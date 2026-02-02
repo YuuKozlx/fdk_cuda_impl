@@ -11,10 +11,26 @@
 
 // 几何结构定义
 struct SConeProjection {
-    float fSrcX, fSrcY, fSrcZ;
-    float fDetSX, fDetSY, fDetSZ;
-    float fDetUX, fDetUY, fDetUZ;
-    float fDetVX, fDetVY, fDetVZ;
+    // the source
+    double fSrcX, fSrcY, fSrcZ;
+
+    // the origin ("bottom left") of the (flat-panel) detector
+    double fDetSX, fDetSY, fDetSZ;
+
+    // the U-edge of a detector pixel
+    double fDetUX, fDetUY, fDetUZ;
+
+    // the V-edge of a detector pixel
+    double fDetVX, fDetVY, fDetVZ;
+};
+
+struct SDimensions3D {
+    unsigned int iVolX;
+    unsigned int iVolY;
+    unsigned int iVolZ;
+    unsigned int iProjAngles;
+    unsigned int iProjU; // number of detectors in the U direction
+    unsigned int iProjV; // number of detectors in the V direction
 };
 
 // 1. 三线性插值
@@ -63,19 +79,28 @@ __global__ void astra_fp_kernel(const float* vol, float* proj, int Nx, int Ny, i
 }
 
 // 3. FDK 预权重修正
-__global__ void fdk_preweight_kernel(float* proj, int Nu, int Nv, int Ntheta, const SConeProjection* geom, const float SID) {
+__global__ void fdk_preweight_kernel(float* proj,
+    const SDimensions3D dims,
+    const float SID, const float SDD,
+    const float du, const float dv) {
     int u = blockIdx.x * blockDim.x + threadIdx.x;
     int v = blockIdx.y * blockDim.y + threadIdx.y;
     int t = blockIdx.z * blockDim.z + threadIdx.z;
+
+    int Nu = dims.iProjU, Nv = dims.iProjV, Ntheta = dims.iProjAngles;
     if (u >= Nu || v >= Nv || t >= Ntheta) return;
 
-    SConeProjection g = geom[t];
-    float pX = g.fDetSX + u*g.fDetUX + v*g.fDetVX;
-    float pY = g.fDetSY + u*g.fDetUY + v*g.fDetVY;
-    float pZ = g.fDetSZ + u*g.fDetUZ + v*g.fDetVZ;
-    float L = sqrtf(powf(pX-g.fSrcX, 2) + powf(pY-g.fSrcY, 2) + powf(pZ-g.fSrcZ, 2));
+    // 1. 计算当前像素相对于探测器中心的物理坐标 (假设中心对称)
+    float u_pos = (u - (Nu - 1) / 2.0f) * du;
+    float v_pos = (v - (Nv - 1) / 2.0f) * dv;
 
-    proj[t * Nu * Nv + v * Nu + u] *= (SID / L);
+    // 2. 计算源到探测器像素的距离 L
+    // 在理想几何下：L = sqrt(SDD^2 + u_pos^2 + v_pos^2)
+    float L = sqrtf(SDD * SDD + u_pos * u_pos + v_pos * v_pos);
+
+    // 3. FDK 预加权公式: Proj = Proj * (SID / L)
+    int idx = t * Nu * Nv + v * Nu + u;
+    proj[idx] *= (SID / L);
 }
 
 // 4. 归一化滤波内核 (修正了 scaling 和量纲)
@@ -83,64 +108,93 @@ __global__ void ramp_filter_kernel(cufftComplex* freq, int Nu_complex, int Nv, i
     int u = blockIdx.x * blockDim.x + threadIdx.x;
     int v = blockIdx.y * blockDim.y + threadIdx.y;
     int t = blockIdx.z * blockDim.z + threadIdx.z;
+
     if (u >= Nu_complex || v >= Nv || t >= Ntheta) return;
 
-    // 归一化频率 [0, 0.5]
-    float f = (float)u / (float)Nu; 
-    // Ramp: |f| / (2*du)，同时除以 Nu 以抵消 cuFFT 的增益
-    float w = (f / (2.0f * du)) / (float)Nu; 
+    // 1. 频率映射：u 是从 0 到 Nu/2 的离散索引
+    // 归一化频率 f_norm = u / Nu, 物理频率 f = u / (Nu * du)
+    float f = (float)u / (float)(Nu * du);
 
-    int idx = t * Nv * Nu_complex + v * Nu_complex + u;
+    // 2. 窗口函数 (可选): 为了抑制高频噪声，通常会加一个 Hamming 或 Hann 窗
+    // 这里仅实现纯 Ram-Lak: |f|
+    // 注意：cuFFT 的 C2R 变换需要乘以 1/Nu 归一化，由于我们在频域操作，直接乘进去
+    float w = f ;
+
+    // 3. 索引计算
+    int idx = (t * Nv + v) * Nu_complex + u;
+
     freq[idx].x *= w;
     freq[idx].y *= w;
 }
 
 // 5. 反投影内核 (修正了权重累加系数)
-__global__ void astra_bp_kernel(float* vol, int Nx, int Ny, int Nz, const float* proj, int Nu, int Nv, int Ntheta, const SConeProjection* geom, const float SID) {
+__global__ void astra_bp_kernel(float* vol, int Nx, int Ny, int Nz,
+    const float* proj, int Nu, int Nv, int Ntheta,
+    const SConeProjection* geom,
+    const float SID, const float voxel_size) {
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
     int iz = blockIdx.z * blockDim.z + threadIdx.z;
+
     if (ix >= Nx || iy >= Ny || iz >= Nz) return;
 
-    float Px = (ix - (Nx - 1) * 0.5f), Py = (iy - (Ny - 1) * 0.5f), Pz = (iz - (Nz - 1) * 0.5f);
+    // 1. 引入物理尺寸 (以中心为原点)
+    float Px = (ix - (Nx - 1) * 0.5f) * voxel_size;
+    float Py = (iy - (Ny - 1) * 0.5f) * voxel_size;
+    float Pz = (iz - (Nz - 1) * 0.5f) * voxel_size;
+
     float sum = 0.0f;
 
     for (int t = 0; t < Ntheta; ++t) {
         SConeProjection g = geom[t];
-        float Lx = Px - g.fSrcX, Ly = Py - g.fSrcY, Lz = Pz - g.fSrcZ;
-        
-        // 计算探测器法线 (U x V)
-        float nX = g.fDetUY*g.fDetVZ - g.fDetUZ*g.fDetVY;
-        float nY = g.fDetUZ*g.fDetVX - g.fDetUX*g.fDetVZ;
-        float nZ = g.fDetUX*g.fDetVY - g.fDetUY*g.fDetVX;
-        float norm_l = sqrtf(nX*nX + nY*nY + nZ*nZ);
-        nX /= norm_l; nY /= norm_l; nZ /= norm_l;
 
-        float U = Lx*nX + Ly*nY + Lz*nZ;
-        float alpha = ((g.fDetSX-g.fSrcX)*nX + (g.fDetSY-g.fSrcY)*nY + (g.fDetSZ-g.fSrcZ)*nZ) / U;
-        float QX = g.fSrcX + alpha*Lx - g.fDetSX;
-        float QY = g.fSrcY + alpha*Ly - g.fDetSY;
-        float QZ = g.fSrcZ + alpha*Lz - g.fDetSZ;
-        float dep_weight = SID / U;
+        // 射线向量: 源 -> 体素
+        float Lx = Px - g.fSrcX;
+        float Ly = Py - g.fSrcY;
+        float Lz = Pz - g.fSrcZ;
 
-        float magU2 = g.fDetUX*g.fDetUX + g.fDetUY*g.fDetUY + g.fDetUZ*g.fDetUZ;
-        float magV2 = g.fDetVX*g.fDetVX + g.fDetVY*g.fDetVY + g.fDetVZ*g.fDetVZ;
-        float u_idx = (QX*g.fDetUX + QY*g.fDetUY + QZ*g.fDetUZ) / magU2;
-        float v_idx = (QX*g.fDetVX + QY*g.fDetVY + QZ*g.fDetVZ) / magV2;
+        // 探测器法线 (建议在外部预计算并直接存入 g)
+        float nX = g.fDetUY * g.fDetVZ - g.fDetUZ * g.fDetVY;
+        float nY = g.fDetUZ * g.fDetVX - g.fDetUX * g.fDetVZ;
+        float nZ = g.fDetUX * g.fDetVY - g.fDetUY * g.fDetVX;
 
-        if (u_idx >= 0 && u_idx < Nu-1 && v_idx >= 0 && v_idx < Nv-1) {
+        // U: 射线向量在法线方向的投射长度
+        float U = Lx * nX + Ly * nY + Lz * nZ;
+        if (fabsf(U) < 1e-6f) continue;
+
+        // alpha: 射线与平面相交的比例系数
+        float alpha = ((g.fDetSX - g.fSrcX) * nX + (g.fDetSY - g.fSrcY) * nY + (g.fDetSZ - g.fSrcZ) * nZ) / U;
+
+        // Q: 探测器平面上的交点坐标 (相对于探测器原点 S)
+        float QX = g.fSrcX + alpha * Lx - g.fDetSX;
+        float QY = g.fSrcY + alpha * Ly - g.fDetSY;
+        float QZ = g.fSrcZ + alpha * Lz - g.fDetSZ;
+
+        // 映射到 U, V 索引
+        float u_idx = (QX * g.fDetUX + QY * g.fDetUY + QZ * g.fDetUZ) / (g.fDetUX * g.fDetUX + g.fDetUY * g.fDetUY + g.fDetUZ * g.fDetUZ);
+        float v_idx = (QX * g.fDetVX + QY * g.fDetVY + QZ * g.fDetVZ) / (g.fDetVX * g.fDetVX + g.fDetVY * g.fDetVY + g.fDetVZ * g.fDetVZ);
+
+        if (u_idx >= 0 && u_idx < Nu - 1 && v_idx >= 0 && v_idx < Nv - 1) {
             int iu = (int)u_idx, iv = (int)v_idx;
-            float wu = u_idx-iu, wv = v_idx-iv;
-            const float* p = proj + t*Nv*Nu;
-            float val = (1-wu)*(1-wv)*p[iv*Nu+iu] + wu*(1-wv)*p[iv*Nu+iu+1] + (1-wu)*wv*p[(iv+1)*Nu+iu] + wu*wv*p[(iv+1)*Nu+iu+1];
-            
-            // FDK 距离平方反比加权
-  
-            sum += val * dep_weight * dep_weight;
+            float wu = u_idx - iu, wv = v_idx - iv;
+
+            const float* p = proj + t * Nv * Nu;
+
+            // 双线性插值
+            float val = (1 - wu) * (1 - wv) * p[iv * Nu + iu] +
+                wu * (1 - wv) * p[iv * Nu + iu + 1] +
+                (1 - wu) * wv * p[(iv + 1) * Nu + iu] +
+                wu * wv * p[(iv + 1) * Nu + iu + 1];
+
+            // FDK 权重修正: (SID / U_virtual)^2
+            // 这里 U 实际上跟源到体素的距离相关，alpha 是缩放比例
+            // 标准 FDK 权重通常使用源到体素投影点的距离
+            float dep_weight = SID / (alpha * sqrtf(Lx * Lx + Ly * Ly + Lz * Lz));
+            sum += val * (dep_weight * dep_weight);
         }
     }
 
-    vol[iz * Ny * Nx + iy * Nx + ix] = sum * (2.0f * M_PI / (float)Ntheta);
+    vol[iz * Ny * Nx + iy * Nx + ix] = sum * ( M_PI / (float)Ntheta)/10;
 }
 
 void save_raw(const char* filename, const std::vector<float>& data) {
@@ -152,76 +206,115 @@ void save_raw(const char* filename, const std::vector<float>& data) {
     }
 }
 
-int main() {
-    int Nx=128, Ny=128, Nz=128, Nu=256, Nv=256, Ntheta=360;
-    float SID=500.0f, SDD=1000.0f, du=1.0f, dv=1.0f;
+int main000() {
+    // 1. 参数定义
+    SDimensions3D dims;
+    dims.iProjU = 256; dims.iProjV = 256; dims.iProjAngles = 360;
+    dims.iVolX = 512;  dims.iVolY = 512,dims.iVolZ = 100;
 
-    // 1. 初始化几何
-    std::vector<SConeProjection> h_geom(Ntheta);
-    for (int t = 0; t < Ntheta; ++t) {
-        float a = t * 2.0f * M_PI / Ntheta;
-        h_geom[t].fSrcX = -SID*cosf(a); h_geom[t].fSrcY = -SID*sinf(a); h_geom[t].fSrcZ = 0;
-        h_geom[t].fDetUX = -du*sinf(a); h_geom[t].fDetUY = du*cosf(a); h_geom[t].fDetUZ = 0;
-        h_geom[t].fDetVX = 0; h_geom[t].fDetVY = 0; h_geom[t].fDetVZ = dv;
-        float cx = (SDD-SID)*cosf(a), cy = (SDD-SID)*sinf(a);
-        h_geom[t].fDetSX = cx - (Nu-1)*0.5f*h_geom[t].fDetUX; 
-        h_geom[t].fDetSY = cy - (Nu-1)*0.5f*h_geom[t].fDetUY; 
-        h_geom[t].fDetSZ = -(Nv-1)*0.5f*dv;
+    float SID = 500.0f;
+    float SDD = 1000.0f;
+    float du = 1.0f;        // 探测器像素尺寸
+    float dv = 1.0f;
+    float voxel_size = 0.5f; // 重建体素尺寸
+
+    size_t proj_elements = dims.iProjU * dims.iProjV * dims.iProjAngles;
+    size_t vol_elements = dims.iVolX * dims.iVolY * dims.iVolZ;
+
+    // 2. 分配主机内存并读取数据
+    std::vector<float> h_proj(proj_elements);
+    FILE* fp = fopen("cat515_projection.raw", "rb");
+    if (!fp) { printf("Error: Cannot find proj.raw\n"); return -1; }
+    fread(h_proj.data(), sizeof(float), proj_elements, fp);
+    fclose(fp);
+
+    // 3. 分配 GPU 内存
+    float* d_proj, * d_vol;
+    cudaMalloc(&d_proj, proj_elements * sizeof(float));
+    cudaMalloc(&d_vol, vol_elements * sizeof(float));
+    cudaMemcpy(d_proj, h_proj.data(), proj_elements * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemset(d_vol, 0, vol_elements * sizeof(float));
+
+    // 4. 构建几何轨迹 (圆周)
+    std::vector<SConeProjection> h_geom(dims.iProjAngles);
+    for (unsigned int t = 0; t < dims.iProjAngles; ++t) {
+        float angle = t * (2.0f * M_PI / dims.iProjAngles);
+        // 源位置
+        h_geom[t].fSrcX = SID * cosf(angle);
+        h_geom[t].fSrcY = SID * sinf(angle);
+        h_geom[t].fSrcZ = 0;
+
+        // 探测器 U, V 向量 (旋转坐标系)
+        h_geom[t].fDetUX = -sinf(angle); h_geom[t].fDetUY = cosf(angle); h_geom[t].fDetUZ = 0;
+        h_geom[t].fDetVX = 0; h_geom[t].fDetVY = 0; h_geom[t].fDetVZ = 1.0;
+
+        // 探测器中心位置 (在源的对面)
+        float det_center_x = -(SDD - SID) * cosf(angle);
+        float det_center_y = -(SDD - SID) * sinf(angle);
+
+        // 计算探测器左下角 S = Center - (U*halfWidth) - (V*halfHeight)
+        h_geom[t].fDetSX = det_center_x - (dims.iProjU - 1) * 0.5f * h_geom[t].fDetUX - (dims.iProjV - 1) * 0.5f * h_geom[t].fDetVX;
+        h_geom[t].fDetSY = det_center_y - (dims.iProjU - 1) * 0.5f * h_geom[t].fDetUY - (dims.iProjV - 1) * 0.5f * h_geom[t].fDetVY;
+        h_geom[t].fDetSZ = 0 - (dims.iProjV - 1) * 0.5f * h_geom[t].fDetVZ;
     }
+    SConeProjection* d_geom;
+    cudaMalloc(&d_geom, dims.iProjAngles * sizeof(SConeProjection));
+    cudaMemcpy(d_geom, h_geom.data(), dims.iProjAngles * sizeof(SConeProjection), cudaMemcpyHostToDevice);
 
-    SConeProjection *d_geom; cudaMalloc(&d_geom, Ntheta*sizeof(SConeProjection));
-    cudaMemcpy(d_geom, h_geom.data(), Ntheta*sizeof(SConeProjection), cudaMemcpyHostToDevice);
+    // ==========================================================
+    // 第一步：预加权
+    // ==========================================================
+    dim3 blockP(16, 16, 1);
+    dim3 gridP((dims.iProjU + 15) / 16, (dims.iProjV + 15) / 16, dims.iProjAngles);
+    fdk_preweight_kernel << <gridP, blockP >> > (d_proj, dims, SID, SDD, du, dv);
+    cudaDeviceSynchronize();
 
-    float *d_vol, *d_proj, *d_recon;
-    cudaMalloc(&d_vol, Nx*Ny*Nz*sizeof(float));
-    cudaMalloc(&d_proj, Nu*Nv*Ntheta*sizeof(float));
-    cudaMalloc(&d_recon, Nx*Ny*Nz*sizeof(float));
+    // 保存预加权结果
+    cudaMemcpy(h_proj.data(), d_proj, proj_elements * sizeof(float), cudaMemcpyDeviceToHost);
+    save_raw("preweighted.raw", h_proj);
 
-    // 2. 创建测试球体 (密度 1.0)
-    std::vector<float> h_ph(Nx*Ny*Nz, 0.0f);
-    for(int i=0; i<Nx*Ny*Nz; i++) {
-        int x=i%Nx, y=(i/Nx)%Ny, z=i/(Nx*Ny);
-        if(pow(x-64,2)+pow(y-64,2)+pow(z-64,2) < 1600) h_ph[i]=1.0f;
-    }
-    cudaMemcpy(d_vol, h_ph.data(), Nx*Ny*Nz*sizeof(float), cudaMemcpyHostToDevice);
-
-    dim3 blk(8,8,8);
-    dim3 gridP((Nu+7)/8, (Nv+7)/8, (Ntheta+7)/8);
-
-    // 3. 正向投影
-    printf("Forward Projecting...\n");
-    astra_fp_kernel<<<gridP, blk>>>(d_vol, d_proj, Nx, Ny, Nz, Nu, Nv, Ntheta, d_geom);
-    
-    // 4. FDK 滤波链条
-    printf("Filtering...\n");
-    fdk_preweight_kernel<<<gridP, blk>>>(d_proj, Nu, Nv, Ntheta, d_geom, SID);
-
-    int Nu_c = Nu/2 + 1;
+    // ==========================================================
+    // 第二步：频谱滤波 (R2C -> Kernel -> C2R)
+    // ==========================================================
+    int Nu_complex = dims.iProjU / 2 + 1;
+    int total_rows = dims.iProjV * dims.iProjAngles;
     cufftHandle plan_fwd, plan_inv;
-    cufftPlanMany(&plan_fwd, 1, &Nu, NULL, 1, Nu, NULL, 1, Nu_c, CUFFT_R2C, Nv*Ntheta);
-    cufftPlanMany(&plan_inv, 1, &Nu, NULL, 1, Nu_c, NULL, 1, Nu, CUFFT_C2R, Nv*Ntheta);
-    
-    cufftComplex* d_f; cudaMalloc(&d_f, Nv*Ntheta*Nu_c*sizeof(cufftComplex));
-    cufftExecR2C(plan_fwd, d_proj, d_f);
-    
-    // 核心修正：传入 Nu 进行归一化
-    ramp_filter_kernel<<<(dim3((Nu_c+7)/8,(Nv+7)/8,(Ntheta+7)/8)), blk>>>(d_f, Nu_c, Nv, Ntheta, du, Nu);
-    
-    cufftExecC2R(plan_inv, d_f, d_proj);
+    cufftPlanMany(&plan_fwd, 1, (int*)&dims.iProjU, NULL, 1, dims.iProjU, NULL, 1, dims.iProjU, CUFFT_R2C, total_rows);
+    cufftPlanMany(&plan_inv, 1, (int*)&dims.iProjU, NULL, 1, dims.iProjU, NULL, 1, dims.iProjU, CUFFT_C2R, total_rows);
 
-    // 5. 反投影
-    printf("Backprojecting...\n");
-    cudaMemset(d_recon, 0, Nx*Ny*Nz*sizeof(float));
-    astra_bp_kernel<<<(dim3((Nx+7)/8,(Ny+7)/8,(Nz+7)/8)), blk>>>(d_recon, Nx, Ny, Nz, d_proj, Nu, Nv, Ntheta, d_geom, SID);
+    cufftComplex* d_freq;
+    cudaMalloc(&d_freq, Nu_complex * total_rows * sizeof(cufftComplex));
 
-    // 6. 保存结果
-    std::vector<float> h_res(Nx*Ny*Nz);
-    cudaMemcpy(h_res.data(), d_recon, Nx*Ny*Nz*sizeof(float), cudaMemcpyDeviceToHost);
-    save_raw("reconstruction_fixed.raw", h_res);
+    cufftExecR2C(plan_fwd, (cufftReal*)d_proj, d_freq);
 
-    printf("Success!\n");
+    dim3 blockF(16, 8, 8);
+    dim3 gridF((Nu_complex + 15) / 16, (dims.iProjV + 7) / 8, (dims.iProjAngles + 7) / 8);
+    ramp_filter_kernel << <gridF, blockF >> > (d_freq, Nu_complex, dims.iProjV, dims.iProjAngles, du, dims.iProjU);
 
+    cufftExecC2R(plan_inv, d_freq, (cufftReal*)d_proj);
+    cudaDeviceSynchronize();
+
+    // 保存滤波结果
+    cudaMemcpy(h_proj.data(), d_proj, proj_elements * sizeof(float), cudaMemcpyDeviceToHost);
+    save_raw("filtered.raw", h_proj);
+
+    // ==========================================================
+    // 第三步：反投影
+    // ==========================================================
+    dim3 blockB(8, 8, 8);
+    dim3 gridB((dims.iVolX + 7) / 8, (dims.iVolY + 7) / 8, (dims.iVolZ + 7) / 8);
+    astra_bp_kernel << <gridB, blockB >> > (d_vol, dims.iVolX, dims.iVolY, dims.iVolZ, d_proj, dims.iProjU, dims.iProjV, dims.iProjAngles, d_geom, SID, voxel_size);
+    cudaDeviceSynchronize();
+
+    // 保存重建结果
+    std::vector<float> h_vol(vol_elements);
+    cudaMemcpy(h_vol.data(), d_vol, vol_elements * sizeof(float), cudaMemcpyDeviceToHost);
+    save_raw("reconstruction.raw", h_vol);
+
+    // 5. 释放资源
     cufftDestroy(plan_fwd); cufftDestroy(plan_inv);
-    cudaFree(d_vol); cudaFree(d_proj); cudaFree(d_recon); cudaFree(d_f); cudaFree(d_geom);
+    cudaFree(d_proj); cudaFree(d_vol); cudaFree(d_geom); cudaFree(d_freq);
+
+    printf("FDK Reconstruction Pipeline Finished.\n");
     return 0;
 }
