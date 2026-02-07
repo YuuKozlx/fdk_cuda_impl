@@ -8,30 +8,31 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
+#include "../YkGlobals.h"
 
-// 几何结构定义
-struct SConeProjection {
-    // the source
-    double fSrcX, fSrcY, fSrcZ;
-
-    // the origin ("bottom left") of the (flat-panel) detector
-    double fDetSX, fDetSY, fDetSZ;
-
-    // the U-edge of a detector pixel
-    double fDetUX, fDetUY, fDetUZ;
-
-    // the V-edge of a detector pixel
-    double fDetVX, fDetVY, fDetVZ;
-};
-
-struct SDimensions3D {
-    unsigned int iVolX;
-    unsigned int iVolY;
-    unsigned int iVolZ;
-    unsigned int iProjAngles;
-    unsigned int iProjU; // number of detectors in the U direction
-    unsigned int iProjV; // number of detectors in the V direction
-};
+//// 几何结构定义
+//struct SConeProjection {
+//    // the source
+//    double fSrcX, fSrcY, fSrcZ;
+//
+//    // the origin ("bottom left") of the (flat-panel) detector
+//    double fDetSX, fDetSY, fDetSZ;
+//
+//    // the U-edge of a detector pixel
+//    double fDetUX, fDetUY, fDetUZ;
+//
+//    // the V-edge of a detector pixel
+//    double fDetVX, fDetVY, fDetVZ;
+//};
+//
+//struct SDimensions3D {
+//    unsigned int iVolX;
+//    unsigned int iVolY;
+//    unsigned int iVolZ;
+//    unsigned int iProjAngles;
+//    unsigned int iProjU; // number of detectors in the U direction
+//    unsigned int iProjV; // number of detectors in the V direction
+//};
 
 // 1. 三线性插值
 __device__ float trilinear_interpolate(const float* vol, float x, float y, float z, int Nx, int Ny, int Nz) {
@@ -206,7 +207,7 @@ void save_raw(const char* filename, const std::vector<float>& data) {
     }
 }
 
-int main000() {
+int main00() {
     // 1. 参数定义
     SDimensions3D dims;
     dims.iProjU = 256; dims.iProjV = 256; dims.iProjAngles = 360;

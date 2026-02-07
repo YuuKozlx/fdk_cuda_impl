@@ -22,17 +22,18 @@
     <VCProjectVersion>17.0</VCProjectVersion>
     <ProjectGuid>{91B78052-F558-77EA-E681-D177BDD00537}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -92,7 +93,8 @@
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>cufft.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -121,17 +123,22 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="YkVecFDKBackProjection.hpp" />
+    <ClInclude Include="YkVecGeo.hpp" />
     <CudaCompile Include="fdk-test\fanbeam_fdk3.cu">
       <FileType>Document</FileType>
     </CudaCompile>
     <CudaCompile Include="testmain.cu">
       <FileType>Document</FileType>
     </CudaCompile>
+    <ClInclude Include="YkFDKBackProjection.hpp" />
     <ClInclude Include="YKFDKFilter.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YkConv.hpp" />
+    <ClInclude Include="YkFDKPreWeight.hpp" />
     <ClInclude Include="YkFFT.hpp" />
+    <ClInclude Include="YkGlobals.h" />
     <ClInclude Include="YKtestconv.hpp" />
     <ClInclude Include="YKUtil.hpp" />
   </ItemGroup>

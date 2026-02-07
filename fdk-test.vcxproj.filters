@@ -13,5 +13,44 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
     </Filter>
+    <Filter Include="vec_fdk">
+      <UniqueIdentifier>{9e40fc35-59ce-4392-9c6b-669f352f926a}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="fdk-test\fanbeam_fdk3.cu" />
+    <CudaCompile Include="testmain.cu" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="YKFDKFilter.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkConv.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFFT.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YKtestconv.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YKUtil.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkGlobals.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKPreWeight.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKBackProjection.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkVecGeo.hpp">
+      <Filter>vec_fdk</Filter>
+    </ClInclude>
+    <ClInclude Include="YkVecFDKBackProjection.hpp">
+      <Filter>vec_fdk</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
