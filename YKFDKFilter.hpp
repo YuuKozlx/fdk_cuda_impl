@@ -102,14 +102,14 @@ namespace YK {
             kernel_fft_.prepare(paddedN_, stream_);
 
             // Default: analytic RamLak (DU=1 weights), bake invN
-            FilterKernelDesc desc;
-            desc.kind = EFilterKernel::RamLak;
-            desc.cutoff = 0.5f;
-            desc.gain = 1.0f;
-            desc.normalized_ramp = true;
+            //FilterKernelDesc desc;
+            //desc.kind = EFilterKernel::RamLak;
+            //desc.cutoff = 0.5f;
+            //desc.gain = 1.0f;
+            //desc.normalized_ramp = true;
 
-            setAnalyticWeights(desc);
-            /*setDiscreteRamLakWeightsDu1();*/
+            //setAnalyticWeights(desc);
+            setDiscreteRamLakWeightsDu1();
             
 
             is_initialized_ = true;

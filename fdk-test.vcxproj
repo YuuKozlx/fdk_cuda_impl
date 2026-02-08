@@ -123,6 +123,8 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="Yktest_fdkflter.hpp" />
+    <ClInclude Include="Yktest_fft.hpp" />
     <ClInclude Include="YkFDKCreateFilterKernel.hpp" />
     <ClInclude Include="YkVecFDKBackProjection.hpp" />
     <ClInclude Include="YkVecGeo.hpp" />

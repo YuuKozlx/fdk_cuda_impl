@@ -9,6 +9,10 @@
 #include "YkFDKBackProjection.hpp"
 
 
+#include "Yktest_fft.hpp"
+#include "Yktest_fdkflter.hpp"
+
+
 static bool read_raw_float(const char* path, std::vector<float>& data) {
     FILE* fp = std::fopen(path, "rb");
     if (!fp) return false;
@@ -25,7 +29,7 @@ static bool write_raw_float(const char* path, const std::vector<float>& data) {
     return n == data.size();
 }
 
-int main() {
+int main_fdk() {
     SDimensions3D dims;
     dims.iProjU = 256; dims.iProjV = 256; dims.iProjAngles = 360;
     dims.iVolX = 512; dims.iVolY = 512; dims.iVolZ = 100;
@@ -105,6 +109,14 @@ int main() {
     YK_CUDA_CHECK(cudaStreamDestroy(s));
 
     std::printf("Done: wrote fdk_vec_vol.raw (%d x %d x %d)\n", Nx, Ny, Nz);
+    return 0;
+}
+
+
+int main() {
+    //YKTest::testFFT();
+    main_fdk();
+    //YKTest::testFilterWeightsSpectra_RamLak();
     return 0;
 }
 

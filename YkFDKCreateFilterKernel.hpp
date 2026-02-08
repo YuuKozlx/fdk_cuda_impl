@@ -260,7 +260,7 @@ namespace YK {
             float* d_weights_fft,
             bool bake_invN = true,
             EKernelToWeightsMode mode = EKernelToWeightsMode::RealPart,
-            bool force_dc_zero = true) const
+            bool force_dc_zero = false) const
         {
             YK_ASSERT(ready_);
             YK_ASSERT(d_weights_fft);

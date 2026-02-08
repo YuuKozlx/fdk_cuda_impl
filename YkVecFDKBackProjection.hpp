@@ -145,8 +145,8 @@ namespace YK {
         if (x >= Nx || y >= Ny || z >= Nz) return;
 
         float3 P = make_float3(
-            (x - (Nx - 1) * 0.5f) * vox,
             (y - (Ny - 1) * 0.5f) * vox,
+            (x - (Nx - 1) * 0.5f) * vox,  
             (z - (Nz - 1) * 0.5f) * vox
         );
 
