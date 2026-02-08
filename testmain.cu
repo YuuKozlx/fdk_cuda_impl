@@ -63,7 +63,7 @@ int main_fdk() {
         geo, Ang, Nu, Nv,
         SID, SDD,
         du, dv,
-        /*offsetU*/-5.0f, /*offsetV*/0.0f);
+        /*offsetU*/-5.5f, /*offsetV*/0.0f);
 
     // cuda
     cudaStream_t s = nullptr;
@@ -81,7 +81,7 @@ int main_fdk() {
         Nx, Ny, Nz, vox,
         SID, SDD, du, dv,
         /*Kchunk=*/8,
-        -5.0f,0.0f,
+        -5.5f,0.0f,
         s
     );
     //YK::fdk_recon_streaming(

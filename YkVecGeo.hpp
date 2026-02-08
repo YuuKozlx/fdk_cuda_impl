@@ -100,49 +100,61 @@ namespace YK {
  *     Optional detector offset in v (rows), in pixel units
  *     Positive values shift the detector towards +detV
  */
-    inline void build_circular_vec_geometry(
+    inline void build_circular_vec_geometry_from_theta(
         std::vector<SConeProjectionVec>& geo,
+        const float* theta,          // [Ang] 外部角度（弧度）
         int Ang, int Nu, int Nv,
         float SOD, float SDD,
         float du, float dv,
-        float offsetU_pix = 0.0f, float offsetV_pix = 0.0f)
+        float offsetU_pix = 0.0f,
+        float offsetV_pix = 0.0f)
     {
         geo.resize(Ang);
-        const float two_pi = 2.0f * 3.14159265358979323846f;
 
-        // Isocenter-to-detector distance
         const float ODD = SDD - SOD;
 
         for (int a = 0; a < Ang; ++a) {
 
-            // View angle (counter-clockwise rotation around +Z)
-            float theta = two_pi * (float)a / (float)Ang;
-            float c = std::cos(theta);
-            float s = std::sin(theta);
+            float t = theta[a];
+            float c = cosf(t);
+            float s = sinf(t);
 
-            // --------------------------------------------------
-            // Source position (world coordinates)
-            //   S = SOD * [ sin(theta), -cos(theta), 0 ]
-            // --------------------------------------------------
-            float3 src = make_float3(SOD * s, -SOD * c, 0.0f);
+            // -------------------------------
+            // Source (绕 +Z)
+            // S = [ SOD*sinθ , -SOD*cosθ , 0 ]
+            // -------------------------------
+            float3 src = make_float3(
+                SOD * s,
+                -SOD * c,
+                0.0f
+            );
 
-            // --------------------------------------------------
-            // Detector center position (world coordinates)
-            //   D = ODD * [ -sin(theta), cos(theta), 0 ]
-            // --------------------------------------------------
-            float3 detC = make_float3(-ODD * s, ODD * c, 0.0f);
+            // -------------------------------
+            // Detector center
+            // D = [ -ODD*sinθ , ODD*cosθ , 0 ]
+            // -------------------------------
+            float3 detC = make_float3(
+                -ODD * s,
+                ODD * c,
+                0.0f
+            );
 
-            // --------------------------------------------------
-            // Detector basis vectors
-            //   detU : column direction (u, fastest index)
-            //   detV : row direction    (v)
-            // --------------------------------------------------
-            float3 detU = make_float3(du * c,du * s, 0.0f);  // U(theta)
-            float3 detV = make_float3(0.0f, 0.0f, dv);        // V = +Z
+            // -------------------------------
+            // Detector basis
+            // -------------------------------
+            float3 detU = make_float3(
+                du * c,
+                du * s,
+                0.0f
+            );
 
-            // --------------------------------------------------
-            // Detector origin (pixel 0,0) in world coordinates
-            // --------------------------------------------------
+            float3 detV = make_float3(
+                0.0f, 0.0f, dv
+            );
+
+            // -------------------------------
+            // Detector origin (pixel 0,0)
+            // -------------------------------
             float cu = (Nu - 1) * 0.5f + offsetU_pix;
             float cv = (Nv - 1) * 0.5f + offsetV_pix;
 
@@ -154,6 +166,29 @@ namespace YK {
 
             geo[a] = SConeProjectionVec{ src, detS, detU, detV };
         }
+    }
+
+
+    inline void build_circular_vec_geometry(
+        std::vector<SConeProjectionVec>& geo,
+        int Ang, int Nu, int Nv,
+        float SOD, float SDD,
+        float du, float dv,
+        float offsetU_pix = 0.0f,
+        float offsetV_pix = 0.0f)
+    {
+        std::vector<float> theta(Ang);
+        const float two_pi = 2.0f * 3.14159265358979323846f;
+
+        for (int a = 0; a < Ang; ++a)
+            theta[a] = two_pi * a / Ang;
+
+        build_circular_vec_geometry_from_theta(
+            geo, theta.data(),
+            Ang, Nu, Nv,
+            SOD, SDD,
+            du, dv,
+            offsetU_pix, offsetV_pix);
     }
 
 

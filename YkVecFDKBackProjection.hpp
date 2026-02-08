@@ -8,6 +8,7 @@
 #include "YkFDKFilter.hpp"
 #include "YkFDKPreWeight.hpp"
 #include "YkVecGeo.hpp"
+#include "YKtestconv.hpp"
 
 namespace YK {
 
@@ -93,8 +94,10 @@ namespace YK {
 
         denom = f3_dot(dir, nh);
         if (fabsf(denom) < 1e-8f) return false;
+
         float SOD_square = f3_dot(g.src, g.src);
         SOD = sqrtf(SOD_square);
+
         DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
         if (fabsf(DSD_n) < 1e-8f) return false;
 
@@ -128,25 +131,27 @@ namespace YK {
 
     // ============================================================
     // Vec backprojection kernel (chunk)
-    // weight: w = (DSD_n/denom)^2   (vector FDK Jacobian)
+    // - views_chunk layout: [K][Nv][Nu], u-fastest
+    // - IMPORTANT: integrate with per-view dtheta[a]
     // ============================================================
     __global__ void fdk_vec_backproject_chunk_kernel(
         const float* __restrict__ views_chunk,            // [K*Nv*Nu]
         const SConeProjectionVec* __restrict__ d_geo,     // [Ang]
+        const float* __restrict__ d_dtheta,               // [Ang]  <-- per-view Δθ
         float* __restrict__ vol,                          // [Nz*Ny*Nx]
         int Nx, int Ny, int Nz, float vox,
         int Nu, int Nv,
-        int K, int base_a,
-        float dtheta)
+        int K, int base_a)
     {
         int x = blockIdx.x * blockDim.x + threadIdx.x;
         int y = blockIdx.y * blockDim.y + threadIdx.y;
         int z = blockIdx.z * blockDim.z + threadIdx.z;
         if (x >= Nx || y >= Ny || z >= Nz) return;
 
+        // NOTE: you intentionally use (y,x,z) mapping here; keep as-is
         float3 P = make_float3(
             (y - (Ny - 1) * 0.5f) * vox,
-            (x - (Nx - 1) * 0.5f) * vox,  
+            (x - (Nx - 1) * 0.5f) * vox,
             (z - (Nz - 1) * 0.5f) * vox
         );
 
@@ -156,28 +161,73 @@ namespace YK {
             int a = base_a + i;
             const SConeProjectionVec& g = d_geo[a];
 
-            float u, v, denom, DSD_n,SOD;
-            if (!project_uv_and_terms(g, P, u, v, denom, DSD_n,SOD)) continue;
+            float u, v, denom, DSD_n, SOD;
+            if (!project_uv_and_terms(g, P, u, v, denom, DSD_n, SOD)) continue;
 
             const float* view_i = views_chunk + (size_t)i * Nv * Nu;
             float p = bilinear_sample_2d(view_i, Nu, Nv, u, v);
 
+            // FDK Jacobian-like factor (your chosen form)
             float w = (SOD * SOD) / (denom * denom);
-            acc += p * w;
+
+            // integrate with per-view Δθ
+            float dt = d_dtheta[a];
+
+            acc += p * w * dt;
         }
 
         size_t vidx = (size_t)z * Ny * Nx + (size_t)y * Nx + x;
-        vol[vidx] += acc * dtheta;
+        vol[vidx] += acc; // <-- no extra global dtheta
     }
 
     // ============================================================
-    // Streaming vec-FDK (offset-aware):
-    // offsetU_pix/offsetV_pix must be consistent with how you built geo.
-    //
-    // IMPORTANT: offsets must be applied in 3 places:
-    //  (1) geometry build (detS shift): you already do in build_circular_vec_geometry
-    //  (2) preweight: pass offsets
-    //  (3) filter padding alignment: offsetX = offsetU_pix
+    // Build per-view dtheta from vector-geometry (Z-axis rotation)
+    // src parameterization consistent with your circular geometry:
+    //   src = ( SOD*sinθ, -SOD*cosθ, 0 )
+    // => θ = atan2(src.x, -src.y)
+    // ============================================================
+    inline void build_dtheta_from_geo_zaxis(
+        const std::vector<SConeProjectionVec>& h_geo,
+        std::vector<float>& h_dtheta)
+    {
+        const int Ang = (int)h_geo.size();
+        h_dtheta.assign(Ang, 0.0f);
+        if (Ang <= 1) return;
+
+        std::vector<float> theta(Ang);
+
+        // 1) theta from src
+        for (int a = 0; a < Ang; ++a) {
+            float sx = h_geo[a].src.x;
+            float sy = h_geo[a].src.y;
+            theta[a] = atan2f(sx, -sy); // atan2(sinθ, cosθ)
+        }
+
+        // 2) unwrap to avoid 2π jumps
+        for (int a = 1; a < Ang; ++a) {
+            float t = theta[a];
+            float p = theta[a - 1];
+            while (t - p > M_PI) t -= 2.0f * M_PI;
+            while (t - p < -M_PI) t += 2.0f * M_PI;
+            theta[a] = t;
+        }
+
+        // 3) center difference (short-scan safe: no wrap)
+        for (int a = 0; a < Ang; ++a) {
+            float dt;
+            if (a == 0)          dt = theta[1] - theta[0];
+            else if (a == Ang - 1) dt = theta[Ang - 1] - theta[Ang - 2];
+            else                 dt = 0.5f * (theta[a + 1] - theta[a - 1]);
+
+            if (dt < 0.0f) dt = -dt;
+            if (dt < 1e-8f) dt = 1e-8f;
+            h_dtheta[a] = dt;
+        }
+    }
+
+    // ============================================================
+    // Streaming vec-FDK (offset-aware)
+    // Input projection layout on host: [Ang][Nv][Nu] (A-V-U), u-fastest
     // ============================================================
     inline void fdk_vec_recon_streaming(
         const float* h_proj,                               // host [Ang*Nv*Nu]
@@ -200,7 +250,16 @@ namespace YK {
             (size_t)Ang * sizeof(SConeProjectionVec),
             cudaMemcpyHostToDevice, stream));
 
-        const float dtheta = (2.0f * 3.14159265358979323846f) / (float)Ang;
+        // build per-view dtheta on host from geo, upload to device
+        std::vector<float> h_dtheta;
+        build_dtheta_from_geo_zaxis(h_geo, h_dtheta);
+
+        float* d_dtheta = nullptr;
+        YK_CUDA_CHECK(cudaMalloc(&d_dtheta, (size_t)Ang * sizeof(float)));
+        YK_CUDA_CHECK(cudaMemcpyAsync(d_dtheta, h_dtheta.data(),
+            (size_t)Ang * sizeof(float),
+            cudaMemcpyHostToDevice, stream));
+
         const size_t view_elems = (size_t)Nu * Nv;
 
         // ---- Preweight (cos) ----
@@ -244,26 +303,33 @@ namespace YK {
                 int a = base + i;
                 const float* h_view = h_proj + (size_t)a * view_elems;
 
+                // H2D one view
                 YK_CUDA_CHECK(cudaMemcpyAsync(d_view_in, h_view, view_elems * sizeof(float),
                     cudaMemcpyHostToDevice, stream));
 
+                // preweight
                 pw.setStream(stream);
                 pw.apply(d_view_in, d_view_pw);
 
+                // pad + filter
                 fm.setStream(stream);
 
                 dim3 b1(256, 1);
                 dim3 g1((paddedN + 255) / 256, Nv);
-                YK::_kernel_pad_with_offset << <g1, b1, 0, stream >> > (d_view_pw, d_padded, Nu, Nv, paddedN, offsetX);
+                YK::_kernel_pad_with_offset << <g1, b1, 0, stream >> > (
+                    d_view_pw, d_padded, Nu, Nv, paddedN, offsetX);
                 YK_CUDA_KERNEL_CHECK();
 
                 fm.apply(d_padded);
 
+                // crop -> Nu
                 dim3 b2(16, 16);
                 dim3 g2((Nu + b2.x - 1) / b2.x, (Nv + b2.y - 1) / b2.y);
-                kernel_crop_u_2d << <g2, b2, 0, stream >> > (d_padded, d_view_flt, Nu, Nv, paddedN, start_u);
+                kernel_crop_u_2d << <g2, b2, 0, stream >> > (
+                    d_padded, d_view_flt, Nu, Nv, paddedN, start_u);
                 YK_CUDA_KERNEL_CHECK();
 
+                // copy into chunk slot (device-to-device)
                 float* d_slot = d_chunk + (size_t)i * view_elems;
                 YK_CUDA_CHECK(cudaMemcpyAsync(d_slot, d_view_flt, view_elems * sizeof(float),
                     cudaMemcpyDeviceToDevice, stream));
@@ -276,16 +342,16 @@ namespace YK {
                 (Nz + block.z - 1) / block.z);
 
             fdk_vec_backproject_chunk_kernel << <grid, block, 0, stream >> > (
-                d_chunk, d_geo, d_vol,
+                d_chunk, d_geo, d_dtheta, d_vol,
                 Nx, Ny, Nz, vox,
                 Nu, Nv,
-                K, base,
-                dtheta);
+                K, base);
             YK_CUDA_KERNEL_CHECK();
         }
 
         // cleanup
         YK_CUDA_CHECK(cudaFree(d_geo));
+        YK_CUDA_CHECK(cudaFree(d_dtheta));
         YK_CUDA_CHECK(cudaFree(d_view_in));
         YK_CUDA_CHECK(cudaFree(d_view_pw));
         YK_CUDA_CHECK(cudaFree(d_view_flt));

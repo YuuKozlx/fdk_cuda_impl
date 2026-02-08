@@ -14,8 +14,11 @@ namespace YK {
     // ============================================================
     // Padding with axis offset (per batch row)
     // ============================================================
-    __global__ void _kernel_pad_with_offset(const float* src, float* dst,
-        int Nu, int batch, int paddedN, float offsetX)
+    __global__ void _kernel_pad_with_offset(
+        const float* __restrict__ src,
+        float* __restrict__ dst,
+        int Nu, int batch, int paddedN,
+        float offsetX)
     {
         int u = blockIdx.x * blockDim.x + threadIdx.x;
         int b = blockIdx.y;
