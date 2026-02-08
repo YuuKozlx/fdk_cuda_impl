@@ -1,33 +1,60 @@
 ﻿#pragma once
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+
 #include <vector>
 #include <cmath>
+#include <algorithm>
 
 #include "YkGlobals.h"
 #include "YkFDKFilter.hpp"
-#include "YkFDKPreWeight.hpp"
 #include "YkVecGeo.hpp"
-#include "YKtestconv.hpp"
 
 namespace YK {
 
-    // ===============================
-    // float3 helpers
-    // ===============================
+    // ============================================================
+    // Constants
+    // ============================================================
+    static constexpr float PI_F = 3.14159265358979323846f;
+
+    // ============================================================
+    // float3 helpers (device)
+    // ============================================================
     __device__ __forceinline__ float3 f3_add(float3 a, float3 b) { return make_float3(a.x + b.x, a.y + b.y, a.z + b.z); }
     __device__ __forceinline__ float3 f3_sub(float3 a, float3 b) { return make_float3(a.x - b.x, a.y - b.y, a.z - b.z); }
     __device__ __forceinline__ float3 f3_mul(float3 a, float t) { return make_float3(a.x * t, a.y * t, a.z * t); }
     __device__ __forceinline__ float  f3_dot(float3 a, float3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
     __device__ __forceinline__ float3 f3_cross(float3 a, float3 b) {
-        return make_float3(a.y * b.z - a.z * b.y,
+        return make_float3(
+            a.y * b.z - a.z * b.y,
             a.z * b.x - a.x * b.z,
-            a.x * b.y - a.y * b.x);
+            a.x * b.y - a.y * b.x
+        );
     }
 
-    // ===============================
-    // bilinear sample for one view (Nv x Nu), u-fastest
-    // ===============================
+    // ============================================================
+    // float3 helpers (host)
+    // ============================================================
+    __host__ __forceinline__ float f3_len_h(float3 a) {
+        return std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+    }
+    __host__ __forceinline__ float f3_dot_h(float3 a, float3 b) {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+    __host__ __forceinline__ float3 f3_sub_h(float3 a, float3 b) {
+        return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
+    }
+    __host__ __forceinline__ float3 f3_cross_h(float3 a, float3 b) {
+        return make_float3(
+            a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x
+        );
+    }
+
+    // ============================================================
+    // bilinear sample for one view (Nv x Nu), u-fastest (device)
+    // ============================================================
     __device__ __forceinline__ float bilinear_sample_2d(const float* img, int Nu, int Nv, float u, float v)
     {
         if (u < 0.0f || u >(float)(Nu - 1) || v < 0.0f || v >(float)(Nv - 1)) return 0.0f;
@@ -50,9 +77,9 @@ namespace YK {
         return p0 + fv * (p1 - p0);
     }
 
-    // ===============================
+    // ============================================================
     // crop padded -> Nu (per view)
-    // ===============================
+    // ============================================================
     __global__ void kernel_crop_u_2d(const float* src, float* dst, int Nu, int Nv, int paddedN, int start_u)
     {
         int u = blockIdx.x * blockDim.x + threadIdx.x;
@@ -66,10 +93,46 @@ namespace YK {
     }
 
     // ============================================================
-    // Vector projection + terms for FDK weight:
-    // denom = (P-S)·n_hat
-    // DSD_n = (detS-S)·n_hat  (signed distance along normal)
-    // enforce t = DSD_n/denom > 0 by flipping normal if necessary
+    // Per-view vector-geometry preweight (power = 1)
+    // w_pre(u,v) = |(detS-src)·n_hat| / |(Q-src)|
+    // Q = detS + u*detU + v*detV
+    // ============================================================
+    __global__ void kernel_preweight_vec_view_power1(
+        const float* __restrict__ src_view,   // [Nv*Nu]
+        float* __restrict__ dst_view,         // [Nv*Nu]
+        SConeProjectionVec g,
+        int Nu, int Nv)
+    {
+        int u = blockIdx.x * blockDim.x + threadIdx.x;
+        int v = blockIdx.y * blockDim.y + threadIdx.y;
+        if (u >= Nu || v >= Nv) return;
+
+        float3 U = g.detU;
+        float3 V = g.detV;
+
+        float3 n = f3_cross(U, V);
+        float nlen2 = f3_dot(n, n);
+        if (nlen2 < 1e-20f) { dst_view[v * Nu + u] = 0.0f; return; }
+
+        float invn = rsqrtf(nlen2);
+        float3 nh = make_float3(n.x * invn, n.y * invn, n.z * invn);
+
+        float DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
+        if (DSD_n < 0.0f) DSD_n = -DSD_n;
+
+        float3 Q = f3_add(g.detS, f3_add(f3_mul(U, (float)u), f3_mul(V, (float)v)));
+        float3 QS = f3_sub(Q, g.src);
+
+        float r2 = f3_dot(QS, QS);
+        float r = sqrtf(fmaxf(r2, 1e-20f));
+
+        float w = DSD_n / r;
+        dst_view[v * Nu + u] = src_view[v * Nu + u] * w;
+    }
+
+    // ============================================================
+    // project_uv + denom for BP (vector geometry)
+    // denom = (P-S)·n_hat, enforce t>0 by flipping normal
     // ============================================================
     __device__ __forceinline__ bool project_uv_and_terms(
         const SConeProjectionVec& g,
@@ -77,7 +140,6 @@ namespace YK {
         float& u_pix,
         float& v_pix,
         float& denom,
-        float& DSD_n,
         float& SOD)
     {
         float3 U = g.detU;
@@ -95,13 +157,11 @@ namespace YK {
         denom = f3_dot(dir, nh);
         if (fabsf(denom) < 1e-8f) return false;
 
-        float SOD_square = f3_dot(g.src, g.src);
-        SOD = sqrtf(SOD_square);
+        SOD = sqrtf(f3_dot(g.src, g.src));
 
-        DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
+        float DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
         if (fabsf(DSD_n) < 1e-8f) return false;
 
-        // CRITICAL: force t > 0 => DSD_n and denom same sign
         if (DSD_n * denom < 0.0f) {
             nh = make_float3(-nh.x, -nh.y, -nh.z);
             denom = -denom;
@@ -114,7 +174,6 @@ namespace YK {
         float3 Q = f3_add(g.src, f3_mul(dir, t));
         float3 D = f3_sub(Q, g.detS);
 
-        // Solve D = u*U + v*V  (u,v are pixel coordinates)
         float UU = f3_dot(U, U);
         float VV = f3_dot(V, V);
         float UV = f3_dot(U, V);
@@ -130,14 +189,12 @@ namespace YK {
     }
 
     // ============================================================
-    // Vec backprojection kernel (chunk)
-    // - views_chunk layout: [K][Nv][Nu], u-fastest
-    // - IMPORTANT: integrate with per-view dtheta[a]
+    // BP chunk kernel with per-view dtheta[a]
     // ============================================================
     __global__ void fdk_vec_backproject_chunk_kernel(
         const float* __restrict__ views_chunk,            // [K*Nv*Nu]
         const SConeProjectionVec* __restrict__ d_geo,     // [Ang]
-        const float* __restrict__ d_dtheta,               // [Ang]  <-- per-view Δθ
+        const float* __restrict__ d_dtheta,               // [Ang]
         float* __restrict__ vol,                          // [Nz*Ny*Nx]
         int Nx, int Ny, int Nz, float vox,
         int Nu, int Nv,
@@ -148,7 +205,7 @@ namespace YK {
         int z = blockIdx.z * blockDim.z + threadIdx.z;
         if (x >= Nx || y >= Ny || z >= Nz) return;
 
-        // NOTE: you intentionally use (y,x,z) mapping here; keep as-is
+        // keep your mapping (y,x,z)
         float3 P = make_float3(
             (y - (Ny - 1) * 0.5f) * vox,
             (x - (Nx - 1) * 0.5f) * vox,
@@ -161,30 +218,23 @@ namespace YK {
             int a = base_a + i;
             const SConeProjectionVec& g = d_geo[a];
 
-            float u, v, denom, DSD_n, SOD;
-            if (!project_uv_and_terms(g, P, u, v, denom, DSD_n, SOD)) continue;
+            float u, v, denom, SOD;
+            if (!project_uv_and_terms(g, P, u, v, denom, SOD)) continue;
 
             const float* view_i = views_chunk + (size_t)i * Nv * Nu;
             float p = bilinear_sample_2d(view_i, Nu, Nv, u, v);
 
-            // FDK Jacobian-like factor (your chosen form)
             float w = (SOD * SOD) / (denom * denom);
-
-            // integrate with per-view Δθ
-            float dt = d_dtheta[a];
-
-            acc += p * w * dt;
+            acc += p * w * d_dtheta[a];
         }
 
         size_t vidx = (size_t)z * Ny * Nx + (size_t)y * Nx + x;
-        vol[vidx] += acc; // <-- no extra global dtheta
+        vol[vidx] += acc;
     }
 
     // ============================================================
-    // Build per-view dtheta from vector-geometry (Z-axis rotation)
-    // src parameterization consistent with your circular geometry:
-    //   src = ( SOD*sinθ, -SOD*cosθ, 0 )
-    // => θ = atan2(src.x, -src.y)
+    // per-view dtheta from geo (Z rotation)
+    // theta = atan2(src.x, -src.y)
     // ============================================================
     inline void build_dtheta_from_geo_zaxis(
         const std::vector<SConeProjectionVec>& h_geo,
@@ -196,23 +246,20 @@ namespace YK {
 
         std::vector<float> theta(Ang);
 
-        // 1) theta from src
         for (int a = 0; a < Ang; ++a) {
             float sx = h_geo[a].src.x;
             float sy = h_geo[a].src.y;
-            theta[a] = atan2f(sx, -sy); // atan2(sinθ, cosθ)
+            theta[a] = std::atan2(sx, -sy);
         }
 
-        // 2) unwrap to avoid 2π jumps
         for (int a = 1; a < Ang; ++a) {
             float t = theta[a];
             float p = theta[a - 1];
-            while (t - p > M_PI) t -= 2.0f * M_PI;
-            while (t - p < -M_PI) t += 2.0f * M_PI;
+            while (t - p > PI_F) t -= 2.0f * PI_F;
+            while (t - p < -PI_F) t += 2.0f * PI_F;
             theta[a] = t;
         }
 
-        // 3) center difference (short-scan safe: no wrap)
         for (int a = 0; a < Ang; ++a) {
             float dt;
             if (a == 0)          dt = theta[1] - theta[0];
@@ -226,8 +273,126 @@ namespace YK {
     }
 
     // ============================================================
-    // Streaming vec-FDK (offset-aware)
-    // Input projection layout on host: [Ang][Nv][Nu] (A-V-U), u-fastest
+    // Compute du/dv arrays from geo (for validate/record),
+    // but return du0 (const) for filter.
+    // ============================================================
+    inline void compute_du_dv_from_geo(
+        const std::vector<SConeProjectionVec>& h_geo,
+        std::vector<float>& h_du,
+        std::vector<float>& h_dv,
+        float& du0,
+        float& dv0)
+    {
+        const int Ang = (int)h_geo.size();
+        h_du.resize(Ang);
+        h_dv.resize(Ang);
+        for (int a = 0; a < Ang; ++a) {
+            h_du[a] = f3_len_h(h_geo[a].detU);
+            h_dv[a] = f3_len_h(h_geo[a].detV);
+        }
+        du0 = (Ang > 0) ? h_du[0] : 1.0f;
+        dv0 = (Ang > 0) ? h_dv[0] : 1.0f;
+        if (!(du0 > 0.0f)) du0 = 1.0f;
+        if (!(dv0 > 0.0f)) dv0 = 1.0f;
+    }
+
+    // ============================================================
+    // AUTO offset from geo (isocenter at origin):
+    // - central ray src -> O=(0,0,0)
+    // - intersect detector plane -> (cu,cv) in det basis
+    // - offset = (cu,cv) - center_index
+    // Use median across views for robustness.
+    // ============================================================
+    inline bool compute_offset_uv_from_geo_isocenter0_one(
+        const SConeProjectionVec& g,
+        int Nu, int Nv,
+        float& offsetU_pix,
+        float& offsetV_pix)
+    {
+        const float3 O = make_float3(0.0f, 0.0f, 0.0f);
+
+        float3 n = f3_cross_h(g.detU, g.detV);
+        float nlen = f3_len_h(n);
+        if (nlen < 1e-12f) return false;
+        float3 nh = make_float3(n.x / nlen, n.y / nlen, n.z / nlen);
+
+        float3 dir = f3_sub_h(O, g.src); // = -src
+        float denom = f3_dot_h(dir, nh);
+        if (std::fabs(denom) < 1e-12f) return false;
+
+        float t = f3_dot_h(f3_sub_h(g.detS, g.src), nh) / denom;
+        if (t <= 0.0f) return false;
+
+        float3 C = make_float3(
+            g.src.x + t * dir.x,
+            g.src.y + t * dir.y,
+            g.src.z + t * dir.z
+        );
+
+        float3 D = f3_sub_h(C, g.detS);
+
+        float UU = f3_dot_h(g.detU, g.detU);
+        float VV = f3_dot_h(g.detV, g.detV);
+        float UV = f3_dot_h(g.detU, g.detV);
+        float DU = f3_dot_h(D, g.detU);
+        float DV = f3_dot_h(D, g.detV);
+
+        float det = UU * VV - UV * UV;
+        if (std::fabs(det) < 1e-20f) return false;
+
+        float cu = (DU * VV - DV * UV) / det;
+        float cv = (-DU * UV + DV * UU) / det;
+
+        offsetU_pix = cu - (Nu - 1) * 0.5f;
+        offsetV_pix = cv - (Nv - 1) * 0.5f;
+        return std::isfinite(offsetU_pix) && std::isfinite(offsetV_pix);
+    }
+
+    inline bool compute_offset_uv_from_geo_isocenter0_median(
+        const std::vector<SConeProjectionVec>& h_geo,
+        int Nu, int Nv,
+        float& offsetU_pix,
+        float& offsetV_pix)
+    {
+        std::vector<float> ou, ov;
+        ou.reserve(h_geo.size());
+        ov.reserve(h_geo.size());
+
+        for (size_t a = 0; a < h_geo.size(); ++a) {
+            float u = 0.0f, v = 0.0f;
+            if (compute_offset_uv_from_geo_isocenter0_one(h_geo[a], Nu, Nv, u, v)) {
+                ou.push_back(u);
+                ov.push_back(v);
+            }
+        }
+        if (ou.empty()) return false;
+
+        auto median = [](std::vector<float>& x) -> float {
+            const size_t n = x.size();
+            const size_t mid = n / 2;
+            std::nth_element(x.begin(), x.begin() + mid, x.end());
+            float m = x[mid];
+            if ((n & 1u) == 0u) {
+                std::nth_element(x.begin(), x.begin() + (mid - 1), x.end());
+                m = 0.5f * (m + x[mid - 1]);
+            }
+            return m;
+            };
+
+        offsetU_pix = median(ou);
+        offsetV_pix = median(ov);
+        return true;
+    }
+
+    // ============================================================
+    // ✅ Single public entry:
+    // Streaming vec-FDK (per-view):
+    //  - auto offsetU/V from geo (median)
+    //  - preweight per-view (power=1)
+    //  - filter uses du0 as constant (computed from geo[0])
+    //  - BP uses per-view dtheta[a]
+    //
+    // Input layout on host: h_proj[a*(Nv*Nu) + v*Nu + u]  (A-V-U)
     // ============================================================
     inline void fdk_vec_recon_streaming(
         const float* h_proj,                               // host [Ang*Nv*Nu]
@@ -235,22 +400,24 @@ namespace YK {
         const std::vector<SConeProjectionVec>& h_geo,       // host [Ang]
         int Nu, int Nv, int Ang,
         int Nx, int Ny, int Nz, float vox,
-        float SID, float SDD, float du, float dv,
         int Kchunk,
-        float offsetU_pix,
-        float offsetV_pix,
         cudaStream_t stream)
     {
-        (void)SID;
+        // -------- auto offsets from geo --------
+        float offsetU_pix = 0.0f, offsetV_pix = 0.0f;
+        if (!compute_offset_uv_from_geo_isocenter0_median(h_geo, Nu, Nv, offsetU_pix, offsetV_pix)) {
+            offsetU_pix = 0.0f;
+            offsetV_pix = 0.0f;
+        }
 
-        // upload geometry
+        // -------- upload geometry --------
         SConeProjectionVec* d_geo = nullptr;
         YK_CUDA_CHECK(cudaMalloc(&d_geo, (size_t)Ang * sizeof(SConeProjectionVec)));
         YK_CUDA_CHECK(cudaMemcpyAsync(d_geo, h_geo.data(),
             (size_t)Ang * sizeof(SConeProjectionVec),
             cudaMemcpyHostToDevice, stream));
 
-        // build per-view dtheta on host from geo, upload to device
+        // -------- per-view dtheta --------
         std::vector<float> h_dtheta;
         build_dtheta_from_geo_zaxis(h_geo, h_dtheta);
 
@@ -260,26 +427,25 @@ namespace YK {
             (size_t)Ang * sizeof(float),
             cudaMemcpyHostToDevice, stream));
 
-        const size_t view_elems = (size_t)Nu * Nv;
+        // -------- du/dv arrays (computed), but filter uses du0 constant --------
+        std::vector<float> h_du, h_dv;
+        float du0 = 1.0f, dv0 = 1.0f;
+        compute_du_dv_from_geo(h_geo, h_du, h_dv, du0, dv0);
+        (void)dv0;
 
-        // ---- Preweight (cos) ----
-        PreweightManager pw;
-        pw.init(Nu, Nv, 1, du, dv, /*DSD=*/SDD,
-            /*offsetU=*/offsetU_pix,
-            /*offsetV=*/offsetV_pix,
-            /*power=*/1, stream);
-
-        // ---- Filter (1D along U, batch=Nv) ----
+        // -------- filter manager (constant du0) --------
         FilterManager fm;
-        fm.init(Nu, du, /*batch=*/Nv, stream);
+        fm.init(Nu, du0, /*batch=*/Nv, stream);
         const int paddedN = fm.getPaddedN();
 
-        // ---- Offset-aware padding alignment ----
-        const float offsetX = offsetU_pix; // U-direction axis offset
+        // offset-aware padding alignment (U only)
+        const float offsetX = offsetU_pix;
         const float axis_idx = (Nu - 1) * 0.5f + offsetX;
         const int start_u = (int)lrintf(paddedN * 0.5f - axis_idx);
 
-        // buffers
+        const size_t view_elems = (size_t)Nu * Nv;
+
+        // -------- buffers --------
         float* d_view_in = nullptr; // [Nv*Nu]
         float* d_view_pw = nullptr; // [Nv*Nu]
         float* d_view_flt = nullptr; // [Nv*Nu]
@@ -295,6 +461,17 @@ namespace YK {
         // clear volume
         YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0, (size_t)Nx * Ny * Nz * sizeof(float), stream));
 
+        // launch configs
+        dim3 pre_b(16, 16);
+        dim3 pre_g((Nu + pre_b.x - 1) / pre_b.x, (Nv + pre_b.y - 1) / pre_b.y);
+
+        dim3 b1(256, 1);
+        dim3 g1((paddedN + 255) / 256, Nv);
+
+        dim3 b2(16, 16);
+        dim3 g2((Nu + b2.x - 1) / b2.x, (Nv + b2.y - 1) / b2.y);
+
+        // -------- main loop --------
         for (int base = 0; base < Ang; base += Kchunk) {
             int K = (base + Kchunk <= Ang) ? Kchunk : (Ang - base);
 
@@ -303,33 +480,29 @@ namespace YK {
                 int a = base + i;
                 const float* h_view = h_proj + (size_t)a * view_elems;
 
-                // H2D one view
                 YK_CUDA_CHECK(cudaMemcpyAsync(d_view_in, h_view, view_elems * sizeof(float),
                     cudaMemcpyHostToDevice, stream));
 
-                // preweight
-                pw.setStream(stream);
-                pw.apply(d_view_in, d_view_pw);
+                // per-view preweight (power=1)
+                kernel_preweight_vec_view_power1 << <pre_g, pre_b, 0, stream >> > (
+                    d_view_in, d_view_pw, h_geo[a], Nu, Nv);
+                YK_CUDA_KERNEL_CHECK();
 
-                // pad + filter
+                // pad rows
                 fm.setStream(stream);
-
-                dim3 b1(256, 1);
-                dim3 g1((paddedN + 255) / 256, Nv);
                 YK::_kernel_pad_with_offset << <g1, b1, 0, stream >> > (
                     d_view_pw, d_padded, Nu, Nv, paddedN, offsetX);
                 YK_CUDA_KERNEL_CHECK();
 
+                // filter in-place
                 fm.apply(d_padded);
 
-                // crop -> Nu
-                dim3 b2(16, 16);
-                dim3 g2((Nu + b2.x - 1) / b2.x, (Nv + b2.y - 1) / b2.y);
+                // crop
                 kernel_crop_u_2d << <g2, b2, 0, stream >> > (
                     d_padded, d_view_flt, Nu, Nv, paddedN, start_u);
                 YK_CUDA_KERNEL_CHECK();
 
-                // copy into chunk slot (device-to-device)
+                // copy into chunk
                 float* d_slot = d_chunk + (size_t)i * view_elems;
                 YK_CUDA_CHECK(cudaMemcpyAsync(d_slot, d_view_flt, view_elems * sizeof(float),
                     cudaMemcpyDeviceToDevice, stream));
@@ -357,28 +530,6 @@ namespace YK {
         YK_CUDA_CHECK(cudaFree(d_view_flt));
         YK_CUDA_CHECK(cudaFree(d_padded));
         YK_CUDA_CHECK(cudaFree(d_chunk));
-    }
-
-    // ------------------------------------------------------------
-    // Backward-compatible overload: defaults offsets = 0
-    // ------------------------------------------------------------
-    inline void fdk_vec_recon_streaming(
-        const float* h_proj,
-        float* d_vol,
-        const std::vector<SConeProjectionVec>& h_geo,
-        int Nu, int Nv, int Ang,
-        int Nx, int Ny, int Nz, float vox,
-        float SID, float SDD, float du, float dv,
-        int Kchunk,
-        cudaStream_t stream)
-    {
-        fdk_vec_recon_streaming(h_proj, d_vol, h_geo,
-            Nu, Nv, Ang,
-            Nx, Ny, Nz, vox,
-            SID, SDD, du, dv,
-            Kchunk,
-            /*offsetU_pix=*/0.0f,
-            /*offsetV_pix=*/0.0f, stream);
     }
 
 } // namespace YK

@@ -79,9 +79,7 @@ int main_fdk() {
         geo,
         Nu, Nv, Ang,
         Nx, Ny, Nz, vox,
-        SID, SDD, du, dv,
         /*Kchunk=*/8,
-        -5.5f,0.0f,
         s
     );
     //YK::fdk_recon_streaming(
