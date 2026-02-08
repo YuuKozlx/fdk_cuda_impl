@@ -13,46 +13,46 @@ namespace YK {
     // ============================================================
     // bilinear sample for one view (Nv x Nu), u-fastest
     // ============================================================
-    __device__ __forceinline__ float bilinear_sample_2d(
-        const float* __restrict__ img, int Nu, int Nv, float u, float v)
-    {
-        if (u < 0.0f || u >(float)(Nu - 1) || v < 0.0f || v >(float)(Nv - 1)) return 0.0f;
-
-        int u0 = (int)floorf(u);
-        int v0 = (int)floorf(v);
-        int u1 = (u0 + 1 < Nu) ? (u0 + 1) : u0;
-        int v1 = (v0 + 1 < Nv) ? (v0 + 1) : v0;
-
-        float fu = u - (float)u0;
-        float fv = v - (float)v0;
-
-        float p00 = img[v0 * Nu + u0];
-        float p10 = img[v0 * Nu + u1];
-        float p01 = img[v1 * Nu + u0];
-        float p11 = img[v1 * Nu + u1];
-
-        float p0 = p00 + fu * (p10 - p00);
-        float p1 = p01 + fu * (p11 - p01);
-        return p0 + fv * (p1 - p0);
-    }
+//__device__ __forceinline__ float bilinear_sample_2d(
+//        const float* __restrict__ img, int Nu, int Nv, float u, float v)
+//    {
+//        if (u < 0.0f || u >(float)(Nu - 1) || v < 0.0f || v >(float)(Nv - 1)) return 0.0f;
+//
+//        int u0 = (int)floorf(u);
+//        int v0 = (int)floorf(v);
+//        int u1 = (u0 + 1 < Nu) ? (u0 + 1) : u0;
+//        int v1 = (v0 + 1 < Nv) ? (v0 + 1) : v0;
+//
+//        float fu = u - (float)u0;
+//        float fv = v - (float)v0;
+//
+//        float p00 = img[v0 * Nu + u0];
+//        float p10 = img[v0 * Nu + u1];
+//        float p01 = img[v1 * Nu + u0];
+//        float p11 = img[v1 * Nu + u1];
+//
+//        float p0 = p00 + fu * (p10 - p00);
+//        float p1 = p01 + fu * (p11 - p01);
+//        return p0 + fv * (p1 - p0);
+//    }
 
     // ============================================================
     // crop padded [Nv*paddedN] -> [Nv*Nu] into dst (u-fastest)
     // ============================================================
-    __global__ void kernel_crop_u_2d(
-        const float* __restrict__ src, // [Nv*paddedN]
-        float* __restrict__ dst,       // [Nv*Nu]
-        int Nu, int Nv, int paddedN, int start_u)
-    {
-        int u = blockIdx.x * blockDim.x + threadIdx.x;
-        int v = blockIdx.y * blockDim.y + threadIdx.y;
-        if (u >= Nu || v >= Nv) return;
+    //__global__ void kernel_crop_u_2d(
+    //    const float* __restrict__ src, // [Nv*paddedN]
+    //    float* __restrict__ dst,       // [Nv*Nu]
+    //    int Nu, int Nv, int paddedN, int start_u)
+    //{
+    //    int u = blockIdx.x * blockDim.x + threadIdx.x;
+    //    int v = blockIdx.y * blockDim.y + threadIdx.y;
+    //    if (u >= Nu || v >= Nv) return;
 
-        int su = start_u + u;
-        float val = 0.0f;
-        if (su >= 0 && su < paddedN) val = src[v * paddedN + su];
-        dst[v * Nu + u] = val;
-    }
+    //    int su = start_u + u;
+    //    float val = 0.0f;
+    //    if (su >= 0 && su < paddedN) val = src[v * paddedN + su];
+    //    dst[v * Nu + u] = val;
+    //}
 
     // ============================================================
     // Backproject a CHUNK of filtered views into volume (accumulate)

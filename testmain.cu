@@ -6,6 +6,7 @@
 #include "YkGlobals.h"
 #include "YkVecGeo.hpp"
 #include "YkVecFDKBackProjection.hpp"
+#include "YkFDKBackProjection.hpp"
 
 
 static bool read_raw_float(const char* path, std::vector<float>& data) {
@@ -79,13 +80,23 @@ int main() {
         -5.0f,0.0f,
         s
     );
+    //YK::fdk_recon_streaming(
+    //    h_proj.data(),
+    //    d_vol,
+    //    Nu, Nv, Ang,
+    //    Nx, Ny, Nz, vox,
+    //    SID, SDD, du, dv,
+    //    -5.0f,0.0f,
+    //    /*Kchunk=*/8,
+    //    s
+    //);
 
     YK_CUDA_CHECK(cudaStreamSynchronize(s));
 
     std::vector<float> h_vol(vol_elems);
     YK_CUDA_CHECK(cudaMemcpy(h_vol.data(), d_vol, vol_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-    if (!write_raw_float("fdk_vec_vol.raw", h_vol)) {
+    if (!write_raw_float("fdk_vec_vol_new.raw", h_vol)) {
         std::printf("Error: cannot write fdk_vec_vol.raw\n");
         return -2;
     }

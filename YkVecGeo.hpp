@@ -137,7 +137,7 @@ namespace YK {
             //   detU : column direction (u, fastest index)
             //   detV : row direction    (v)
             // --------------------------------------------------
-            float3 detU = make_float3(du * c, du * s, 0.0f);  // U(theta)
+            float3 detU = make_float3(du * c,du * s, 0.0f);  // U(theta)
             float3 detV = make_float3(0.0f, 0.0f, dv);        // V = +Z
 
             // --------------------------------------------------

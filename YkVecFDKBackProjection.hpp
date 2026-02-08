@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <vector>
@@ -66,8 +66,8 @@ namespace YK {
 
     // ============================================================
     // Vector projection + terms for FDK weight:
-    // denom = (P-S)¡¤n_hat
-    // DSD_n = (detS-S)¡¤n_hat  (signed distance along normal)
+    // denom = (P-S)Â·n_hat
+    // DSD_n = (detS-S)Â·n_hat  (signed distance along normal)
     // enforce t = DSD_n/denom > 0 by flipping normal if necessary
     // ============================================================
     __device__ __forceinline__ bool project_uv_and_terms(
@@ -76,7 +76,8 @@ namespace YK {
         float& u_pix,
         float& v_pix,
         float& denom,
-        float& DSD_n)
+        float& DSD_n,
+        float& SOD)
     {
         float3 U = g.detU;
         float3 V = g.detV;
@@ -92,7 +93,8 @@ namespace YK {
 
         denom = f3_dot(dir, nh);
         if (fabsf(denom) < 1e-8f) return false;
-
+        float SOD_square = f3_dot(g.src, g.src);
+        SOD = sqrtf(SOD_square);
         DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
         if (fabsf(DSD_n) < 1e-8f) return false;
 
@@ -154,13 +156,13 @@ namespace YK {
             int a = base_a + i;
             const SConeProjectionVec& g = d_geo[a];
 
-            float u, v, denom, DSD_n;
-            if (!project_uv_and_terms(g, P, u, v, denom, DSD_n)) continue;
+            float u, v, denom, DSD_n,SOD;
+            if (!project_uv_and_terms(g, P, u, v, denom, DSD_n,SOD)) continue;
 
             const float* view_i = views_chunk + (size_t)i * Nv * Nu;
             float p = bilinear_sample_2d(view_i, Nu, Nv, u, v);
 
-            float w = (DSD_n * DSD_n) / (denom * denom);
+            float w = (SOD * SOD) / (denom * denom);
             acc += p * w;
         }
 

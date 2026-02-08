@@ -71,6 +71,26 @@ struct SConeProjectionVec {
     } while (0)
 #endif
 
+#ifndef YK_ASSERT
+#include <cstdio>
+#include <cstdlib>
+
+#if defined(_DEBUG) || defined(DEBUG)
+#define YK_ASSERT(cond)                                           \
+            do {                                                         \
+                if (!(cond)) {                                           \
+                    std::fprintf(stderr,                                 \
+                        "[YK_ASSERT] %s:%d: %s\n",                       \
+                        __FILE__, __LINE__, #cond);                      \
+                    std::abort();                                        \
+                }                                                        \
+            } while (0)
+#else
+#define YK_ASSERT(cond) ((void)0)
+#endif
+#endif
+
+
 
 // ============================================================
 // 1. CUDA error checking

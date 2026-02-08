@@ -123,16 +123,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="YkFDKCreateFilterKernel.hpp" />
     <ClInclude Include="YkVecFDKBackProjection.hpp" />
     <ClInclude Include="YkVecGeo.hpp" />
     <CudaCompile Include="fdk-test\fanbeam_fdk3.cu">
       <FileType>Document</FileType>
     </CudaCompile>
-    <CudaCompile Include="testmain.cu">
-      <FileType>Document</FileType>
-    </CudaCompile>
     <ClInclude Include="YkFDKBackProjection.hpp" />
     <ClInclude Include="YKFDKFilter.hpp" />
+    <CudaCompile Include="testmain.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YkConv.hpp" />

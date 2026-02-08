@@ -1,55 +1,27 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
+#include <device_launch_parameters.h>
 #include <cufft.h>
+
 #include "YkConv.hpp"
-#include "YkFFT.hpp"     // Äã¸øµÄ CudaFFT£¨¿É¸´ÓÃ plan + stream£©
-#include "YkGlobals.h"   // ÄãµÄ YK_CUDA_CHECK / YK_CUFFT_CHECK / YK_KERNEL_CHECK µÈ
+#include "YkFFT.hpp"
+#include "YkFDKCreateFilterKernel.hpp"
+#include "YkGlobals.h"
 
 namespace YK {
 
     // ============================================================
-    // 1) Generate spatial Ram-Lak kernel (circularly shifted, n=0 at idx 0)
-    // ============================================================
-    __global__ void _kernel_gen_spatial_rl_kernel(float* kernel, int paddedN, float du) {
-        int u = blockIdx.x * blockDim.x + threadIdx.x;
-        if (u >= paddedN) return;
-
-        int n = (u <= paddedN / 2) ? u : (u - paddedN);
-        int an = (n < 0) ? -n : n;
-
-        float val = 0.0f;
-        if (n == 0) {
-            val = 1.0f / (4.0f * du * du);
-        }
-        else if (an & 1) { // odd
-            const float pi = 3.14159265358979323846f;
-            val = -1.0f / (pi * pi * (float)(n * n) * du * du);
-        }
-
-        // bake 1/N normalization to cancel cuFFT C2R scaling (C2R has N gain)
-        kernel[u] = val / (float)paddedN;
-    }
-
-    // ============================================================
-    // 2) Extract real-part weights from FFT(kernel)
-    // ============================================================
-    __global__ void _kernel_extract_fft_weights(const cufftComplex* src, float* dst, int n_complex) {
-        int u = blockIdx.x * blockDim.x + threadIdx.x;
-        if (u < n_complex) dst[u] = src[u].x;
-    }
-
-    // ============================================================
-    // 3) Padding with axis offset (per batch row)
+    // Padding with axis offset (per batch row)
     // ============================================================
     __global__ void _kernel_pad_with_offset(const float* src, float* dst,
-        int Nu, int batch, int paddedN, float offsetX) {
+        int Nu, int batch, int paddedN, float offsetX)
+    {
         int u = blockIdx.x * blockDim.x + threadIdx.x;
         int b = blockIdx.y;
         if (u >= paddedN || b >= batch) return;
 
         float axis_idx = (Nu - 1) * 0.5f + offsetX;
-        // round-to-nearest: avoids systematic 0.5-pixel bias
         int start_u = __float2int_rn(paddedN * 0.5f - axis_idx);
 
         int dst_idx = b * paddedN + u;
@@ -57,82 +29,99 @@ namespace YK {
         dst[dst_idx] = (su >= 0 && su < Nu) ? src[b * Nu + su] : 0.0f;
     }
 
-
+    // ============================================================
+    // Scale in-place: data *= s
+    // ============================================================
+    __global__ void _kernel_scale_inplace(float* data, int n, float s)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) data[i] *= s;
+    }
 
     // ============================================================
-    // FilterManager using CudaFFT (no raw cufftHandle here)
+    // FilterManager using CudaFFT + FilterKernelFFT
+    //
+    // âœ… Conventions (fully unified):
+    //  - Frequency weights are ALWAYS DU=1 convention (NO du inside)
+    //  - Weights ALWAYS bake 1/paddedN (cancel cuFFT C2R N gain)
+    //  - du scaling ALWAYS happens here (postScale = 1/(du_mm^2))
+    //
+    // This removes all "du_in_kernel" ambiguity.
     // ============================================================
     class FilterManager {
+    public:
+        enum class EWeightsSource {
+            Analytic,         // build_analytic()
+            DiscreteRamLakDu1 // build_discrete_ramlak_du1()
+        };
+
     private:
-        // FFT tool (batched) for projections
         CudaFFT fft_batch_;
-        // FFT tool (single batch=1) for kernel->weights generation
-        CudaFFT fft_single_;
+        FilterKernelFFT kernel_fft_;
 
-        // precomputed frequency weights (real, length n_complex)
-        float* d_filter_weights_ = nullptr;
+        float* d_filter_weights_ = nullptr;     // [n_complex]
+        cufftComplex* d_complex_buf_ = nullptr; // [batch*n_complex]
 
-        // workspace for batched FFT spectrum: [batch * n_complex]
-        cufftComplex* d_complex_buf_ = nullptr;
-
-        // workspace for kernel FFT spectrum: [n_complex]
-        cufftComplex* d_tmp_complex_ = nullptr;
-
-        // geometry params
         int paddedN_ = 0;
         int n_complex_ = 0;
         int batch_ = 0;
 
+        float du_mm_ = 1.0f;     // store detector pitch (mm)
+        float postScale_ = 1.0f; // = 1/(du_mm^2)
+
         cudaStream_t stream_ = 0;
         bool is_initialized_ = false;
+
+        EWeightsSource weights_src_ = EWeightsSource::Analytic;
 
     public:
         FilterManager() = default;
         ~FilterManager() { release(); }
 
-        bool init(int Nu, float du, int batch, cudaStream_t stream = 0) {
+        // ------------------------------------------------------------
+        // init (default: analytic RamLak)
+        // ------------------------------------------------------------
+        bool init(int Nu, float du_mm, int batch, cudaStream_t stream = 0)
+        {
             release();
             stream_ = stream;
             batch_ = batch;
 
-            // paddedN = next pow2 >= 2*Nu
             paddedN_ = 1;
             while (paddedN_ < 2 * Nu) paddedN_ <<= 1;
             n_complex_ = paddedN_ / 2 + 1;
 
-            // init FFT tools (plans bound to stream)
+            du_mm_ = du_mm;
+            postScale_ = (du_mm_ > 0.0f) ? (1.0f / (du_mm_ * du_mm_)) : 1.0f;
+
             fft_batch_.init(paddedN_, batch_, stream_);
-            fft_single_.init(paddedN_, 1, stream_);
 
-            // allocate persistent buffers
-            YK_CUDA_CHECK(cudaMalloc(&d_filter_weights_, n_complex_ * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_complex_buf_, (size_t)batch_ * n_complex_ * sizeof(cufftComplex)));
-            YK_CUDA_CHECK(cudaMalloc(&d_tmp_complex_, n_complex_ * sizeof(cufftComplex)));
+            YK_CUDA_CHECK(cudaMalloc(&d_filter_weights_, (size_t)n_complex_ * sizeof(float)));
+            YK_CUDA_CHECK(cudaMalloc(&d_complex_buf_, (size_t)batch_ * (size_t)n_complex_ * sizeof(cufftComplex)));
 
-            // --- build weights: spatial RL kernel -> FFT -> extract real part ---
-            float* d_temp_kernel = nullptr;
-            YK_CUDA_CHECK(cudaMalloc(&d_temp_kernel, paddedN_ * sizeof(float)));
+            kernel_fft_.prepare(paddedN_, stream_);
 
-            _kernel_gen_spatial_rl_kernel << <(paddedN_ + 255) / 256, 256, 0, stream_ >> > (d_temp_kernel, paddedN_, du);
-            YK_CUDA_KERNEL_CHECK();
+            // Default: analytic RamLak (DU=1 weights), bake invN
+            FilterKernelDesc desc;
+            desc.kind = EFilterKernel::RamLak;
+            desc.cutoff = 0.5f;
+            desc.gain = 1.0f;
+            desc.normalized_ramp = true;
 
-            // FFT kernel (batch=1)
-            fft_single_.fft(d_temp_kernel, d_tmp_complex_);
-
-            _kernel_extract_fft_weights << <(n_complex_ + 255) / 256, 256, 0, stream_ >> > (d_tmp_complex_, d_filter_weights_, n_complex_);
-            YK_CUDA_KERNEL_CHECK();
-
-            YK_CUDA_CHECK(cudaFree(d_temp_kernel));
+            setAnalyticWeights(desc);
+            /*setDiscreteRamLakWeightsDu1();*/
+            
 
             is_initialized_ = true;
             return true;
         }
 
-        void setStream(cudaStream_t stream) {
+        void setStream(cudaStream_t stream)
+        {
             stream_ = stream;
             if (!is_initialized_) return;
             fft_batch_.setStream(stream_);
-            fft_single_.setStream(stream_);
+            kernel_fft_.setStream(stream_);
         }
 
         cudaStream_t getStream() const { return stream_; }
@@ -140,8 +129,51 @@ namespace YK {
         int getNComplex() const { return n_complex_; }
         const float* getWeights() const { return d_filter_weights_; }
 
-        // d_padded_data: [batch * paddedN], in-place filtered
-        void apply(float* d_padded_data) {
+        // optional: allow changing du after init
+        void setDetectorPitchMm(float du_mm)
+        {
+            du_mm_ = du_mm;
+            postScale_ = (du_mm_ > 0.0f) ? (1.0f / (du_mm_ * du_mm_)) : 1.0f;
+        }
+
+        float detectorPitchMm() const { return du_mm_; }
+        float postScale() const { return postScale_; }
+
+        // ------------------------------------------------------------
+        // Build analytic weights (DU=1), bake 1/N
+        // ------------------------------------------------------------
+        void setAnalyticWeights(const FilterKernelDesc& desc)
+        {
+            if (!is_initialized_ && paddedN_ == 0) return;
+
+            weights_src_ = EWeightsSource::Analytic;
+
+            kernel_fft_.prepare(paddedN_, stream_);
+            kernel_fft_.build_analytic(d_filter_weights_, desc, /*bake_invN=*/true);
+        }
+
+        // ------------------------------------------------------------
+        // Build discrete RamLak (DU=1): spatial kernel -> FFT -> RealPart
+        // bake 1/N inside spatial kernel
+        // ------------------------------------------------------------
+        void setDiscreteRamLakWeightsDu1()
+        {
+            if (!is_initialized_ && paddedN_ == 0) return;
+
+            weights_src_ = EWeightsSource::DiscreteRamLakDu1;
+
+            kernel_fft_.prepare(paddedN_, stream_);
+            kernel_fft_.build_discrete_ramlak_du1(
+                d_filter_weights_,
+                /*bake_invN=*/true,
+                FilterKernelFFT::EKernelToWeightsMode::RealPart);
+        }
+
+        // ------------------------------------------------------------
+        // Apply filtering in-place on padded data: [batch*paddedN]
+        // ------------------------------------------------------------
+        void apply(float* d_padded_data)
+        {
             if (!is_initialized_) return;
 
             // FFT (batched)
@@ -149,35 +181,52 @@ namespace YK {
 
             // multiply weights
             dim3 block(256, 1);
-            dim3 grid((n_complex_ + 255) / 256, batch_);
-            _kernel_pointwise_mul << <grid, block, 0, stream_ >> > (d_complex_buf_, d_filter_weights_, n_complex_, batch_);
+            dim3 grid((n_complex_ + block.x - 1) / block.x, batch_);
+            _kernel_pointwise_mul << <grid, block, 0, stream_ >> > (
+                d_complex_buf_, d_filter_weights_, n_complex_, batch_);
             YK_CUDA_KERNEL_CHECK();
 
             // IFFT (batched)
             fft_batch_.ifft(d_complex_buf_, d_padded_data);
-            // normalization already baked into spatial RL kernel (1/paddedN)
+
+            // âœ… No 1/paddedN here (weights already baked invN)
+            // âœ… Always apply du scaling here (DU belongs to filter module)
+            if (postScale_ != 1.0f) {
+                const int total = batch_ * paddedN_;
+                dim3 b2(256, 1);
+                dim3 g2((total + b2.x - 1) / b2.x, 1);
+                _kernel_scale_inplace << <g2, b2, 0, stream_ >> > (
+                    d_padded_data, total, postScale_);
+                YK_CUDA_KERNEL_CHECK();
+            }
         }
 
-        void release() {
+        void release()
+        {
             fft_batch_.release();
-            fft_single_.release();
+            kernel_fft_.release();
 
-            if (d_filter_weights_) { cudaFree(d_filter_weights_); d_filter_weights_ = nullptr; }
-            if (d_complex_buf_) { cudaFree(d_complex_buf_);    d_complex_buf_ = nullptr; }
-            if (d_tmp_complex_) { cudaFree(d_tmp_complex_);    d_tmp_complex_ = nullptr; }
+            if (d_filter_weights_) { YK_CUDA_CHECK(cudaFree(d_filter_weights_)); d_filter_weights_ = nullptr; }
+            if (d_complex_buf_) { YK_CUDA_CHECK(cudaFree(d_complex_buf_));    d_complex_buf_ = nullptr; }
 
             paddedN_ = 0;
             n_complex_ = 0;
             batch_ = 0;
+
+            du_mm_ = 1.0f;
+            postScale_ = 1.0f;
+
             stream_ = 0;
             is_initialized_ = false;
+            weights_src_ = EWeightsSource::Analytic;
         }
     };
 
     // ============================================================
     // Helper: padding + filtering on specified stream
     // ============================================================
-    inline void executeFdkFiltering_Optimized(FilterManager& manager,
+    inline void executeFdkFiltering_Optimized(
+        FilterManager& manager,
         float* d_input,          // [batch*Nu]
         float* d_output_padded,  // [batch*paddedN]
         int Nu, int batch, float offsetX,
@@ -186,9 +235,10 @@ namespace YK {
         manager.setStream(stream);
 
         dim3 block(256, 1);
-        dim3 grid_pad((manager.getPaddedN() + 255) / 256, batch);
+        dim3 grid_pad((manager.getPaddedN() + block.x - 1) / block.x, batch);
 
-        _kernel_pad_with_offset << <grid_pad, block, 0, stream >> > (d_input, d_output_padded,
+        _kernel_pad_with_offset << <grid_pad, block, 0, stream >> > (
+            d_input, d_output_padded,
             Nu, batch, manager.getPaddedN(), offsetX);
         YK_CUDA_KERNEL_CHECK();
 

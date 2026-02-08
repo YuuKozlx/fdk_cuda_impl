@@ -19,7 +19,7 @@
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="fdk-test\fanbeam_fdk3.cu" />
-    <CudaCompile Include="testmain.cu" />
+    <CudaCompile Include="testFilter.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YKFDKFilter.hpp">
@@ -50,6 +50,9 @@
       <Filter>vec_fdk</Filter>
     </ClInclude>
     <ClInclude Include="YkVecFDKBackProjection.hpp">
+      <Filter>vec_fdk</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKCreateFilterKernel.hpp">
       <Filter>vec_fdk</Filter>
     </ClInclude>
   </ItemGroup>
