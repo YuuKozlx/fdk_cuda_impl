@@ -2,13 +2,17 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-#include <vector>
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
-#include "YkGlobals.h"
+#include <cuda_runtime_api.h>
 #include "YkFDKFilter.hpp"
+#include "YkGlobals.h"
+#include "YkSampling2D.hpp"
 #include "YkVecGeo.hpp"
+#include "YkVecOperation.hpp"
+#include "YkUtil.hpp"
 
 namespace YK {
 
@@ -17,80 +21,7 @@ namespace YK {
     // ============================================================
     static constexpr float PI_F = 3.14159265358979323846f;
 
-    // ============================================================
-    // float3 helpers (device)
-    // ============================================================
-    __device__ __forceinline__ float3 f3_add(float3 a, float3 b) { return make_float3(a.x + b.x, a.y + b.y, a.z + b.z); }
-    __device__ __forceinline__ float3 f3_sub(float3 a, float3 b) { return make_float3(a.x - b.x, a.y - b.y, a.z - b.z); }
-    __device__ __forceinline__ float3 f3_mul(float3 a, float t) { return make_float3(a.x * t, a.y * t, a.z * t); }
-    __device__ __forceinline__ float  f3_dot(float3 a, float3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-    __device__ __forceinline__ float3 f3_cross(float3 a, float3 b) {
-        return make_float3(
-            a.y * b.z - a.z * b.y,
-            a.z * b.x - a.x * b.z,
-            a.x * b.y - a.y * b.x
-        );
-    }
-
-    // ============================================================
-    // float3 helpers (host)
-    // ============================================================
-    __host__ __forceinline__ float f3_len_h(float3 a) {
-        return std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
-    }
-    __host__ __forceinline__ float f3_dot_h(float3 a, float3 b) {
-        return a.x * b.x + a.y * b.y + a.z * b.z;
-    }
-    __host__ __forceinline__ float3 f3_sub_h(float3 a, float3 b) {
-        return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-    }
-    __host__ __forceinline__ float3 f3_cross_h(float3 a, float3 b) {
-        return make_float3(
-            a.y * b.z - a.z * b.y,
-            a.z * b.x - a.x * b.z,
-            a.x * b.y - a.y * b.x
-        );
-    }
-
-    // ============================================================
-    // bilinear sample for one view (Nv x Nu), u-fastest (device)
-    // ============================================================
-    __device__ __forceinline__ float bilinear_sample_2d(const float* img, int Nu, int Nv, float u, float v)
-    {
-        if (u < 0.0f || u >(float)(Nu - 1) || v < 0.0f || v >(float)(Nv - 1)) return 0.0f;
-
-        int u0 = (int)floorf(u);
-        int v0 = (int)floorf(v);
-        int u1 = (u0 + 1 < Nu) ? (u0 + 1) : u0;
-        int v1 = (v0 + 1 < Nv) ? (v0 + 1) : v0;
-
-        float fu = u - (float)u0;
-        float fv = v - (float)v0;
-
-        float p00 = img[v0 * Nu + u0];
-        float p10 = img[v0 * Nu + u1];
-        float p01 = img[v1 * Nu + u0];
-        float p11 = img[v1 * Nu + u1];
-
-        float p0 = p00 + fu * (p10 - p00);
-        float p1 = p01 + fu * (p11 - p01);
-        return p0 + fv * (p1 - p0);
-    }
-
-    // ============================================================
-    // crop padded -> Nu (per view)
-    // ============================================================
-    __global__ void kernel_crop_u_2d(const float* src, float* dst, int Nu, int Nv, int paddedN, int start_u)
-    {
-        int u = blockIdx.x * blockDim.x + threadIdx.x;
-        int v = blockIdx.y * blockDim.y + threadIdx.y;
-        if (u >= Nu || v >= Nv) return;
-
-        int su = start_u + u;
-        float val = 0.0f;
-        if (su >= 0 && su < paddedN) val = src[v * paddedN + su];
-        dst[v * Nu + u] = val;
-    }
+    
 
     // ============================================================
     // Per-view vector-geometry preweight (power = 1)
@@ -222,7 +153,7 @@ namespace YK {
             if (!project_uv_and_terms(g, P, u, v, denom, SOD)) continue;
 
             const float* view_i = views_chunk + (size_t)i * Nv * Nu;
-            float p = bilinear_sample_2d(view_i, Nu, Nv, u, v);
+            float p = YK::Interp::sample2d(view_i, Nu, Nv, u, v);
 
             float w = (SOD * SOD) / (denom * denom);
             acc += p * w * d_dtheta[a];
@@ -287,8 +218,8 @@ namespace YK {
         h_du.resize(Ang);
         h_dv.resize(Ang);
         for (int a = 0; a < Ang; ++a) {
-            h_du[a] = f3_len_h(h_geo[a].detU);
-            h_dv[a] = f3_len_h(h_geo[a].detV);
+            h_du[a] = f3_len(h_geo[a].detU);
+            h_dv[a] = f3_len(h_geo[a].detV);
         }
         du0 = (Ang > 0) ? h_du[0] : 1.0f;
         dv0 = (Ang > 0) ? h_dv[0] : 1.0f;
@@ -311,16 +242,16 @@ namespace YK {
     {
         const float3 O = make_float3(0.0f, 0.0f, 0.0f);
 
-        float3 n = f3_cross_h(g.detU, g.detV);
-        float nlen = f3_len_h(n);
+        float3 n = f3_cross(g.detU, g.detV);
+        float nlen = f3_len(n);
         if (nlen < 1e-12f) return false;
         float3 nh = make_float3(n.x / nlen, n.y / nlen, n.z / nlen);
 
-        float3 dir = f3_sub_h(O, g.src); // = -src
-        float denom = f3_dot_h(dir, nh);
+        float3 dir = f3_sub(O, g.src); // = -src
+        float denom = f3_dot(dir, nh);
         if (std::fabs(denom) < 1e-12f) return false;
 
-        float t = f3_dot_h(f3_sub_h(g.detS, g.src), nh) / denom;
+        float t = f3_dot(f3_sub(g.detS, g.src), nh) / denom;
         if (t <= 0.0f) return false;
 
         float3 C = make_float3(
@@ -329,13 +260,13 @@ namespace YK {
             g.src.z + t * dir.z
         );
 
-        float3 D = f3_sub_h(C, g.detS);
+        float3 D = f3_sub(C, g.detS);
 
-        float UU = f3_dot_h(g.detU, g.detU);
-        float VV = f3_dot_h(g.detV, g.detV);
-        float UV = f3_dot_h(g.detU, g.detV);
-        float DU = f3_dot_h(D, g.detU);
-        float DV = f3_dot_h(D, g.detV);
+        float UU = f3_dot(g.detU, g.detU);
+        float VV = f3_dot(g.detV, g.detV);
+        float UV = f3_dot(g.detU, g.detV);
+        float DU = f3_dot(D, g.detU);
+        float DV = f3_dot(D, g.detV);
 
         float det = UU * VV - UV * UV;
         if (std::fabs(det) < 1e-20f) return false;
@@ -433,6 +364,8 @@ namespace YK {
         compute_du_dv_from_geo(h_geo, h_du, h_dv, du0, dv0);
         (void)dv0;
 
+        //-------- PreweightManager --------
+
         // -------- filter manager (constant du0) --------
         FilterManager fm;
         fm.init(Nu, du0, /*batch=*/Nv, stream);
@@ -468,8 +401,7 @@ namespace YK {
         dim3 b1(256, 1);
         dim3 g1((paddedN + 255) / 256, Nv);
 
-        dim3 b2(16, 16);
-        dim3 g2((Nu + b2.x - 1) / b2.x, (Nv + b2.y - 1) / b2.y);
+
 
         // -------- main loop --------
         for (int base = 0; base < Ang; base += Kchunk) {
@@ -498,8 +430,7 @@ namespace YK {
                 fm.apply(d_padded);
 
                 // crop
-                kernel_crop_u_2d << <g2, b2, 0, stream >> > (
-                    d_padded, d_view_flt, Nu, Nv, paddedN, start_u);
+                YK::Util::crop_u_2d(d_padded, d_view_flt, Nu, Nv, paddedN, start_u, stream);
                 YK_CUDA_KERNEL_CHECK();
 
                 // copy into chunk

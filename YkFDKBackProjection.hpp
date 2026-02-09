@@ -1,12 +1,13 @@
 #pragma once
+#include <cmath>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <vector>
-#include <cmath>
 
-#include "YkGlobals.h"
-#include "YkFDKPreWeight.hpp"
 #include "YKFDKFilter.hpp"
+#include "YkFDKPreWeight.hpp"
+#include "YkGlobals.h"
+#include "YkSampling2D.hpp"
 
 namespace YK {
 
@@ -113,7 +114,7 @@ namespace YK {
             float v = z_det / dv + v0;
 
             const float* view_i = views_chunk + (size_t)i * Nv * Nu;
-            float p = bilinear_sample_2d(view_i, Nu, Nv, u, v);
+            float p = YK::Interp::sample2d(view_i, Nu, Nv, u, v);
 
             float denom = (SID - xr);
             if (fabsf(denom) < 1e-6f) continue;
@@ -231,10 +232,7 @@ namespace YK {
                 // filter in-place on padded
                 fm.apply(d_padded);
 
-                // crop -> d_view_flt
-                dim3 b2(16, 16);
-                dim3 g2((Nu + b2.x - 1) / b2.x, (Nv + b2.y - 1) / b2.y);
-                kernel_crop_u_2d << <g2, b2, 0, stream >> > (d_padded, d_view_flt, Nu, Nv, paddedN, start_u);
+                YK::Util::crop_u_2d(d_padded, d_view_flt, Nu, Nv, paddedN, start_u, stream);
                 YK_CUDA_KERNEL_CHECK();
 
                 // copy into chunk slot (device-to-device)

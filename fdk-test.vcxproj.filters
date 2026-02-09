@@ -16,10 +16,19 @@
     <Filter Include="vec_fdk">
       <UniqueIdentifier>{9e40fc35-59ce-4392-9c6b-669f352f926a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="tests">
+      <UniqueIdentifier>{3b6c95cb-c5c2-46c4-bad8-337e9863a850}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="util">
+      <UniqueIdentifier>{2d0ce3a4-80aa-4183-8646-b9638168e8f2}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="fdk-test\fanbeam_fdk3.cu" />
-    <CudaCompile Include="testFilter.cu" />
+    <CudaCompile Include="testmain.cu" />
+    <CudaCompile Include="YkUtil.cu">
+      <Filter>util</Filter>
+    </CudaCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YKFDKFilter.hpp">
@@ -29,12 +38,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="YkFFT.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YKtestconv.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YKUtil.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="YkGlobals.h">
@@ -54,6 +57,24 @@
     </ClInclude>
     <ClInclude Include="YkFDKCreateFilterKernel.hpp">
       <Filter>vec_fdk</Filter>
+    </ClInclude>
+    <ClInclude Include="YkVecOperation.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkSampling2D.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Yktest_fft.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="Yktest_fdkflter.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="YKtestconv.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="YkUtil.hpp">
+      <Filter>util</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
