@@ -7,60 +7,19 @@
 #include <vector>
 
 #include <cuda_runtime_api.h>
+#include <sstream>
 #include "YkFDKFilter.hpp"
+#include "YkFDKVecAlignPadCrop.hpp"
+#include "YkFDKVecGeoDerived.hpp"
+#include "YkFDKVecPreWeight.hpp"
 #include "YkGlobals.h"
+#include "YkIoDump.hpp"
 #include "YkSampling2D.hpp"
+#include "YkUtil.hpp"
 #include "YkVecGeo.hpp"
 #include "YkVecOperation.hpp"
-#include "YkUtil.hpp"
 
-namespace YK {
-
-    // ============================================================
-    // Constants
-    // ============================================================
-    static constexpr float PI_F = 3.14159265358979323846f;
-
-    
-
-    // ============================================================
-    // Per-view vector-geometry preweight (power = 1)
-    // w_pre(u,v) = |(detS-src)·n_hat| / |(Q-src)|
-    // Q = detS + u*detU + v*detV
-    // ============================================================
-    __global__ void kernel_preweight_vec_view_power1(
-        const float* __restrict__ src_view,   // [Nv*Nu]
-        float* __restrict__ dst_view,         // [Nv*Nu]
-        SConeProjectionVec g,
-        int Nu, int Nv)
-    {
-        int u = blockIdx.x * blockDim.x + threadIdx.x;
-        int v = blockIdx.y * blockDim.y + threadIdx.y;
-        if (u >= Nu || v >= Nv) return;
-
-        float3 U = g.detU;
-        float3 V = g.detV;
-
-        float3 n = f3_cross(U, V);
-        float nlen2 = f3_dot(n, n);
-        if (nlen2 < 1e-20f) { dst_view[v * Nu + u] = 0.0f; return; }
-
-        float invn = rsqrtf(nlen2);
-        float3 nh = make_float3(n.x * invn, n.y * invn, n.z * invn);
-
-        float DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
-        if (DSD_n < 0.0f) DSD_n = -DSD_n;
-
-        float3 Q = f3_add(g.detS, f3_add(f3_mul(U, (float)u), f3_mul(V, (float)v)));
-        float3 QS = f3_sub(Q, g.src);
-
-        float r2 = f3_dot(QS, QS);
-        float r = sqrtf(fmaxf(r2, 1e-20f));
-
-        float w = DSD_n / r;
-        dst_view[v * Nu + u] = src_view[v * Nu + u] * w;
-    }
-
+namespace YK { 
     // ============================================================
     // project_uv + denom for BP (vector geometry)
     // denom = (P-S)·n_hat, enforce t>0 by flipping normal
@@ -163,168 +122,6 @@ namespace YK {
         vol[vidx] += acc;
     }
 
-    // ============================================================
-    // per-view dtheta from geo (Z rotation)
-    // theta = atan2(src.x, -src.y)
-    // ============================================================
-    inline void build_dtheta_from_geo_zaxis(
-        const std::vector<SConeProjectionVec>& h_geo,
-        std::vector<float>& h_dtheta)
-    {
-        const int Ang = (int)h_geo.size();
-        h_dtheta.assign(Ang, 0.0f);
-        if (Ang <= 1) return;
-
-        std::vector<float> theta(Ang);
-
-        for (int a = 0; a < Ang; ++a) {
-            float sx = h_geo[a].src.x;
-            float sy = h_geo[a].src.y;
-            theta[a] = std::atan2(sx, -sy);
-        }
-
-        for (int a = 1; a < Ang; ++a) {
-            float t = theta[a];
-            float p = theta[a - 1];
-            while (t - p > PI_F) t -= 2.0f * PI_F;
-            while (t - p < -PI_F) t += 2.0f * PI_F;
-            theta[a] = t;
-        }
-
-        for (int a = 0; a < Ang; ++a) {
-            float dt;
-            if (a == 0)          dt = theta[1] - theta[0];
-            else if (a == Ang - 1) dt = theta[Ang - 1] - theta[Ang - 2];
-            else                 dt = 0.5f * (theta[a + 1] - theta[a - 1]);
-
-            if (dt < 0.0f) dt = -dt;
-            if (dt < 1e-8f) dt = 1e-8f;
-            h_dtheta[a] = dt;
-        }
-    }
-
-    // ============================================================
-    // Compute du/dv arrays from geo (for validate/record),
-    // but return du0 (const) for filter.
-    // ============================================================
-    inline void compute_du_dv_from_geo(
-        const std::vector<SConeProjectionVec>& h_geo,
-        std::vector<float>& h_du,
-        std::vector<float>& h_dv,
-        float& du0,
-        float& dv0)
-    {
-        const int Ang = (int)h_geo.size();
-        h_du.resize(Ang);
-        h_dv.resize(Ang);
-        for (int a = 0; a < Ang; ++a) {
-            h_du[a] = f3_len(h_geo[a].detU);
-            h_dv[a] = f3_len(h_geo[a].detV);
-        }
-        du0 = (Ang > 0) ? h_du[0] : 1.0f;
-        dv0 = (Ang > 0) ? h_dv[0] : 1.0f;
-        if (!(du0 > 0.0f)) du0 = 1.0f;
-        if (!(dv0 > 0.0f)) dv0 = 1.0f;
-    }
-
-    // ============================================================
-    // AUTO offset from geo (isocenter at origin):
-    // - central ray src -> O=(0,0,0)
-    // - intersect detector plane -> (cu,cv) in det basis
-    // - offset = (cu,cv) - center_index
-    // Use median across views for robustness.
-    // ============================================================
-    inline bool compute_offset_uv_from_geo_isocenter0_one(
-        const SConeProjectionVec& g,
-        int Nu, int Nv,
-        float& offsetU_pix,
-        float& offsetV_pix)
-    {
-        const float3 O = make_float3(0.0f, 0.0f, 0.0f);
-
-        float3 n = f3_cross(g.detU, g.detV);
-        float nlen = f3_len(n);
-        if (nlen < 1e-12f) return false;
-        float3 nh = make_float3(n.x / nlen, n.y / nlen, n.z / nlen);
-
-        float3 dir = f3_sub(O, g.src); // = -src
-        float denom = f3_dot(dir, nh);
-        if (std::fabs(denom) < 1e-12f) return false;
-
-        float t = f3_dot(f3_sub(g.detS, g.src), nh) / denom;
-        if (t <= 0.0f) return false;
-
-        float3 C = make_float3(
-            g.src.x + t * dir.x,
-            g.src.y + t * dir.y,
-            g.src.z + t * dir.z
-        );
-
-        float3 D = f3_sub(C, g.detS);
-
-        float UU = f3_dot(g.detU, g.detU);
-        float VV = f3_dot(g.detV, g.detV);
-        float UV = f3_dot(g.detU, g.detV);
-        float DU = f3_dot(D, g.detU);
-        float DV = f3_dot(D, g.detV);
-
-        float det = UU * VV - UV * UV;
-        if (std::fabs(det) < 1e-20f) return false;
-
-        float cu = (DU * VV - DV * UV) / det;
-        float cv = (-DU * UV + DV * UU) / det;
-
-        offsetU_pix = cu - (Nu - 1) * 0.5f;
-        offsetV_pix = cv - (Nv - 1) * 0.5f;
-        return std::isfinite(offsetU_pix) && std::isfinite(offsetV_pix);
-    }
-
-    inline bool compute_offset_uv_from_geo_isocenter0_median(
-        const std::vector<SConeProjectionVec>& h_geo,
-        int Nu, int Nv,
-        float& offsetU_pix,
-        float& offsetV_pix)
-    {
-        std::vector<float> ou, ov;
-        ou.reserve(h_geo.size());
-        ov.reserve(h_geo.size());
-
-        for (size_t a = 0; a < h_geo.size(); ++a) {
-            float u = 0.0f, v = 0.0f;
-            if (compute_offset_uv_from_geo_isocenter0_one(h_geo[a], Nu, Nv, u, v)) {
-                ou.push_back(u);
-                ov.push_back(v);
-            }
-        }
-        if (ou.empty()) return false;
-
-        auto median = [](std::vector<float>& x) -> float {
-            const size_t n = x.size();
-            const size_t mid = n / 2;
-            std::nth_element(x.begin(), x.begin() + mid, x.end());
-            float m = x[mid];
-            if ((n & 1u) == 0u) {
-                std::nth_element(x.begin(), x.begin() + (mid - 1), x.end());
-                m = 0.5f * (m + x[mid - 1]);
-            }
-            return m;
-            };
-
-        offsetU_pix = median(ou);
-        offsetV_pix = median(ov);
-        return true;
-    }
-
-    // ============================================================
-    // ✅ Single public entry:
-    // Streaming vec-FDK (per-view):
-    //  - auto offsetU/V from geo (median)
-    //  - preweight per-view (power=1)
-    //  - filter uses du0 as constant (computed from geo[0])
-    //  - BP uses per-view dtheta[a]
-    //
-    // Input layout on host: h_proj[a*(Nv*Nu) + v*Nu + u]  (A-V-U)
-    // ============================================================
     inline void fdk_vec_recon_streaming(
         const float* h_proj,                               // host [Ang*Nv*Nu]
         float* d_vol,                                      // device [Nz*Ny*Nx]
@@ -334,51 +131,77 @@ namespace YK {
         int Kchunk,
         cudaStream_t stream)
     {
-        // -------- auto offsets from geo --------
-        float offsetU_pix = 0.0f, offsetV_pix = 0.0f;
-        if (!compute_offset_uv_from_geo_isocenter0_median(h_geo, Nu, Nv, offsetU_pix, offsetV_pix)) {
-            offsetU_pix = 0.0f;
-            offsetV_pix = 0.0f;
-        }
+        // ------------------------------------------------------------
+        // Debug: dump only one view (preweight/pad/fltpad/crop)
+        // ------------------------------------------------------------
+        YK::IO::DumpManager dump;
+        dump.init("./dbg/", /*enabled=*/true);
+        const int  DUMP_A = 0;      // 只保存这一张 view
+        bool dumped = false;
 
-        // -------- upload geometry --------
+        // ============================================================
+        // 0) CPU derived params (offset/dtheta/du0 etc.)
+        // ============================================================
+        GeoDerivedManagerVec derived;
+        {
+            GeoDerivedManagerVec::GeoDerivedOptions opt;
+            opt.offset_mode = GeoDerivedManagerVec::EOffsetMode::PerView;
+            opt.isocenter = make_float3(0.0f, 0.0f, 0.0f);
+            opt.dtheta_eps = 1e-8f;
+            (void)derived.init(Nu, Nv, opt);
+            (void)derived.build_geo_params(h_geo);
+        }
+        const auto& gv = derived.views();
+        const float du0 = derived.du0_mm();
+
+        // ============================================================
+        // 1) Upload geo
+        // ============================================================
         SConeProjectionVec* d_geo = nullptr;
         YK_CUDA_CHECK(cudaMalloc(&d_geo, (size_t)Ang * sizeof(SConeProjectionVec)));
-        YK_CUDA_CHECK(cudaMemcpyAsync(d_geo, h_geo.data(),
+        YK_CUDA_CHECK(cudaMemcpyAsync(
+            d_geo, h_geo.data(),
             (size_t)Ang * sizeof(SConeProjectionVec),
             cudaMemcpyHostToDevice, stream));
 
-        // -------- per-view dtheta --------
-        std::vector<float> h_dtheta;
-        build_dtheta_from_geo_zaxis(h_geo, h_dtheta);
-
+        // ============================================================
+        // 2) Upload dtheta
+        // ============================================================
         float* d_dtheta = nullptr;
-        YK_CUDA_CHECK(cudaMalloc(&d_dtheta, (size_t)Ang * sizeof(float)));
-        YK_CUDA_CHECK(cudaMemcpyAsync(d_dtheta, h_dtheta.data(),
-            (size_t)Ang * sizeof(float),
-            cudaMemcpyHostToDevice, stream));
+        {
+            std::vector<float> h_dtheta(Ang, 1e-8f);
+            if ((int)gv.size() == Ang) {
+                for (int a = 0; a < Ang; ++a) h_dtheta[a] = gv[a].dtheta;
+            }
+            YK_CUDA_CHECK(cudaMalloc(&d_dtheta, (size_t)Ang * sizeof(float)));
+            YK_CUDA_CHECK(cudaMemcpyAsync(
+                d_dtheta, h_dtheta.data(),
+                (size_t)Ang * sizeof(float),
+                cudaMemcpyHostToDevice, stream));
+        }
 
-        // -------- du/dv arrays (computed), but filter uses du0 constant --------
-        std::vector<float> h_du, h_dv;
-        float du0 = 1.0f, dv0 = 1.0f;
-        compute_du_dv_from_geo(h_geo, h_du, h_dv, du0, dv0);
-        (void)dv0;
+        // ============================================================
+        // 3) Managers
+        // ============================================================
+        PreweightManagerVec pw;
+        pw.init(Nu, Nv, /*blockThreads=*/256, stream);
 
-        //-------- PreweightManager --------
+        AlignPadCropManagerVec align;
+        align.init(Nu, Nv, stream);
+        const int paddedN = align.paddedN();
 
-        // -------- filter manager (constant du0) --------
         FilterManager fm;
-        fm.init(Nu, du0, /*batch=*/Nv, stream);
-        const int paddedN = fm.getPaddedN();
+        // batch = Nv (每行做1D FFT)
+        if (!fm.init(Nu, paddedN, du0, /*batch=*/Nv, stream)) {
+            // hard fail: your paddedN/params mismatch
+            YK_ASSERT(false && "FilterManager init failed");
+        }
 
-        // offset-aware padding alignment (U only)
-        const float offsetX = offsetU_pix;
-        const float axis_idx = (Nu - 1) * 0.5f + offsetX;
-        const int start_u = (int)lrintf(paddedN * 0.5f - axis_idx);
+        // ============================================================
+        // 4) Buffers
+        // ============================================================
+        const size_t view_elems = (size_t)Nu * (size_t)Nv;
 
-        const size_t view_elems = (size_t)Nu * Nv;
-
-        // -------- buffers --------
         float* d_view_in = nullptr; // [Nv*Nu]
         float* d_view_pw = nullptr; // [Nv*Nu]
         float* d_view_flt = nullptr; // [Nv*Nu]
@@ -388,58 +211,88 @@ namespace YK {
         YK_CUDA_CHECK(cudaMalloc(&d_view_in, view_elems * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_view_pw, view_elems * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_view_flt, view_elems * sizeof(float)));
-        YK_CUDA_CHECK(cudaMalloc(&d_padded, (size_t)Nv * paddedN * sizeof(float)));
+        YK_CUDA_CHECK(cudaMalloc(&d_padded, (size_t)Nv * (size_t)paddedN * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_chunk, (size_t)Kchunk * view_elems * sizeof(float)));
 
-        // clear volume
-        YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0, (size_t)Nx * Ny * Nz * sizeof(float), stream));
+        YK_CUDA_CHECK(cudaMemsetAsync(
+            d_vol, 0,
+            (size_t)Nx * (size_t)Ny * (size_t)Nz * sizeof(float),
+            stream));
 
-        // launch configs
-        dim3 pre_b(16, 16);
-        dim3 pre_g((Nu + pre_b.x - 1) / pre_b.x, (Nv + pre_b.y - 1) / pre_b.y);
-
-        dim3 b1(256, 1);
-        dim3 g1((paddedN + 255) / 256, Nv);
-
-
-
-        // -------- main loop --------
+        // ============================================================
+        // 5) Main loop
+        // ============================================================
         for (int base = 0; base < Ang; base += Kchunk) {
-            int K = (base + Kchunk <= Ang) ? Kchunk : (Ang - base);
+            const int K = (base + Kchunk <= Ang) ? Kchunk : (Ang - base);
 
-            // build filtered views into d_chunk
             for (int i = 0; i < K; ++i) {
-                int a = base + i;
+                const int a = base + i;
                 const float* h_view = h_proj + (size_t)a * view_elems;
 
-                YK_CUDA_CHECK(cudaMemcpyAsync(d_view_in, h_view, view_elems * sizeof(float),
+                // H2D
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    d_view_in, h_view,
+                    view_elems * sizeof(float),
                     cudaMemcpyHostToDevice, stream));
 
-                // per-view preweight (power=1)
-                kernel_preweight_vec_view_power1 << <pre_g, pre_b, 0, stream >> > (
-                    d_view_in, d_view_pw, h_geo[a], Nu, Nv);
-                YK_CUDA_KERNEL_CHECK();
+                // (1) preweight (K=1)
+                pw.setStream(stream);
+                pw.applyChunk(d_view_in, d_view_pw, d_geo, /*K=*/1, /*base_a=*/a);
 
-                // pad rows
+                // dump preweight once
+                if (!dumped && a == DUMP_A) {
+                    dump.dumpDeviceF32_A("pw", a, d_view_pw, view_elems, stream);
+                }
+
+                // (2) pad with per-view offsetU
+                float offsetU = 0.0f;
+                if ((int)gv.size() == Ang && gv[a].offset_valid) offsetU = gv[a].offsetU_pix;
+
+                align.setStream(stream);
+                align.pad(d_view_pw, d_padded, offsetU);
+
+                // dump padded once + meta
+                if (!dumped && a == DUMP_A) {
+                    dump.dumpDeviceF32_A("pad", a, d_padded, (size_t)Nv * (size_t)paddedN, stream);
+
+                    std::ostringstream ss;
+                    ss << "a=" << a << "\n";
+                    ss << "Nu=" << Nu << " Nv=" << Nv << " paddedN=" << paddedN << "\n";
+                    ss << "offsetU_pix=" << offsetU << "\n";
+                    ss << "start_u=" << align.lastStartU() << "\n";
+                    ss << "du0_mm=" << du0 << "\n";
+                    if ((int)gv.size() == Ang) ss << "dtheta=" << gv[a].dtheta << "\n";
+                    dump.dumpText_A("meta", a, ss.str());
+                }
+
+                // (3) filter in-place on padded
                 fm.setStream(stream);
-                YK::_kernel_pad_with_offset << <g1, b1, 0, stream >> > (
-                    d_view_pw, d_padded, Nu, Nv, paddedN, offsetX);
-                YK_CUDA_KERNEL_CHECK();
-
-                // filter in-place
                 fm.apply(d_padded);
 
-                // crop
-                YK::Util::crop_u_2d(d_padded, d_view_flt, Nu, Nv, paddedN, start_u, stream);
-                YK_CUDA_KERNEL_CHECK();
+                // dump filtered padded once
+                if (!dumped && a == DUMP_A) {
+                    dump.dumpDeviceF32_A("fltpad", a, d_padded, (size_t)Nv * (size_t)paddedN, stream);
+                }
 
-                // copy into chunk
+                // (4) crop back
+                align.crop(d_padded, d_view_flt);
+
+                // dump crop once -> then disable
+                if (!dumped && a == DUMP_A) {
+                    dump.dumpDeviceF32_A("crop", a, d_view_flt, view_elems, stream);
+                    dumped = true;
+                    dump.setEnabled(false);
+                }
+
+                // pack into chunk
                 float* d_slot = d_chunk + (size_t)i * view_elems;
-                YK_CUDA_CHECK(cudaMemcpyAsync(d_slot, d_view_flt, view_elems * sizeof(float),
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    d_slot, d_view_flt,
+                    view_elems * sizeof(float),
                     cudaMemcpyDeviceToDevice, stream));
             }
 
-            // backproject chunk
+            // BP chunk
             dim3 block(8, 8, 4);
             dim3 grid((Nx + block.x - 1) / block.x,
                 (Ny + block.y - 1) / block.y,
@@ -453,7 +306,9 @@ namespace YK {
             YK_CUDA_KERNEL_CHECK();
         }
 
-        // cleanup
+        // ============================================================
+        // 6) Cleanup
+        // ============================================================
         YK_CUDA_CHECK(cudaFree(d_geo));
         YK_CUDA_CHECK(cudaFree(d_dtheta));
         YK_CUDA_CHECK(cudaFree(d_view_in));
@@ -462,5 +317,8 @@ namespace YK {
         YK_CUDA_CHECK(cudaFree(d_padded));
         YK_CUDA_CHECK(cudaFree(d_chunk));
     }
+
+
+
 
 } // namespace YK

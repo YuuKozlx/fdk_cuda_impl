@@ -31,9 +31,6 @@
     </CudaCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="YKFDKFilter.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="YkConv.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -44,9 +41,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="YkFDKPreWeight.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKBackProjection.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="YkVecGeo.hpp">
@@ -76,5 +70,31 @@
     <ClInclude Include="YkUtil.hpp">
       <Filter>util</Filter>
     </ClInclude>
+    <ClInclude Include="YkFDKVecPreWeight.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKVecAlignPadCrop.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKVecGeoDerived.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKBackProjection.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkIoDump.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKVecOnlineStreamer.hpp">
+      <Filter>vec_fdk</Filter>
+    </ClInclude>
+    <ClInclude Include="YKFDKFilter.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="YkIoDump.cpp">
+      <Filter>util</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

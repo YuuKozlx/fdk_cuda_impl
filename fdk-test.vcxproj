@@ -123,6 +123,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="YkFDKBackProjection.hpp" />
+    <ClInclude Include="YKFDKFilter.hpp" />
+    <ClInclude Include="YkFDKVecAlignPadCrop.hpp" />
+    <ClInclude Include="YkFDKVecGeoDerived.hpp" />
+    <ClInclude Include="YkFDKVecOnlineStreamer.hpp" />
+    <ClInclude Include="YkFDKVecPreWeight.hpp" />
+    <ClInclude Include="YkIoDump.hpp" />
     <ClInclude Include="YkSampling2D.hpp" />
     <ClInclude Include="Yktest_fdkflter.hpp" />
     <ClInclude Include="Yktest_fft.hpp" />
@@ -132,8 +139,6 @@
     <CudaCompile Include="fdk-test\fanbeam_fdk3.cu">
       <FileType>Document</FileType>
     </CudaCompile>
-    <ClInclude Include="YkFDKBackProjection.hpp" />
-    <ClInclude Include="YKFDKFilter.hpp" />
     <CudaCompile Include="testmain.cu" />
     <CudaCompile Include="YkUtil.cu" />
   </ItemGroup>
@@ -147,6 +152,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YkVecOperation.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="YkIoDump.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

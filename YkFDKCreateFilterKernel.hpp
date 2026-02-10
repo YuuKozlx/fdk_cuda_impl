@@ -3,6 +3,7 @@
 #include <device_launch_parameters.h>
 #include <cufft.h>
 #include <cmath>
+#include <utility>
 
 #include "YkGlobals.h"
 #include "YkFFT.hpp"
@@ -13,112 +14,143 @@ namespace YK {
     // Filter options
     // ============================================================
     enum class EFilterKernel {
+        None,        // no filtering (identity)
         RamLak,
         SheppLogan,
         Cosine,
-        Hann,
-        Hamming
+        Hann,        // Hann == Hanning
+        Hamming,
+        Blackman
+    };
+
+    // 权重构建来源（保留两条路径）
+    enum class EWeightsBuildSource {
+        AnalyticFreq,     // 直接频域写 H(f)=|f|*window
+        DiscreteRLFFT     // 空域RL->FFT 提取 ramp -> 乘窗
     };
 
     struct FilterKernelDesc {
         EFilterKernel kind = EFilterKernel::RamLak;
 
-        // IMPORTANT:
-        // cutoff is in DFT-normalized frequency:
-        //   f = k / N   in [0, 0.5], Nyquist = 0.5
-        // So default cutoff=0.5 means full Nyquist.
+        // cutoff in DFT-normalized frequency:
+        // f = k/N in [0,0.5], Nyquist=0.5
         float cutoff = 0.5f;
 
         float gain = 1.0f;
 
-        // true  => ramp = f   (f = k/N, DU=1 convention)
-        // false => ramp = k   (index ramp, still DU=1)
-        bool normalized_ramp = true;
 
-        // Make DC consistent between analytic & discrete
-        bool force_dc_zero = true;
+        // DC 处理（让离散/解析对齐）
+        bool force_dc_zero = false;
+
+        // 选择构建来源：保留两条路
+        EWeightsBuildSource source = EWeightsBuildSource::DiscreteRLFFT;
     };
 
     // ============================================================
     // Device helpers
     // ============================================================
-    __device__ __forceinline__ float yk_sinc_pi_device(float x) {
+    static __device__ __forceinline__ float yk_sinc_pi_device(float x)
+    {
         const float pi = 3.14159265358979323846f;
         float t = pi * x;
         if (fabsf(t) < 1e-8f) return 1.0f;
         return sinf(t) / t;
     }
 
+    static __device__ __forceinline__ float yk_window_shape_device(float x, EFilterKernel kind)
+    {
+        // x in [0,1]
+        const float pi = 3.14159265358979323846f;
+        x = fminf(fmaxf(x, 0.0f), 1.0f);
+
+        switch (kind) {
+        case EFilterKernel::None:
+        case EFilterKernel::RamLak:
+            return 1.0f;
+
+        case EFilterKernel::SheppLogan:
+            // common: sinc(f/(2*fc)) -> with x=f/fc => sinc(x/2)
+            return yk_sinc_pi_device(0.5f * x);
+
+        case EFilterKernel::Cosine:
+            return cosf(0.5f * pi * x);
+
+        case EFilterKernel::Hann:
+            return 0.5f * (1.0f + cosf(pi * x));
+
+        case EFilterKernel::Hamming:
+            return 0.54f + 0.46f * cosf(pi * x);
+
+        case EFilterKernel::Blackman: {
+            // single-sided form consistent with pi*x
+            const float a0 = 0.42f;
+            const float a1 = 0.5f;
+            const float a2 = 0.08f;
+            return a0 + a1 * cosf(pi * x) + a2 * cosf(2.0f * pi * x);
+        }
+
+        default:
+            return 1.0f;
+        }
+    }
+
     // ============================================================
-    // (A) Analytic weights in frequency domain (DU=1 convention)
-    //
-    // Use DFT-normalized frequency: f = k / N  in [0, 0.5]
-    // This matches the DFT of the discrete Ram-Lak kernel (DU=1).
-    //
-    // w[k] = gain * ramp * windowShape * (optional 1/N)
-    // NOTE: NO du scaling here!
-    // NOTE: DO NOT multiply by 2 for "symmetric spectrum" when using cuFFT R2C half-spectrum.
+    // Kernels (static to avoid multiple definition across TUs)
     // ============================================================
-    __global__ void kernel_build_filter_weights_fft(
+
+    // (0) Identity weights: w[k] = gain * (bake_invN ? 1/N : 1)
+    static __global__ void kernel_fill_identity_weights(
         float* __restrict__ w,
         int n_complex,
-        int N,                 // N == paddedN
+        int N,
+        float gain,
+        bool bake_invN)
+    {
+        int k = blockIdx.x * blockDim.x + threadIdx.x;
+        if (k >= n_complex) return;
+        float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
+        w[k] = gain * invN;
+    }
+
+    // (1) Analytic frequency-domain build (direct)
+    // w[k] = gain * ramp(f or k) * window(x) * (optional 1/N), cutoff applied
+    static __global__ void kernel_build_weights_analytic_freq(
+        float* __restrict__ w,
+        int n_complex,
+        int N,
         FilterKernelDesc desc,
-        bool bake_invN)        // bake 1/N into w (to cancel cuFFT C2R gain N)
+        bool bake_invN)
     {
         int k = blockIdx.x * blockDim.x + threadIdx.x;
         if (k >= n_complex) return;
 
-        // DFT-normalized frequency: f = k/N, Nyquist = 0.5
-        float f = (N > 0) ? ((float)k / (float)N) : 0.0f; // [0, 0.5]
-
-        if (desc.force_dc_zero && k == 0) {
-            w[k] = 0.0f;
+        // None => identity (do not force DC unless user asked)
+        if (desc.kind == EFilterKernel::None) {
+            float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
+            w[k] = desc.gain * invN;
             return;
         }
 
-        if (f > desc.cutoff) {
-            w[k] = 0.0f;
-            return;
-        }
+        float f = (N > 0) ? ((float)k / (float)N) : 0.0f; // [0,0.5]
 
-        float ramp = desc.normalized_ramp ? f : (float)k;
+        if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
 
-        float shape = 1.0f;
-        const float pi = 3.14159265358979323846f;
-
-        // normalize x to [0,1] over [0, cutoff]
         float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
-        float x = f / cc;
+        if (f > cc) { w[k] = 0.0f; return; }
 
-        switch (desc.kind) {
-        case EFilterKernel::RamLak:     shape = 1.0f; break;
-        case EFilterKernel::SheppLogan: shape = yk_sinc_pi_device(x * 0.5f); break; // sinc(pi*x/2)
-        case EFilterKernel::Cosine:     shape = cosf(0.5f * pi * x); break;
-        case EFilterKernel::Hann:       shape = 0.5f * (1.0f + cosf(pi * x)); break;
-        case EFilterKernel::Hamming:    shape = 0.54f + 0.46f * cosf(pi * x); break;
-        default:                        shape = 1.0f; break;
-        }
+        float ramp = f;
+        float x = (cc > 0.0f) ? (f / cc) : 0.0f;
+        float shape = yk_window_shape_device(x, desc.kind);
 
         float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
         w[k] = desc.gain * ramp * shape * invN;
     }
 
-    // ============================================================
-    // (B) Generate spatial discrete Ram-Lak kernel (DU=1 convention)
-    //     h[0]      = 1/4
-    //     h[n odd]  = -1/(pi^2 n^2)
-    //     h[n even] = 0
-    //
-    // circular shift: n=0 at idx0 (so FFT directly yields non-negative bins)
-    // optional: bake 1/N into h to cancel cuFFT C2R scaling (N gain)
-    //
-    // NOTE: NO du scaling here!
-    // ============================================================
-    __global__ void kernel_gen_spatial_rl_kernel_du1(
+    // (2) Spatial discrete Ram-Lak kernel (DU=1 convention)
+    static __global__ void kernel_gen_spatial_rl_kernel_du1(
         float* __restrict__ h,
-        int N,           // paddedN
-        bool bake_invN)  // include 1/N in h
+        int N,
+        bool bake_invN)
     {
         int u = blockIdx.x * blockDim.x + threadIdx.x;
         if (u >= N) return;
@@ -130,11 +162,10 @@ namespace YK {
         if (n == 0) {
             val = 1.0f / 4.0f;
         }
-        else if (an & 1) { // odd
+        else if (an & 1) {
             const float pi = 3.14159265358979323846f;
             float fn = (float)n;
             val = -1.0f / (pi * pi * fn * fn);
-
         }
         else {
             val = 0.0f;
@@ -144,13 +175,8 @@ namespace YK {
         h[u] = val;
     }
 
-    // ============================================================
-    // Extract weights from FFT(kernel)
-    //   - RealPart:   dst[k]=Re
-    //   - Magnitude:  dst[k]=sqrt(Re^2+Im^2)
-    // Optionally force DC to 0 for alignment with analytic ramp.
-    // ============================================================
-    __global__ void kernel_extract_weights_from_fft(
+    // (3) Extract ramp weights from FFT(RL)
+    static __global__ void kernel_extract_weights_from_fft(
         const cufftComplex* __restrict__ src,
         float* __restrict__ dst,
         int n_complex,
@@ -168,14 +194,41 @@ namespace YK {
         dst[k] = v;
     }
 
+    // (4) Apply window/cutoff/gain/DC on ramp weights (in-place)
+    static __global__ void kernel_apply_window_to_weights_inplace(
+        float* __restrict__ w,
+        int n_complex,
+        int N,
+        FilterKernelDesc desc)
+    {
+        int k = blockIdx.x * blockDim.x + threadIdx.x;
+        if (k >= n_complex) return;
+
+        // None should not normally come here, but keep safe
+        if (desc.kind == EFilterKernel::None) {
+            w[k] = w[k] * desc.gain;
+            return;
+        }
+
+        float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
+
+        if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
+
+        float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
+        if (f > cc) { w[k] = 0.0f; return; }
+
+        float x = (cc > 0.0f) ? (f / cc) : 0.0f;
+        float shape = yk_window_shape_device(x, desc.kind);
+
+        w[k] = w[k] * (desc.gain * shape);
+    }
+
     // ============================================================
-    // FilterKernelFFT: build weights for FilterManager
-    //  - All weights are DU=1 convention (no du)
-    //  - bake_invN=true recommended if FilterManager does NOT divide by N after IFFT
+    // FilterKernelFFT: NEW single public API, but keeps both build paths
     // ============================================================
     class FilterKernelFFT {
     public:
-        enum class EKernelToWeightsMode {
+        enum class ERampExtractMode {
             RealPart = 0,
             Magnitude = 1
         };
@@ -192,7 +245,8 @@ namespace YK {
             return *this;
         }
 
-        void prepare(int paddedN, cudaStream_t stream = 0) {
+        void prepare(int paddedN, cudaStream_t stream = 0)
+        {
             if (paddedN <= 0) {
                 YK_ASSERT(false && "paddedN must be > 0");
                 return;
@@ -215,12 +269,14 @@ namespace YK {
             ready_ = ok;
         }
 
-        void setStream(cudaStream_t s) {
+        void setStream(cudaStream_t s)
+        {
             stream_ = s;
             if (ready_) fft_r2c_.setStream(stream_);
         }
 
-        void release() {
+        void release()
+        {
             if (d_tmp_fft_) {
                 YK_CUDA_CHECK(cudaFree(d_tmp_fft_));
                 d_tmp_fft_ = nullptr;
@@ -233,69 +289,90 @@ namespace YK {
             ready_ = false;
         }
 
-        float* alloc_weights() const {
+        int paddedN() const { return paddedN_; }
+        int n_complex() const { return n_complex_; }
+        cudaStream_t stream() const { return stream_; }
+
+        float* alloc_weights() const
+        {
             YK_ASSERT(ready_);
             float* d_w = nullptr;
             YK_CUDA_CHECK(cudaMalloc(&d_w, (size_t)n_complex_ * sizeof(float)));
             return d_w;
         }
 
-        // Analytic (DU=1, DFT-normalized f=k/N). bake_invN recommended.
-        void build_analytic(float* d_weights_fft, const FilterKernelDesc& desc, bool bake_invN = true) const {
-            YK_ASSERT(ready_);
-            YK_ASSERT(d_weights_fft);
-
-            dim3 block(256, 1);
-            dim3 grid((n_complex_ + block.x - 1) / block.x, 1);
-
-            YK::kernel_build_filter_weights_fft << <grid, block, 0, stream_ >> > (
-                d_weights_fft, n_complex_, paddedN_, desc, bake_invN);
-            YK_CUDA_KERNEL_CHECK();
-        }
-
-        // Discrete RL (DU=1) -> FFT -> extract.
-        // bake_invN should match analytic path.
-        // force_dc_zero should match desc.force_dc_zero in analytic path.
-        void build_discrete_ramlak_du1(
-            float* d_weights_fft,
+        // ============================================================
+        // THE SINGLE PUBLIC BUILD API (NEW)
+        // Keeps BOTH:
+        //  - desc.source == AnalyticFreq     : direct frequency build
+        //  - desc.source == DiscreteRLFFT    : spatial RL -> FFT -> ramp -> window
+        //
+        // bake_invN:
+        //  - true : bake 1/N into weights (or RL kernel) to cancel cuFFT C2R gain N
+        //
+        // mode:
+        //  - only affects DiscreteRLFFT (extract from RL spectrum)
+        // ============================================================
+        void build_weights(
+            float* d_weights_fft,               // [n_complex]
+            const FilterKernelDesc& desc,
             bool bake_invN = true,
-            EKernelToWeightsMode mode = EKernelToWeightsMode::RealPart,
-            bool force_dc_zero = false) const
+            ERampExtractMode mode = ERampExtractMode::Magnitude) const
         {
             YK_ASSERT(ready_);
             YK_ASSERT(d_weights_fft);
 
+            dim3 block(256, 1);
+            dim3 gridC((n_complex_ + block.x - 1) / block.x, 1);
+
+            // kind=None is identity regardless of source
+            if (desc.kind == EFilterKernel::None) {
+                kernel_fill_identity_weights << <gridC, block, 0, stream_ >> > (
+                    d_weights_fft, n_complex_, paddedN_, desc.gain, bake_invN);
+                YK_CUDA_KERNEL_CHECK();
+                return;
+            }
+
+            if (desc.source == EWeightsBuildSource::AnalyticFreq) {
+                // direct frequency-domain generation (kept!)
+                kernel_build_weights_analytic_freq << <gridC, block, 0, stream_ >> > (
+                    d_weights_fft, n_complex_, paddedN_, desc, bake_invN);
+                YK_CUDA_KERNEL_CHECK();
+                return;
+            }
+
+            // DiscreteRLFFT path (kept!)
             float* d_spatial = nullptr;
             YK_CUDA_CHECK(cudaMalloc(&d_spatial, (size_t)paddedN_ * sizeof(float)));
 
-            dim3 block(256, 1);
             dim3 gridN((paddedN_ + block.x - 1) / block.x, 1);
-
-            YK::kernel_gen_spatial_rl_kernel_du1 << <gridN, block, 0, stream_ >> > (
+            kernel_gen_spatial_rl_kernel_du1 << <gridN, block, 0, stream_ >> > (
                 d_spatial, paddedN_, bake_invN);
             YK_CUDA_KERNEL_CHECK();
 
-            // R2C FFT
+            // RL -> spectrum
             fft_r2c_.fft(d_spatial, d_tmp_fft_);
 
-            dim3 gridC((n_complex_ + block.x - 1) / block.x, 1);
-            YK::kernel_extract_weights_from_fft << <gridC, block, 0, stream_ >> > (
-                d_tmp_fft_, d_weights_fft, n_complex_, (int)mode, force_dc_zero);
+            // extract ramp
+            kernel_extract_weights_from_fft << <gridC, block, 0, stream_ >> > (
+                d_tmp_fft_, d_weights_fft, n_complex_, (int)mode, desc.force_dc_zero);
             YK_CUDA_KERNEL_CHECK();
 
             YK_CUDA_CHECK(cudaFree(d_spatial));
+
+            // apply window/cutoff/gain/DC
+            kernel_apply_window_to_weights_inplace << <gridC, block, 0, stream_ >> > (
+                d_weights_fft, n_complex_, paddedN_, desc);
+            YK_CUDA_KERNEL_CHECK();
         }
 
-        int paddedN()   const { return paddedN_; }
-        int n_complex() const { return n_complex_; }
-        cudaStream_t stream() const { return stream_; }
-
     private:
-        void move_from(FilterKernelFFT& o) noexcept {
-            paddedN_ = o.paddedN_; o.paddedN_ = 0;
+        void move_from(FilterKernelFFT& o) noexcept
+        {
+            paddedN_ = o.paddedN_;   o.paddedN_ = 0;
             n_complex_ = o.n_complex_; o.n_complex_ = 0;
-            stream_ = o.stream_; o.stream_ = 0;
-            ready_ = o.ready_; o.ready_ = false;
+            stream_ = o.stream_;    o.stream_ = 0;
+            ready_ = o.ready_;     o.ready_ = false;
 
             d_tmp_fft_ = o.d_tmp_fft_; o.d_tmp_fft_ = nullptr;
             fft_r2c_ = std::move(o.fft_r2c_);

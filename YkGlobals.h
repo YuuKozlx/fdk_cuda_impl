@@ -5,10 +5,11 @@
 // CUDA Common Macros & Utilities
 // ============================================================
 
-#include <cuda_runtime.h>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cmath>
+#include <cuda_runtime.h>
+#include <vector_types.h>
 
 
 // 几何结构定义
@@ -35,12 +36,29 @@ struct SDimensions3D {
     unsigned int iProjV; // number of detectors in the V direction
 };
 
-struct SConeProjectionVec {
-    float3 src;   // source position (world)
-    float3 detS;  // detector pixel (0,0) position (world)
-    float3 detU;  // per-pixel vector in U direction (world), length = du
-    float3 detV;  // per-pixel vector in V direction (world), length = dv
+struct alignas(16) SConeProjectionVec {
+    float3 src;      // source position (world)
+    float3 detS;     // detector pixel (0,0) position (world)
+    float3 detU;     // per-pixel vector in U direction (world), length = du
+    float3 detV;    // per-pixel vector in V direction (world), length = dv
+    float3 angle;   // angle.x : gantry rotation angle [rad], measured (encoder)
+                    // angle.y : reserved (e.g. angle velocity / jitter / 0)
+                    // angle.z : reserved
 };
+
+
+#ifndef YK_FM_LOGE
+#define YK_FM_LOGE(fmt, ...) fprintf(stderr, "[FilterManager][E] " fmt "\n", ##__VA_ARGS__)
+#endif
+
+#ifndef YK_FM_LOGW
+#define YK_FM_LOGW(fmt, ...) fprintf(stderr, "[FilterManager][W] " fmt "\n", ##__VA_ARGS__)
+#endif
+
+#ifndef YK_FM_LOGI
+#define YK_FM_LOGI(fmt, ...) fprintf(stdout, "[FilterManager][I] " fmt "\n", ##__VA_ARGS__)
+#endif
+
 
 
 #ifndef YK_CUDA_CHECK

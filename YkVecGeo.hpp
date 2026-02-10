@@ -2,172 +2,120 @@
 #include <cmath>
 #include <cuda_runtime.h>
 #include <vector>
+
 #include "YkGlobals.h"
+#include "YkVecOperation.hpp"
 
 namespace YK {
 
-
-
     /**
- * @brief Build circular cone-beam vector geometry (MATLAB-consistent version)
- *
- * This function builds a circular cone-beam CT trajectory using a **vector
- * geometry formulation**, fully consistent with the following MATLAB model:
- *
- *   Source position:
- *     S(theta) = SOD * [  sin(theta);
- *                         -cos(theta);
- *                          0           ]
- *
- *   Detector center:
- *     D(theta) = ODD * [ -sin(theta);
- *                         cos(theta);
- *                         0           ]
- *
- *   Detector column direction (u direction):
- *     U(theta) = du * [  cos(theta);
- *                         sin(theta);
- *                         0           ]
- *
- *   Detector row direction (v direction):
- *     V        = dv * [  0;
- *                         0;
- *                         1           ]
- *
- * where:
- *   - theta increases with view index a (counter-clockwise around +Z)
- *   - SOD = source-to-isocenter distance
- *   - SDD = source-to-detector distance
- *   - ODD = SDD - SOD (isocenter-to-detector distance)
- *
- * Coordinate / memory conventions (VERY IMPORTANT):
- * -------------------------------------------------
- *   - World coordinate system:
- *       X right, Y forward, Z up (right-handed)
- *
- *   - View index a:
- *       theta = 2*pi * a / Ang
- *
- *   - Projection data layout:
- *       proj[a][v][u]  (A-V-U order)
- *       u = detector column index (fastest)
- *       v = detector row index
- *
- *   - Detector vectors:
- *       detU : direction of increasing u (column direction)
- *       detV : direction of increasing v (row direction)
- *
- *   - Pixel (u=0, v=0) corresponds to:
- *       detector center minus half detector size:
- *         detS = detCenter
- *                - ((Nu-1)/2 + offsetU_pix) * detU
- *                - ((Nv-1)/2 + offsetV_pix) * detV
- *
- * This definition is compatible with:
- *   - FDK vector backprojection
- *   - bilinear sampling using img[v * Nu + u]
- *   - u-axis filtering (Ram-Lak along detector columns)
- *
- * @param[out] geo
- *     Output vector of SConeProjectionVec, size = Ang
- *
- * @param[in] Ang
- *     Number of projection views
- *
- * @param[in] Nu
- *     Number of detector columns (u direction)
- *
- * @param[in] Nv
- *     Number of detector rows (v direction)
- *
- * @param[in] SOD
- *     Source-to-isocenter distance
- *
- * @param[in] SDD
- *     Source-to-detector distance
- *
- * @param[in] du
- *     Detector pixel width (column spacing)
- *
- * @param[in] dv
- *     Detector pixel height (row spacing)
- *
- * @param[in] offsetU_pix
- *     Optional detector offset in u (columns), in pixel units
- *     Positive values shift the detector towards +detU
- *
- * @param[in] offsetV_pix
- *     Optional detector offset in v (rows), in pixel units
- *     Positive values shift the detector towards +detV
- */
+     * @brief Circular cone-beam vector geometry with theta=0 at source on -X axis
+     *
+     * World: X right, Y forward, Z up (RH)
+     * Rotation: theta increases CCW around +Z
+     *
+     * Base at theta=0:
+     *   src0  = (-SOD, 0, 0)
+     *   detC0 = ( +ODD, 0, 0)   where ODD = SDD - SOD
+     *   detU0 = ( 0,  -du, 0)   (u increases toward -Y at theta=0)
+     *   detV0 = ( 0,   0, dv)   (v increases toward +Z)
+     *
+     * Then apply Rz(theta) to src0, detC0, detU0, detV0.
+     *
+     * Pixel (u=0,v=0):
+     *   detS = detC
+     *        - ((Nu-1)/2 + offsetU_pix) * detU
+     *        - ((Nv-1)/2 + offsetV_pix) * detV
+     *
+     * Tilt (optional, detector-local axes, order u->v->n):
+     *   detTiltUVN = (phi_u, phi_v, phi_n) in radians
+     *   Axes are defined at each view *before tilt*:
+     *     e_u = normalize(detU)
+     *     e_v = normalize(detV)
+     *     e_n = normalize(detC - src)   (center ray direction)
+     *
+     *   Applied order (column vectors):
+     *     u then v then n
+     *
+     * Angle storage:
+     *   geo[a].ang.x = theta[a] (rad), ang.y/z reserved
+     */
     inline void build_circular_vec_geometry_from_theta(
         std::vector<SConeProjectionVec>& geo,
-        const float* theta,          // [Ang] 外部角度（弧度）
+        const float* theta,          // [Ang] radians
         int Ang, int Nu, int Nv,
         float SOD, float SDD,
         float du, float dv,
         float offsetU_pix = 0.0f,
-        float offsetV_pix = 0.0f)
+        float offsetV_pix = 0.0f,
+        float3 detTiltUVN = make_float3(0.0f, 0.0f, 0.0f)) // (phi_u, phi_v, phi_n)
     {
         geo.resize(Ang);
 
         const float ODD = SDD - SOD;
 
+        // theta=0 reference (source at -X)
+        const float3 src0 = make_float3(-SOD, 0.0f, 0.0f);
+        const float3 detC0 = make_float3(ODD, 0.0f, 0.0f);
+
+        // Match MATLAB-style U(theta) = du*[sinθ,-cosθ,0]  => U(0)=(0,-du,0)
+        const float3 detU0 = make_float3(0.0f, -du, 0.0f);
+        const float3 detV0 = make_float3(0.0f, 0.0f, dv);
+
+        // pixel-center offsets (in pixels)
+        const float cu = 0.5f * (Nu - 1) + offsetU_pix;
+        const float cv = 0.5f * (Nv - 1) + offsetV_pix;
+
+        const float phi_u = detTiltUVN.x;
+        const float phi_v = detTiltUVN.y;
+        const float phi_n = detTiltUVN.z;
+
         for (int a = 0; a < Ang; ++a) {
 
-            float t = theta[a];
-            float c = cosf(t);
-            float s = sinf(t);
+            const float t = theta[a];
 
-            // -------------------------------
-            // Source (绕 +Z)
-            // S = [ SOD*sinθ , -SOD*cosθ , 0 ]
-            // -------------------------------
-            float3 src = make_float3(
-                SOD * s,
-                -SOD * c,
-                0.0f
-            );
+            // Rotate all base elements by gantry angle (about origin)
+            const float3 src = f3_rotz_p(src0, t);
+            const float3 detC = f3_rotz_p(detC0, t);
+            float3 detU = f3_rotz(detU0, t);
+            float3 detV = f3_rotz(detV0, t);
 
-            // -------------------------------
-            // Detector center
-            // D = [ -ODD*sinθ , ODD*cosθ , 0 ]
-            // -------------------------------
-            float3 detC = make_float3(
-                -ODD * s,
-                ODD * c,
-                0.0f
-            );
+            // Optional detector tilts in detector-local axes (body-fixed), order u -> v -> n
+            if ((fabs(phi_u) >= 1e-4f) || (fabs(phi_v) >= 1e-4f) || (fabs(phi_n) >= 1e-4f)) {
 
-            // -------------------------------
-            // Detector basis
-            // -------------------------------
-            float3 detU = make_float3(
-                du * c,
-                du * s,
-                0.0f
-            );
+                // 1) rotate about current U axis
+                {
+                    float3 u_unit = f3_normalize(detU);
+                    detU = f3_rot_axis(detU, u_unit, phi_u);
+                    detV = f3_rot_axis(detV, u_unit, phi_u);
+                }
 
-            float3 detV = make_float3(
-                0.0f, 0.0f, dv
-            );
+                // 2) rotate about UPDATED V axis
+                {
+                    float3 v_unit = f3_normalize(detV);
+                    detU = f3_rot_axis(detU, v_unit, phi_v);
+                    detV = f3_rot_axis(detV, v_unit, phi_v);
+                }
 
-            // -------------------------------
-            // Detector origin (pixel 0,0)
-            // -------------------------------
-            float cu = (Nu - 1) * 0.5f + offsetU_pix;
-            float cv = (Nv - 1) * 0.5f + offsetV_pix;
+                // 3) rotate about UPDATED detector normal n = U x V
+                {
+                    float3 n_unit = f3_normalize(f3_cross(detU, detV)); // right-hand: U×V
+                    detU = f3_rot_axis(detU, n_unit, phi_n);
+                    detV = f3_rot_axis(detV, n_unit, phi_n);
+                }
+            }
 
-            float3 detS = make_float3(
-                detC.x - cu * detU.x - cv * detV.x,
-                detC.y - cu * detU.y - cv * detV.y,
-                detC.z - cu * detU.z - cv * detV.z
-            );
+            // Detector origin (pixel 0,0) from center + basis
+            const float3 detS = f3_sub(detC, f3_add(f3_mul(detU, cu), f3_mul(detV, cv)));
 
-            geo[a] = SConeProjectionVec{ src, detS, detU, detV };
+            // store angle (rad) in ang.x for alignment-friendly layout
+            const float3 ang = make_float3(t, 0.0f, 0.0f);
+
+            // Ensure SConeProjectionVec field order matches this initializer:
+            // { src, detS, detU, detV, ang }
+            geo[a] = SConeProjectionVec{ src, detS, detU, detV, ang };
         }
     }
-
 
     inline void build_circular_vec_geometry(
         std::vector<SConeProjectionVec>& geo,
@@ -175,22 +123,23 @@ namespace YK {
         float SOD, float SDD,
         float du, float dv,
         float offsetU_pix = 0.0f,
-        float offsetV_pix = 0.0f)
+        float offsetV_pix = 0.0f,
+        float3 detTiltUVN = make_float3(0.0f, 0.0f, 0.0f)) // default 0
     {
         std::vector<float> theta(Ang);
-        const float two_pi = 2.0f * 3.14159265358979323846f;
+        const float two_pi = 2.0f * CUDA_PI;
 
-        for (int a = 0; a < Ang; ++a)
+        for (int a = 0; a < Ang; ++a) {
             theta[a] = two_pi * a / Ang;
+        }
 
         build_circular_vec_geometry_from_theta(
             geo, theta.data(),
             Ang, Nu, Nv,
             SOD, SDD,
             du, dv,
-            offsetU_pix, offsetV_pix);
+            offsetU_pix, offsetV_pix,
+            detTiltUVN);
     }
-
-
 
 } // namespace YK
