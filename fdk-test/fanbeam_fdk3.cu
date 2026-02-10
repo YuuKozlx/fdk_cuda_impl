@@ -131,7 +131,7 @@ __global__ void ramp_filter_kernel(cufftComplex* freq, int Nu_complex, int Nv, i
 // 5. 反投影内核 (修正了权重累加系数)
 __global__ void astra_bp_kernel(float* vol, int Nx, int Ny, int Nz,
     const float* proj, int Nu, int Nv, int Ntheta,
-    const SConeProjection* geom,
+    const SConeProjectionVec* geom,
     const float SID, const float voxel_size) {
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -258,9 +258,9 @@ int main00() {
         h_geom[t].fDetSY = det_center_y - (dims.iProjU - 1) * 0.5f * h_geom[t].fDetUY - (dims.iProjV - 1) * 0.5f * h_geom[t].fDetVY;
         h_geom[t].fDetSZ = 0 - (dims.iProjV - 1) * 0.5f * h_geom[t].fDetVZ;
     }
-    SConeProjection* d_geom;
-    cudaMalloc(&d_geom, dims.iProjAngles * sizeof(SConeProjection));
-    cudaMemcpy(d_geom, h_geom.data(), dims.iProjAngles * sizeof(SConeProjection), cudaMemcpyHostToDevice);
+    SConeProjectionVec* d_geom;
+    cudaMalloc(&d_geom, dims.iProjAngles * sizeof(SConeProjectionVec));
+    cudaMemcpy(d_geom, h_geom.data(), dims.iProjAngles * sizeof(SConeProjectionVec), cudaMemcpyHostToDevice);
 
     // ==========================================================
     // 第一步：预加权

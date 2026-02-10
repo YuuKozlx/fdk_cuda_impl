@@ -110,7 +110,6 @@ namespace YK {
             }
 
             // ---------------- managers ----------------
-            pw_.init(Nu_, Nv_, 256, stream_);
             align_.init(Nu_, Nv_, stream_);
             paddedN_ = align_.paddedN();
 

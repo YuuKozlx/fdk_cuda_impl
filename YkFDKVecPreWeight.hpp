@@ -1,129 +1,114 @@
 #pragma once
+#include <cooperative_groups.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
+#include <algorithm>
+
+#include <cmath>
+#include <crt/host_defines.h>
+#include <driver_types.h>
+#include <vector_types.h>
 #include "YkGlobals.h"
 #include "YkVecGeo.hpp"
 #include "YkVecOperation.hpp"
 
 namespace YK {
+    namespace cg = cooperative_groups;
 
-    // ============================================================
-    // Vec geometry preweight (chunk batch, power=1)
-    // w_pre(u,v) = |(detS-src)·n_hat| / |(Q-src)|
-    // Q = detS + u*detU + v*detV
-    //
-    // layout: [K][Nv][Nu] contiguous
-    // ============================================================
-    __global__ void _kernel_preweight_vec_chunk_warprow(
-        const float* __restrict__ src,              // [K*Nv*Nu]
-        float* __restrict__ dst,                    // [K*Nv*Nu]
-        const SConeProjectionVec* __restrict__ geo, // [Ang]
-        int Nu, int Nv,
-        int K, int base_a)
+
+    // normalize policy (host)
+    inline SKernelLaunchPolicy normalizePreweightPolicy(SKernelLaunchPolicy p) {
+        if (p.block_threads < 32) p.block_threads = 32;
+        p.block_threads = (p.block_threads + 31) & ~31; // multiple of 32
+        p.block_threads = std::min(p.block_threads, 1024);
+        return p;
+    }
+
+    // ---------------------- kernel ----------------------
+    __global__ void preweight_vec_chunk_rowwarp_kernel(
+        const float* __restrict__ src,                 // [K*Nv*Nu]
+        float* __restrict__ dst,                       // [K*Nv*Nu]
+        const SConeProjectionVec* __restrict__ geo,    // [Ang]
+        const SFDKGeoParamPerView* __restrict__ gv,  // [Ang]
+        int Nu, int Nv, int K, int base_a, int Ang,
+        int bounds_check)                               // 0/1
     {
-        // one warp processes one detector row (fixed v) of one view i
-        int warp_global = (blockIdx.x * blockDim.x + threadIdx.x) >> 5; // /32
-        int lane = threadIdx.x & 31;
+        cg::thread_block tb = cg::this_thread_block();
+        cg::thread_block_tile<32> warp = cg::tiled_partition<32>(tb);
 
-        int total_warps = K * Nv;
+        const int warps_per_block = int(tb.size() / 32);
+        const int warp_id_in_block = int(tb.thread_rank() / 32);
+        const int warp_global = int(blockIdx.x) * warps_per_block + warp_id_in_block;
+
+        const int total_warps = K * Nv;
         if (warp_global >= total_warps) return;
 
-        int i = warp_global / Nv;       // view index within chunk
-        int v = warp_global - i * Nv;   // row
-        int a = base_a + i;
+        const int i = warp_global / Nv;
+        const int v = warp_global - i * Nv;
+        const int a = base_a + i;
 
-        SConeProjectionVec g = geo[a];
-        float3 U = g.detU;
-        float3 V = g.detV;
+        if (bounds_check && (a < 0 || a >= Ang)) return;
 
-        float3 n = f3_cross(U, V);
-        float nlen2 = f3_dot(n, n);
-        if (nlen2 < 1e-20f) return;
+        const SConeProjectionVec g = geo[a];
+        const float DSD_n_abs = gv[a].SDD_mm;
 
-        float invn = rsqrtf(nlen2);
-        float3 nh = make_float3(n.x * invn, n.y * invn, n.z * invn);
+        const float3 detSv = f3_add(g.detS, f3_mul(g.detV, (float)v));
+        const size_t base = ((size_t)i * (size_t)Nv + (size_t)v) * (size_t)Nu;
 
-        float DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
-        if (DSD_n < 0.0f) DSD_n = -DSD_n;
+        for (int u = (int)warp.thread_rank(); u < Nu; u += 32) {
+            const float3 Q = f3_add(detSv, f3_mul(g.detU, (float)u));
+            const float3 QS = f3_sub(Q, g.src);
 
-        // precompute detS + v*V
-        float3 detSv = f3_add(g.detS, f3_mul(V, (float)v));
+            const float r2 = f3_dot(QS, QS);
+            const float r = sqrtf(fmaxf(r2, 1e-20f));
 
-        size_t base = ((size_t)i * (size_t)Nv + (size_t)v) * (size_t)Nu;
+            const float w = (DSD_n_abs > 0.0f) ? (DSD_n_abs / r) : 0.0f;
 
-        for (int u = lane; u < Nu; u += 32) {
-            float3 Q = f3_add(detSv, f3_mul(U, (float)u));
-            float3 QS = f3_sub(Q, g.src);
-
-            float r2 = f3_dot(QS, QS);
-            float r = sqrtf(fmaxf(r2, 1e-20f));
-
-            float w = DSD_n / r;
-            dst[base + (size_t)u] = src[base + (size_t)u] * w;
+            const size_t idx = base + (size_t)u;
+            dst[idx] = src[idx] * w;
         }
     }
 
+    // ---------------------- manager (name kept) ----------------------
     class PreweightManagerVec {
     public:
-        // init: only needs Nu/Nv and default launch policy
-        bool init(int Nu, int Nv,
-            int blockThreads = 256,   // must be multiple of 32
-            cudaStream_t stream = 0)
-        {
-            Nu_ = Nu; Nv_ = Nv;
-            stream_ = stream;
+        PreweightManagerVec() { setPolicy(SKernelLaunchPolicy{}); }
+        explicit PreweightManagerVec(const SKernelLaunchPolicy& p) { setPolicy(p); }
 
-            if (blockThreads < 32 || (blockThreads % 32) != 0) blockThreads = 256;
-            blockThreads_ = blockThreads;
+        void setPolicy(const SKernelLaunchPolicy& p) { policy_ = normalizePreweightPolicy(p); }
+        const SKernelLaunchPolicy& policy() const { return policy_; }
 
-            inited_ = (Nu_ > 0 && Nv_ > 0);
-            return inited_;
-        }
-
-        void setStream(cudaStream_t s) { stream_ = s; }
-
-        // apply chunk: src/dst are [K*Nv*Nu] contiguous
-        // geo is device pointer [Ang]
-        void applyChunk(const float* d_src_chunk,
-            float* d_dst_chunk,
+        void applyChunk(const SDimensions3D& dims,
+            const float* d_src_chunk, float* d_dst_chunk,
             const SConeProjectionVec* d_geo,
-            int K, int base_a) const
+            const SFDKGeoParamPerView* d_gv,
+            int K, int base_a,
+            cudaStream_t stream = (cudaStream_t)0 ) const
         {
-            if (!inited_ || K <= 0) return;
+            if (!d_src_chunk || !d_dst_chunk || !d_geo || !d_gv) return;
 
-            const int warps = K * Nv_;
-            const int warpsPerBlock = blockThreads_ / 32;
-            const int blocks = (warps + warpsPerBlock - 1) / warpsPerBlock;
+            const int Nu = (int)dims.iProjU;
+            const int Nv = (int)dims.iProjV;
+            const int Ang = (int)dims.iProjAngles;
 
-            _kernel_preweight_vec_chunk_warprow << <blocks, blockThreads_, 0, stream_ >> > (
-                d_src_chunk, d_dst_chunk, d_geo, Nu_, Nv_, K, base_a);
+            if (Nu <= 0 || Nv <= 0 || Ang <= 0 || K <= 0) return;
+
+            const int blockThreads = policy_.block_threads;
+            const int warps_per_block = blockThreads / 32;
+            const int total_warps = K * Nv;
+            const int blocks = (total_warps + warps_per_block - 1) / warps_per_block;
+
+            preweight_vec_chunk_rowwarp_kernel << <blocks, blockThreads, 0, stream >> > (
+                d_src_chunk, d_dst_chunk, d_geo, d_gv,
+                Nu, Nv, K, base_a, Ang,
+                policy_.bounds_check ? 1 : 0);
 
             YK_CUDA_KERNEL_CHECK();
         }
 
-        int Nu() const { return Nu_; }
-        int Nv() const { return Nv_; }
-        int blockThreads() const { return blockThreads_; }
-
     private:
-        int Nu_ = 0, Nv_ = 0;
-        int blockThreads_ = 256;
-        cudaStream_t stream_ = 0;
-        bool inited_ = false;
+        SKernelLaunchPolicy policy_{};
     };
 
-    // 统一风格 helper（可选）
-    inline void executeFdkPreweightVecChunk(
-        PreweightManagerVec& pw,
-        const float* d_in_chunk, float* d_out_chunk,
-        const SConeProjectionVec* d_geo,
-        int K, int base_a,
-        cudaStream_t stream = 0)
-    {
-        pw.setStream(stream);
-        pw.applyChunk(d_in_chunk, d_out_chunk, d_geo, K, base_a);
-    }
-
 } // namespace YK
-

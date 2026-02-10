@@ -54,7 +54,7 @@ namespace YK {
 
         const float ODD = SDD - SOD;
 
-        // theta=0 reference (source at -X)
+        // theta=0 reference (source at -X) 源点必须这么定义
         const float3 src0 = make_float3(-SOD, 0.0f, 0.0f);
         const float3 detC0 = make_float3(ODD, 0.0f, 0.0f);
 

@@ -24,7 +24,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="fdk-test\fanbeam_fdk3.cu" />
     <CudaCompile Include="testmain.cu" />
     <CudaCompile Include="YkUtil.cu">
       <Filter>util</Filter>
@@ -38,9 +37,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="YkGlobals.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKPreWeight.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="YkVecGeo.hpp">
@@ -79,17 +75,14 @@
     <ClInclude Include="YkFDKVecGeoDerived.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="YkFDKBackProjection.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="YkIoDump.hpp">
       <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="YkFDKVecOnlineStreamer.hpp">
-      <Filter>vec_fdk</Filter>
-    </ClInclude>
     <ClInclude Include="YKFDKFilter.hpp">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YkMem3d.hpp">
+      <Filter>util</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

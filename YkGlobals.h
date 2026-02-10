@@ -9,23 +9,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
-#include <vector_types.h>
 
 
-// 几何结构定义
-struct SConeProjection {
-    // the source
-    double fSrcX, fSrcY, fSrcZ;
-
-    // the origin ("bottom left") of the (flat-panel) detector
-    double fDetSX, fDetSY, fDetSZ;
-
-    // the U-edge of a detector pixel
-    double fDetUX, fDetUY, fDetUZ;
-
-    // the V-edge of a detector pixel
-    double fDetVX, fDetVY, fDetVZ;
-};
 
 struct SDimensions3D {
     unsigned int iVolX;
@@ -35,6 +20,28 @@ struct SDimensions3D {
     unsigned int iProjU; // number of detectors in the U direction
     unsigned int iProjV; // number of detectors in the V direction
 };
+
+struct SProjDims {
+    unsigned int Nu;
+    unsigned int Nv;
+    unsigned int Ang;
+
+    static SProjDims from(const SDimensions3D& d) {
+        return { d.iProjU, d.iProjV, d.iProjAngles };
+    }
+};
+
+struct SVolDims {
+    unsigned int Nx;
+    unsigned int Ny;
+    unsigned int Nz;
+
+    static SVolDims from(const SDimensions3D& d) {
+        return { d.iVolX, d.iVolY, d.iVolZ };
+    }
+};
+
+
 
 struct alignas(16) SConeProjectionVec {
     float3 src;      // source position (world)
@@ -46,18 +53,30 @@ struct alignas(16) SConeProjectionVec {
                     // angle.z : reserved
 };
 
+// ---------------------- launch policy ----------------------
+struct SKernelLaunchPolicy {
+    int block_threads = 256;   // warp-row: must be multiple of 32
+    bool bounds_check = true;  // 是否检查 a in [0, Ang)
+};
 
-#ifndef YK_FM_LOGE
-#define YK_FM_LOGE(fmt, ...) fprintf(stderr, "[FilterManager][E] " fmt "\n", ##__VA_ARGS__)
-#endif
+struct SFDKGeoParamPerView
+{
+    float du_mm = 1.0f;     // |detU|
+    float dv_mm = 1.0f;     // |detV|
 
-#ifndef YK_FM_LOGW
-#define YK_FM_LOGW(fmt, ...) fprintf(stderr, "[FilterManager][W] " fmt "\n", ##__VA_ARGS__)
-#endif
+    float offsetU_pix = 0.0f;
+    float offsetV_pix = 0.0f;
+    bool  offset_valid = true;
 
-#ifndef YK_FM_LOGI
-#define YK_FM_LOGI(fmt, ...) fprintf(stdout, "[FilterManager][I] " fmt "\n", ##__VA_ARGS__)
-#endif
+    float theta = 0.0f;     // unwrapped atan2(src.x, -src.y)
+    float dtheta = 0.0f;    // >= eps
+
+    float SOD_mm = 0.0f;        // |src - isocenter|
+    float SDD_mm = 0.0f;
+};
+
+
+
 
 
 
