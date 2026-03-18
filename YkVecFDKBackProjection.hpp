@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cuda_runtime_api.h>
 #include <sstream>
+
 #include "YkFDKFilter.hpp"
 #include "YkFDKVecAlignPadCrop.hpp"
 #include "YkFDKVecGeoDerived.hpp"
@@ -20,84 +21,72 @@
 #include "YkVecGeo.hpp"
 #include "YkVecOperation.hpp"
 
-namespace YK { 
-
+namespace YK {
 
     // ============================================================
-// project_uv + two denoms
-// denom_n = (P-S)·n_hat        (for plane intersection)
-// denom_c = (P-S)·d0_hat       (projection on central ray, what you want)
-// ============================================================
-    __device__ __forceinline__ bool project_uv_and_terms(
+    // Derived-based projector (device)
+    //   - u/v: by intersecting ray (src->P) with detector plane
+    //   - denom_c: (P-S)·ray0hat  (projection onto central ray direction)
+    // Uses exported per-view info (gv):
+    //   gv.nhat, gv.DSD_n, gv.ray0hat,
+    //   gv.basis_valid, gv.UU, gv.VV, gv.UV, gv.invDetUV
+    //
+    // NOTE
+    //   - We do a LOCAL flip (nhat,DSD_n) only for intersection to enforce t>0.
+    //     This does NOT modify stored gv.nhat / gv.DSD_n.
+    // ============================================================
+    __device__ __forceinline__ bool project_uv_and_terms_derived(
         const SConeProjectionVec& g,
+        const SFDKGeoParamPerView& gv,
         float3 P,
         float& u_pix,
         float& v_pix,
         float& denom_c)
     {
-        const float3 U = g.detU;
-        const float3 V = g.detV;
-
-        // detector normal
-        float3 n = f3_cross(U, V);
-        float nlen2 = f3_dot(n, n);
-        if (nlen2 < 1e-20f) return false;
-
-        float invn = rsqrtf(nlen2);
-        float3 nh = make_float3(n.x * invn, n.y * invn, n.z * invn);
-
         // ray from source to voxel
-        float3 dir = f3_sub(P, g.src);
+        const float3 dir = f3_sub(P, g.src);
 
-        // (A) plane-normal denom (for intersection)
-        float denom_n = f3_dot(dir, nh);
+        // denom_c = (P-S) · ray0hat  (projection on central ray direction you defined)
+        denom_c = f3_dot(dir, gv.ray0hat);
+
+        // plane intersection path uses exported detector normal & DSD_n
+        float3 nh_local = gv.nhat;
+        float  DSD_n_local = gv.DSD_n;
+
+        float denom_n = f3_dot(dir, nh_local);
         if (fabsf(denom_n) < 1e-8f) return false;
+        if (fabsf(DSD_n_local) < 1e-8f) return false;
 
-        // (B) central-ray projection denom (what you want)
-        float ca = cosf(g.angle.x);
-        float sa = sinf(g.angle.x);
-        
-        float3 d0 = make_float3(ca, sa, 0.0f);
-        denom_c = f3_dot(dir, d0);
-        // denom_c 可以为负；你是否要丢弃由你决定（通常 P 在源点“后方”才会负）
-
-        // signed distance from source to detector plane along normal
-        float DSD_n = f3_dot(f3_sub(g.detS, g.src), nh);
-        if (fabsf(DSD_n) < 1e-8f) return false;
-
-        // enforce t>0 by consistent flipping (only affects plane intersection path)
-        if (DSD_n * denom_n < 0.0f) {
-            nh = make_float3(-nh.x, -nh.y, -nh.z);
+        // local flip only for intersection to enforce t>0
+        if (DSD_n_local * denom_n < 0.0f) {
+            nh_local = make_float3(-nh_local.x, -nh_local.y, -nh_local.z);
             denom_n = -denom_n;
-            DSD_n = -DSD_n;
+            DSD_n_local = -DSD_n_local;
         }
 
-        // correct plane intersection
-        float t = DSD_n / denom_n;
+        const float t = DSD_n_local / denom_n;
         if (t <= 0.0f) return false;
 
-        float3 Q = f3_add(g.src, f3_mul(dir, t)); // hit point on detector plane
-        float3 D = f3_sub(Q, g.detS);
+        // hit point on detector plane
+        const float3 Q = f3_add(g.src, f3_mul(dir, t));
+        const float3 D = f3_sub(Q, g.detS);
 
-        // solve D = u*U + v*V
-        float UU = f3_dot(U, U);
-        float VV = f3_dot(V, V);
-        float UV = f3_dot(U, V);
-        float DU = f3_dot(D, U);
-        float DV = f3_dot(D, V);
+        // detector basis solve using exported cache:
+        //   D = u*detU + v*detV  (detU,detV can be non-orthogonal)
+        if (!gv.basis_valid || gv.invDetUV == 0.0f) return false;
 
-        float det = UU * VV - UV * UV;
-        if (fabsf(det) < 1e-12f) return false;
+        const float DU = f3_dot(D, g.detU);
+        const float DV = f3_dot(D, g.detV);
 
-        u_pix = (DU * VV - DV * UV) / det;
-        v_pix = (-DU * UV + DV * UU) / det;
+        u_pix = (DU * gv.VV - DV * gv.UV) * gv.invDetUV;
+        v_pix = (-DU * gv.UV + DV * gv.UU) * gv.invDetUV;
         return true;
     }
 
-
-
     // ============================================================
-    // BP chunk kernel with per-view dtheta[a]
+    // BP chunk kernel (uses derived table)
+    //   weight: w = (SID^2) / (denom_c^2)
+    //   where SID is stored in gv.SOD_mm by your chosen definition
     // ============================================================
     __global__ void fdk_vec_backproject_chunk_kernel(
         const float* __restrict__ views_chunk,            // [K*Nv*Nu]
@@ -113,6 +102,7 @@ namespace YK {
         int z = blockIdx.z * blockDim.z + threadIdx.z;
         if (x >= Nx || y >= Ny || z >= Nz) return;
 
+        // NOTE: your coordinate convention kept as-is
         float3 P = make_float3(
             (y - (Ny - 1) * 0.5f) * vox,
             (x - (Nx - 1) * 0.5f) * vox,
@@ -127,16 +117,20 @@ namespace YK {
             const SConeProjectionVec& g = d_geo[a];
             const SFDKGeoParamPerView& gv = d_gv[a];
 
-            float u = 0.0f, v = 0.0f, denom = 0.0f;
-            if (!project_uv_and_terms(g, P, u, v, denom)) continue;
+            float u = 0.0f, v = 0.0f, denom_c = 0.0f;
+            if (!project_uv_and_terms_derived(g, gv, P, u, v, denom_c)) continue;
 
             const float* view_i = views_chunk + (size_t)i * (size_t)Nv * (size_t)Nu;
             float p = YK::Interp::sample2d(view_i, Nu, Nv, u, v);
 
-            // SOD comes from gv (you can define it as sqrt(src.x^2+src.y^2) or sqrt(src·src))
-            float SOD = gv.SOD_mm;
+            // IMPORTANT:
+            //   gv.SOD_mm stores SID by your definition (distance to plane through Z-axis with normal || central ray)
+            const float SID = gv.SOD_mm;
 
-            float w = (SOD * SOD) / (denom * denom);
+            const float denom2 = denom_c * denom_c;
+            if (denom2 < 1e-20f) continue;
+
+            const float w = (SID * SID) / denom2;
             acc += p * w * gv.dtheta;
         }
 
@@ -144,7 +138,9 @@ namespace YK {
         vol[vidx] += acc;
     }
 
-
+    // ============================================================
+    // Streaming recon (minimal fixes + use derived offsets correctly)
+    // ============================================================
     inline void fdk_vec_recon_streaming(
         const float* h_proj,                               // host [Ang*Nv*Nu]
         float* d_vol,                                      // device [Nz*Ny*Nx]
@@ -162,79 +158,56 @@ namespace YK {
         bool dumped = false;
 
         // ============================================================
-        // 0) CPU derived params (offset/dtheta/du0 etc.)
+        // 0) CPU derived params (theta/dtheta/du/dv/SID/SDD/offset/ray0hat/nhat/basis-cache...)
         // ============================================================
+        std::vector<SFDKGeoParamPerView> h_gv(dims.iPAng, SFDKGeoParamPerView{});
         GeoDerivedManagerVec derived;
         {
             GeoDerivedManagerVec::GeoDerivedOptions opt;
-            opt.offset_mode = GeoDerivedManagerVec::EOffsetMode::PerView;
-            opt.isocenter = make_float3(0.0f, 0.0f, 0.0f);
             opt.dtheta_eps = 1e-8f;
-            (void)derived.init(dims.iProjU, dims.iProjV, opt);
-            (void)derived.build_geo_params(h_geo);
+            (void)derived.build_geo_params(dims.iPU, dims.iPV, h_geo, h_gv);
         }
-        const auto& gv = derived.views();
-        const float du0 = derived.du0_mm();
 
         // ============================================================
         // 1) Upload geo
         // ============================================================
         SConeProjectionVec* d_geo = nullptr;
-        YK_CUDA_CHECK(cudaMalloc(&d_geo, (size_t)dims.iProjAngles * sizeof(SConeProjectionVec)));
+        YK_CUDA_CHECK(cudaMalloc(&d_geo, (size_t)dims.iPAng * sizeof(SConeProjectionVec)));
         YK_CUDA_CHECK(cudaMemcpyAsync(
             d_geo, h_geo.data(),
-            (size_t)dims.iProjAngles * sizeof(SConeProjectionVec),
+            (size_t)dims.iPAng * sizeof(SConeProjectionVec),
             cudaMemcpyHostToDevice, stream));
 
         // ============================================================
-        // 2) Upload dtheta
-        // ============================================================
-        float* d_dtheta = nullptr;
-        {
-            std::vector<float> h_dtheta(dims.iProjAngles, 1e-8f);
-            if ((int)gv.size() == dims.iProjAngles) {
-                for (int a = 0; a < dims.iProjAngles; ++a) h_dtheta[a] = gv[a].dtheta;
-            }
-            YK_CUDA_CHECK(cudaMalloc(&d_dtheta, (size_t)dims.iProjAngles * sizeof(float)));
-            YK_CUDA_CHECK(cudaMemcpyAsync(
-                d_dtheta, h_dtheta.data(),
-                (size_t)dims.iProjAngles * sizeof(float),
-                cudaMemcpyHostToDevice, stream));       
-        }
-
-        // ============================================================
-        // 2.5) Upload derived per-view table (gv)
+        // 2) Upload derived per-view table (gv)
         // ============================================================
         SFDKGeoParamPerView* d_gv = nullptr;
-        {
-            // gv 是 host vector，必须上传到 device
-            YK_CUDA_CHECK(cudaMalloc(&d_gv, (size_t)dims.iProjAngles * sizeof(SFDKGeoParamPerView)));
-            YK_CUDA_CHECK(cudaMemcpyAsync(
-                d_gv, gv.data(),
-                (size_t)dims.iProjAngles * sizeof(SFDKGeoParamPerView),
-                cudaMemcpyHostToDevice, stream));
-        }
+        YK_CUDA_CHECK(cudaMalloc(&d_gv, (size_t)dims.iPAng * sizeof(SFDKGeoParamPerView)));
+        YK_CUDA_CHECK(cudaMemcpyAsync(
+            d_gv, h_gv.data(),
+            (size_t)dims.iPAng * sizeof(SFDKGeoParamPerView),
+            cudaMemcpyHostToDevice, stream));
+
         // ============================================================
         // 3) Managers
         // ============================================================
         PreweightManagerVec pw;
-      
 
         AlignPadCropManagerVec align;
-        align.init(dims.iProjU, dims.iProjV, stream);
+        const int host_chunk = 1;
+        align.init(dims.iPU, dims.iPV, host_chunk, stream);
         const int paddedN = align.paddedN();
 
         FilterManager fm;
         // batch = Nv (每行做1D FFT)
-        if (!fm.init(dims.iProjU, paddedN, du0, /*batch=*/dims.iProjV, stream)) {
-            // hard fail: your paddedN/params mismatch
+        if (!fm.init(dims.iPU, paddedN, h_gv[0].du_mm, /*batch=*/dims.iPV, stream)) {
             YK_ASSERT(false && "FilterManager init failed");
         }
 
         // ============================================================
         // 4) Buffers
         // ============================================================
-        const size_t view_elems = (size_t)dims.iProjU * (size_t)dims.iProjV;
+        const size_t view_elems = (size_t)dims.iPU * (size_t)dims.iPV;
 
         float* d_view_in = nullptr; // [Nv*Nu]
         float* d_view_pw = nullptr; // [Nv*Nu]
@@ -245,19 +218,19 @@ namespace YK {
         YK_CUDA_CHECK(cudaMalloc(&d_view_in, view_elems * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_view_pw, view_elems * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_view_flt, view_elems * sizeof(float)));
-        YK_CUDA_CHECK(cudaMalloc(&d_padded, (size_t)dims.iProjV * (size_t)paddedN * sizeof(float)));
+        YK_CUDA_CHECK(cudaMalloc(&d_padded, (size_t)dims.iPV * (size_t)paddedN * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_chunk, (size_t)Kchunk * view_elems * sizeof(float)));
 
         YK_CUDA_CHECK(cudaMemsetAsync(
             d_vol, 0,
-            (size_t)dims.iVolX * (size_t)dims.iVolY* (size_t)dims.iVolZ * sizeof(float),
+            (size_t)dims.iVX * (size_t)dims.iVY * (size_t)dims.iVZ * sizeof(float),
             stream));
 
         // ============================================================
         // 5) Main loop
         // ============================================================
-        for (int base = 0; base < dims.iProjAngles; base += Kchunk) {
-            const int K = (base + Kchunk <= dims.iProjAngles) ? Kchunk : (dims.iProjAngles - base);
+        for (int base = 0; base < dims.iPAng; base += Kchunk) {
+            const int K = (base + Kchunk <= dims.iPAng) ? Kchunk : (dims.iPAng - base);
 
             for (int i = 0; i < K; ++i) {
                 const int a = base + i;
@@ -269,36 +242,19 @@ namespace YK {
                     view_elems * sizeof(float),
                     cudaMemcpyHostToDevice, stream));
 
-
-                // 单张 view：src/dst 只有 Nv*Nu，所以 K=1，base_a=a
+                // Single view: K=1, base_a=a
                 pw.applyChunk(dims, d_view_in, d_view_pw, d_geo, d_gv, /*K=*/1, /*base_a=*/a, stream);
-
 
                 // dump preweight once
                 if (!dumped && a == DUMP_A) {
                     dump.dumpDeviceF32_A("pw", a, d_view_pw, view_elems, stream);
                 }
 
-                // (2) pad with per-view offsetU
-                float offsetU = 0.0f;
-                if ((int)gv.size() == dims.iProjAngles && gv[a].offset_valid) offsetU = gv[a].offsetU_pix;
+                // (2) pad with per-view offsetU (pixel)
+                std::vector<float> offsetU(1, 0.0f);
+                offsetU[0] = h_gv[a].offsetU_pix;
 
-                align.setStream(stream);
-                align.pad(d_view_pw, d_padded, offsetU);
-
-                // dump padded once + meta
-                if (!dumped && a == DUMP_A) {
-                    dump.dumpDeviceF32_A("pad", a, d_padded, (size_t)dims.iProjV * (size_t)paddedN, stream);
-
-                    std::ostringstream ss;
-                    ss << "a=" << a << "\n";
-                    ss << "Nu=" << dims.iProjU << " Nv=" << dims.iProjV << " paddedN=" << paddedN << "\n";
-                    ss << "offsetU_pix=" << offsetU << "\n";
-                    ss << "start_u=" << align.lastStartU() << "\n";
-                    ss << "du0_mm=" << du0 << "\n";
-                    if ((int)gv.size() == dims.iProjAngles) ss << "dtheta=" << gv[a].dtheta << "\n";
-                    dump.dumpText_A("meta", a, ss.str());
-                }
+                align.padChunk(d_view_pw, d_padded, offsetU);
 
                 // (3) filter in-place on padded
                 fm.setStream(stream);
@@ -306,11 +262,11 @@ namespace YK {
 
                 // dump filtered padded once
                 if (!dumped && a == DUMP_A) {
-                    dump.dumpDeviceF32_A("fltpad", a, d_padded, (size_t)dims.iProjV* (size_t)paddedN, stream);
+                    dump.dumpDeviceF32_A("fltpad", a, d_padded, (size_t)dims.iPV * (size_t)paddedN, stream);
                 }
 
                 // (4) crop back
-                align.crop(d_padded, d_view_flt);
+                align.cropChunk(d_padded, d_view_flt);
 
                 // dump crop once -> then disable
                 if (!dumped && a == DUMP_A) {
@@ -329,14 +285,15 @@ namespace YK {
 
             // BP chunk
             dim3 block(8, 8, 4);
-            dim3 grid((dims.iVolX + block.x - 1) / block.x,
-                (dims.iVolY + block.y - 1) / block.y,
-                (dims.iVolZ+ block.z - 1) / block.z);
+            dim3 grid(
+                (dims.iVX + block.x - 1) / block.x,
+                (dims.iVY + block.y - 1) / block.y,
+                (dims.iVZ + block.z - 1) / block.z);
 
             fdk_vec_backproject_chunk_kernel << <grid, block, 0, stream >> > (
                 d_chunk, d_geo, d_gv, d_vol,
-                dims.iVolX, dims.iVolY, dims.iVolZ, vox,
-                dims.iProjU, dims.iProjV,
+                dims.iVX, dims.iVY, dims.iVZ, vox,
+                dims.iPU, dims.iPV,
                 K, base);
             YK_CUDA_KERNEL_CHECK();
         }
@@ -345,7 +302,6 @@ namespace YK {
         // 6) Cleanup
         // ============================================================
         YK_CUDA_CHECK(cudaFree(d_geo));
-        YK_CUDA_CHECK(cudaFree(d_dtheta));
         YK_CUDA_CHECK(cudaFree(d_view_in));
         YK_CUDA_CHECK(cudaFree(d_view_pw));
         YK_CUDA_CHECK(cudaFree(d_view_flt));
@@ -353,8 +309,5 @@ namespace YK {
         YK_CUDA_CHECK(cudaFree(d_chunk));
         YK_CUDA_CHECK(cudaFree(d_gv));
     }
-
-
-
 
 } // namespace YK

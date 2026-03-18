@@ -11,6 +11,9 @@
 
 #include "Yktest_fft.hpp"
 #include "Yktest_fdkflter.hpp"
+#include "YkMem3d.hpp"
+#include "Yktest_mem3d.hpp"
+#include "Yktest_dataobject.hpp"
 //#include "YkFdkVecOnlineStreamer.hpp"
 
 
@@ -32,20 +35,20 @@ static bool write_raw_float(const char* path, const std::vector<float>& data) {
 
 int main_fdk() {
     SDimensions3D dims;
-    dims.iProjU = 256; dims.iProjV = 256; dims.iProjAngles = 360;
-    dims.iVolX = 512; dims.iVolY = 512; dims.iVolZ = 100;
+    dims.iPU = 256; dims.iPV = 256; dims.iPAng = 360;
+    dims.iVX = 512; dims.iVY = 512; dims.iVZ = 100;
 
     float SID = 500.0f;
     float SDD = 1000.0f;
     float du = 1.0f, dv = 1.0f;
     float vox = 0.5f;
 
-    int Nu = (int)dims.iProjU;
-    int Nv = (int)dims.iProjV;
-    int Ang = (int)dims.iProjAngles;
-    int Nx = (int)dims.iVolX;
-    int Ny = (int)dims.iVolY;
-    int Nz = (int)dims.iVolZ;
+    int Nu = (int)dims.iPU;
+    int Nv = (int)dims.iPV;
+    int Ang = (int)dims.iPAng;
+    int Nx = (int)dims.iVX;
+    int Ny = (int)dims.iVY;
+    int Nz = (int)dims.iVZ;
 
     const size_t view_elems = (size_t)Nu * Nv;
     const size_t proj_elems = view_elems * (size_t)Ang;
@@ -252,11 +255,16 @@ int main_fdk() {
 //}
 
 
+
 int main() {
     //YKTest::testFFT();
     main_fdk();
     //main_fdk_online();
     //YKTest::testFilterWeightsSpectra_RamLak();
+    YKTest::test_gpumem3d();
+    YKTest::test_mem_data_integration_wrap();
+    YKTest::test_cpu_wrap_copy();
+
     return 0;
 }
 

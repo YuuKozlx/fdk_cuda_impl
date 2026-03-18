@@ -1,145 +1,380 @@
 // YkAlignPadCropVec.hpp
 #pragma once
-#include <cmath>
+
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <cooperative_groups.h>
 
-#include <vector_types.h>
-#include "YkGlobals.h"
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+#include "YkGlobals.h" // SKernelLaunchPolicy, YK_CUDA_CHECK, YK_CUDA_KERNEL_CHECK, etc.
 
 namespace YK {
+    namespace cg = cooperative_groups;
 
     // ============================================================
-    // pad: [Nv*Nu] -> [Nv*paddedN] using start_u
+    // Policy (same style as preweight)
     // ============================================================
-    __global__ void _kernel_pad_startu(
-        const float* __restrict__ src,  // [Nv*Nu]
-        float* __restrict__ dst,        // [Nv*paddedN]
-        int Nu, int Nv, int paddedN,
-        int start_u)
-    {
-        int u = blockIdx.x * blockDim.x + threadIdx.x;
-        int v = blockIdx.y;
-        if (u >= paddedN || v >= Nv) return;
-
-        int su = u - start_u;
-        float val = 0.0f;
-        if ((unsigned)su < (unsigned)Nu) val = src[v * Nu + su];
-        dst[v * paddedN + u] = val;
+    inline SKernelLaunchPolicy normalizeAlignPadCropPolicy(SKernelLaunchPolicy p) {
+        if (p.block_threads < 32) p.block_threads = 32;
+        p.block_threads = (p.block_threads + 31) & ~31; // multiple of 32
+        p.block_threads = std::min(p.block_threads, 1024);
+        return p;
     }
 
     // ============================================================
-    // crop: [Nv*paddedN] -> [Nv*Nu] using start_u
+    // helpers
     // ============================================================
-    __global__ void _kernel_crop_startu(
-        const float* __restrict__ src,  // [Nv*paddedN]
-        float* __restrict__ dst,        // [Nv*Nu]
-        int Nu, int Nv, int paddedN,
-        int start_u)
-    {
-        int u = blockIdx.x * blockDim.x + threadIdx.x;
-        int v = blockIdx.y;
-        if (u >= Nu || v >= Nv) return;
+    __host__ __device__ __forceinline__ int computePaddedN_nextPow2_2Nu(int Nu) {
+        int need = 2 * Nu;
+        int n = 1;
+        while (n < need) n <<= 1;
+        return n;
+    }
 
-        int su = start_u + u;
-        float val = 0.0f;
-        if ((unsigned)su < (unsigned)paddedN) val = src[v * paddedN + su];
-        dst[v * Nu + u] = val;
+    __host__ __device__ __forceinline__ int computeStartU_centerAxis(int Nu, int paddedN, float offsetU_pix) {
+        // axis_idx = (Nu-1)/2 + offsetU_pix
+        const float axis_idx = (Nu - 1) * 0.5f + offsetU_pix;
+        return (int)lrintf(paddedN * 0.5f - axis_idx);
     }
 
     // ============================================================
-    // AlignPadCropManagerVec
-    //  - owns paddedN policy (nextPow2(2*Nu))
-    //  - computes start_u from offsetU_pix
-    //  - pad -> (filter in between) -> crop (using same start_u)
+    // row-warp pad kernel
+    //  - 1 warp handles one row: row = i*Nv + v
+    //  - lane handles u with stride 32
+    // ============================================================
+    __global__ void align_pad_chunk_rowwarp_kernel(
+        const float* __restrict__ src,       // [K*Nv*Nu]
+        float* __restrict__ dst,             // [K*Nv*paddedN]
+        const int* __restrict__ startu,      // [K]
+        int Nu, int Nv, int paddedN,
+        int K,
+        int bounds_check)                    // 0/1
+    {
+        cg::thread_block tb = cg::this_thread_block();
+        cg::thread_block_tile<32> warp = cg::tiled_partition<32>(tb);
+
+        const int warps_per_block = int(tb.size() / 32);
+        const int warp_id_in_block = int(tb.thread_rank() / 32);
+        const int warp_global = int(blockIdx.x) * warps_per_block + warp_id_in_block;
+
+        const int total_warps = K * Nv; // rows
+        if (warp_global >= total_warps) return;
+
+        const int i = warp_global / Nv;
+        const int v = warp_global - i * Nv;
+        const int sU = startu[i];
+
+        const size_t base_src = ((size_t)i * (size_t)Nv + (size_t)v) * (size_t)Nu;
+        const size_t base_dst = ((size_t)i * (size_t)Nv + (size_t)v) * (size_t)paddedN;
+
+        for (int u = (int)warp.thread_rank(); u < paddedN; u += 32) {
+            int su = u - sU;
+            float val = 0.0f;
+
+            if (!bounds_check) {
+                // caller guarantees su in [0,Nu)
+                val = src[base_src + (size_t)su];
+            }
+            else {
+                if ((unsigned)su < (unsigned)Nu) val = src[base_src + (size_t)su];
+            }
+
+            dst[base_dst + (size_t)u] = val;
+        }
+    }
+
+    // ============================================================
+    // row-warp crop kernel
+    //  - src: [K*Nv*paddedN]
+    //  - dst: [K*Nv*Nu]
+    // ============================================================
+    __global__ void align_crop_chunk_rowwarp_kernel(
+        const float* __restrict__ src,       // [K*Nv*paddedN]
+        float* __restrict__ dst,             // [K*Nv*Nu]
+        const int* __restrict__ startu,      // [K]
+        int Nu, int Nv, int paddedN,
+        int K,
+        int bounds_check)                    // 0/1
+    {
+        cg::thread_block tb = cg::this_thread_block();
+        cg::thread_block_tile<32> warp = cg::tiled_partition<32>(tb);
+
+        const int warps_per_block = int(tb.size() / 32);
+        const int warp_id_in_block = int(tb.thread_rank() / 32);
+        const int warp_global = int(blockIdx.x) * warps_per_block + warp_id_in_block;
+
+        const int total_warps = K * Nv;
+        if (warp_global >= total_warps) return;
+
+        const int i = warp_global / Nv;
+        const int v = warp_global - i * Nv;
+        const int sU = startu[i];
+
+        const size_t base_src = ((size_t)i * (size_t)Nv + (size_t)v) * (size_t)paddedN;
+        const size_t base_dst = ((size_t)i * (size_t)Nv + (size_t)v) * (size_t)Nu;
+
+        for (int u = (int)warp.thread_rank(); u < Nu; u += 32) {
+            int su = sU + u;
+            float val = 0.0f;
+
+            if (!bounds_check) {
+                // caller guarantees su in [0,paddedN)
+                val = src[base_src + (size_t)su];
+            }
+            else {
+                if ((unsigned)su < (unsigned)paddedN) val = src[base_src + (size_t)su];
+            }
+
+            dst[base_dst + (size_t)u] = val;
+        }
+    }
+
+    // ============================================================
+    // AlignPadCropManagerVec (chunk-only)
+    //  - K=1 covers single-view usage
+    //  - stores host startU/offsetU lists for debugging
+    //  - maintains device startU buffer for row-warp kernels
     // ============================================================
     class AlignPadCropManagerVec {
     public:
-        bool init(int Nu, int Nv, cudaStream_t stream = 0)
-        {
-            Nu_ = Nu;
-            Nv_ = Nv;
-            stream_ = stream;
+        AlignPadCropManagerVec() = default;
+        ~AlignPadCropManagerVec() { release(); }
 
-            paddedN_ = computePaddedN_(Nu_);
-            inited_ = (Nu_ > 0 && Nv_ > 0 && paddedN_ >= Nu_);
+        AlignPadCropManagerVec(const AlignPadCropManagerVec&) = delete;
+        AlignPadCropManagerVec& operator=(const AlignPadCropManagerVec&) = delete;
 
-            last_startu_ = 0;
-            last_offsetU_ = 0.0f;
-            last_offsetV_ = 0.0f;
-            return inited_;
+        AlignPadCropManagerVec(AlignPadCropManagerVec&& o) noexcept { move_from_(o); }
+        AlignPadCropManagerVec& operator=(AlignPadCropManagerVec&& o) noexcept {
+            if (this != &o) { release(); move_from_(o); }
+            return *this;
         }
 
-        void setStream(cudaStream_t s) { stream_ = s; }
+        // policy (same pattern as preweight)
+        void setPolicy(SKernelLaunchPolicy p) { policy_ = normalizeAlignPadCropPolicy(p); }
+        SKernelLaunchPolicy policy() const { return policy_; }
 
-        // ---- query ----
+        // ------------------------------------------------------------
+        // init (thin)
+        // chunkCapacity: optional pre-alloc for startU device buffer
+        // ------------------------------------------------------------
+        bool init(int Nu, int Nv, int chunkCapacity = 1, cudaStream_t stream = (cudaStream_t)0) {
+            if (Nu <= 0 || Nv <= 0) return false;
+            return init_(Nu, Nv, chunkCapacity, stream);
+        }
+
+        bool init(const SDimensions3D& dims, int chunkCapacity = 1, cudaStream_t stream = (cudaStream_t)0) {
+            const int Nu = (int)dims.iPU;
+            const int Nv = (int)dims.iPV;
+            if (Nu <= 0 || Nv <= 0) return false;
+            return init_(Nu, Nv, chunkCapacity, stream);
+        }
+
+        // query
         int Nu() const { return Nu_; }
         int Nv() const { return Nv_; }
         int paddedN() const { return paddedN_; }
+        int chunkK() const { return chunk_K_; }
 
-        int lastStartU() const { return last_startu_; }
-        float lastOffsetU() const { return last_offsetU_; }
-        float lastOffsetV() const { return last_offsetV_; }
+        const std::vector<int>& chunkStartU() const { return chunk_startu_; }
+        const std::vector<float>& chunkOffsetU() const { return chunk_offsetu_; }
 
         // ------------------------------------------------------------
-        // (1): offsetU_pix -> start_u -> pad
-        // offsetU_pix: central-ray hit offset in pixel (u-axis)
+        // Chunk pad (one call, K views)
+        //  src_chunk: [K*Nv*Nu]
+        //  dst_padded_chunk: [K*Nv*paddedN]
+        //  offsetU_pix_list: host pointer size K
+        //
+        // K=1 即单张
         // ------------------------------------------------------------
-        bool pad(const float* d_in_view,   // [Nv*Nu]
-                 float* d_padded,          // [Nv*paddedN]
-                 float offsetU_pix)
+        bool padChunk(
+            const float* d_src_chunk,
+            float* d_dst_padded_chunk,
+            const float* offsetU_pix_list, // host, size K
+            int K)
         {
-            if (!inited_) return false;
-            last_offsetU_ = offsetU_pix;
+            if (!inited_ || !d_src_chunk || !d_dst_padded_chunk || !offsetU_pix_list) return false;
+            if (K <= 0) return false;
 
-            // align padded center to detector axis index
-            // axis_idx = (Nu-1)/2 + offsetU_pix
-            const float axis_idx = (Nu_ - 1) * 0.5f + offsetU_pix;
-            last_startu_ = (int)lrintf(paddedN_ * 0.5f - axis_idx);
+            beginChunk_(K);
+            ensureChunkCapacity_(K);
 
-            dim3 block(256, 1);
-            dim3 grid((paddedN_ + block.x - 1) / block.x, Nv_);
-            _kernel_pad_startu << <grid, block, 0, stream_ >> > (
-                d_in_view, d_padded, Nu_, Nv_, paddedN_, last_startu_);
+            // compute host lists
+            for (int i = 0; i < K; ++i) {
+                const float off = offsetU_pix_list[i];
+                chunk_offsetu_[(size_t)i] = off;
+                chunk_startu_[(size_t)i] = computeStartU_centerAxis(Nu_, paddedN_, off);
+            }
+
+            // upload startU list
+            YK_CUDA_CHECK(cudaMemcpyAsync(
+                d_chunk_startu_,
+                chunk_startu_.data(),
+                (size_t)K * sizeof(int),
+                cudaMemcpyHostToDevice,
+                stream_));
+
+            // row-warp launch
+            const int blockThreads = policy_.block_threads;
+            const int warps_per_block = blockThreads / 32;
+            const int total_warps = K * Nv_;
+            const int blocks = (total_warps + warps_per_block - 1) / warps_per_block;
+
+            align_pad_chunk_rowwarp_kernel << <blocks, blockThreads, 0, stream_ >> > (
+                d_src_chunk, d_dst_padded_chunk, d_chunk_startu_,
+                Nu_, Nv_, paddedN_, K,
+                policy_.bounds_check ? 1 : 0);
             YK_CUDA_KERNEL_CHECK();
+
+            chunk_K_ = K;
             return true;
         }
 
-
-
-        // ------------------------------------------------------------
-        // (2): crop back using same start_u
-        // NOTE: call after padFromOffset* for current view
-        // ------------------------------------------------------------
-        void crop(
-            const float* d_padded, // [Nv*paddedN]
-            float* d_out_view      // [Nv*Nu]
-        ) const
+        bool padChunk(
+            const float* d_src_chunk,
+            float* d_dst_padded_chunk,
+            const std::vector<float>& offsetU_pix_list
+            )
         {
-            dim3 block(256, 1);
-            dim3 grid((Nu_ + block.x - 1) / block.x, Nv_);
-            _kernel_crop_startu << <grid, block, 0, stream_ >> > (
-                d_padded, d_out_view, Nu_, Nv_, paddedN_, last_startu_);
+            return padChunk(d_src_chunk, d_dst_padded_chunk,
+                offsetU_pix_list.data(), (int)offsetU_pix_list.size());
+        }
+
+        // ------------------------------------------------------------
+        // Chunk crop (one call, K views)
+        //  src_padded_chunk: [K*Nv*paddedN]
+        //  dst_chunk: [K*Nv*Nu]
+        //
+        // uses d_chunk_startu_ from last padChunk()
+        // ------------------------------------------------------------
+        bool cropChunk(
+            const float* d_src_padded_chunk,
+            float* d_dst_chunk,
+            cudaStream_t stream = 0)
+        {
+            if (!inited_ || !d_src_padded_chunk || !d_dst_chunk) return false;
+
+            const int K = chunk_K_;
+            if (K <= 0) return false;                 // 没 padChunk 过就 crop：直接失败
+            if (!d_chunk_startu_) return false;       // 防御
+
+            // capacity 理论上 padChunk 已 ensure 过，这里可以不再 ensure
+            // 但保留也无妨（不会改变 d_chunk_startu_ 的内容）
+            ensureChunkCapacity_(K);
+
+            const int blockThreads = policy_.block_threads;
+            const int warps_per_block = blockThreads / 32;
+            const int total_warps = K * Nv_;
+            const int blocks = (total_warps + warps_per_block - 1) / warps_per_block;
+
+            align_crop_chunk_rowwarp_kernel << <blocks, blockThreads, 0, stream >> > (
+                d_src_padded_chunk, d_dst_chunk, d_chunk_startu_,
+                Nu_, Nv_, paddedN_, K,
+                policy_.bounds_check ? 1 : 0);
             YK_CUDA_KERNEL_CHECK();
+
+            return true;
         }
 
-    private:
-        static int computePaddedN_(int Nu)
+        // cleanup
+        void release()
         {
-            // policy: nextPow2(2*Nu)
-            int need = 2 * Nu;
-            int n = 1;
-            while (n < need) n <<= 1;
-            return n;
+            if (d_chunk_startu_) {
+                cudaFree(d_chunk_startu_);
+                d_chunk_startu_ = nullptr;
+            }
+            chunk_capacity_ = 0;
+
+            chunk_K_ = 0;
+            chunk_startu_.clear();
+            chunk_offsetu_.clear();
+
+            inited_ = false;
+            Nu_ = Nv_ = paddedN_ = 0;
         }
 
     private:
-        int Nu_ = 0, Nv_ = 0, paddedN_ = 0;
-        cudaStream_t stream_ = 0;
-        bool inited_ = false;
+        bool init_(int Nu, int Nv, int chunkCapacity, cudaStream_t stream)
+        {
+            release();
 
-        float last_offsetU_ = 0.0f, last_offsetV_ = 0.0f;
-        int last_startu_ = 0;
+            Nu_ = Nu;
+            Nv_ = Nv;
+            stream_ = stream;
+            paddedN_ = computePaddedN_nextPow2_2Nu(Nu_);
+            inited_ = (paddedN_ >= Nu_);
+
+            policy_ = normalizeAlignPadCropPolicy(policy_);
+
+            if (chunkCapacity > 0) ensureChunkCapacity_(chunkCapacity);
+            return inited_;
+        }
+
+        void beginChunk_(int K)
+        {
+            chunk_startu_.assign((size_t)K, 0);
+            chunk_offsetu_.assign((size_t)K, 0.0f);
+        }
+
+        void ensureChunkCapacity_(int K)
+        {
+            if (K <= 0) return;
+            if (K <= chunk_capacity_ && d_chunk_startu_) return;
+
+            int newCap = std::max(1, chunk_capacity_);
+            while (newCap < K) newCap <<= 1;
+
+            int* newBuf = nullptr;
+            YK_CUDA_CHECK(cudaMalloc(&newBuf, (size_t)newCap * sizeof(int)));
+
+            if (d_chunk_startu_) cudaFree(d_chunk_startu_);
+            d_chunk_startu_ = newBuf;
+            chunk_capacity_ = newCap;
+        }
+
+        void move_from_(AlignPadCropManagerVec& o) noexcept
+        {
+            Nu_ = o.Nu_;
+            Nv_ = o.Nv_;
+            paddedN_ = o.paddedN_;
+            inited_ = o.inited_;
+
+            policy_ = o.policy_;
+
+            chunk_K_ = o.chunk_K_;
+            chunk_capacity_ = o.chunk_capacity_;
+            chunk_startu_ = std::move(o.chunk_startu_);
+            chunk_offsetu_ = std::move(o.chunk_offsetu_);
+            d_chunk_startu_ = o.d_chunk_startu_;
+
+            o.d_chunk_startu_ = nullptr;
+            o.chunk_capacity_ = 0;
+            o.chunk_K_ = 0;
+            o.inited_ = false;
+            o.Nu_ = o.Nv_ = o.paddedN_ = 0;
+        }
+
+    private:
+        // cached dims
+        int Nu_ = 0;
+        int Nv_ = 0;
+        int paddedN_ = 0;
+        bool inited_ = false;
+        cudaStream_t stream_;
+
+        // policy like preweight
+        SKernelLaunchPolicy policy_{};
+
+        // chunk state (host cached)
+        int chunk_K_ = 0;
+        std::vector<int>   chunk_startu_;
+        std::vector<float> chunk_offsetu_;
+
+        // device buffer for startU
+        int chunk_capacity_ = 0;
+        int* d_chunk_startu_ = nullptr; // [capacity]
     };
 
 } // namespace YK

@@ -88,9 +88,9 @@ namespace YK {
         {
             if (!d_src_chunk || !d_dst_chunk || !d_geo || !d_gv) return;
 
-            const int Nu = (int)dims.iProjU;
-            const int Nv = (int)dims.iProjV;
-            const int Ang = (int)dims.iProjAngles;
+            const int Nu = (int)dims.iPU;
+            const int Nv = (int)dims.iPV;
+            const int Ang = (int)dims.iPAng;
 
             if (Nu <= 0 || Nv <= 0 || Ang <= 0 || K <= 0) return;
 

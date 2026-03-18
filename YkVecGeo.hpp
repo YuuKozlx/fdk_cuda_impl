@@ -22,19 +22,40 @@ namespace YK {
      *
      * Then apply Rz(theta) to src0, detC0, detU0, detV0.
      *
-     * Pixel (u=0,v=0):
+     * ----------------------------------------------------------------------------
+     * IMPORTANT: semantics of detector_pixel_center_offset{U,V}_pix (THIS FUNCTION ONLY)
+     * ----------------------------------------------------------------------------
+     * These parameters ONLY define the in-plane shift of the detector pixel coordinate
+     * system relative to the detector geometric center detC, measured in pixels along
+     * the detector axes (detU, detV).
+     *
+     * They DO NOT represent:
+     *   - principal-point (source projection) offsets,
+     *   - source position correction,
+     *   - any geometry calibration result.
+     *
+     * When detector tilt is enabled:
+     *   - The offsets MUST be applied AFTER gantry rotation and AFTER detector tilt.
+     *   - In other words, detector_pixel_center_offset{U,V}_pix are always interpreted
+     *     along the FINAL detU / detV directions used by the pixel coordinate system.
+     *
+     * Concretely, the offsets are applied only when constructing detS:
+     *
      *   detS = detC
-     *        - ((Nu-1)/2 + offsetU_pix) * detU
-     *        - ((Nv-1)/2 + offsetV_pix) * detV
+     *        - ( (Nu-1)/2 + detector_pixel_center_offsetU_pix ) * detU
+     *        - ( (Nv-1)/2 + detector_pixel_center_offsetV_pix ) * detV
+     *
+     * This guarantees that the offset meaning remains a pure in-plane pixel shift on
+     * the rotated detector, independent of gantry angle and tilt.
      *
      * Tilt (optional, detector-local axes, order u->v->n):
      *   detTiltUVN = (phi_u, phi_v, phi_n) in radians
      *   Axes are defined at each view *before tilt*:
      *     e_u = normalize(detU)
      *     e_v = normalize(detV)
-     *     e_n = normalize(detC - src)   (center ray direction)
+     *     e_n = normalize(detC - src)   (center ray direction through detC)
      *
-     *   Applied order (column vectors):
+     *   Applied order (body-fixed / about updated axes through detC):
      *     u then v then n
      *
      * Angle storage:
@@ -46,8 +67,8 @@ namespace YK {
         int Ang, int Nu, int Nv,
         float SOD, float SDD,
         float du, float dv,
-        float offsetU_pix = 0.0f,
-        float offsetV_pix = 0.0f,
+        float detector_pixel_center_offsetU_pix = 0.0f,
+        float detector_pixel_center_offsetV_pix = 0.0f,
         float3 detTiltUVN = make_float3(0.0f, 0.0f, 0.0f)) // (phi_u, phi_v, phi_n)
     {
         geo.resize(Ang);
@@ -62,9 +83,10 @@ namespace YK {
         const float3 detU0 = make_float3(0.0f, -du, 0.0f);
         const float3 detV0 = make_float3(0.0f, 0.0f, dv);
 
-        // pixel-center offsets (in pixels)
-        const float cu = 0.5f * (Nu - 1) + offsetU_pix;
-        const float cv = 0.5f * (Nv - 1) + offsetV_pix;
+        // pixel-center indices (in pixels) + pixel-center shift relative to detC (in pixels)
+        // NOTE: offsets are applied along FINAL detU/detV after gantry rotation + tilt.
+        const float cu = 0.5f * (Nu - 1) + detector_pixel_center_offsetU_pix;
+        const float cv = 0.5f * (Nv - 1) + detector_pixel_center_offsetV_pix;
 
         const float phi_u = detTiltUVN.x;
         const float phi_v = detTiltUVN.y;
@@ -81,7 +103,7 @@ namespace YK {
             float3 detV = f3_rotz(detV0, t);
 
             // Optional detector tilts in detector-local axes (body-fixed), order u -> v -> n
-            if ((fabs(phi_u) >= 1e-4f) || (fabs(phi_v) >= 1e-4f) || (fabs(phi_n) >= 1e-4f)) {
+            if ((fabs(phi_u) >= 1e-5f) || (fabs(phi_v) >= 1e-5f) || (fabs(phi_n) >= 1e-5f)) {
 
                 // 1) rotate about current U axis
                 {
@@ -105,7 +127,8 @@ namespace YK {
                 }
             }
 
-            // Detector origin (pixel 0,0) from center + basis
+            // Pixel (u=0,v=0) world origin detS from detC and detector basis
+            // Apply pixel-center offset ALONG FINAL detU/detV (after gantry rotation + tilt).
             const float3 detS = f3_sub(detC, f3_add(f3_mul(detU, cu), f3_mul(detV, cv)));
 
             // store angle (rad) in ang.x for alignment-friendly layout
@@ -122,8 +145,8 @@ namespace YK {
         int Ang, int Nu, int Nv,
         float SOD, float SDD,
         float du, float dv,
-        float offsetU_pix = 0.0f,
-        float offsetV_pix = 0.0f,
+        float detector_pixel_center_offsetU_pix = 0.0f,
+        float detector_pixel_center_offsetV_pix = 0.0f,
         float3 detTiltUVN = make_float3(0.0f, 0.0f, 0.0f)) // default 0
     {
         std::vector<float> theta(Ang);
@@ -138,7 +161,8 @@ namespace YK {
             Ang, Nu, Nv,
             SOD, SDD,
             du, dv,
-            offsetU_pix, offsetV_pix,
+            detector_pixel_center_offsetU_pix,
+            detector_pixel_center_offsetV_pix,
             detTiltUVN);
     }
 

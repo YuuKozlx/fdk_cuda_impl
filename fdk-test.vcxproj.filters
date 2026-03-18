@@ -84,6 +84,15 @@
     <ClInclude Include="YkMem3d.hpp">
       <Filter>util</Filter>
     </ClInclude>
+    <ClInclude Include="Yktest_mem3d.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="YkDataObj.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="Yktest_dataobject.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="YkIoDump.cpp">

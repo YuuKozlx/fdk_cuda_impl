@@ -284,8 +284,10 @@ namespace YK {
         float3 f3_rotz_p(float3 p, float a) { return f3_rotz(p, a); }
 
 
-    // ---------- rotate point about coordinate axis passing through p0 ----------
-    // 数学公式： p' = p0 + R * (p - p0)
+    // Rotate point about an axis passing through p0 and parallel to coordinate axis
+    // (X / Y / Z). i.e. rotation around line: p(t) = p0 + t * axis_dir
+    // 数学公式：p' = p0 + R * (p - p0)
+    // 含义：绕“经过 p0 且方向与坐标轴一致”的直线旋转
     __host__ __device__ __forceinline__
         float3 f3_rotx_about(float3 p, float3 p0, float a)
     {

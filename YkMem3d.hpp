@@ -1,261 +1,332 @@
 #pragma once
-// ============================================================
-// YK::Util - Single-header CUDA 3D buffer + view + controller
-// - GpuView3D<T>        : POD view for kernels (non-owning)
-// - GpuBuffer3D<T>      : stores pointer + shape + pitch, RAII (owning or borrowed)
-// - CudaMemoryController: alloc/wrap/upload/download/zero helpers
-//
-// Design notes (minimal & practical):
-// - "3D" is stored as a pitched 2D allocation with height = ny * nz
-//   so that: sliceBytes = pitchBytes * ny, and z-step = sliceBytes.
-// - Upload/Download assume host data is contiguous in x-fastest order,
-//   laid out as [z][y][x] with contiguous (nx*ny*nz) elements.
-// - C++14 compatible.
-// ============================================================
-
-#include <cuda_runtime.h>
-
 #include <cstddef>
 #include <cstdint>
-#include <cuda_runtime_api.h>
-#include <driver_types.h>
+#include <memory>
 #include <stdexcept>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include "YkGlobals.h"
+#include <cstring>
+#include <cuda_runtime.h>
+#include "YkGlobals.h" // 包含 YK_CUDA_CHECK 宏
+
+// -------------------------- 条件编译 C++14 / C++20 --------------------------
+#if __cplusplus >= 202002L
+#define YK_NODISCARD [[nodiscard]]
+#define YK_BYTE std::byte
+#else
+#define YK_NODISCARD
+#define YK_BYTE unsigned char
+#endif
+
+#ifdef __CUDACC__
+#define YK_HD __host__ __device__
+#else
+#define YK_HD
+#endif
 
 namespace YK {
-    namespace Util {
+    namespace Mem {
 
+        // -------------------------- Shape / Region --------------------------
+        struct Shape3D { int nx = 0, ny = 0, nz = 0; };
+        struct Region3D { int ox = 0, oy = 0, oz = 0; int sx = 0, sy = 0, sz = 0; };
+        enum class OwnerTag : uint8_t { Owning, Borrowed };
 
-        // ---------------------------
-        // Basic shape/region
-        // ---------------------------
-        struct Shape3D {
-            int nx = 0;
-            int ny = 0;
-            int nz = 0;
-        };
-
-        // Optional ROI structure (not used by upload/download full, but handy to extend later)
-        struct Region3D {
-            int ox = 0, oy = 0, oz = 0;
-            int sx = 0, sy = 0, sz = 0;
-        };
-
-        enum class OwnerTag : uint8_t {
-            Owning,
-            Borrowed
-        };
-
-        // ---------------------------
-        // GpuView3D<T> - POD view (kernel-friendly)
-        // ---------------------------
+        // -------------------------- CPU Buffer --------------------------
         template<typename T>
-        struct GpuView3D {
+        struct CpuView3D {
             T* ptr = nullptr;
             int nx = 0, ny = 0, nz = 0;
-            size_t pitchBytes = 0; // bytes per row (y-step)
-            size_t sliceBytes = 0; // bytes per slice (z-step) = pitchBytes * ny
+            size_t sliceStride = 0;
 
-            __host__ __device__ explicit operator bool() const { return ptr != nullptr; }
+            explicit operator bool() const noexcept { return ptr != nullptr; }
+            T* at(int x, int y, int z) const noexcept { return ptr + size_t(z) * sliceStride + size_t(y) * nx + x; }
 
-            // x-fastest, then y by pitch, then z by sliceBytes
-            __host__ __device__ T* at(int x, int y, int z) const {
-                char* base = reinterpret_cast<char*>(ptr) + static_cast<size_t>(z) * sliceBytes + static_cast<size_t>(y) * pitchBytes;
-                return reinterpret_cast<T*>(base) + x;
+#if __cplusplus >= 202002L
+            // C++20 写法
+            auto operator()(int x, int y, int z) const noexcept {
+                if constexpr (std::is_const_v<T>)
+                    return *at(x, y, z); // 返回 const T&
+                else
+                    return *at(x, y, z); // 返回 T&
             }
+#else
+            // C++14 写法
+            typename std::conditional<std::is_const<T>::value, const T&, T&>::type
+                operator()(int x, int y, int z) const noexcept {
+                return *at(x, y, z);
+            }
+#endif
         };
 
-        // ---------------------------
-        // GpuBuffer3D<T> - owns (or borrows) a pitched "3D" buffer
-        // ---------------------------
         template<typename T>
-        class GpuBuffer3D {
+        class CpuBuffer3D {
         public:
-            GpuBuffer3D() = default;
-            ~GpuBuffer3D() { reset_noexcept(); }
+            using ValueType = T;
+            CpuBuffer3D() = default;
 
-            GpuBuffer3D(const GpuBuffer3D&) = delete;
-            GpuBuffer3D& operator=(const GpuBuffer3D&) = delete;
+            // Owning 构造函数
+            CpuBuffer3D(int nx, int ny, int nz, bool zero = false)
+                : sh_{ nx, ny, nz }, sliceStride_(size_t(nx)* ny)
+            {
+                if (nx <= 0 || ny <= 0 || nz <= 0)
+                    throw std::invalid_argument("CpuBuffer3D: nx/ny/nz must > 0");
 
-            GpuBuffer3D(GpuBuffer3D&& o) noexcept { move_from(o); }
-            GpuBuffer3D& operator=(GpuBuffer3D&& o) noexcept {
-                if (this != &o) { reset_noexcept(); move_from(o); }
+                ptr_ = std::make_unique<T[]>(size_t(nx) * ny * nz);
+                if (zero)
+                    std::memset(ptr_.get(), 0, sizeof(T) * size_t(nx) * ny * nz);
+            }
+
+            // 禁用拷贝
+            CpuBuffer3D(const CpuBuffer3D&) = delete;
+            CpuBuffer3D& operator=(const CpuBuffer3D&) = delete;
+
+            // 支持移动
+            CpuBuffer3D(CpuBuffer3D&& o) noexcept
+                : ptr_(std::move(o.ptr_)), sh_(o.sh_), sliceStride_(o.sliceStride_)
+            {
+                o.sh_ = {}; o.sliceStride_ = 0;
+            }
+
+            CpuBuffer3D& operator=(CpuBuffer3D&& o) noexcept {
+                if (this != &o) {
+                    ptr_ = std::move(o.ptr_);
+                    sh_ = o.sh_;
+                    sliceStride_ = o.sliceStride_;
+                    o.sh_ = {}; o.sliceStride_ = 0;
+                }
                 return *this;
             }
 
-            // View for kernels / algorithms
-            GpuView3D<T> view() const {
-                return GpuView3D<T>{ ptr_, sh_.nx, sh_.ny, sh_.nz, pitchBytes_, sliceBytes_ };
-            }
-            GpuView3D<const T> cview() const {
-                return GpuView3D<const T>{ ptr_, sh_.nx, sh_.ny, sh_.nz, pitchBytes_, sliceBytes_ };
-            }
+            ~CpuBuffer3D() = default;
 
-            // Introspection
-            Shape3D shape() const { return sh_; }
-            size_t pitch_bytes() const { return pitchBytes_; }
-            size_t slice_bytes() const { return sliceBytes_; }
-            OwnerTag owner() const { return owner_; }
-            explicit operator bool() const { return ptr_ != nullptr; }
-            T* data() const { return ptr_; }
+            CpuView3D<T> view() { return { ptr_.get(), sh_.nx, sh_.ny, sh_.nz, sliceStride_ }; }
+            CpuView3D<const T> cview() const { return { ptr_.get(), sh_.nx, sh_.ny, sh_.nz, sliceStride_ }; }
 
-            // Manual reset (optional; RAII already frees for owning)
-            void reset() { reset_noexcept(); }
+            Shape3D shape() const noexcept { return sh_; }
+            T* data() noexcept { return ptr_.get(); }
+            const T* cdata() const noexcept { return ptr_.get(); }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
 
         private:
-            // Only controller can construct filled buffers
-            friend class CudaMemoryController;
+            std::unique_ptr<T[]> ptr_;
+            Shape3D sh_{};
+            size_t sliceStride_ = 0;
+        };
 
-            static GpuBuffer3D make_owning(T* ptr, Shape3D sh, size_t pitchBytes) {
-                GpuBuffer3D b;
-                b.ptr_ = ptr;
-                b.sh_ = sh;
-                b.pitchBytes_ = pitchBytes;
-                b.sliceBytes_ = pitchBytes * static_cast<size_t>(sh.ny);
-                b.owner_ = OwnerTag::Owning;
-                return b;
+        template<typename T>
+        class CpuBuffer3DBorrowed {
+        public:
+            using ValueType = T;
+
+            // 构造函数：必须提供外部指针和尺寸
+            CpuBuffer3DBorrowed(T* externalPtr, int nx, int ny, int nz)
+                : ptr_(externalPtr), sh_{ nx, ny, nz }, sliceStride_(size_t(nx)* ny)
+            {
+                if (!externalPtr)
+                    throw std::invalid_argument("CpuBuffer3DBorrowed: externalPtr is null");
+                if (nx <= 0 || ny <= 0 || nz <= 0)
+                    throw std::invalid_argument("CpuBuffer3DBorrowed: nx/ny/nz must > 0");
             }
-            static GpuBuffer3D make_borrowed(T* ptr, Shape3D sh, size_t pitchBytes) {
-                GpuBuffer3D b;
-                b.ptr_ = ptr;
-                b.sh_ = sh;
-                b.pitchBytes_ = pitchBytes;
-                b.sliceBytes_ = pitchBytes * static_cast<size_t>(sh.ny);
-                b.owner_ = OwnerTag::Borrowed;
-                return b;
+
+            // 禁用拷贝
+            CpuBuffer3DBorrowed(const CpuBuffer3DBorrowed&) = delete;
+            CpuBuffer3DBorrowed& operator=(const CpuBuffer3DBorrowed&) = delete;
+
+            // 支持移动
+            CpuBuffer3DBorrowed(CpuBuffer3DBorrowed&& o) noexcept
+                : ptr_(o.ptr_), sh_(o.sh_), sliceStride_(o.sliceStride_)
+            {
+                o.ptr_ = nullptr;
+                o.sh_ = {};
+                o.sliceStride_ = 0;
+            }
+
+            CpuBuffer3DBorrowed& operator=(CpuBuffer3DBorrowed&& o) noexcept {
+                if (this != &o) {
+                    ptr_ = o.ptr_;
+                    sh_ = o.sh_;
+                    sliceStride_ = o.sliceStride_;
+                    o.ptr_ = nullptr;
+                    o.sh_ = {};
+                    o.sliceStride_ = 0;
+                }
+                return *this;
+            }
+
+            // view / cview
+            CpuView3D<T> view() { return { ptr_, sh_.nx, sh_.ny, sh_.nz, sliceStride_ }; }
+            CpuView3D<const T> cview() const { return { ptr_, sh_.nx, sh_.ny, sh_.nz, sliceStride_ }; }
+
+            // 数据访问
+            T* data() noexcept { return ptr_; }
+            const T* cdata() const noexcept { return ptr_; }
+
+            // 形状
+            Shape3D shape() const noexcept { return sh_; }
+
+            // 转 bool
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+        private:
+            T* ptr_;             // 外部内存指针
+            Shape3D sh_;         // 尺寸
+            size_t sliceStride_; // 每个 z 层的跨度
+        };
+
+        // -------------------------- Device Buffer --------------------------
+        template<typename T>
+        struct DeviceView3D {
+            T* ptr = nullptr;
+            int nx = 0, ny = 0, nz = 0;
+            size_t pitchBytes = 0, sliceBytes = 0;
+
+            explicit operator bool() const noexcept { return ptr != nullptr; }
+
+            YK_HD T* at(int x, int y, int z) const noexcept {
+                auto byteOffset = size_t(z) * sliceBytes + size_t(y) * pitchBytes;
+                return reinterpret_cast<T*>(reinterpret_cast<YK_BYTE*>(ptr) + byteOffset) + x;
+            }
+
+#if __cplusplus >= 202002L
+            YK_HD auto operator()(int x, int y, int z) const noexcept {
+                if constexpr (std::is_const_v<T>)
+                    return *at(x, y, z);
+                else
+                    return *at(x, y, z);
+            }
+#else
+            YK_HD typename std::conditional<std::is_const<T>::value, const T&, T&>::type
+                operator()(int x, int y, int z) const noexcept {
+                return *at(x, y, z);
+            }
+#endif
+        };
+
+
+        template<typename T>
+        class DeviceBuffer3D {
+        public:
+            using ValueType = T;
+            DeviceBuffer3D() = default;
+            ~DeviceBuffer3D() { reset_noexcept(); }
+            DeviceBuffer3D(const DeviceBuffer3D&) = delete;
+            DeviceBuffer3D& operator=(const DeviceBuffer3D&) = delete;
+            DeviceBuffer3D(DeviceBuffer3D&& o) noexcept { move_from(o); }
+            DeviceBuffer3D& operator=(DeviceBuffer3D&& o) noexcept { if (this != &o) { reset_noexcept(); move_from(o); } return *this; }
+
+            YK_NODISCARD DeviceView3D<T> view() const noexcept { return { ptr_, sh_.nx, sh_.ny, sh_.nz, pitchBytes_, sliceBytes_ }; }
+            YK_NODISCARD DeviceView3D<const T> cview() const noexcept { return { ptr_, sh_.nx, sh_.ny, sh_.nz, pitchBytes_, sliceBytes_ }; }
+
+            Shape3D shape() const noexcept { return sh_; }
+            size_t pitch() const noexcept { return pitchBytes_; }
+            size_t slice() const noexcept { return sliceBytes_; }
+            OwnerTag owner() const noexcept { return owner_; }
+            int deviceId() const noexcept { return deviceId_; }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+            T* data() const noexcept { return ptr_; }
+            const T* cdata() const { return ptr_; }
+
+
+
+            void reset() noexcept { reset_noexcept(); }
+
+        private:
+            friend class MemoryController;
+
+            static DeviceBuffer3D make_owning(T* ptr, Shape3D sh, size_t pitchBytes, int deviceId) {
+                return DeviceBuffer3D{ ptr, sh, pitchBytes, pitchBytes * sh.ny, OwnerTag::Owning, deviceId };
             }
 
             void reset_noexcept() noexcept {
                 if (owner_ == OwnerTag::Owning && ptr_) {
-                    // cannot throw in noexcept; ignore error
-                    cudaFree(ptr_);
+                    YK_CUDA_CHECK(cudaSetDevice(deviceId_));
+                    YK_CUDA_CHECK(cudaFree(ptr_));
                 }
-                ptr_ = nullptr;
-                sh_ = {};
-                pitchBytes_ = 0;
-                sliceBytes_ = 0;
-                owner_ = OwnerTag::Borrowed;
+                ptr_ = nullptr; sh_ = {}; pitchBytes_ = sliceBytes_ = 0; owner_ = OwnerTag::Borrowed; deviceId_ = 0;
             }
 
-            void move_from(GpuBuffer3D& o) noexcept {
+            void move_from(DeviceBuffer3D& o) noexcept {
                 ptr_ = o.ptr_; o.ptr_ = nullptr;
                 sh_ = o.sh_; o.sh_ = {};
                 pitchBytes_ = o.pitchBytes_; o.pitchBytes_ = 0;
                 sliceBytes_ = o.sliceBytes_; o.sliceBytes_ = 0;
                 owner_ = o.owner_; o.owner_ = OwnerTag::Borrowed;
+                deviceId_ = o.deviceId_; o.deviceId_ = 0;
             }
 
-        private:
+            DeviceBuffer3D(T* ptr, Shape3D sh, size_t pitchBytes, size_t sliceBytes, OwnerTag owner, int deviceId)
+                : ptr_(ptr), sh_(sh), pitchBytes_(pitchBytes), sliceBytes_(sliceBytes), owner_(owner), deviceId_(deviceId) {
+            }
+
             T* ptr_ = nullptr;
             Shape3D sh_{};
-            size_t pitchBytes_ = 0;
-            size_t sliceBytes_ = 0;
+            size_t pitchBytes_ = 0, sliceBytes_ = 0;
             OwnerTag owner_ = OwnerTag::Borrowed;
+            int deviceId_ = 0;
         };
 
-        // ---------------------------
-        // CudaMemoryController - alloc/wrap/copy helpers
-        // ---------------------------
-        class CudaMemoryController {
+        // -------------------------- MemoryController --------------------------
+        class MemoryController {
         public:
-            // Select device (optional helper)
-            void setDevice(int index) const {
-                YK_CUDA_CHECK(cudaSetDevice(index));
+            void setDevice(int id) const { YK_CUDA_CHECK(cudaSetDevice(id)); }
+
+            // ---------------- CPU Buffers ----------------
+
+            // allocate owning CPU buffer
+            template<typename T>
+            CpuBuffer3D<T> allocateCpu3D(int nx, int ny, int nz, bool zero = false) const {
+                return CpuBuffer3D<T>(nx, ny, nz, zero);
             }
 
-            // Allocate a "3D" pitched buffer:
-            // We allocate a pitched 2D surface of size: width = nx*sizeof(T), height = ny*nz.
-            // Layout: z slices are stacked vertically, each slice has ny rows.
+            // ---------------- GPU Buffers ----------------
+
             template<typename T>
-            GpuBuffer3D<T> allocatePitched3D(int nx, int ny, int nz, bool zero = false, cudaStream_t stream = 0) const {
-                if (nx <= 0 || ny <= 0 || nz <= 0) {
-                    throw std::invalid_argument("allocatePitched3D: nx/ny/nz must be > 0");
-                }
+            DeviceBuffer3D<T> allocateDevice3D(int nx, int ny, int nz, int deviceId = 0, bool zero = false, cudaStream_t stream = 0) const {
+                if (nx <= 0 || ny <= 0 || nz <= 0) throw std::invalid_argument("allocateDevice3D: nx/ny/nz>0");
 
-                T* dptr = nullptr;
-                size_t pitch = 0;
-
-                const size_t widthBytes = static_cast<size_t>(nx) * sizeof(T);
-                const size_t heightRows = static_cast<size_t>(ny) * static_cast<size_t>(nz); // stacked slices
-
-                YK_CUDA_CHECK(cudaMallocPitch(reinterpret_cast<void**>(&dptr), &pitch, widthBytes, heightRows));
-
-                auto buf = GpuBuffer3D<T>::make_owning(dptr, Shape3D{ nx, ny, nz }, pitch);
+                cudaSetDevice(deviceId);
+                cudaExtent extent = make_cudaExtent(nx * sizeof(T), ny, nz);
+                cudaPitchedPtr dptr;
+                YK_CUDA_CHECK(cudaMalloc3D(&dptr, extent));
 
                 if (zero) {
-                    // total bytes = pitch * heightRows
-                    const size_t bytes = pitch * heightRows;
-                    YK_UTIL_CUDA_CHECK(cudaMemsetAsync(dptr, 0, bytes, stream));
+                    YK_CUDA_CHECK(cudaMemset3DAsync(dptr, 0, extent, stream));
                 }
-                return buf;
+
+                return DeviceBuffer3D<T>::make_owning((T*)dptr.ptr, { nx, ny, nz }, dptr.pitch, deviceId);
             }
 
-            // Wrap an external pitched pointer (borrowed; will NOT cudaFree)
-            template<typename T>
-            GpuBuffer3D<T> wrapPitched3D(T* dptr, int nx, int ny, int nz, size_t pitchBytes) const {
-                if (!dptr) throw std::invalid_argument("wrapPitched3D: dptr is null");
-                if (nx <= 0 || ny <= 0 || nz <= 0) throw std::invalid_argument("wrapPitched3D: nx/ny/nz must be > 0");
-                if (pitchBytes < static_cast<size_t>(nx) * sizeof(T)) {
-                    throw std::invalid_argument("wrapPitched3D: pitchBytes < nx*sizeof(T)");
-                }
-                return GpuBuffer3D<T>::make_borrowed(dptr, Shape3D{ nx, ny, nz }, pitchBytes);
+            // ---------------- Upload / Download ----------------
+
+            template<typename T, typename Buf>
+            void upload3D(const DeviceBuffer3D<T>& dst, const Buf& src, cudaStream_t stream = 0) const {
+                if (!dst || !src) throw std::invalid_argument("upload3D: null ptr");
+
+                cudaSetDevice(dst.deviceId());
+                cudaMemcpy3DParms copyParams = {};
+                copyParams.srcPtr = make_cudaPitchedPtr((void*)src.cdata(), src.shape().nx * sizeof(T), src.shape().nx, src.shape().ny);
+                copyParams.dstPtr = make_cudaPitchedPtr((void*)dst.data(), dst.pitch(), dst.shape().nx, dst.shape().ny);
+                copyParams.extent = make_cudaExtent(src.shape().nx * sizeof(T), src.shape().ny, src.shape().nz);
+                copyParams.kind = cudaMemcpyHostToDevice;
+
+                YK_CUDA_CHECK(cudaMemcpy3DAsync(&copyParams, stream));
             }
 
-            // Zero entire buffer (async)
-            template<typename T>
-            void zero(const GpuBuffer3D<T>& buf, cudaStream_t stream = 0) const {
-                auto sh = buf.shape();
-                if (!buf) return;
-                const size_t heightRows = static_cast<size_t>(sh.ny) * static_cast<size_t>(sh.nz);
-                const size_t bytes = buf.pitch_bytes() * heightRows;
-                YK_UTIL_CUDA_CHECK(cudaMemsetAsync(buf.data(), 0, bytes, stream));
+            template<typename T, typename Buf>
+            void download3D(Buf& dst, const DeviceBuffer3D<T>& src, cudaStream_t stream = 0) const {
+                if (!dst || !src) throw std::invalid_argument("download3D: null ptr");
+
+                cudaSetDevice(src.deviceId());
+                cudaMemcpy3DParms copyParams = {};
+                copyParams.srcPtr = make_cudaPitchedPtr((void*)src.cdata(), src.pitch(), src.shape().nx, src.shape().ny);
+                copyParams.dstPtr = make_cudaPitchedPtr((void*)dst.data(), dst.shape().nx * sizeof(T), dst.shape().nx, dst.shape().ny);
+                copyParams.extent = make_cudaExtent(dst.shape().nx * sizeof(T), dst.shape().ny, dst.shape().nz);
+                copyParams.kind = cudaMemcpyDeviceToHost;
+
+                YK_CUDA_CHECK(cudaMemcpy3DAsync(&copyParams, stream));
             }
 
-            // Upload contiguous host data (H->D), full buffer
-            // Host layout: contiguous nx*ny*nz elements, x-fastest.
-            template<typename T>
-            void upload(const GpuBuffer3D<T>& dst, const T* hsrc, cudaStream_t stream = 0) const {
-                if (!dst) throw std::invalid_argument("upload: dst is null");
-                if (!hsrc) throw std::invalid_argument("upload: hsrc is null");
-
-                const auto sh = dst.shape();
-                const size_t widthBytes = static_cast<size_t>(sh.nx) * sizeof(T);
-                const size_t heightRows = static_cast<size_t>(sh.ny) * static_cast<size_t>(sh.nz);
-
-                // host is contiguous: host pitch = widthBytes
-                YK_UTIL_CUDA_CHECK(cudaMemcpy2DAsync(
-                    dst.data(), dst.pitch_bytes(),
-                    hsrc, widthBytes,
-                    widthBytes, heightRows,
-                    cudaMemcpyHostToDevice, stream));
-            }
-
-            // Download contiguous host data (D->H), full buffer
-            template<typename T>
-            void download(T* hdst, const GpuBuffer3D<T>& src, cudaStream_t stream = 0) const {
-                if (!src) throw std::invalid_argument("download: src is null");
-                if (!hdst) throw std::invalid_argument("download: hdst is null");
-
-                const auto sh = src.shape();
-                const size_t widthBytes = static_cast<size_t>(sh.nx) * sizeof(T);
-                const size_t heightRows = static_cast<size_t>(sh.ny) * static_cast<size_t>(sh.nz);
-
-                YK_UTIL_CUDA_CHECK(cudaMemcpy2DAsync(
-                    hdst, widthBytes,
-                    src.data(), src.pitch_bytes(),
-                    widthBytes, heightRows,
-                    cudaMemcpyDeviceToHost, stream));
-            }
-
-            // (Optional) synchronize helper
-            void sync(cudaStream_t stream = 0) const {
-                YK_UTIL_CUDA_CHECK(cudaStreamSynchronize(stream));
-            }
+            void sync(cudaStream_t stream = 0) const { YK_CUDA_CHECK(cudaStreamSynchronize(stream)); }
         };
 
     } // namespace Util
 } // namespace YK
-

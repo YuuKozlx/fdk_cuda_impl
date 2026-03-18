@@ -13,31 +13,32 @@
 
 
 struct SDimensions3D {
-    unsigned int iVolX;
-    unsigned int iVolY;
-    unsigned int iVolZ;
-    unsigned int iProjAngles;
-    unsigned int iProjU; // number of detectors in the U direction
-    unsigned int iProjV; // number of detectors in the V direction
+    unsigned int iVX;
+    unsigned int iVY;
+    unsigned int iVZ;
+    unsigned int iPAng;
+    unsigned int iPU; // number of detectors in the U direction
+    unsigned int iPV; // number of detectors in the V direction
 };
 
+
 struct SProjDims {
-    unsigned int Nu;
-    unsigned int Nv;
-    unsigned int Ang;
+    int Nu = 0;
+    int Nv = 0;
+    int Ang = 0;
 
     static SProjDims from(const SDimensions3D& d) {
-        return { d.iProjU, d.iProjV, d.iProjAngles };
+        return { (int)d.iPU, (int)d.iPV, (int)d.iPAng };
     }
 };
 
 struct SVolDims {
-    unsigned int Nx;
-    unsigned int Ny;
-    unsigned int Nz;
+    int Nx = 0;
+    int Ny = 0;
+    int Nz = 0;
 
     static SVolDims from(const SDimensions3D& d) {
-        return { d.iVolX, d.iVolY, d.iVolZ };
+        return { (int)d.iVX, (int)d.iVY, (int)d.iVZ };
     }
 };
 
@@ -58,22 +59,56 @@ struct SKernelLaunchPolicy {
     int block_threads = 256;   // warp-row: must be multiple of 32
     bool bounds_check = true;  // ÊÇ·ñ¼ì²é a in [0, Ang)
 };
+//
+//struct SFDKGeoParamPerView
+//{
+//    float du_mm = 1.0f;     // |detU|
+//    float dv_mm = 1.0f;     // |detV|
+//
+//    float offsetU_pix = 0.0f;
+//    float offsetV_pix = 0.0f;
+//    bool  offset_valid = true;
+//
+//    float theta = 0.0f;     // unwrapped atan2(src.x, -src.y)
+//    float dtheta = 0.0f;    // >= eps
+//
+//    float SOD_mm = 0.0f;        // |src - isocenter|
+//    float SDD_mm = 0.0f;
+//};
 
-struct SFDKGeoParamPerView
+struct alignas(16) SFDKGeoParamPerView
 {
-    float du_mm = 1.0f;     // |detU|
-    float dv_mm = 1.0f;     // |detV|
+    float theta = 0.0f;
+    float dtheta = 0.0f;
+
+    // IMPORTANT: this stores SID by your definition (NOT classic SOD)
+    float SOD_mm = 0.0f;   // == SID_mm
+    float SDD_mm = 0.0f;
+
+    int   Nu = 0;
+    int   Nv = 0;
 
     float offsetU_pix = 0.0f;
     float offsetV_pix = 0.0f;
-    bool  offset_valid = true;
+    int   offset_mode = 1;     // 0 ignore, 1 apply
+    int   offset_valid = 1;    // 0 invalid, 1 valid
 
-    float theta = 0.0f;     // unwrapped atan2(src.x, -src.y)
-    float dtheta = 0.0f;    // >= eps
+    float3 nhat = { 0,0,0 };
+    float  DSD_n = 0.0f;
 
-    float SOD_mm = 0.0f;        // |src - isocenter|
-    float SDD_mm = 0.0f;
+
+    float3 ray0hat = { 0,0,0 };
+
+    float du_mm = 1.0f;
+    float dv_mm = 1.0f;
+
+    int   basis_valid = 0;
+    float UU = 0.0f;
+    float VV = 0.0f;
+    float UV = 0.0f;
+    float invDetUV = 0.0f;
 };
+
 
 
 
