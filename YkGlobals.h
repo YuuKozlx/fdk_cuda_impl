@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
+#include <vector_types.h>
 
 
 
@@ -45,13 +46,14 @@ struct SVolDims {
 
 
 struct alignas(16) SConeProjectionVec {
-    float3 src;      // source position (world)
+    float3 src;      // tube params : source position (world);
+    float3 srcCR; // tube params£ºcenter ray direction [unit vector];
     float3 detS;     // detector pixel (0,0) position (world)
     float3 detU;     // per-pixel vector in U direction (world), length = du
     float3 detV;    // per-pixel vector in V direction (world), length = dv
     float3 angle;   // angle.x : gantry rotation angle [rad], measured (encoder)
-                    // angle.y : reserved (e.g. angle velocity / jitter / 0)
-                    // angle.z : reserved
+    // angle.y : reserved (e.g. angle velocity / jitter / 0)
+    // angle.z : reserved
 };
 
 // ---------------------- launch policy ----------------------
