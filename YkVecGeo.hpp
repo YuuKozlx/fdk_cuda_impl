@@ -1,169 +1,247 @@
-#pragma once
+﻿#pragma once
 #include <cmath>
 #include <cuda_runtime.h>
 #include <vector>
 
+#include <stdexcept>
+#include <vector_functions.hpp>
+#include <vector_types.h>
 #include "YkGlobals.h"
 #include "YkVecOperation.hpp"
 
 namespace YK {
 
     /**
-     * @brief Circular cone-beam vector geometry with theta=0 at source on -X axis
+     * @brief Circular cone-beam vector geometry (vector form, Euler-enabled)
      *
-     * World: X right, Y forward, Z up (RH)
-     * Rotation: theta increases CCW around +Z
+     * World coordinate system (right-handed):
+     *   X: right
+     *   Y: forward (initial source-to-detector direction)
+     *   Z: up
      *
-     * Base at theta=0:
-     *   src0  = (-SOD, 0, 0)
-     *   detC0 = ( +ODD, 0, 0)   where ODD = SDD - SOD
-     *   detU0 = ( 0,  -du, 0)   (u increases toward -Y at theta=0)
-     *   detV0 = ( 0,   0, dv)   (v increases toward +Z)
-     *
-     * Then apply Rz(theta) to src0, detC0, detU0, detV0.
+     * Gantry rotation:
+     *   theta increases CCW around +Z (right-hand rule)
      *
      * ----------------------------------------------------------------------------
-     * IMPORTANT: semantics of detector_pixel_center_offset{U,V}_pix (THIS FUNCTION ONLY)
+     * Base geometry at theta = 0 (before any rotation / offset)
      * ----------------------------------------------------------------------------
-     * These parameters ONLY define the in-plane shift of the detector pixel coordinate
-     * system relative to the detector geometric center detC, measured in pixels along
-     * the detector axes (detU, detV).
+     *   src0   = (0, -SID, 0)        // source position
+     *   detC0  = (0,  IDD, 0)        // detector center
      *
-     * They DO NOT represent:
-     *   - principal-point (source projection) offsets,
-     *   - source position correction,
-     *   - any geometry calibration result.
+     *   detU0  = (du, 0, 0)          // detector u-axis (pixel step)
+     *   detV0  = (0, 0, dv)          // detector v-axis (pixel step)
      *
-     * When detector tilt is enabled:
-     *   - The offsets MUST be applied AFTER gantry rotation and AFTER detector tilt.
-     *   - In other words, detector_pixel_center_offset{U,V}_pix are always interpreted
-     *     along the FINAL detU / detV directions used by the pixel coordinate system.
+     *   srcCR0 = (0, 1, 0)           // center ray direction (source → detector)
      *
-     * Concretely, the offsets are applied only when constructing detS:
+     * ----------------------------------------------------------------------------
+     * Geometry construction per view (theta = theta[a])
+     * ----------------------------------------------------------------------------
+     * 1) Source position:
+     *      src = src0 + src_offset
      *
-     *   detS = detC
-     *        - ( (Nu-1)/2 + detector_pixel_center_offsetU_pix ) * detU
-     *        - ( (Nv-1)/2 + detector_pixel_center_offsetV_pix ) * detV
+     * 2) Detector center:
+     *      detC = Rz(theta) * (detC0 + det_offset)
      *
-     * This guarantees that the offset meaning remains a pure in-plane pixel shift on
-     * the rotated detector, independent of gantry angle and tilt.
+     * 3) Center ray direction:
+     *      srcCR is defined as:
      *
-     * Tilt (optional, detector-local axes, order u->v->n):
-     *   detTiltUVN = (phi_u, phi_v, phi_n) in radians
-     *   Axes are defined at each view *before tilt*:
-     *     e_u = normalize(detU)
-     *     e_v = normalize(detV)
-     *     e_n = normalize(detC - src)   (center ray direction through detC)
+     *        a) base direction srcCR0
+     *        b) apply source Euler rotation (pitch=X, yaw=Y, roll=Z)
+     *        c) apply gantry rotation Rz(theta)
      *
-     *   Applied order (body-fixed / about updated axes through detC):
-     *     u then v then n
+     *      i.e.:
+     *        srcCR = Rz(theta) * R_euler(srcEuler) * srcCR0
      *
-     * Angle storage:
-     *   geo[a].ang.x = theta[a] (rad), ang.y/z reserved
+     *      NOTE:
+     *        Optionally, srcCR can also be derived from geometry:
+     *          srcCR = normalize(detC - src)
+     *        depending on whether explicit angular control or geometric consistency is preferred.
+     *
+     * ----------------------------------------------------------------------------
+     * 4) Detector local axes (U, V)
+     * ----------------------------------------------------------------------------
+     *   Step 1: apply gantry rotation
+     *      U = Rz(theta) * detU0
+     *      V = Rz(theta) * detV0
+     *
+     *   Step 2: apply detector tilt (Euler angles)
+     *
+     *      detTiltEuler = (phi_x, phi_y, phi_z)
+     *
+     *      Rotation order: X → Y → Z (extrinsic, world axes)
+     *
+     *      U, V are rotated consistently:
+     *        U = Rz * Ry * Rx * U
+     *        V = Rz * Ry * Rx * V
+     *
+     * ----------------------------------------------------------------------------
+     * 5) Detector pixel origin (top-left pixel center)
+     * ----------------------------------------------------------------------------
+     *   Let:
+     *      cu = (Nu - 1) / 2
+     *      cv = (Nv - 1) / 2
+     *
+     *   Then:
+     *      detS = detC
+     *           - cu * U
+     *           - cv * V
+     *
+     * ----------------------------------------------------------------------------
+     * Detector pixel offset semantics (IMPORTANT)
+     * ----------------------------------------------------------------------------
+     *   Pixel offsets (if used) represent ONLY in-plane detector shifts
+     *   along the FINAL (already rotated + tilted) U/V axes.
+     *
+     *   They DO NOT represent:
+     *     - source position correction
+     *     - principal point / projection offset
+     *     - calibration parameters
+     *
+     *   If enabled:
+     *
+     *     detS = detC
+     *          - (cu + offsetU_pix) * U
+     *          - (cv + offsetV_pix) * V
+     *
+     *   Offsets MUST be applied AFTER:
+     *     - gantry rotation
+     *     - detector tilt
+     *
+     * ----------------------------------------------------------------------------
+     * Notes
+     * ----------------------------------------------------------------------------
+     * - All rotations are right-handed
+     * - Euler angles are in radians
+     * - Gantry rotation is always about global Z axis
+     * - Detector tilt is applied after gantry rotation
+     * - Source Euler rotation is applied before gantry rotation
+     *
+     * ----------------------------------------------------------------------------
+     * Stored parameters
+     * ----------------------------------------------------------------------------
+     *   geo[a].src   = source position
+     *   geo[a].srcCR = center ray direction (unit vector)
+     *   geo[a].detS  = detector pixel (0,0) position
+     *   geo[a].U     = detector u step vector
+     *   geo[a].V     = detector v step vector
+     *   geo[a].ang   = (theta, 0, 0)
      */
+
+
     inline void build_circular_vec_geometry_from_theta(
         std::vector<SConeProjectionVec>& geo,
-        const float* theta,          // [Ang] radians
+        const std::vector<float>& theta,      // [Ang] radians
         int Ang, int Nu, int Nv,
-        float SOD, float SDD,
         float du, float dv,
-        float detector_pixel_center_offsetU_pix = 0.0f,
-        float detector_pixel_center_offsetV_pix = 0.0f,
-        float3 detTiltUVN = make_float3(0.0f, 0.0f, 0.0f)) // (phi_u, phi_v, phi_n)
+        float SID, float IDD,
+        float3 det_offset = make_float3(0.0f, 0.0f, 0.0f),
+        float3 detTiltEuler = make_float3(0.0f, 0.0f, 0.0f),
+        float3 src_offset = make_float3(0.0f, 0.0f, 0.0f),
+        float3 srcCRTiltEuler = make_float3(0.0f, 0.0f, 0.0f)   // source center-ray Euler angles (pitch, yaw, roll)
+    ) // detector tilt Euler angles (pitch, yaw, roll)
     {
         geo.resize(Ang);
 
-        const float ODD = SDD - SOD;
-
-        // theta=0 reference (source at -X) Դ�������ô����
-        const float3 src0 = make_float3(-SOD, 0.0f, 0.0f);
-        const float3 detC0 = make_float3(ODD, 0.0f, 0.0f);
-
-        // Match MATLAB-style U(theta) = du*[sin��,-cos��,0]  => U(0)=(0,-du,0)
-        const float3 detU0 = make_float3(0.0f, -du, 0.0f);
-        const float3 detV0 = make_float3(0.0f, 0.0f, dv);
-
-        // pixel-center indices (in pixels) + pixel-center shift relative to detC (in pixels)
-        // NOTE: offsets are applied along FINAL detU/detV after gantry rotation + tilt.
-        const float cu = 0.5f * (Nu - 1) + detector_pixel_center_offsetU_pix;
-        const float cv = 0.5f * (Nv - 1) + detector_pixel_center_offsetV_pix;
-
-        const float phi_u = detTiltUVN.x;
-        const float phi_v = detTiltUVN.y;
-        const float phi_n = detTiltUVN.z;
+        const float3 detU0 = make_float3(du, 0.f, 0.f);  // detector U local
+        const float3 detV0 = make_float3(0.f, 0.f, dv);  // detector V local
+        const float3 src0 = make_float3(0.f, -SID, 0.f); // source position
+        const float3 detC0 = make_float3(0.f, IDD, 0.f); // detector center
+        const float3 srcCR0 = make_float3(0.f, 1.f, 0.f); // initial source ray along Y
 
         for (int a = 0; a < Ang; ++a) {
+            float t = theta[a];
 
-            const float t = theta[a];
+            // --------------------------
+            // 1) 源位置 + 偏移
+            // --------------------------
+            float3 src = f3_translate_point(src0, src_offset);
+            src = f3_rotz(src, t); // gantry rotation applied to source position as well for consistency
+            // --------------------------
+            // 2) 探测器中心位置 + 偏移 + gantry旋转
+            // --------------------------
+            float3 detC = f3_translate_point(detC0, det_offset);
+            detC = f3_rotz(detC, t); // gantry rotation
 
-            // Rotate all base elements by gantry angle (about origin)
-            const float3 src = f3_rotz_p(src0, t);
-            const float3 detC = f3_rotz_p(detC0, t);
-            float3 detU = f3_rotz(detU0, t);
-            float3 detV = f3_rotz(detV0, t);
+            // --------------------------
+            // 3) 源中心射线旋转（欧拉角 + gantry旋转）
+            // --------------------------
+            float3 srcCR = srcCR0;
+            // Apply Euler angles (pitch=X, yaw=Y, roll=Z)
+            srcCR = f3_rot_axis(srcCR, make_float3(1, 0, 0), srcCRTiltEuler.x);
+            srcCR = f3_rot_axis(srcCR, make_float3(0, 1, 0), srcCRTiltEuler.y);
+            srcCR = f3_rot_axis(srcCR, make_float3(0, 0, 1), srcCRTiltEuler.z);
+            // Gantry rotation about Z
+            srcCR = f3_rotz(srcCR, t);
 
-            // Optional detector tilts in detector-local axes (body-fixed), order u -> v -> n
-            if ((fabs(phi_u) >= 1e-5f) || (fabs(phi_v) >= 1e-5f) || (fabs(phi_n) >= 1e-5f)) {
+            // --------------------------
+            // 4) 探测器局部 U/V 方向 + tilt（欧拉角）
+            // --------------------------
+            float3 U = detU0;
+            float3 V = detV0;
 
-                // 1) rotate about current U axis
-                {
-                    float3 u_unit = f3_normalize(detU);
-                    detU = f3_rot_axis(detU, u_unit, phi_u);
-                    detV = f3_rot_axis(detV, u_unit, phi_u);
-                }
+            // apply gantry rotation
+            U = f3_rotz(U, t);
+            V = f3_rotz(V, t);
 
-                // 2) rotate about UPDATED V axis
-                {
-                    float3 v_unit = f3_normalize(detV);
-                    detU = f3_rot_axis(detU, v_unit, phi_v);
-                    detV = f3_rot_axis(detV, v_unit, phi_v);
-                }
+            // detector tilt Euler angles
+            U = f3_rot_axis(U, make_float3(1, 0, 0), detTiltEuler.x);
+            V = f3_rot_axis(V, make_float3(1, 0, 0), detTiltEuler.x);
 
-                // 3) rotate about UPDATED detector normal n = U x V
-                {
-                    float3 n_unit = f3_normalize(f3_cross(detU, detV)); // right-hand: U��V
-                    detU = f3_rot_axis(detU, n_unit, phi_n);
-                    detV = f3_rot_axis(detV, n_unit, phi_n);
-                }
-            }
+            U = f3_rot_axis(U, make_float3(0, 1, 0), detTiltEuler.y);
+            V = f3_rot_axis(V, make_float3(0, 1, 0), detTiltEuler.y);
 
-            // Pixel (u=0,v=0) world origin detS from detC and detector basis
-            // Apply pixel-center offset ALONG FINAL detU/detV (after gantry rotation + tilt).
-            const float3 detS = f3_sub(detC, f3_add(f3_mul(detU, cu), f3_mul(detV, cv)));
+            U = f3_rot_axis(U, make_float3(0, 0, 1), detTiltEuler.z);
+            V = f3_rot_axis(V, make_float3(0, 0, 1), detTiltEuler.z);
 
-            // store angle (rad) in ang.x for alignment-friendly layout
-            const float3 ang = make_float3(t, 0.0f, 0.0f);
+            // --------------------------
+            // 5) 探测器像素原点 detS
+            // --------------------------
+            float cu = 0.5f * (Nu - 1);
+            float cv = 0.5f * (Nv - 1);
+            float3 detS = f3_sub(detC, f3_add(f3_mul(U, cu), f3_mul(V, cv)));
 
-            // Ensure SConeProjectionVec field order matches this initializer:
-            // { src, detS, detU, detV, ang }
-            geo[a] = SConeProjectionVec{ src, detS, detU, detV, ang };
+            // --------------------------
+            // 6) 保存
+            // --------------------------
+            geo[a] = SConeProjectionVec{ src, srcCR, detS, U, V, make_float3(t,0.f,0.f) };
         }
     }
 
     inline void build_circular_vec_geometry(
         std::vector<SConeProjectionVec>& geo,
         int Ang, int Nu, int Nv,
-        float SOD, float SDD,
         float du, float dv,
-        float detector_pixel_center_offsetU_pix = 0.0f,
-        float detector_pixel_center_offsetV_pix = 0.0f,
-        float3 detTiltUVN = make_float3(0.0f, 0.0f, 0.0f)) // default 0
+        float SID, float IDD,
+        float3 det_offset = make_float3(0.0f, 0.0f, 0.0f),
+        float3 detTiltEuler = make_float3(0.0f, 0.0f, 0.0f),
+        float3 src_offset = make_float3(0.0f, 0.0f, 0.0f),
+        float3 srcCRTiltEuler = make_float3(0.0f, 0.0f, 0.0f))
     {
-        std::vector<float> theta(Ang);
+        if (Ang <= 0) throw std::runtime_error("Ang must > 0");
+
         const float two_pi = 2.0f * CUDA_PI;
 
-        for (int a = 0; a < Ang; ++a) {
-            theta[a] = two_pi * a / Ang;
+        std::vector<float> theta;
+        theta.resize(Ang);
+
+        for (int a = 0; a < Ang; ++a)
+        {
+            theta[a] = (two_pi * float(a) + CUDA_PI / 2) / float(Ang);
         }
 
+        // 🔥 直接调用你的“新统一接口”
         build_circular_vec_geometry_from_theta(
-            geo, theta.data(),
-            Ang, Nu, Nv,
-            SOD, SDD,
+            geo,
+            theta,        // 注意：你现在接口是 vector，不是 pointer
+            Ang,
+            Nu, Nv,
             du, dv,
-            detector_pixel_center_offsetU_pix,
-            detector_pixel_center_offsetV_pix,
-            detTiltUVN);
+            SID, IDD,
+            det_offset,
+            detTiltEuler,
+            src_offset,
+            srcCRTiltEuler
+        );
     }
 
 } // namespace YK
