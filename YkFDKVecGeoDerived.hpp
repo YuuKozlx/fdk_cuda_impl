@@ -77,7 +77,6 @@ namespace YK {
                 // 0) meta
                 gv.Nu = detector_pixels_u;
                 gv.Nv = detector_pixels_v;
-                gv.offset_mode = 0;
 
                 // =========================================================
                 // 1) theta
@@ -97,8 +96,8 @@ namespace YK {
                 // =========================================================
                 // 4) (1) central ray dir + SID
                 // =========================================================
-                const float3 central_ray_dir = central_ray_direction_xy(gv.theta);
-                gv.SOD_mm = sid_mm_from_dir_and_source(central_ray_dir, geo.src); // SOD_mm field stores SID by your definition
+                const float3 central_ray_dir = geo.srcCR;
+                gv.SOD_mm = sid_mm_from_source_to_zaxis(geo.src); // SOD_mm field stores SID by your definition
 
                 // =========================================================
                 // 4) (2) principal point -> SDD + offsetU/V + ray0hat
@@ -107,27 +106,22 @@ namespace YK {
                 //   - We compute principal point by intersecting central ray with detector plane.
                 //   - We compute pixel coordinate (u,v) of that point and offsets from detector center pixel.
                 //   - ray0hat is unit vector from source to principal point.
-                compute_principal_point_SDD_offsets_ray0hat(
+                compute_SDD_offsets(
                     geo,
                     detector_pixels_u, detector_pixels_v,
-                    central_ray_dir,
-                    gv.offset_valid,
                     gv.offsetU_pix,
                     gv.offsetV_pix,
-                    gv.SDD_mm,
-                    gv.ray0hat);
+                    gv.SDD_mm);
+                printf("SDD = %.3f\n", gv.SDD_mm);
 
-                // =========================================================
-                // 5) nhat + DSD_n
-                // =========================================================
-                compute_detector_plane_normal_and_DSDn(
-                    geo, gv.nhat, gv.DSD_n, opt_.force_DSD_positive);
 
                 // 5) detector basis cache (for device-side u/v solve)
                 compute_detector_basis_cache(
                     geo,
-                    gv.basis_valid,
                     gv.UU, gv.VV, gv.UV, gv.invDetUV);
+
+                gv.ray_center = geo.srcCR;
+                gv.det_n = f3_cross(geo.detU, geo.detV);
 
             }
 
@@ -178,60 +172,25 @@ namespace YK {
             float& pixel_v_mm)
         {
             pixel_u_mm = f3_len(geo.detU);
-            if (!(pixel_u_mm > 0.f)) pixel_u_mm = 1.f;
+            if (!(pixel_u_mm > 0.f)) std::runtime_error("Invalid geometry: detU length must be > 0");
 
             pixel_v_mm = f3_len(geo.detV);
-            if (!(pixel_v_mm > 0.f)) pixel_v_mm = 1.f;
+            if (!(pixel_v_mm > 0.f)) std::runtime_error("Invalid geometry: detV length must be > 0");
         }
 
-        // -----------------------------
-        // central ray direction (XY)
-        // -----------------------------
-        static inline float3 central_ray_direction_xy(float theta_rad)
-        {
-            return make_float3(cosf(theta_rad), sinf(theta_rad), 0.f);
-        }
+
 
         // -----------------------------
         // SID by your definition: SID = | d ¡¤ src |
         // (plane through Z-axis with normal || d, and |d|=1)
         // -----------------------------
-        static inline float sid_mm_from_dir_and_source(const float3& central_ray_dir_unit, const float3& source_world)
+        static inline float sid_mm_from_source_to_zaxis(const float3& src)
         {
-            return fabsf(f3_dot(central_ray_dir_unit, source_world));
+            return f3_len(f3(src.x, src.y, 0.f));
         }
 
-        // -----------------------------
-        // detector plane normal + DSD_n
-        //   nhat = normalize(detU x detV)
-        //   DSD_n = (detS - src) ¡¤ nhat
-        // -----------------------------
-        static inline bool compute_detector_plane_normal_and_DSDn(
-            const SConeProjectionVec& geo,
-            float3& detector_plane_normal_unit,
-            float& source_to_detector_plane_distance_along_normal,
-            bool force_DSD_positive)
-        {
-            float3 n = f3_cross(geo.detU, geo.detV);
-            const float n2 = f3_dot(n, n);
-            if (n2 < 1e-24f) {
-                detector_plane_normal_unit = make_float3(0, 0, 0);
-                source_to_detector_plane_distance_along_normal = 0.f;
-                return false;
-            }
-            const float invn = rsqrtf(n2);
-            detector_plane_normal_unit = make_float3(n.x * invn, n.y * invn, n.z * invn);
 
-            source_to_detector_plane_distance_along_normal =
-                f3_dot(f3_sub(geo.detS, geo.src), detector_plane_normal_unit);
 
-            if (force_DSD_positive && source_to_detector_plane_distance_along_normal < 0.f) {
-                detector_plane_normal_unit = f3_mul(detector_plane_normal_unit, -1.f);
-                source_to_detector_plane_distance_along_normal =
-                    -source_to_detector_plane_distance_along_normal;
-            }
-            return true;
-        }
 
         // -----------------------------
         // detector basis cache for device-side solve
@@ -239,7 +198,6 @@ namespace YK {
         // -----------------------------
         static inline void compute_detector_basis_cache(
             const SConeProjectionVec& geo,
-            int& basis_valid,
             float& UU, float& VV, float& UV, float& invDetUV)
         {
             UU = f3_dot(geo.detU, geo.detU);
@@ -248,14 +206,15 @@ namespace YK {
 
             const float det = UU * VV - UV * UV;
             if (fabsf(det) < 1e-20f) {
-                basis_valid = 0;
+
                 invDetUV = 0.0f;
                 return;
             }
 
-            basis_valid = 1;
             invDetUV = 1.0f / det;
         }
+
+
 
         // -----------------------------
         // principal point + SDD + offsets + ray0hat
@@ -266,60 +225,61 @@ namespace YK {
         //   passes through detS, normal computed as normalize(detU x detV)
         //
         // outputs (write into gv fields via refs):
-        //   offset_valid, offsetU_pix, offsetV_pix, SDD_mm, ray0hat
+        //   offset_valid, offsetU_pix, offsetV_pix, SDD_mm
         // -----------------------------
-        static inline void compute_principal_point_SDD_offsets_ray0hat(
+        static inline bool compute_SDD_offsets(
             const SConeProjectionVec& geo,
             int detector_pixels_u,
             int detector_pixels_v,
-            const float3& central_ray_dir_unit,
-            int& out_offset_valid,
             float& out_offsetU_pix,
             float& out_offsetV_pix,
-            float& out_SDD_mm,
-            float3& out_ray0hat)
+            float& out_SDD_mm)
         {
-            out_offset_valid = 0;
             out_offsetU_pix = 0.f;
             out_offsetV_pix = 0.f;
             out_SDD_mm = 0.f;
-            out_ray0hat = make_float3(0, 0, 0);
 
-            // local plane normal from U x V (independent; may be locally flipped for t>0)
-            float3 nh_local;
-            float  DSD_n_local = 0.f;
-            if (!compute_detector_plane_normal_and_DSDn(geo, nh_local, DSD_n_local, /*force*/false)) return;
 
-            float denom = f3_dot(central_ray_dir_unit, nh_local);
-            if (fabsf(denom) < 1e-12f) return;
+            // Compute the detector plane normal from U x V
+            float3 n = f3_cross(geo.detU, geo.detV);
+            const float n2 = f3_dot(n, n);
+            if (n2 < 1e-24f) {
+                return false;
+            }
+            const float invn = rsqrtf(n2);
+            float3 detector_plane_normal_unit = make_float3(n.x * invn, n.y * invn, n.z * invn);
 
-            float numer = f3_dot(f3_sub(geo.detS, geo.src), nh_local);
-            float t = numer / denom;
-
-            // local flip to enforce forward intersection (t>0)
-            if (t <= 0.f) {
-                nh_local = make_float3(-nh_local.x, -nh_local.y, -nh_local.z);
-                denom = -denom;
-                numer = -numer;
-                if (fabsf(denom) < 1e-12f) return;
-                t = numer / denom;
-                if (t <= 0.f) return;
+            // Calculate the parameter t for the intersection with the primary ray
+            float denom = f3_dot(geo.srcCR, detector_plane_normal_unit);
+            if (fabsf(denom) < 1e-24f) {  // ray nearly parallel to detector
+                return false;
             }
 
-            // principal point on detector plane
-            const float3 principal_point_world = f3_add(geo.src, f3_mul(central_ray_dir_unit, t));
+            float numer = f3_dot(f3_sub(geo.detS, geo.src), detector_plane_normal_unit);
+            float t = numer / denom;
+
+            // Local flip to enforce forward intersection (t > 0)
+            if (t <= 0.f) {
+                detector_plane_normal_unit = make_float3(-detector_plane_normal_unit.x, -detector_plane_normal_unit.y, -detector_plane_normal_unit.z);
+                denom = -denom;
+                numer = -numer;
+                if (fabsf(denom) < 1e-12f) return false;
+                t = numer / denom;
+                if (t <= 0.f) return false;
+            }
+
+            // Principal point on the detector plane
+            const float3 principal_point_world = f3_add(geo.src, f3_mul(geo.srcCR, t));
 
             // SDD and ray0hat: ray0 = principal - src
             const float3 ray0 = f3_sub(principal_point_world, geo.src);
-            const float  ray0_len2 = f3_dot(ray0, ray0);
-            if (ray0_len2 < 1e-20f) return;
+            const float ray0_len2 = f3_dot(ray0, ray0);
+            if (ray0_len2 < 1e-20f) return false;
 
             const float inv_len = rsqrtf(ray0_len2);
-            out_ray0hat = make_float3(ray0.x * inv_len, ray0.y * inv_len, ray0.z * inv_len);
             out_SDD_mm = sqrtf(ray0_len2);
 
-            // pixel coordinate of principal point:
-            //   D = principal - detS = u*detU + v*detV
+            // Pixel coordinates of the principal point:
             const float3 D = f3_sub(principal_point_world, geo.detS);
 
             const float UU = f3_dot(geo.detU, geo.detU);
@@ -329,19 +289,20 @@ namespace YK {
             const float DV = f3_dot(D, geo.detV);
 
             const float det = UU * VV - UV * UV;
-            if (fabsf(det) < 1e-20f) return;
+            if (fabsf(det) < 1e-20f) return false;
 
             const float invdet = 1.f / det;
             const float u_pix = (DU * VV - DV * UV) * invdet;
             const float v_pix = (-DU * UV + DV * UU) * invdet;
 
-            // offsets relative to detector center pixel
+            // Offsets relative to the detector center pixel
             const float center_u = 0.5f * (detector_pixels_u - 1);
             const float center_v = 0.5f * (detector_pixels_v - 1);
 
             out_offsetU_pix = u_pix - center_u;
             out_offsetV_pix = v_pix - center_v;
-            out_offset_valid = true;
+
+            return true;
         }
 
     private:

@@ -226,7 +226,7 @@ namespace YK {
 
         for (int a = 0; a < Ang; ++a)
         {
-            theta[a] = (two_pi * float(a) + CUDA_PI / 2) / float(Ang);
+            theta[a] = two_pi * float(a) / float(Ang);
         }
 
         // 🔥 直接调用你的“新统一接口”

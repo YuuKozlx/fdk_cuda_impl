@@ -46,25 +46,22 @@ namespace YK {
         // ray from source to voxel
         const float3 dir = f3_sub(P, g.src);
 
-        // denom_c = (P-S) · ray0hat  (projection on central ray direction you defined)
-        denom_c = f3_dot(dir, gv.ray0hat);
+        // denom_c = (P-S) · ray_center  (projection on central ray direction you defined)
+        denom_c = f3_dot(dir, gv.ray_center);
 
         // plane intersection path uses exported detector normal & DSD_n
-        float3 nh_local = gv.nhat;
-        float  DSD_n_local = gv.DSD_n;
+        float3 nh_local = gv.det_n;
+        float  DSD_n_local = gv.SDD_mm;
 
-        float denom_n = f3_dot(dir, nh_local);
+        /* printf("denom_c=%.3f,  DSD_n_local=%.3f, \n", denom_c, DSD_n_local);*/
+
+        float denom_n = fabs(f3_dot(dir, nh_local));
         if (fabsf(denom_n) < 1e-8f) return false;
         if (fabsf(DSD_n_local) < 1e-8f) return false;
 
-        // local flip only for intersection to enforce t>0
-        if (DSD_n_local * denom_n < 0.0f) {
-            nh_local = make_float3(-nh_local.x, -nh_local.y, -nh_local.z);
-            denom_n = -denom_n;
-            DSD_n_local = -DSD_n_local;
-        }
 
         const float t = DSD_n_local / denom_n;
+        //printf("denom_c=%.3f, denom_n=%.3f, DSD_n_local=%.3f, t=%.3f\n", denom_c, denom_n, DSD_n_local, t);
         if (t <= 0.0f) return false;
 
         // hit point on detector plane
@@ -73,7 +70,7 @@ namespace YK {
 
         // detector basis solve using exported cache:
         //   D = u*detU + v*detV  (detU,detV can be non-orthogonal)
-        if (!gv.basis_valid || gv.invDetUV == 0.0f) return false;
+        if (gv.invDetUV == 0.0f) return false;
 
         const float DU = f3_dot(D, g.detU);
         const float DV = f3_dot(D, g.detV);
@@ -89,10 +86,10 @@ namespace YK {
     //   where SID is stored in gv.SOD_mm by your chosen definition
     // ============================================================
     __global__ void fdk_vec_backproject_chunk_kernel(
-        const float* __restrict__ views_chunk,            // [K*Nv*Nu]
-        const SConeProjectionVec* __restrict__ d_geo,     // [Ang]
-        const SFDKGeoParamPerView* __restrict__ d_gv,     // [Ang]
-        float* __restrict__ vol,                          // [Nz*Ny*Nx]
+        const float* __restrict__ views_chunk, // [K*Nv*Nu]
+        const SConeProjectionVec* __restrict__ d_geo, // [Ang]
+        const SFDKGeoParamPerView* __restrict__ d_gv, // [Ang]
+        float* __restrict__ vol, // [Nz*Ny*Nx]
         int Nx, int Ny, int Nz, float vox,
         int Nu, int Nv,
         int K, int base_a)
@@ -102,40 +99,46 @@ namespace YK {
         int z = blockIdx.z * blockDim.z + threadIdx.z;
         if (x >= Nx || y >= Ny || z >= Nz) return;
 
-        // NOTE: your coordinate convention kept as-is
+        // Calculate the voxel position P
         float3 P = make_float3(
             (y - (Ny - 1) * 0.5f) * vox,
             (x - (Nx - 1) * 0.5f) * vox,
             (z - (Nz - 1) * 0.5f) * vox
         );
 
+
+
+        // Accumulate projection values
         float acc = 0.0f;
 
         for (int i = 0; i < K; ++i) {
             int a = base_a + i;
-
             const SConeProjectionVec& g = d_geo[a];
             const SFDKGeoParamPerView& gv = d_gv[a];
 
             float u = 0.0f, v = 0.0f, denom_c = 0.0f;
             if (!project_uv_and_terms_derived(g, gv, P, u, v, denom_c)) continue;
 
+
             const float* view_i = views_chunk + (size_t)i * (size_t)Nv * (size_t)Nu;
             float p = YK::Interp::sample2d(view_i, Nu, Nv, u, v);
 
-            // IMPORTANT:
-            //   gv.SOD_mm stores SID by your definition (distance to plane through Z-axis with normal || central ray)
             const float SID = gv.SOD_mm;
-
             const float denom2 = denom_c * denom_c;
             if (denom2 < 1e-20f) continue;
 
             const float w = (SID * SID) / denom2;
             acc += p * w * gv.dtheta;
+
+
         }
 
         size_t vidx = (size_t)z * (size_t)Ny * (size_t)Nx + (size_t)y * (size_t)Nx + (size_t)x;
         vol[vidx] += acc;
+
+
+
+
     }
 
     // ============================================================

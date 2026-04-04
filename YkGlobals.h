@@ -92,19 +92,15 @@ struct alignas(16) SFDKGeoParamPerView
 
     float offsetU_pix = 0.0f;
     float offsetV_pix = 0.0f;
-    int   offset_mode = 1;     // 0 ignore, 1 apply
-    int   offset_valid = 1;    // 0 invalid, 1 valid
 
-    float3 nhat = { 0,0,0 };
-    float  DSD_n = 0.0f;
+    float3 ray_center = { 0,0,0 };// from source to principal point (mm)
 
+    float3 det_n = { 0,0,0 }; // detector plane normal (unit vector)
 
-    float3 ray0hat = { 0,0,0 };
 
     float du_mm = 1.0f;
     float dv_mm = 1.0f;
 
-    int   basis_valid = 0;
     float UU = 0.0f;
     float VV = 0.0f;
     float UV = 0.0f;

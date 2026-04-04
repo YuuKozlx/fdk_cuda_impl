@@ -1,11 +1,11 @@
 
 #include <cstdio>
-#include <vector>
 #include <cuda_runtime.h>
+#include <vector>
 
 #include "YkGlobals.h"
-#include "YkVecGeo.hpp"
 #include "YkVecFDKBackProjection.hpp"
+#include "YkVecGeo.hpp"
 //#include "YkFDKBackProjection.hpp"
 
 
@@ -14,6 +14,7 @@
 #include "YkMem3d.hpp"
 #include "Yktest_mem3d.hpp"
 #include "Yktest_dataobject.hpp"
+#include "YkVecOperation.hpp"
 //#include "YkFdkVecOnlineStreamer.hpp"
 
 
@@ -36,12 +37,12 @@ static bool write_raw_float(const char* path, const std::vector<float>& data) {
 int main_fdk() {
     SDimensions3D dims;
     dims.iPU = 256; dims.iPV = 256; dims.iPAng = 360;
-    dims.iVX = 512; dims.iVY = 512; dims.iVZ = 100;
+    dims.iVX = 1024; dims.iVY = 1024; dims.iVZ = 400;
 
     float SID = 500.0f;
     float SDD = 1000.0f;
     float du = 1.0f, dv = 1.0f;
-    float vox = 0.5f;
+    float vox = 0.125f;
 
     int Nu = (int)dims.iPU;
     int Nv = (int)dims.iPV;
@@ -56,18 +57,20 @@ int main_fdk() {
 
     // read proj (assume A-V-U contiguous: [a][v][u])
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float("pmma_cylinder_150cm_proj.raw", h_proj)) {
+    if (!read_raw_float("proj_256x256.raw", h_proj)) {
         std::printf("Error: cannot read cat515_projection.raw (expect %zu floats)\n", proj_elems);
         return -1;
     }
 
     // build vector geometry (circular)
     std::vector<SConeProjectionVec> geo;
+    float offsetU_mm = 5.5f * du;  // 5.5 ÏñËØ ¡ú mm
     YK::build_circular_vec_geometry(
-        geo, Ang, Nu, Nv,
-        SID, SDD,
+        geo,
+        Ang, Nu, Nv,
         du, dv,
-        /*offsetU*/-5.5f, /*offsetV*/0.0f);
+        SID, SDD - SID,
+        f3(offsetU_mm, 0.f, 0.f));
 
     // cuda
     cudaStream_t s = nullptr;

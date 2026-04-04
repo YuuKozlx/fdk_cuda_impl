@@ -116,6 +116,7 @@
       <WarningLevel>Level3</WarningLevel>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <Optimization>Disabled</Optimization>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -126,6 +127,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="minimha.h" />
     <ClInclude Include="YkDataObj.hpp" />
     <ClInclude Include="YKFDKFilter.hpp" />
     <ClInclude Include="YkFDKVecAlignPadCrop.hpp" />
