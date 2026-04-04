@@ -101,6 +101,9 @@ struct alignas(16) SFDKGeoParamPerView
     float du_mm = 1.0f;
     float dv_mm = 1.0f;
 
+    float detS_sub_src_dot_dU = 0.0f;   // (detS - src) ¡¤ detU
+    float detS_sub_src_dot_dV = 0.0f;   // (detS - src) ¡¤ detV
+
     float UU = 0.0f;
     float VV = 0.0f;
     float UV = 0.0f;

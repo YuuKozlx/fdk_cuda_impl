@@ -16,52 +16,6 @@ namespace YK {
 //   - We do a LOCAL flip (nhat,DSD_n) only for intersection to enforce t>0.
 //     This does NOT modify stored gv.nhat / gv.DSD_n.
 // ============================================================
-    __device__ __forceinline__ bool project_uv_and_terms_derived(
-        const SConeProjectionVec& g,
-        const SFDKGeoParamPerView& gv,
-        float3 P,
-        float& u_pix,
-        float& v_pix,
-        float& denom_c)
-    {
-        // ray from source to voxel
-        const float3 dir = f3_sub(P, g.src);
-
-        // denom_c = (P-S) · ray_center  (projection on central ray direction you defined)
-        denom_c = f3_dot(dir, gv.ray_center);
-
-        // plane intersection path uses exported detector normal & DSD_n
-        float3 nh_local = gv.det_n;
-        float  DSD_n_local = gv.SDD_mm;
-
-        /* printf("denom_c=%.3f,  DSD_n_local=%.3f, \n", denom_c, DSD_n_local);*/
-
-        float denom_n = fabs(f3_dot(dir, nh_local));
-        if (fabsf(denom_n) < 1e-8f) return false;
-        if (fabsf(DSD_n_local) < 1e-8f) return false;
-
-
-        const float t = DSD_n_local / denom_n;
-        //printf("denom_c=%.3f, denom_n=%.3f, DSD_n_local=%.3f, t=%.3f\n", denom_c, denom_n, DSD_n_local, t);
-        if (t <= 0.0f) return false;
-
-        // hit point on detector plane
-        const float3 Q = f3_add(g.src, f3_mul(dir, t));
-        const float3 D = f3_sub(Q, g.detS);
-
-        // detector basis solve using exported cache:
-        //   D = u*detU + v*detV  (detU,detV can be non-orthogonal)
-        if (gv.invDetUV == 0.0f) return false;
-
-        const float DU = f3_dot(D, g.detU);
-        const float DV = f3_dot(D, g.detV);
-
-        u_pix = (DU * gv.VV - DV * gv.UV) * gv.invDetUV;
-        v_pix = (-DU * gv.UV + DV * gv.UU) * gv.invDetUV;
-        return true;
-    }
-
-
     template<int ZSIZE>
     __global__ void fdk_bp_kernel(
         const cudaTextureObject_t* __restrict__ tex_views, // [K]
@@ -128,14 +82,42 @@ namespace YK {
 
 
 
+    __device__ __forceinline__ bool project_uv_and_terms_derived(
+        const SConeProjectionVec& g,
+        const SFDKGeoParamPerView& gv,
+        float3 P,
+        float& u_pix,
+        float& v_pix,
+        float& denom_c)
+    {
+        const float3 dir = f3_sub(P, g.src);
+
+        denom_c = f3_dot(dir, gv.ray_center);
+
+        const float denom_n = f3_dot(dir, gv.det_n);
+        if (fabsf(denom_n) < 1e-8f) return false;
+
+        const float t = __fdividef(gv.SDD_mm, denom_n);
+        if (t <= 0.f) return false;
+
+        // D·detU = t*(dir·detU) - (detS-src)·detU
+        const float DU = t * f3_dot(dir, g.detU) - gv.detS_sub_src_dot_dU;
+        const float DV = t * f3_dot(dir, g.detV) - gv.detS_sub_src_dot_dV;
+
+        u_pix = (DU * gv.VV - DV * gv.UV) * gv.invDetUV;
+        v_pix = (-DU * gv.UV + DV * gv.UU) * gv.invDetUV;
+        return true;
+    }
+
+
     template<int ZSIZE>
     __global__ void fdk_bp_kernel(
         const cudaTextureObject_t* __restrict__ tex_views,
-        const SConeProjectionVec* __restrict__ d_geo,
-        const SFDKGeoParamPerView* __restrict__ d_gv,
+        const SConeProjectionVec* __restrict__ d_geo,    // 已是 chunk 起始：d_geo + base
+        const SFDKGeoParamPerView* __restrict__ d_gv,     // 已是 chunk 起始：d_gv + base
         float* __restrict__ vol,
         int Nx, int Ny, int Nz, float vox,
-        int K, int base_a)
+        int K)
     {
         const int x = blockIdx.x * blockDim.x + threadIdx.x;
         const int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -149,9 +131,11 @@ namespace YK {
         for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
 
         for (int i = 0; i < K; ++i) {
-            const int a = base_a + i;
-            const SConeProjectionVec& g = d_geo[a];
-            const SFDKGeoParamPerView& gv = d_gv[a];
+            const SConeProjectionVec& g = d_geo[i];   // 直接用 i，不加 base_a
+            const SFDKGeoParamPerView& gv = d_gv[i];
+
+            const float fX = (y - (Ny - 1) * 0.5f) * vox;
+            const float fY = (x - (Nx - 1) * 0.5f) * vox;
 
 #pragma unroll
             for (int iz = 0; iz < ZSIZE; ++iz) {
@@ -159,8 +143,7 @@ namespace YK {
                 if (zIdx >= Nz) continue;
 
                 float3 P = make_float3(
-                    (y - (Ny - 1) * 0.5f) * vox,
-                    (x - (Nx - 1) * 0.5f) * vox,
+                    fX, fY,
                     (zIdx - (Nz - 1) * 0.5f) * vox);
 
                 float u, v, denom_c;
@@ -182,50 +165,54 @@ namespace YK {
             }
         }
     }
-    //// 根据 Nz 选合适的 ZSIZE
-    //inline void launchBpKernel(
-    //    const cudaTextureObject_t* d_texObjs,
-    //    float* d_vol,
-    //    int Nx, int Ny, int Nz, float vox,
-    //    int K, cudaStream_t stream)
-    //{
-    //    dim3 block(16, 16, 1);
-    //    dim3 grid(
-    //        (Nx + block.x - 1) / block.x,
-    //        (Ny + block.y - 1) / block.y,
-    //        (Nz + 3) / 4);  // ZSIZE=4
 
-    //    fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
-    //        d_texObjs, d_vol,
-    //        Nx, Ny, Nz, vox, K);
-    //    YK_CUDA_KERNEL_CHECK();
-    //}
 
+    // 根据 Nz 选合适的 ZSIZE
     inline void launchBpKernel(
         const cudaTextureObject_t* d_texObjs,
-        const SConeProjectionVec* d_geo,
-        const SFDKGeoParamPerView* d_gv,
         float* d_vol,
         int Nx, int Ny, int Nz, float vox,
-        int K, int base_a,
-        cudaStream_t stream)
+        int K, cudaStream_t stream)
     {
+        constexpr int ZSIZE = 4; // 可以根据 Nz 调整，比如 Nz 很大时可以用 8 或 16，但要注意寄存器压力和 occupancy
         dim3 block(16, 16, 1);
         dim3 grid(
             (Nx + block.x - 1) / block.x,
             (Ny + block.y - 1) / block.y,
-            (Nz + 3) / 4);
+            (Nz + ZSIZE - 1) / ZSIZE);
 
-        fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+        fdk_bp_kernel<ZSIZE> << <grid, block, 0, stream >> > (
+            d_texObjs, d_vol,
+            Nx, Ny, Nz, vox, K);
+        YK_CUDA_KERNEL_CHECK();
+    }
+
+
+    // 非预计算版本，直接在 kernel 内计算 u/v/denom_c，避免了全局内存访问，但计算量增加
+    inline void launchBpKernel(
+        const cudaTextureObject_t* d_texObjs,
+        const SConeProjectionVec* d_geo,   // 传 ctx.d_geo + base
+        const SFDKGeoParamPerView* d_gv,    // 传 ctx.d_gv  + base
+        float* d_vol,
+        int Nx, int Ny, int Nz, float vox,
+        int K, cudaStream_t stream)
+    {
+
+        constexpr int ZSIZE = 4; // 可以根据 Nz 调整，比如 Nz 很大时可以用 8 或 16，但要注意寄存器压力和 occupancy
+        dim3 block(16, 16, 1);
+        dim3 grid(
+            (Nx + block.x - 1) / block.x,
+            (Ny + block.y - 1) / block.y,
+            (Nz + ZSIZE - 1) / ZSIZE);
+
+        fdk_bp_kernel<ZSIZE> << <grid, block, 0, stream >> > (
             d_texObjs,
             d_geo,
             d_gv,
             d_vol,
-            Nx, Ny, Nz, vox,
-            K, base_a);
+            Nx, Ny, Nz, vox, K);
         YK_CUDA_KERNEL_CHECK();
     }
-
 
 
 } // namespace YK

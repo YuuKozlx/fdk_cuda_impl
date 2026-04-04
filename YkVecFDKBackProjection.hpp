@@ -116,14 +116,16 @@ namespace YK {
             //    dims.iVX, dims.iVY, dims.iVZ, vox,
             //    K, stream);
 
+            // 非预计算版本 
             launchBpKernel(
                 ctx.chunk.d_texObjs,
-                ctx.d_geo,
-                ctx.d_gv,
+                ctx.d_geo + base,   // 偏移到当前 chunk 起始
+                ctx.d_gv + base,
                 ctx.d_vol,
                 dims.iVX, dims.iVY, dims.iVZ, vox,
-                K, base,
-                stream);
+                K, stream);
+
+
         }
 
         // ---- 5. 输出 ----

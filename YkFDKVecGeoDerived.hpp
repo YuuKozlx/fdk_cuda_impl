@@ -121,7 +121,11 @@ namespace YK {
                     gv.UU, gv.VV, gv.UV, gv.invDetUV);
 
                 gv.ray_center = geo.srcCR;
-                gv.det_n = f3_cross(geo.detU, geo.detV);
+                gv.det_n = f3_cross(geo.detV, geo.detU);
+
+                float3 detS_src = f3_sub(geo.detS, geo.src);
+                gv.detS_sub_src_dot_dU = f3_dot(detS_src, geo.detU);
+                gv.detS_sub_src_dot_dV = f3_dot(detS_src, geo.detV);
 
             }
 
@@ -241,7 +245,7 @@ namespace YK {
 
 
             // Compute the detector plane normal from U x V
-            float3 n = f3_cross(geo.detU, geo.detV);
+            float3 n = f3_cross(geo.detV, geo.detU);
             const float n2 = f3_dot(n, n);
             if (n2 < 1e-24f) {
                 return false;
@@ -258,15 +262,6 @@ namespace YK {
             float numer = f3_dot(f3_sub(geo.detS, geo.src), detector_plane_normal_unit);
             float t = numer / denom;
 
-            // Local flip to enforce forward intersection (t > 0)
-            if (t <= 0.f) {
-                detector_plane_normal_unit = make_float3(-detector_plane_normal_unit.x, -detector_plane_normal_unit.y, -detector_plane_normal_unit.z);
-                denom = -denom;
-                numer = -numer;
-                if (fabsf(denom) < 1e-12f) return false;
-                t = numer / denom;
-                if (t <= 0.f) return false;
-            }
 
             // Principal point on the detector plane
             const float3 principal_point_world = f3_add(geo.src, f3_mul(geo.srcCR, t));

@@ -1,10 +1,11 @@
 #pragma once
 #include <vector>
 #include "YkFDKChunkBuffer.hpp"
-#include "YkVecGeo.hpp"
+#include "YkFDKPrecompute.hpp"
 #include "YkFDKVecGeoDerived.hpp"
 #include "YkGlobals.h"
 #include "YkUtil.hpp"
+#include "YkVecGeo.hpp"
 
 namespace YK {
 
@@ -48,12 +49,16 @@ namespace YK {
                 dims.iPAng * sizeof(SFDKGeoParamPerView), cudaMemcpyHostToDevice, stream));
             YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0, vol_elems * sizeof(float), stream));
 
+            // geo/gv 上传后立即预计算
+            launchPrecomputeCoeffs(d_geo, d_gv, d_coeffs, dims.iPAng, stream);
+
             chunk.init(Kchunk, dims.iPU, dims.iPV);
         }
 
         void destroy() {
             chunk.destroy();
             auto freePtr = [](auto*& p) { if (p) { cudaFree(p); p = nullptr; } };
+            freePtr(d_coeffs);
             freePtr(d_geo);
             freePtr(d_gv);
             freePtr(d_vol);
