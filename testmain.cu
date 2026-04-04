@@ -70,7 +70,7 @@ int main_fdk() {
         Ang, Nu, Nv,
         du, dv,
         SID, SDD - SID,
-        f3(offsetU_mm, 0.f, 0.f));
+        YK::f3(offsetU_mm, 0.f, 0.f));
 
     // cuda
     cudaStream_t s = nullptr;
@@ -80,7 +80,7 @@ int main_fdk() {
     YK_CUDA_CHECK(cudaMalloc(&d_vol, vol_elems * sizeof(float)));
 
     // streaming recon (preweight + filter + vec BP)
-    YK::fdk_vec_recon_streaming(
+    YK::fdk_recon(
         h_proj.data(),
         d_vol,
         geo,

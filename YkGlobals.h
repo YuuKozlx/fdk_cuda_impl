@@ -107,7 +107,18 @@ struct alignas(16) SFDKGeoParamPerView
     float invDetUV = 0.0f;
 };
 
+struct FdkAffineCoeff {
+    float4 Cu;  // u 分子系数 (cx, cy, cz, cw)
+    float4 Cv;  // v 分子系数
+    float4 Cd;  // 分母系数
+    float  dtheta;
+    float  SID2; // SOD^2，权重用
+};
 
+// constant 内存，按 chunk 上传
+// 1024 角度 × 64 bytes = 64KB，刚好在限制内
+static constexpr int kMaxChunkAng = 1024;
+__constant__ FdkAffineCoeff gC_coeffs[kMaxChunkAng];
 
 
 

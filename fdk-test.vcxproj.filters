@@ -96,6 +96,15 @@
     <ClInclude Include="minimha.h">
       <Filter>util</Filter>
     </ClInclude>
+    <ClInclude Include="YkFDKViewTexSlot.hpp">
+      <Filter>vec_fdk</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKChunkBuffer.hpp">
+      <Filter>vec_fdk</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKGpuContext.hpp">
+      <Filter>vec_fdk</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="YkIoDump.cpp">
