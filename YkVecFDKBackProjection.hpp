@@ -90,7 +90,7 @@ namespace YK {
                     cudaMemcpyHostToDevice, stream));
 
                 pw.applyChunk(dims, ctx.d_view_in, ctx.d_view_pw,
-                    ctx.d_geo, ctx.d_gv, 1, a, stream);
+                    ctx.d_geo + a, ctx.d_gv + a, 1, stream);
 
                 if (onDump) onDump(a, "pw", ctx.d_view_pw, view_elems);
 
