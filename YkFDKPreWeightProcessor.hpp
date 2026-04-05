@@ -10,7 +10,6 @@
 #include "YkVecGeo.hpp"
 #include "YkVecOperation.hpp"
 #include "IProcessor.hpp"
-#include "YkFdkFilterContext.hpp"
 
 namespace YK {
     namespace cg = cooperative_groups;

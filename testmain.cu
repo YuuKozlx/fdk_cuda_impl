@@ -16,7 +16,7 @@
 #include "Yktest_dataobject.hpp"
 #include "YkVecOperation.hpp"
 //#include "YkFdkVecOnlineStreamer.hpp"
-#include "YkFDKOnline.hpp"
+
 
 
 static bool read_raw_float(const char* path, std::vector<float>& data) {
@@ -40,71 +40,79 @@ int main_fdk() {
     dims.iPU = 256; dims.iPV = 256; dims.iPAng = 360;
     dims.iVX = 1024; dims.iVY = 1024; dims.iVZ = 400;
 
-    float SID = 500.0f;
-    float SDD = 1000.0f;
-    float du = 1.0f, dv = 1.0f;
-    float vox = 0.125f;
+    const float SID = 500.0f, SDD = 1000.0f;
+    const float du = 1.0f, dv = 1.0f, vox = 0.125f;
 
-    int Nu = (int)dims.iPU;
-    int Nv = (int)dims.iPV;
-    int Ang = (int)dims.iPAng;
-    int Nx = (int)dims.iVX;
-    int Ny = (int)dims.iVY;
-    int Nz = (int)dims.iVZ;
+    const int Ang = dims.iPAng;
+    const int Nx = dims.iVX, Ny = dims.iVY, Nz = dims.iVZ;
 
-    const size_t view_elems = (size_t)Nu * Nv;
-    const size_t proj_elems = view_elems * (size_t)Ang;
+    const size_t view_elems = (size_t)dims.iPU * dims.iPV;
+    const size_t proj_elems = view_elems * Ang;
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
-    // read proj (assume A-V-U contiguous: [a][v][u])
+    // 读投影
     std::vector<float> h_proj(proj_elems);
     if (!read_raw_float("proj_256x256.raw", h_proj)) {
-        std::printf("Error: cannot read cat515_projection.raw (expect %zu floats)\n", proj_elems);
+        std::printf("Error: cannot read proj_256x256.raw (expect %zu floats)\n", proj_elems);
         return -1;
     }
 
-    // build vector geometry (circular)
+    // 构建完整圆轨迹几何
     std::vector<SConeProjectionVec> geo;
-    float offsetU_mm = 5.5f * du;  // 5.5 像素 → mm
+    const float offsetU_mm = 5.5f * du;
     YK::build_circular_vec_geometry(
-        geo,
-        Ang, Nu, Nv,
-        du, dv,
+        geo, Ang, dims.iPU, dims.iPV, du, dv,
         SID, SDD - SID,
         YK::f3(offsetU_mm, 0.f, 0.f));
 
-    // cuda
+    // CUDA 资源
     cudaStream_t s = nullptr;
     YK_CUDA_CHECK(cudaStreamCreate(&s));
 
     float* d_vol = nullptr;
     YK_CUDA_CHECK(cudaMalloc(&d_vol, vol_elems * sizeof(float)));
 
-    // streaming recon (preweight + filter + vec BP)
-    YK::fdk_recon(
-        h_proj.data(),
-        d_vol,
-        geo,
-        dims, vox,
-        /*Kchunk=*/8,
-        s
-    );
+    // 在线重建
+    const int batches = 12;
+    const int batch_size = Ang / batches;
 
+    SDimensions3D batch_dims = dims;
+
+    for (int i = 0; i < batches; ++i) {
+        const int base = i * batch_size;
+        const int K = (i < batches - 1) ? batch_size : Ang - base;
+        batch_dims.iPAng = K;
+
+        std::vector<SConeProjectionVec> batch_geo(
+            geo.begin() + base,
+            geo.begin() + base + K);
+
+        YK::fdk_recon(
+            h_proj.data() + (size_t)base * view_elems,
+            d_vol,
+            batch_geo,
+            batch_dims, vox,
+            /*Kchunk=*/batch_size,
+            s,
+            /*clear_vol=*/(i == 0));
+    }
 
     YK_CUDA_CHECK(cudaStreamSynchronize(s));
 
+    // D2H & 写文件
     std::vector<float> h_vol(vol_elems);
-    YK_CUDA_CHECK(cudaMemcpy(h_vol.data(), d_vol, vol_elems * sizeof(float), cudaMemcpyDeviceToHost));
+    YK_CUDA_CHECK(cudaMemcpy(h_vol.data(), d_vol,
+        vol_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
     if (!write_raw_float("fdk_vec_vol_new.raw", h_vol)) {
-        std::printf("Error: cannot write fdk_vec_vol.raw\n");
+        std::printf("Error: cannot write fdk_vec_vol_new.raw\n");
         return -2;
     }
 
     YK_CUDA_CHECK(cudaFree(d_vol));
     YK_CUDA_CHECK(cudaStreamDestroy(s));
 
-    std::printf("Done: wrote fdk_vec_vol.raw (%d x %d x %d)\n", Nx, Ny, Nz);
+    std::printf("Done: wrote fdk_vec_vol_new.raw (%d x %d x %d)\n", Nx, Ny, Nz);
     return 0;
 }
 

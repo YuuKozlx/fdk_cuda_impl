@@ -12,7 +12,6 @@ namespace YK {
         SConeProjectionVec* d_geo = nullptr;  // [iPAng]
         SFDKGeoParamPerView* d_gv = nullptr;  // [iPAng]
         FdkAffineCoeff* d_coeffs = nullptr;  // [iPAng]
-        float* d_vol = nullptr;  // [iVX*iVY*iVZ]
         float* d_chunk_in = nullptr;  // [Kchunk*iPV*iPU]
         float* d_chunk_pw = nullptr;  // [Kchunk*iPV*iPU]
         float* d_chunk_flt = nullptr;  // [Kchunk*iPV*iPU]
@@ -32,7 +31,7 @@ namespace YK {
         {
             const size_t view_elems = (size_t)dims.iPU * dims.iPV;
             const size_t chunk_elems = (size_t)Kchunk * view_elems;
-            const size_t vol_elems = (size_t)dims.iVX * dims.iVY * dims.iVZ;
+
 
             // geo / gv
             YK_CUDA_CHECK(cudaMalloc(&d_geo, dims.iPAng * sizeof(SConeProjectionVec)));
@@ -47,10 +46,6 @@ namespace YK {
             // 预计算仿射系数（geo/gv 上传后立即触发）
             YK_CUDA_CHECK(cudaMalloc(&d_coeffs, dims.iPAng * sizeof(FdkAffineCoeff)));
             launchPrecomputeCoeffs(d_geo, d_gv, d_coeffs, dims.iPAng, stream);
-
-            // volume（清零）
-            YK_CUDA_CHECK(cudaMalloc(&d_vol, vol_elems * sizeof(float)));
-            YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0, vol_elems * sizeof(float), stream));
 
             // chunk 级投影缓冲
             YK_CUDA_CHECK(cudaMalloc(&d_chunk_in, chunk_elems * sizeof(float)));
@@ -67,7 +62,6 @@ namespace YK {
             free_(d_geo);
             free_(d_gv);
             free_(d_coeffs);
-            free_(d_vol);
             free_(d_chunk_in);
             free_(d_chunk_pw);
             free_(d_chunk_flt);

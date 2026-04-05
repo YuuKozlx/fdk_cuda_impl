@@ -132,15 +132,11 @@
     <ClInclude Include="YkFDKChunkBuffer.hpp" />
     <ClInclude Include="minimha.h" />
     <ClInclude Include="YkDataObj.hpp" />
-    <ClInclude Include="YKFDKFilter.hpp" />
-    <ClInclude Include="YkFDKFilter2.hpp" />
+    <ClInclude Include="YkFDKFilterProcessor.hpp" />
     <ClInclude Include="YkFDKGpuContext.hpp" />
-    <ClInclude Include="YkFDKOnline.hpp" />
     <ClInclude Include="YkFDKPrecompute.hpp" />
-    <ClInclude Include="YkFDKVecAlignPadCrop.hpp" />
     <ClInclude Include="YkFDKVecGeoDerived.hpp" />
-    <ClInclude Include="YkFDKVecPreWeight.hpp" />
-    <ClInclude Include="YkFDKVecPreWeight2.hpp" />
+    <ClInclude Include="YkFDKPreWeightProcessor.hpp" />
     <ClInclude Include="YkFDKViewTexSlot.hpp" />
     <ClInclude Include="YkIoDump.hpp" />
     <ClInclude Include="YkMem3d.hpp" />
@@ -154,7 +150,6 @@
     <ClInclude Include="YkVecGeo.hpp" />
     <ClInclude Include="YkFdkFilterContext.hpp" />
     <CudaCompile Include="testmain.cu" />
-    <CudaCompile Include="YkUtil.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YkConv.hpp" />
