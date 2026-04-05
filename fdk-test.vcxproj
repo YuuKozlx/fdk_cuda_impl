@@ -128,7 +128,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="IProcessor.hpp" />
-    <ClInclude Include="YkFDKBackproject.cuh" />
+    <ClInclude Include="YkBackProject.hpp" />
     <ClInclude Include="YkFDKChunkBuffer.hpp" />
     <ClInclude Include="minimha.h" />
     <ClInclude Include="YkDataObj.hpp" />
@@ -146,7 +146,7 @@
     <ClInclude Include="Yktest_fft.hpp" />
     <ClInclude Include="YkFDKCreateFilterKernel.hpp" />
     <ClInclude Include="Yktest_mem3d.hpp" />
-    <ClInclude Include="YkVecFDKBackProjection.hpp" />
+    <ClInclude Include="YkVecFDK.hpp" />
     <ClInclude Include="YkVecGeo.hpp" />
     <ClInclude Include="YkFdkFilterContext.hpp" />
     <CudaCompile Include="testmain.cu" />

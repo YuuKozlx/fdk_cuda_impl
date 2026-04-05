@@ -2,6 +2,9 @@
 #include <cuda_runtime.h>
 #include "YkGlobals.h"
 #include "YkVecOperation.hpp"
+#include "YkVecGeo.hpp"
+#include "IProcessor.hpp"
+#include "YkFdkFilterContext.hpp"
 
 namespace YK {
 
@@ -215,5 +218,113 @@ namespace YK {
         YK_CUDA_KERNEL_CHECK();
     }
 
+
+} // namespace YK
+
+
+namespace YK {
+
+
+
+
+
+    // ----------------------------------------------------------------
+    // BpProcessor : IProcessor
+    // ----------------------------------------------------------------
+    class BpProcessor : public IProcessor {
+    public:
+        BpProcessor() = default;
+        ~BpProcessor() override { release(); }
+
+        BpProcessor(const BpProcessor&) = delete;
+        BpProcessor& operator=(const BpProcessor&) = delete;
+
+        void setInitContext(const void* ctx) override
+        {
+            if (!ctx) {
+                std::fprintf(stderr, "[YK][Bp][E] setInitContext: null.\n");
+                return;
+            }
+            const auto* ic = static_cast<const BpInitContext*>(ctx);
+            Nx_ = ic->dims.iVX;
+            Ny_ = ic->dims.iVY;
+            Nz_ = ic->dims.iVZ;
+            vox_ = ic->vox;
+            cfg_ready_ = true;
+        }
+
+        bool init() override
+        {
+            if (!cfg_ready_) {
+                std::fprintf(stderr, "[YK][Bp][E] init: setInitContext() not called.\n");
+                return false;
+            }
+            if (Nx_ <= 0 || Ny_ <= 0 || Nz_ <= 0 || vox_ <= 0.f) {
+                std::fprintf(stderr, "[YK][Bp][E] init: invalid dims or vox.\n");
+                return false;
+            }
+            is_initialized_ = true;
+            return true;
+        }
+
+        void setContext(const void* ctx) override
+        {
+            if (!is_initialized_) {
+                std::fprintf(stderr, "[YK][Bp][E] setContext: not initialized.\n");
+                return;
+            }
+            if (!ctx) {
+                std::fprintf(stderr, "[YK][Bp][E] setContext: null.\n");
+                return;
+            }
+            const auto* cc = static_cast<const BpChunkContext*>(ctx);
+            if (!cc->d_texObjs || !cc->d_vol || cc->K <= 0) {
+                std::fprintf(stderr, "[YK][Bp][E] setContext: invalid chunk context.\n");
+                return;
+            }
+            chunk_ = *cc;
+        }
+
+        void process(const float* /*d_input*/,
+            float*       /*d_output*/,
+            cudaStream_t stream = 0) override
+        {
+            if (!is_initialized_) {
+                std::fprintf(stderr, "[YK][Bp][E] process: not initialized.\n");
+                return;
+            }
+            if (!chunk_.d_texObjs || !chunk_.d_vol || chunk_.K <= 0) {
+                std::fprintf(stderr, "[YK][Bp][E] process: setContext() not called.\n");
+                return;
+            }
+
+            // 预计算版本：只需 texObjs + d_vol，gC_coeffs 已通过 cudaMemcpyToSymbol 上传
+            launchBpKernel(
+                chunk_.d_texObjs,
+                chunk_.d_vol,
+                Nx_, Ny_, Nz_, vox_,
+                chunk_.K, stream);
+        }
+
+        void release() override
+        {
+            chunk_ = {};
+            Nx_ = Ny_ = Nz_ = 0;
+            vox_ = 0.f;
+            is_initialized_ = false;
+            cfg_ready_ = false;
+        }
+
+        bool        isInitialized() const override { return is_initialized_; }
+        const char* name()          const override { return "BpProcessor"; }
+
+    private:
+        int   Nx_ = 0, Ny_ = 0, Nz_ = 0;
+        float vox_ = 0.f;
+
+        BpChunkContext chunk_ = {};
+        bool           is_initialized_ = false;
+        bool           cfg_ready_ = false;
+    };
 
 } // namespace YK

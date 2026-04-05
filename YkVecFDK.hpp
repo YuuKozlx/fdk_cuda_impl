@@ -12,7 +12,7 @@
 
 #include <functional>
 #include "IProcessor.hpp"
-#include "YkFDKBackproject.cuh"
+#include "YkBackProject.hpp"
 #include "YkFDKFilterProcessor.hpp"
 #include "YkFDKGpuContext.hpp"
 #include "YkFDKPrecompute.hpp"
@@ -73,6 +73,19 @@ namespace YK {
             }
         }
 
+        BpProcessor bp;
+        {
+            BpInitContext ictx{};
+            ictx.dims = dims;
+            ictx.vox = vox;
+            IProcessor* proc = &bp;
+            proc->setInitContext(&ictx);
+            if (!proc->init()) {
+                std::fprintf(stderr, "[fdk_recon_impl] BpProcessor init failed.\n");
+                return;
+            }
+        }
+
         // ---- 3. GPU 资源 ----
         if (clear_vol) {
             const size_t n = (size_t)dims.iVX * dims.iVY * dims.iVZ;
@@ -80,7 +93,7 @@ namespace YK {
         }
 
         FdkGpuContext ctx;
-        ctx.init(dims, h_geo, h_gv, Kchunk, stream);  // ctx.d_vol 不再使用，但 init 内部仍会分配
+        ctx.init(dims, h_geo, h_gv, Kchunk, stream);
 
         std::vector<FdkAffineCoeff> h_coeffs(dims.iPAng);
         YK_CUDA_CHECK(cudaMemcpyAsync(h_coeffs.data(), ctx.d_coeffs,
@@ -93,6 +106,7 @@ namespace YK {
 
         IProcessor* pw_proc = &pw;
         IProcessor* fp_proc = &fp;
+        IProcessor* bp_proc = &bp;
 
         for (int base = 0; base < dims.iPAng; base += Kchunk) {
             const int K = std::min(Kchunk, (int)dims.iPAng - base);
@@ -135,17 +149,13 @@ namespace YK {
 
             ctx.chunk.uploadTexObjs(K, stream);
 
-            // ↓ 改动1：直接写 d_vol_out，不再经过 ctx.d_vol 中转
-            launchBpKernel(
-                ctx.chunk.d_texObjs,
-                ctx.d_geo + base,
-                ctx.d_gv + base,
-                d_vol_out,             // ← 原来是 ctx.d_vol
-                dims.iVX, dims.iVY, dims.iVZ, vox,
-                K, stream);
+            BpChunkContext bctx{};
+            bctx.d_texObjs = ctx.chunk.d_texObjs;
+            bctx.d_vol = d_vol_out;
+            bctx.K = K;
+            bp_proc->setContext(&bctx);
+            bp_proc->process(nullptr, nullptr, stream);
         }
-
-        // ↓ 改动2：删除末尾的 d_vol_out != ctx.d_vol 拷贝，不再需要
     }
 
 

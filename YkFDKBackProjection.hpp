@@ -4,7 +4,6 @@
 #include <device_launch_parameters.h>
 #include <vector>
 
-#include "YKFDKFilter.hpp"
 #include "YkFDKPreWeight.hpp"
 #include "YkGlobals.h"
 #include "YkSampling2D.hpp"

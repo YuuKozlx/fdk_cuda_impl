@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 #include "YkFDKViewTexSlot.hpp"
 #include "YkUtil.hpp"
+#include "YkGlobals.h"
 
 namespace YK {
 

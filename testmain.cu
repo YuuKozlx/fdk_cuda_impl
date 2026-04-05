@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "YkGlobals.h"
-#include "YkVecFDKBackProjection.hpp"
+#include "YkVecFDK.hpp"
 #include "YkVecGeo.hpp"
 //#include "YkFDKBackProjection.hpp"
 

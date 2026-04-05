@@ -37,4 +37,25 @@ namespace YK {
         int                        K = 0;         // 当前 chunk 实际视角数
     };
 
+
+
+    // ----------------------------------------------------------------
+// Init context（对应 PreweightInitContext 的角色）
+// ----------------------------------------------------------------
+    struct BpInitContext {
+        SDimensions3D dims;
+        float         vox;
+    };
+
+    // ----------------------------------------------------------------
+    // Chunk context（对应 PreweightChunkContext 的角色）
+    // ----------------------------------------------------------------
+    struct BpChunkContext {
+        const cudaTextureObject_t* d_texObjs;  // chunk 内各帧 texture
+        const SConeProjectionVec* d_geo;      // ctx.d_geo + base
+        const SFDKGeoParamPerView* d_gv;       // ctx.d_gv  + base
+        float* d_vol;      // 外部 volume buffer
+        int                        K;
+    };
+
 } // namespace YK
