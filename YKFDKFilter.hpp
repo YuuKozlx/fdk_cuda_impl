@@ -65,7 +65,7 @@ namespace YK {
         FilterKernelDesc cached_desc_{};
 
         // 你也可以把这个做成 settable；先给默认更稳
-        FilterKernelFFT::ERampExtractMode extract_mode_ = FilterKernelFFT::ERampExtractMode::RealPart;
+        ERampExtractMode extract_mode_ = ERampExtractMode::RealPart;
 
     private:
         bool validateInitArgs_(int Nu, int paddedN, float du_mm, int batch) const
@@ -127,8 +127,7 @@ namespace YK {
                 kernel_fft_.build_weights(
                     d_filter_weights_,
                     cached_desc_,
-                    /*bake_invN=*/true,
-                    extract_mode_);
+                    /*bake_invN=*/true);
 
                 YK_FM_LOGI(
                     "weights built (LAZY): source=%d kind=%d cutoff=%.3f gain=%.3f  dc0=%d paddedN=%d mode=%d",
@@ -187,7 +186,7 @@ namespace YK {
             cached_desc_.force_dc_zero = false;                          // 推荐 false
             // --------------------------------------------------------------
 
-            extract_mode_ = FilterKernelFFT::ERampExtractMode::RealPart;
+            extract_mode_ = ERampExtractMode::RealPart;
 
             weights_ready_ = false;
             weights_dirty_ = true;
@@ -262,7 +261,7 @@ namespace YK {
         }
 
         // 可选：设置离散提取模式（只影响 DiscreteRLFFT）
-        void setRampExtractMode(FilterKernelFFT::ERampExtractMode mode)
+        void setRampExtractMode(YK::ERampExtractMode mode)
         {
             extract_mode_ = mode;
             // mode 变更会影响离散提取结果，所以标脏
@@ -349,7 +348,7 @@ namespace YK {
             weights_dirty_ = true;
 
             cached_desc_ = FilterKernelDesc{};
-            extract_mode_ = FilterKernelFFT::ERampExtractMode::Magnitude;
+            extract_mode_ = ERampExtractMode::Magnitude;
         }
 
         // 调试用状态

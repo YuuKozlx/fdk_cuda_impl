@@ -1,6 +1,7 @@
 #pragma once
 #include <cuda_runtime.h>
 #include "YkGlobals.h"
+#include "YkVecOperation.hpp"
 
 namespace YK {
 

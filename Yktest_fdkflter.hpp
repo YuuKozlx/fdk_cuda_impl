@@ -128,7 +128,7 @@ namespace YKTest {
             descI.force_dc_zero = false;      // 直通别砍 DC
             descI.source = EWeightsBuildSource::AnalyticFreq; // irrelevant for None
 
-            kernel.build_weights(d_w_I, descI, bake_invN, FilterKernelFFT::ERampExtractMode::Magnitude);
+            kernel.build_weights(d_w_I, descI, bake_invN);
         }
 
         // -----------------------------
@@ -140,8 +140,9 @@ namespace YKTest {
         descA.gain = 1.0f;
         descA.force_dc_zero = force_dc_zero;
         descA.source = EWeightsBuildSource::AnalyticFreq;
+        descA.extract_mode = ERampExtractMode::Magnitude; // unused for AnalyticFreq, but set anyway
 
-        kernel.build_weights(d_w_A, descA, bake_invN, FilterKernelFFT::ERampExtractMode::Magnitude /*unused*/);
+        kernel.build_weights(d_w_A, descA, bake_invN);
 
         // -----------------------------
         // 2) DiscreteRLFFT RamLak
@@ -150,7 +151,7 @@ namespace YKTest {
         descB.source = EWeightsBuildSource::DiscreteRLFFT;
 
         // 离散提取推荐 Magnitude（更稳），你也可以改 RealPart 对齐旧实现
-        kernel.build_weights(d_w_B, descB, bake_invN, FilterKernelFFT::ERampExtractMode::Magnitude);
+        kernel.build_weights(d_w_B, descB, bake_invN);
 
         // -----------------------------
         // Copy back

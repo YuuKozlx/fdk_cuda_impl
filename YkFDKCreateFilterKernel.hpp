@@ -29,6 +29,13 @@ namespace YK {
         DiscreteRLFFT     // 空域RL->FFT 提取 ramp -> 乘窗
     };
 
+    // 从离散RLFFT提取 ramp 的方式（仅对 EWeightsBuildSource::DiscreteRLFFT 有效）
+    enum class ERampExtractMode {
+        RealPart = 0,
+        Magnitude = 1
+    };
+
+
     struct FilterKernelDesc {
         EFilterKernel kind = EFilterKernel::RamLak;
 
@@ -44,6 +51,8 @@ namespace YK {
 
         // 选择构建来源：保留两条路
         EWeightsBuildSource source = EWeightsBuildSource::DiscreteRLFFT;
+
+        ERampExtractMode extract_mode = ERampExtractMode::RealPart; // 仅对 DiscreteRLFFT 有效
     };
 
     // ============================================================
@@ -228,10 +237,7 @@ namespace YK {
     // ============================================================
     class FilterKernelFFT {
     public:
-        enum class ERampExtractMode {
-            RealPart = 0,
-            Magnitude = 1
-        };
+
 
         FilterKernelFFT() = default;
         ~FilterKernelFFT() { release(); }
@@ -316,8 +322,7 @@ namespace YK {
         void build_weights(
             float* d_weights_fft,               // [n_complex]
             const FilterKernelDesc& desc,
-            bool bake_invN = true,
-            ERampExtractMode mode = ERampExtractMode::Magnitude) const
+            bool bake_invN = true) const
         {
             YK_ASSERT(ready_);
             YK_ASSERT(d_weights_fft);
@@ -352,6 +357,8 @@ namespace YK {
 
             // RL -> spectrum
             fft_r2c_.fft(d_spatial, d_tmp_fft_);
+
+            auto mode = desc.extract_mode;
 
             // extract ramp
             kernel_extract_weights_from_fft << <gridC, block, 0, stream_ >> > (

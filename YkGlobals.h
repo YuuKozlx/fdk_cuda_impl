@@ -110,6 +110,8 @@ struct alignas(16) SFDKGeoParamPerView
     float invDetUV = 0.0f;
 };
 
+
+
 struct FdkAffineCoeff {
     float4 Cu;  // u 分子系数 (cx, cy, cz, cw)
     float4 Cv;  // v 分子系数

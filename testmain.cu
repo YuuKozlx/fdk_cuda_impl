@@ -16,6 +16,7 @@
 #include "Yktest_dataobject.hpp"
 #include "YkVecOperation.hpp"
 //#include "YkFdkVecOnlineStreamer.hpp"
+#include "YkFDKOnline.hpp"
 
 
 static bool read_raw_float(const char* path, std::vector<float>& data) {
@@ -88,16 +89,7 @@ int main_fdk() {
         /*Kchunk=*/8,
         s
     );
-    //YK::fdk_recon_streaming(
-    //    h_proj.data(),
-    //    d_vol,
-    //    Nu, Nv, Ang,
-    //    Nx, Ny, Nz, vox,
-    //    SID, SDD, du, dv,
-    //    -5.0f,0.0f,
-    //    /*Kchunk=*/8,
-    //    s
-    //);
+
 
     YK_CUDA_CHECK(cudaStreamSynchronize(s));
 
@@ -117,146 +109,6 @@ int main_fdk() {
 }
 
 
-//int main_fdk_online()
-//{
-//    // -----------------------------
-//    // 1) Dims / params
-//    // -----------------------------
-//    SDimensions3D dims;
-//    dims.iProjU = 256; dims.iProjV = 256; dims.iProjAngles = 360;
-//    dims.iVolX = 512; dims.iVolY = 512; dims.iVolZ = 100;
-//
-//    float SID = 500.0f;
-//    float SDD = 1000.0f;
-//    float du = 1.0f, dv = 1.0f;
-//    float vox = 0.5f;
-//
-//    const int Nu = (int)dims.iProjU;
-//    const int Nv = (int)dims.iProjV;
-//    const int Ang = (int)dims.iProjAngles;
-//    const int Nx = (int)dims.iVolX;
-//    const int Ny = (int)dims.iVolY;
-//    const int Nz = (int)dims.iVolZ;
-//
-//    const size_t view_elems = (size_t)Nu * (size_t)Nv;
-//    const size_t vol_elems = (size_t)Nx * (size_t)Ny * (size_t)Nz;
-//
-//    std::printf("[main] Nu=%d Nv=%d Ang=%d | Vol=%dx%dx%d vox=%.3f\n",
-//        Nu, Nv, Ang, Nx, Ny, Nz, vox);
-//
-//    // -----------------------------
-//    // 2) Build geometry
-//    // -----------------------------
-//    std::vector<SConeProjectionVec> geo;
-//    YK::build_circular_vec_geometry(
-//        geo, Ang, Nu, Nv,
-//        SID, SDD,
-//        du, dv,
-//        /*offsetU*/-5.5f, /*offsetV*/0.0f);
-//
-//    if ((int)geo.size() != Ang) {
-//        std::printf("[main][E] geo.size=%zu but Ang=%d\n", geo.size(), Ang);
-//        return -10;
-//    }
-//
-//    // -----------------------------
-//    // 3) CUDA stream + volume
-//    // -----------------------------
-//    cudaStream_t s = nullptr;
-//    YK_CUDA_CHECK(cudaStreamCreate(&s));
-//
-//    float* d_vol = nullptr;
-//    YK_CUDA_CHECK(cudaMalloc(&d_vol, vol_elems * sizeof(float)));
-//
-//    // -----------------------------
-//    // 4) Online streamer init
-//    // -----------------------------
-//    YK::FdkVecOnlineStreamer recon;
-//    const int Kchunk = 40;
-//    if (!recon.init(geo, Nu, Nv, Ang, Nx, Ny, Nz, vox, Kchunk, s)) {
-//        std::printf("[main][E] recon.init failed\n");
-//        YK_CUDA_CHECK(cudaFree(d_vol));
-//        YK_CUDA_CHECK(cudaStreamDestroy(s));
-//        return -11;
-//    }
-//
-//    recon.resetVolume(d_vol);
-//
-//    // -----------------------------
-//    // 5) Online acquisition loop
-//    // -----------------------------
-//    std::vector<float> one_view(view_elems, 0.0f);
-//
-//    FILE* fp = std::fopen("pmma_cylinder_150cm_proj.raw", "rb");
-//    if (!fp) {
-//        std::printf("[main][E] cannot open pmma_cylinder_150cm_proj.raw\n");
-//        recon.release();
-//        YK_CUDA_CHECK(cudaFree(d_vol));
-//        YK_CUDA_CHECK(cudaStreamDestroy(s));
-//        return -12;
-//    }
-//
-//    for (int a = 0; a < Ang; ++a) {
-//        size_t nread = std::fread(one_view.data(), sizeof(float), one_view.size(), fp);
-//        if (nread != one_view.size()) {
-//            std::printf("[main][E] fread failed at view %d: got %zu expect %zu\n",
-//                a, nread, one_view.size());
-//            std::fclose(fp);
-//            recon.release();
-//            YK_CUDA_CHECK(cudaFree(d_vol));
-//            YK_CUDA_CHECK(cudaStreamDestroy(s));
-//            return -13;
-//        }
-//
-//        if (!recon.push_view(a, one_view.data())) {
-//            std::printf("[main][E] push_view failed at a=%d\n", a);
-//            std::fclose(fp);
-//            recon.release();
-//            YK_CUDA_CHECK(cudaFree(d_vol));
-//            YK_CUDA_CHECK(cudaStreamDestroy(s));
-//            return -14;
-//        }
-//
-//        if ((a + 1) % 50 == 0) {
-//            std::printf("[main] acquired %d / %d views\n", a + 1, Ang);
-//        }
-//    }
-//
-//    std::fclose(fp);
-//
-//    // -----------------------------
-//    // 6) Flush remainder + sync
-//    // -----------------------------
-//    recon.flush();
-//    YK_CUDA_CHECK(cudaStreamSynchronize(s));
-//
-//    // -----------------------------
-//    // 7) Copy back & save
-//    // -----------------------------
-//    std::vector<float> h_vol(vol_elems);
-//    YK_CUDA_CHECK(cudaMemcpy(h_vol.data(), d_vol,
-//        vol_elems * sizeof(float),
-//        cudaMemcpyDeviceToHost));
-//
-//    if (!write_raw_float("fdk_online.raw", h_vol)) {
-//        std::printf("[main][E] cannot write fdk_online.raw\n");
-//        recon.release();
-//        YK_CUDA_CHECK(cudaFree(d_vol));
-//        YK_CUDA_CHECK(cudaStreamDestroy(s));
-//        return -15;
-//    }
-//
-//    // -----------------------------
-//    // 8) Cleanup
-//    // -----------------------------
-//    recon.release();
-//    YK_CUDA_CHECK(cudaFree(d_vol));
-//    YK_CUDA_CHECK(cudaStreamDestroy(s));
-//
-//    std::printf("[main] Done: wrote fdk_online.raw (%d x %d x %d)\n", Nx, Ny, Nz);
-//    return 0;
-//}
-
 
 
 int main() {
@@ -264,9 +116,9 @@ int main() {
     main_fdk();
     //main_fdk_online();
     //YKTest::testFilterWeightsSpectra_RamLak();
-    YKTest::test_gpumem3d();
-    YKTest::test_mem_data_integration_wrap();
-    YKTest::test_cpu_wrap_copy();
+    //YKTest::test_gpumem3d();
+    //YKTest::test_mem_data_integration_wrap();
+    //YKTest::test_cpu_wrap_copy();
 
     return 0;
 }

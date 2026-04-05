@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "YkGlobals.h" // SKernelLaunchPolicy, YK_CUDA_CHECK, YK_CUDA_KERNEL_CHECK, etc.
+#include "YkFDKFilter2.hpp"
 
 namespace YK {
     namespace cg = cooperative_groups;
@@ -236,7 +237,7 @@ namespace YK {
             const float* d_src_chunk,
             float* d_dst_padded_chunk,
             const std::vector<float>& offsetU_pix_list
-            )
+        )
         {
             return padChunk(d_src_chunk, d_dst_padded_chunk,
                 offsetU_pix_list.data(), (int)offsetU_pix_list.size());
