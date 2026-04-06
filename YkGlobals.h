@@ -61,22 +61,7 @@ struct SKernelLaunchPolicy {
     int block_threads = 256;   // warp-row: must be multiple of 32
     bool bounds_check = true;  // ÊÇ·ñ¼ì²é a in [0, Ang)
 };
-//
-//struct SFDKGeoParamPerView
-//{
-//    float du_mm = 1.0f;     // |detU|
-//    float dv_mm = 1.0f;     // |detV|
-//
-//    float offsetU_pix = 0.0f;
-//    float offsetV_pix = 0.0f;
-//    bool  offset_valid = true;
-//
-//    float theta = 0.0f;     // unwrapped atan2(src.x, -src.y)
-//    float dtheta = 0.0f;    // >= eps
-//
-//    float SOD_mm = 0.0f;        // |src - isocenter|
-//    float SDD_mm = 0.0f;
-//};
+
 
 struct alignas(16) SFDKGeoParamPerView
 {
@@ -100,6 +85,8 @@ struct alignas(16) SFDKGeoParamPerView
 
     float du_mm = 1.0f;
     float dv_mm = 1.0f;
+    float inv_du_mm = 1.0f;
+    float inv_dv_mm = 1.0f;
 
     float detS_sub_src_dot_dU = 0.0f;   // (detS - src) ¡¤ detU
     float detS_sub_src_dot_dV = 0.0f;   // (detS - src) ¡¤ detV

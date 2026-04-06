@@ -67,7 +67,6 @@ namespace YK {
         const float qs0_x = (dS_x + dV_x * fv) - src_x;
         const float qs0_y = (dS_y + dV_y * fv) - src_y;
         const float qs0_z = (dS_z + dV_z * fv) - src_z;
-        const float inv_dsd = (DSD > 0.0f) ? DSD : 0.0f;
 
         const size_t base = ((size_t)i * Nv + (size_t)v) * Nu;
         const float* src_row = src + base;
@@ -79,7 +78,7 @@ namespace YK {
             const float qsy = qs0_y + dU_y * fu;
             const float qsz = qs0_z + dU_z * fu;
             const float r2 = qsx * qsx + qsy * qsy + qsz * qsz;
-            const float w = inv_dsd * rsqrtf(fmaxf(r2, 1e-20f));
+            const float w = DSD * rsqrtf(fmaxf(r2, 1e-20f));
             dst_row[u] = src_row[u] * w;
         }
     }

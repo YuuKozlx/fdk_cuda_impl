@@ -91,7 +91,10 @@ namespace YK {
                 // =========================================================
                 // 3) du/dv
                 // =========================================================
-                compute_detector_pixel_size_mm(geo, gv.du_mm, gv.dv_mm);
+                gv.du_mm = f3_len(geo.detU);
+                gv.dv_mm = f3_len(geo.detV);
+                gv.inv_du_mm = 1.0f / gv.du_mm;
+                gv.inv_dv_mm = 1.0f / gv.dv_mm;
 
                 // =========================================================
                 // 4) (1) central ray dir + SID
@@ -121,12 +124,10 @@ namespace YK {
                     gv.UU, gv.VV, gv.UV, gv.invDetUV);
 
                 gv.ray_center = geo.srcCR;
-                gv.det_n = f3_cross(geo.detV, geo.detU);
-
+                gv.det_n = f3_normalize(f3_cross(geo.detV, geo.detU));
                 float3 detS_src = f3_sub(geo.detS, geo.src);
                 gv.detS_sub_src_dot_dU = f3_dot(detS_src, geo.detU);
                 gv.detS_sub_src_dot_dV = f3_dot(detS_src, geo.detV);
-
             }
 
             return true;
@@ -167,20 +168,7 @@ namespace YK {
             return dt;
         }
 
-        // -----------------------------
-        // du/dv
-        // -----------------------------
-        static inline void compute_detector_pixel_size_mm(
-            const SConeProjectionVec& geo,
-            float& pixel_u_mm,
-            float& pixel_v_mm)
-        {
-            pixel_u_mm = f3_len(geo.detU);
-            if (!(pixel_u_mm > 0.f)) std::runtime_error("Invalid geometry: detU length must be > 0");
 
-            pixel_v_mm = f3_len(geo.detV);
-            if (!(pixel_v_mm > 0.f)) std::runtime_error("Invalid geometry: detV length must be > 0");
-        }
 
 
 

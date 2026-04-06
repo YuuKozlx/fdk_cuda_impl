@@ -250,7 +250,7 @@ namespace YK {
                 cudaMemcpyHostToDevice, stream_));
 
             const float du = (fc->h_gv[0].du_mm > 0.0f) ? fc->h_gv[0].du_mm : 1.0f;
-            postScale_ = 1.0f / (du * du);
+            postScale_ = 1.0f / du;
         }
 
         // ----------------------------------------------------------------

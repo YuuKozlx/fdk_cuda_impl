@@ -50,7 +50,7 @@ int main_fdk() {
     dims.iVX = 512; dims.iVY = 512; dims.iVZ = 100;
 
     const float SID = 500.0f, SDD = 1000.0f;
-    const float du = 0.25f, dv = 0.25f, vox = 0.0125f;
+    const float du = 0.25f, dv = 0.25f, vox = 0.25f;
 
     const int Ang = dims.iPAng;
     const int Nx = dims.iVX, Ny = dims.iVY, Nz = dims.iVZ;
