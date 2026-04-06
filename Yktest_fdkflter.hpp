@@ -121,7 +121,7 @@ namespace YKTest {
         // 0) Identity sanity (None)
         // -----------------------------
         {
-            FilterKernelDesc descI{};
+            SFilterKernelDesc descI{};
             descI.kind = EFilterKernel::None;
             descI.gain = 1.0f;
             descI.cutoff = 0.5f;              // ignored for None
@@ -134,7 +134,7 @@ namespace YKTest {
         // -----------------------------
         // 1) AnalyticFreq RamLak
         // -----------------------------
-        FilterKernelDesc descA{};
+        SFilterKernelDesc descA{};
         descA.kind = EFilterKernel::RamLak;
         descA.cutoff = 0.5f;
         descA.gain = 1.0f;
@@ -147,7 +147,7 @@ namespace YKTest {
         // -----------------------------
         // 2) DiscreteRLFFT RamLak
         // -----------------------------
-        FilterKernelDesc descB = descA;
+        SFilterKernelDesc descB = descA;
         descB.source = EWeightsBuildSource::DiscreteRLFFT;
 
         // 离散提取推荐 Magnitude（更稳），你也可以改 RealPart 对齐旧实现

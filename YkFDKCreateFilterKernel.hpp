@@ -9,58 +9,12 @@
 #include "YkFFT.hpp"
 
 namespace YK {
-
-    // ============================================================
-    // Filter options
-    // ============================================================
-    enum class EFilterKernel {
-        None,        // no filtering (identity)
-        RamLak,
-        SheppLogan,
-        Cosine,
-        Hann,        // Hann == Hanning
-        Hamming,
-        Blackman
-    };
-
-    // 权重构建来源（保留两条路径）
-    enum class EWeightsBuildSource {
-        AnalyticFreq,     // 直接频域写 H(f)=|f|*window
-        DiscreteRLFFT     // 空域RL->FFT 提取 ramp -> 乘窗
-    };
-
-    // 从离散RLFFT提取 ramp 的方式（仅对 EWeightsBuildSource::DiscreteRLFFT 有效）
-    enum class ERampExtractMode {
-        RealPart = 0,
-        Magnitude = 1
-    };
-
-
-    struct FilterKernelDesc {
-        EFilterKernel kind = EFilterKernel::RamLak;
-
-        // cutoff in DFT-normalized frequency:
-        // f = k/N in [0,0.5], Nyquist=0.5
-        float cutoff = 0.5f;
-
-        float gain = 1.0f;
-
-
-        // DC 处理（让离散/解析对齐）
-        bool force_dc_zero = false;
-
-        // 选择构建来源：保留两条路
-        EWeightsBuildSource source = EWeightsBuildSource::DiscreteRLFFT;
-
-        ERampExtractMode extract_mode = ERampExtractMode::RealPart; // 仅对 DiscreteRLFFT 有效
-    };
-
     // ============================================================
     // Device helpers
     // ============================================================
     static __device__ __forceinline__ float yk_sinc_pi_device(float x)
     {
-        const float pi = 3.14159265358979323846f;
+        const float pi = CUDA_PI;
         float t = pi * x;
         if (fabsf(t) < 1e-8f) return 1.0f;
         return sinf(t) / t;
@@ -69,7 +23,7 @@ namespace YK {
     static __device__ __forceinline__ float yk_window_shape_device(float x, EFilterKernel kind)
     {
         // x in [0,1]
-        const float pi = 3.14159265358979323846f;
+        const float pi = CUDA_PI;
         x = fminf(fmaxf(x, 0.0f), 1.0f);
 
         switch (kind) {
@@ -127,7 +81,7 @@ namespace YK {
         float* __restrict__ w,
         int n_complex,
         int N,
-        FilterKernelDesc desc,
+        SFilterKernelDesc desc,
         bool bake_invN)
     {
         int k = blockIdx.x * blockDim.x + threadIdx.x;
@@ -208,7 +162,7 @@ namespace YK {
         float* __restrict__ w,
         int n_complex,
         int N,
-        FilterKernelDesc desc)
+        SFilterKernelDesc desc)
     {
         int k = blockIdx.x * blockDim.x + threadIdx.x;
         if (k >= n_complex) return;
@@ -321,7 +275,7 @@ namespace YK {
         // ============================================================
         void build_weights(
             float* d_weights_fft,               // [n_complex]
-            const FilterKernelDesc& desc,
+            const SFilterKernelDesc& desc,
             bool bake_invN = true) const
         {
             YK_ASSERT(ready_);

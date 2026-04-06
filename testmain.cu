@@ -45,17 +45,26 @@ static bool write_raw_float(const char* path, const float* data, uint64_t elemen
 }
 
 int main_fdk() {
-    SDimensions3D dims;
-    dims.iPU = 1024; dims.iPV = 1024; dims.iPAng = 720;
-    dims.iVX = 512; dims.iVY = 512; dims.iVZ = 100;
+    SCBCTParams params;
 
-    const float SID = 500.0f, SDD = 1000.0f;
-    const float du = 0.25f, dv = 0.25f, vox = 0.25f;
+    params.iPU = 1024; params.iPV = 1024; params.iPAng = 720;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 100;
 
-    const int Ang = dims.iPAng;
-    const int Nx = dims.iVX, Ny = dims.iVY, Nz = dims.iVZ;
 
-    const size_t view_elems = (size_t)dims.iPU * dims.iPV;
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)M_PI / params.iPAng;
+
+    params.angle_list = angle_list;
+
+    params.SID = 500.0f, params.SDD = 1000.0f;
+    params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_xy_mm = 0.25f;
+    params.vox_z_mm = 0.25f;
+
+    const int Ang = params.iPAng;
+    const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
     const size_t proj_elems = view_elems * Ang;
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
@@ -66,14 +75,6 @@ int main_fdk() {
         return -1;
     }
 
-    // 构建完整圆轨迹几何
-    std::vector<SConeProjectionVec> geo;
-    const float offsetU_mm = 0.0f;
-    YK::build_circular_vec_geometry(
-        geo, Ang, dims.iPU, dims.iPV, du, dv,
-        SID, SDD - SID,
-        YK::f3(offsetU_mm, 0.f, 0.f));
-
     // CUDA 资源
     cudaStream_t s = nullptr;
     YK_CUDA_CHECK(cudaStreamCreate(&s));
@@ -83,7 +84,7 @@ int main_fdk() {
     // 离线重建（一次性全量）
     YK::fdk_recon(
         h_proj.data(), d_vol_buf.data(),
-        geo, dims, vox,
+        params,
         /*Kchunk=*/8, s,
         /*clear_vol=*/true);
 
@@ -101,42 +102,6 @@ int main_fdk() {
     }
 
 
-    auto d_vol = d_vol_buf.data(); // 直接借用之前分配的设备内存
-
-    // 在线重建
-    const int batches = 12;
-    const int batch_size = Ang / batches;
-
-    SDimensions3D batch_dims = dims;
-
-    for (int i = 0; i < batches; ++i) {
-        const int base = i * batch_size;
-        const int K = (i < batches - 1) ? batch_size : Ang - base;
-        batch_dims.iPAng = K;
-
-        std::vector<SConeProjectionVec> batch_geo(
-            geo.begin() + base,
-            geo.begin() + base + K);
-
-        YK::fdk_recon(
-            h_proj.data() + (size_t)base * view_elems,
-            d_vol,
-            batch_geo,
-            batch_dims, vox,
-            /*Kchunk=*/batch_size,
-            s,
-            /*clear_vol=*/(i == 0));
-    }
-
-    YK_CUDA_CHECK(cudaStreamSynchronize(s));
-
-    ctrl.download3D(h_vol, d_vol_buf, s);
-
-    // D2H & 写文件
-    if (!write_raw_float("fdk_vec_vol_online.raw", h_vol.data(), h_vol.size())) {
-        std::printf("Error: cannot write fdk_vec_vol_online.raw\n");
-        return -2;
-    }
 
 
     YK_CUDA_CHECK(cudaStreamDestroy(s));

@@ -23,7 +23,7 @@ namespace YK {
         FdkGpuContext& operator=(const FdkGpuContext&) = delete;
 
         void init(
-            const SDimensions3D& dims,
+            const SProjDims& dims,
             const std::vector<SConeProjectionVec>& h_geo,
             const std::vector<SFDKGeoParamPerView>& h_gv,
             int          Kchunk,

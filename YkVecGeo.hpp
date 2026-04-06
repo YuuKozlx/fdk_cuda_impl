@@ -130,94 +130,82 @@ namespace YK {
 
     inline void build_circular_vec_geometry_from_theta(
         std::vector<SConeProjectionVec>& geo,
-        const std::vector<float>& theta,      // [Ang] radians
+        const std::vector<float>& theta,
         int Ang, int Nu, int Nv,
         float du, float dv,
         float SID, float IDD,
-        float3 det_offset = make_float3(0.0f, 0.0f, 0.0f),
-        float3 detTiltEuler = make_float3(0.0f, 0.0f, 0.0f),  // OutOfPlane(x), reserved(y), InPlane(z)
-        float3 src_offset = make_float3(0.0f, 0.0f, 0.0f),
-        float3 srcCRTiltEuler = make_float3(0.0f, 0.0f, 0.0f) // pitch(x), yaw(y), roll(z) in local frame
+        float3 det_offset = make_float3(0.f, 0.f, 0.f),
+        float3 detTilt_deg = make_float3(0.f, 0.f, 0.f),  // outOfPlane(x), lateral(y), inPlane(z)
+        float3 src_offset = make_float3(0.f, 0.f, 0.f),
+        float3 srcCRTilt_deg = make_float3(0.f, 0.f, 0.f)   // pitch(x), yaw(y), roll(z) 单位:度
     )
     {
         geo.resize(Ang);
 
-        const float3 detU0 = make_float3(du, 0.f, 0.f);  // detector U local
-        const float3 detV0 = make_float3(0.f, 0.f, dv);   // detector V local
-        const float3 src0 = make_float3(0.f, -SID, 0.f); // source position
-        const float3 detC0 = make_float3(0.f, IDD, 0.f); // detector center
-        const float3 srcCR0 = make_float3(0.f, 1.f, 0.f); // initial center ray along Y
+        auto deg2rad = [](float deg) { return deg * CUDA_PI / 180.f; };
+
+        // ---- 探测器 U/V 方向向量（局部系） ----
+        float3 detU_dir = make_float3(1.f, 0.f, 0.f);
+        float3 detV_dir = make_float3(0.f, 0.f, 1.f);
+        {
+            const float3 axisU = detU_dir;
+            detU_dir = f3_rot_axis(detU_dir, axisU, deg2rad(detTilt_deg.x));
+            detV_dir = f3_rot_axis(detV_dir, axisU, deg2rad(detTilt_deg.x));
+
+            const float3 axisV = detV_dir;
+            detU_dir = f3_rot_axis(detU_dir, axisV, deg2rad(detTilt_deg.y));
+            detV_dir = f3_rot_axis(detV_dir, axisV, deg2rad(detTilt_deg.y));
+
+            const float3 normal = f3_normalize(f3_cross(detU_dir, detV_dir));
+            detU_dir = f3_rot_axis(detU_dir, normal, deg2rad(detTilt_deg.z));
+            detV_dir = f3_rot_axis(detV_dir, normal, deg2rad(detTilt_deg.z));
+        }
+
+        // ---- 主射线方向（局部系） ----
+        // 初始主射线沿 +Y，局部系轴：X=右, Y=前, Z=上
+        float3 srcCR_dir = make_float3(0.f, 1.f, 0.f);
+        {
+            // pitch：绕局部 X 轴（上下俯仰）
+            srcCR_dir = f3_rot_axis(srcCR_dir,
+                make_float3(1.f, 0.f, 0.f), deg2rad(srcCRTilt_deg.x));
+
+            // yaw：绕局部 Z 轴（左右偏转）
+            srcCR_dir = f3_rot_axis(srcCR_dir,
+                make_float3(0.f, 0.f, 1.f), deg2rad(srcCRTilt_deg.y));
+
+            // roll：绕射线自身方向（面内旋转，通常为0）
+            srcCR_dir = f3_rot_axis(srcCR_dir,
+                f3_normalize(srcCR_dir), deg2rad(srcCRTilt_deg.z));
+
+            srcCR_dir = f3_normalize(srcCR_dir);
+        }
+
+        const float3 src0 = make_float3(0.f, -SID, 0.f);
+        const float3 detC0 = make_float3(0.f, IDD, 0.f);
 
         for (int a = 0; a < Ang; ++a)
         {
-            float t = theta[a];
+            const float t = theta[a];
 
-            // --------------------------------------------------
-            // 机架旋转后的局部坐标轴
-            // --------------------------------------------------
-            const float3 localX = f3_rotz(make_float3(1.f, 0.f, 0.f), t);
-            const float3 localY = f3_rotz(make_float3(0.f, 1.f, 0.f), t);
-            // localZ = (0,0,1) 不变，绕Z轴旋转后Z轴本身不动
+            // 1) 源位置
+            float3 src = f3_rotz_p(f3_translate_point(src0, src_offset), t);
 
-            // --------------------------------------------------
-            // 1) 源位置：先加局部偏移，再做机架旋转
-            //    src_offset 在旋转前施加 = 在局部系内定义偏移
-            // --------------------------------------------------
-            float3 src = f3_translate_point(src0, src_offset);
-            src = f3_rotz_p(src, t);
+            // 2) 探测器中心
+            float3 detC = f3_rotz_p(f3_translate_point(detC0, det_offset), t);
 
-            // --------------------------------------------------
-            // 2) 探测器中心：先加局部偏移，再做机架旋转
-            // --------------------------------------------------
-            float3 detC = f3_translate_point(detC0, det_offset);
-            detC = f3_rotz_p(detC, t);
+            // 3) 中心射线：局部系方向随机架旋转
+            float3 srcCR = f3_rotz(srcCR_dir, t);
 
-            // --------------------------------------------------
-            // 3) 源中心射线：先在局部系施加 tilt，再做机架旋转
-            //    对应 RTK 的 srcCRTiltEuler，顺序 pitch→yaw→roll
-            // --------------------------------------------------
-            float3 srcCR = srcCR0;
-            srcCR = f3_rot_axis(srcCR, make_float3(1.f, 0.f, 0.f), srcCRTiltEuler.x); // pitch
-            srcCR = f3_rot_axis(srcCR, make_float3(0.f, 1.f, 0.f), srcCRTiltEuler.y); // yaw
-            srcCR = f3_rot_axis(srcCR, make_float3(0.f, 0.f, 1.f), srcCRTiltEuler.z); // roll
-            srcCR = f3_rotz(srcCR, t); // 最后整体随机架旋转
+            // 4) 探测器 U/V：局部系方向随机架旋转，再乘间距
+            float3 U = f3_scale(f3_rotz(detU_dir, t), du);
+            float3 V = f3_scale(f3_rotz(detV_dir, t), dv);
 
-            // --------------------------------------------------
-            // 4) 探测器 U/V 方向：先做机架旋转，再绕局部轴施加 tilt
-            // --------------------------------------------------
-            float3 U = f3_rotz(detU0, t);
-            float3 V = f3_rotz(detV0, t);
+            // 5) detS：像素 (0,0) 的世界坐标
+            const float cu = 0.5f * (Nu - 1);
+            const float cv = 0.5f * (Nv - 1);
+            float3 detS = f3_sub(detC, f3_add(f3_scale(U, cu), f3_scale(V, cv)));
 
-            // OutOfPlaneAngle：绕机架旋转后的局部 X 轴
-            U = f3_rot_axis(U, localX, detTiltEuler.x);
-            V = f3_rot_axis(V, localX, detTiltEuler.x);
-
-            // reserved y：绕局部 Y 轴（RTK 无对应，扩展用）
-            U = f3_rot_axis(U, localY, detTiltEuler.y);
-            V = f3_rot_axis(V, localY, detTiltEuler.y);
-
-            // InPlaneAngle：绕探测器法线（U×V 方向）
-            // 经过前两步后法线方向已更新，动态计算
-            float3 normal = f3_normalize(f3_cross(U, V));
-            U = f3_rot_axis(U, normal, detTiltEuler.z);
-            V = f3_rot_axis(V, normal, detTiltEuler.z);
-
-            // detC 也需要跟随 OutOfPlane tilt（探测器中心随探测器倾斜）
-            // InPlane 是面内旋转，detC 不动
-            detC = f3_rot_axis(detC, localX, detTiltEuler.x);
-            detC = f3_rot_axis(detC, localY, detTiltEuler.y);
-
-            // --------------------------------------------------
-            // 5) 探测器像素原点 detS
-            //    detC 是中心，detS 是像素 (0,0) 的世界坐标
-            // --------------------------------------------------
-            float cu = 0.5f * (Nu - 1);
-            float cv = 0.5f * (Nv - 1);
-            float3 detS = f3_sub(detC, f3_add(f3_mul(U, cu), f3_mul(V, cv)));
-
-            // --------------------------------------------------
             // 6) 保存
-            // --------------------------------------------------
             geo[a] = SConeProjectionVec{
                 src,
                 srcCR,

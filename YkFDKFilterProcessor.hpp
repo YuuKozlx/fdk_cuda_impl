@@ -17,15 +17,7 @@
 #include "IProcessor.hpp"
 #include "YkFdkFilterContext.hpp"
 
-#ifndef YK_FP_LOGE
-#define YK_FP_LOGE(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][E] " fmt "\n", ##__VA_ARGS__)
-#endif
-#ifndef YK_FP_LOGW
-#define YK_FP_LOGW(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][W] " fmt "\n", ##__VA_ARGS__)
-#endif
-#ifndef YK_FP_LOGI
-#define YK_FP_LOGI(fmt, ...) std::fprintf(stdout, "[YK][FilterProcessor][I] " fmt "\n", ##__VA_ARGS__)
-#endif
+
 
 namespace YK {
     namespace cg = cooperative_groups;
@@ -150,7 +142,7 @@ namespace YK {
         // ----------------------------------------------------------------
         void setInitContext(const void* ctx) override
         {
-            if (!ctx) { YK_FP_LOGE("setInitContext: null."); return; }
+            if (!ctx) { YK_LOGE("setInitContext: null."); return; }
             const auto* ic = static_cast<const FdkFilterInitContext*>(ctx);
 
             cfg_.Nu = (int)ic->dims.iPU;
@@ -161,7 +153,7 @@ namespace YK {
             cfg_.stream = ic->stream;
             cfg_ready_ = true;
 
-            YK_FP_LOGI("setInitContext: Nu=%d Nv=%d Kchunk=%d stream=%p",
+            YK_LOGI("setInitContext: Nu=%d Nv=%d Kchunk=%d stream=%p",
                 cfg_.Nu, cfg_.Nv, cfg_.K, (void*)cfg_.stream);
         }
 
@@ -173,7 +165,7 @@ namespace YK {
             release();
 
             if (!cfg_ready_) {
-                YK_FP_LOGE("init failed: setInitContext() not called."); return false;
+                YK_LOGE("init failed: setInitContext() not called."); return false;
             }
             if (!validateCfg_()) return false;
 
@@ -208,7 +200,7 @@ namespace YK {
             weights_dirty_ = true;
             current_K_ = 0;   // 等待 setContext()
 
-            YK_FP_LOGI(
+            YK_LOGI(
                 "init ok: Nu=%d Nv=%d Kchunk=%d paddedN=%d n_cmplx=%d stream=%p",
                 Nu_, Nv_, K_, paddedN_, n_cmplx_, (void*)stream_);
 
@@ -221,19 +213,19 @@ namespace YK {
         void setContext(const void* ctx) override
         {
             if (!is_initialized_) {
-                YK_FP_LOGE("setContext: not initialized."); return;
+                YK_LOGE("setContext: not initialized."); return;
             }
             if (!ctx) {
-                YK_FP_LOGE("setContext: null."); return;
+                YK_LOGE("setContext: null."); return;
             }
 
             const auto* fc = static_cast<const FdkFilterContext*>(ctx);
 
             if (!fc->h_gv) {
-                YK_FP_LOGE("setContext: h_gv is null."); return;
+                YK_LOGE("setContext: h_gv is null."); return;
             }
             if (fc->K <= 0 || fc->K > K_) {
-                YK_FP_LOGE("setContext: K(%d) out of range [1, %d].", fc->K, K_); return;
+                YK_LOGE("setContext: K(%d) out of range [1, %d].", fc->K, K_); return;
             }
 
             current_K_ = fc->K;
@@ -265,7 +257,7 @@ namespace YK {
 
             ensureWeights_();
             if (!weights_ready_) {
-                YK_FP_LOGE("process aborted: weights not ready."); return;
+                YK_LOGE("process aborted: weights not ready."); return;
             }
 
             launchPad_(d_input, current_K_);
@@ -320,7 +312,7 @@ namespace YK {
             int                 Nu = 0;
             int                 Nv = 0;
             int                 K = 0;
-            FilterKernelDesc    desc = {};
+            SFilterKernelDesc    desc = {};
             SKernelLaunchPolicy policy = {};
             cudaStream_t        stream = 0;
         } cfg_;
@@ -337,7 +329,7 @@ namespace YK {
         cudaStream_t stream_ = 0;
 
         SKernelLaunchPolicy policy_ = {};
-        FilterKernelDesc    desc_ = {};
+        SFilterKernelDesc    desc_ = {};
 
         // GPU buffers
         int* d_startu_ = nullptr; // [K_]
@@ -359,7 +351,7 @@ namespace YK {
         bool validateCfg_() const
         {
             if (cfg_.Nu <= 0 || cfg_.Nv <= 0 || cfg_.K <= 0) {
-                YK_FP_LOGE("validateCfg: invalid dims Nu=%d Nv=%d K=%d.",
+                YK_LOGE("validateCfg: invalid dims Nu=%d Nv=%d K=%d.",
                     cfg_.Nu, cfg_.Nv, cfg_.K);
                 return false;
             }
@@ -369,16 +361,16 @@ namespace YK {
         bool validateApply_(const float* d_in, const float* d_out) const
         {
             if (!is_initialized_) {
-                YK_FP_LOGE("process aborted: not initialized."); return false;
+                YK_LOGE("process aborted: not initialized."); return false;
             }
             if (!d_in) {
-                YK_FP_LOGE("process aborted: d_input is null.");  return false;
+                YK_LOGE("process aborted: d_input is null.");  return false;
             }
             if (!d_out) {
-                YK_FP_LOGE("process aborted: d_output is null."); return false;
+                YK_LOGE("process aborted: d_output is null."); return false;
             }
             if (current_K_ <= 0) {
-                YK_FP_LOGE("process aborted: setContext() not called."); return false;
+                YK_LOGE("process aborted: setContext() not called."); return false;
             }
             return true;
         }
@@ -390,7 +382,7 @@ namespace YK {
             kernel_fft_.prepare(paddedN_, stream_);
             kernel_fft_.build_weights(d_weights_, desc_, /*bake_invN=*/true);
 
-            YK_FP_LOGI(
+            YK_LOGI(
                 "weights built (lazy): source=%d kind=%d cutoff=%.3f "
                 "gain=%.3f dc0=%d paddedN=%d",
                 (int)desc_.source, (int)desc_.kind,
@@ -453,7 +445,7 @@ namespace YK {
             stream_ = s;
             fft_batch_.setStream(s);
             kernel_fft_.setStream(s);
-            YK_FP_LOGI("setStream_: switched to %p", (void*)s);
+            YK_LOGI("setStream_: switched to %p", (void*)s);
         }
     };
 

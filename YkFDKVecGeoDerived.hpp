@@ -252,7 +252,7 @@ namespace YK {
 
 
             // Principal point on the detector plane
-            const float3 principal_point_world = f3_add(geo.src, f3_mul(geo.srcCR, t));
+            const float3 principal_point_world = f3_add(geo.src, f3_scale(geo.srcCR, t));
 
             // SDD and ray0hat: ray0 = principal - src
             const float3 ray0 = f3_sub(principal_point_world, geo.src);

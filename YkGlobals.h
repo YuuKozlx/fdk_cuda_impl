@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
+#include <vector>
 #include <vector_types.h>
 
 
@@ -22,11 +23,10 @@ struct SDimensions3D {
     unsigned int iPV; // number of detectors in the V direction
 };
 
-
 struct SProjDims {
-    int Nu = 0;
-    int Nv = 0;
-    int Ang = 0;
+    int iPU = 0;
+    int iPV = 0;
+    int iPAng = 0;
 
     static SProjDims from(const SDimensions3D& d) {
         return { (int)d.iPU, (int)d.iPV, (int)d.iPAng };
@@ -43,6 +43,42 @@ struct SVolDims {
     }
 };
 
+
+struct SVolumeGeometry {
+    // volume 尺寸（体素数）
+    int Nx = 0, Ny = 0, Nz = 0;
+
+    // 体素大小（mm）
+    float vox_x = 1.f, vox_y = 1.f, vox_z = 1.f;
+
+    // volume 中心的世界坐标（mm），默认原点
+    float3 center = make_float3(0.f, 0.f, 0.f);
+
+    // 便捷构造：等体素，中心对齐世界原点
+    static SVolumeGeometry make_centered(int Nx, int Ny, int Nz, float vox) {
+        SVolumeGeometry g;
+        g.Nx = Nx; g.Ny = Ny; g.Nz = Nz;
+        g.vox_x = g.vox_y = g.vox_z = vox;
+        g.center = make_float3(0.f, 0.f, 0.f);
+        return g;
+    }
+
+    static SVolumeGeometry make_centered(int Nx, int Ny, int Nz, float vox_xy, float vox_z) {
+        SVolumeGeometry g;
+        g.Nx = Nx; g.Ny = Ny; g.Nz = Nz;
+        g.vox_x = g.vox_y = vox_xy; g.vox_z = vox_z;
+        g.center = make_float3(0.f, 0.f, 0.f);
+        return g;
+    }
+
+    // 推导 volume (0,0,0) 体素的世界坐标
+    __host__ __device__  float3 origin() const {
+        return make_float3(
+            center.x - (Nx - 1) * 0.5f * vox_x,
+            center.y - (Ny - 1) * 0.5f * vox_y,
+            center.z - (Nz - 1) * 0.5f * vox_z);
+    }
+};
 
 
 struct alignas(16) SConeProjectionVec {
@@ -61,6 +97,8 @@ struct SKernelLaunchPolicy {
     int block_threads = 256;   // warp-row: must be multiple of 32
     bool bounds_check = true;  // 是否检查 a in [0, Ang)
 };
+
+
 
 
 struct alignas(16) SFDKGeoParamPerView
@@ -109,11 +147,57 @@ struct FdkAffineCoeff {
 
 // constant 内存，按 chunk 上传
 // 1024 角度 × 64 bytes = 64KB，刚好在限制内
-static constexpr int kMaxChunkAng = 1024;
+static constexpr int kMaxChunkAng = 32;
 __constant__ FdkAffineCoeff gC_coeffs[kMaxChunkAng];
 
 
+// ============================================================
+// Filter options
+// ============================================================
+enum class EFilterKernel {
+    None,        // no filtering (identity)
+    RamLak,
+    SheppLogan,
+    Cosine,
+    Hann,        // Hann == Hanning
+    Hamming,
+    Blackman
+};
 
+// 权重构建来源（保留两条路径）
+enum class EWeightsBuildSource {
+    AnalyticFreq,     // 直接频域写 H(f)=|f|*window
+    DiscreteRLFFT     // 空域RL->FFT 提取 ramp -> 乘窗
+};
+
+// 从离散RLFFT提取 ramp 的方式（仅对 EWeightsBuildSource::DiscreteRLFFT 有效）
+enum class ERampExtractMode {
+    RealPart = 0,
+    Magnitude = 1
+};
+
+
+struct SFilterKernelDesc {
+    EFilterKernel kind = EFilterKernel::RamLak;
+
+    // cutoff in DFT-normalized frequency:
+    // f = k/N in [0,0.5], Nyquist=0.5
+    float cutoff = 0.5f;
+
+    float gain = 1.0f;
+
+
+    // DC 处理（让离散/解析对齐）
+    bool force_dc_zero = false;
+
+    // 选择构建来源：保留两条路
+    EWeightsBuildSource source = EWeightsBuildSource::DiscreteRLFFT;
+
+    ERampExtractMode extract_mode = ERampExtractMode::RealPart; // 仅对 DiscreteRLFFT 有效
+
+    SFilterKernelDesc() {}
+    SFilterKernelDesc(EFilterKernel fkenel) :kind(fkenel) {}
+};
 
 
 #ifndef YK_CUDA_CHECK
@@ -165,32 +249,15 @@ __constant__ FdkAffineCoeff gC_coeffs[kMaxChunkAng];
 
 
 
-// ============================================================
-// 1. CUDA error checking
-// ============================================================
-
-#ifndef CUDA_CHECK
-#define CUDA_CHECK(call)                                                     \
-    do {                                                                     \
-        cudaError_t err = (call);                                            \
-        if (err != cudaSuccess) {                                            \
-            fprintf(stderr,                                                  \
-                    "[CUDA ERROR] %s:%d\n  %s\n",                            \
-                    __FILE__, __LINE__,                                      \
-                    cudaGetErrorString(err));                                \
-            std::abort();                                                    \
-        }                                                                    \
-    } while (0)
+#ifndef YK_LOGE
+#define YK_LOGE(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][E] " fmt "\n", ##__VA_ARGS__)
 #endif
-
-#ifndef CUDA_KERNEL_CHECK
-#define CUDA_KERNEL_CHECK()                                                  \
-    do {                                                                     \
-        CUDA_CHECK(cudaPeekAtLastError());                                   \
-        CUDA_CHECK(cudaDeviceSynchronize());                                 \
-    } while (0)
+#ifndef YK_LOGW
+#define YK_LOGW(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][W] " fmt "\n", ##__VA_ARGS__)
 #endif
-
+#ifndef YK_LOGI
+#define YK_LOGI(fmt, ...) std::fprintf(stdout, "[YK][FilterProcessor][I] " fmt "\n", ##__VA_ARGS__)
+#endif
 // ============================================================
 // 2. CUDA math helpers
 // ============================================================
@@ -227,34 +294,34 @@ __constant__ FdkAffineCoeff gC_coeffs[kMaxChunkAng];
 // 4. CUDA launch helpers
 // ============================================================
 
-#ifndef CUDA_DIV_UP
-#define CUDA_DIV_UP(x, y) (((x) + (y) - 1) / (y))
+#ifndef YK_CUDA_DIV_UP
+#define YK_CUDA_DIV_UP(x, y) (((x) + (y) - 1) / (y))
 #endif
 
 // 1D launch
-#define CUDA_LAUNCH_1D(kernel, n, block, ...)                                \
+#define YK_CUDA_LAUNCH_1D(kernel, n, block, ...)                                \
     do {                                                                     \
         dim3 _block(block);                                                  \
-        dim3 _grid(CUDA_DIV_UP((n), _block.x));                              \
+        dim3 _grid(YK_CUDA_DIV_UP((n), _block.x));                              \
         kernel<<<_grid, _block>>>(__VA_ARGS__);                              \
     } while (0)
 
 // 2D launch
-#define CUDA_LAUNCH_2D(kernel, nx, ny, blockx, blocky, ...)                  \
+#define YK_CUDA_LAUNCH_2D(kernel, nx, ny, blockx, blocky, ...)                  \
     do {                                                                     \
         dim3 _block(blockx, blocky);                                         \
-        dim3 _grid(CUDA_DIV_UP((nx), _block.x),                               \
-                   CUDA_DIV_UP((ny), _block.y));                             \
+        dim3 _grid(YK_CUDA_DIV_UP((nx), _block.x),                               \
+                   YK_CUDA_DIV_UP((ny), _block.y));                             \
         kernel<<<_grid, _block>>>(__VA_ARGS__);                              \
     } while (0)
 
 // 3D launch
-#define CUDA_LAUNCH_3D(kernel, nx, ny, nz, bx, by, bz, ...)                  \
+#define YK_CUDA_LAUNCH_3D(kernel, nx, ny, nz, bx, by, bz, ...)                  \
     do {                                                                     \
         dim3 _block(bx, by, bz);                                             \
-        dim3 _grid(CUDA_DIV_UP((nx), _block.x),                               \
-                   CUDA_DIV_UP((ny), _block.y),                               \
-                   CUDA_DIV_UP((nz), _block.z));                             \
+        dim3 _grid(YK_CUDA_DIV_UP((nx), _block.x),                               \
+                   YK_CUDA_DIV_UP((ny), _block.y),                               \
+                   YK_CUDA_DIV_UP((nz), _block.z));                             \
         kernel<<<_grid, _block>>>(__VA_ARGS__);                              \
     } while (0)
 
@@ -262,41 +329,41 @@ __constant__ FdkAffineCoeff gC_coeffs[kMaxChunkAng];
 // 5. Memory helpers
 // ============================================================
 
-#define CUDA_MALLOC(ptr, bytes)                                              \
-    CUDA_CHECK(cudaMalloc((void**)&(ptr), (bytes)))
+#define YK_CUDA_MALLOC(ptr, bytes)                                              \
+    YK_CUDA_CHECK(cudaMalloc((void**)&(ptr), (bytes)))
 
-#define CUDA_FREE(ptr)                                                       \
+#define YK_CUDA_FREE(ptr)                                                       \
     do {                                                                     \
         if ((ptr) != nullptr) {                                              \
-            CUDA_CHECK(cudaFree(ptr));                                       \
+            YK_CUDA_CHECK(cudaFree(ptr));                                       \
             (ptr) = nullptr;                                                 \
         }                                                                    \
     } while (0)
 
-#define CUDA_MEMCPY_H2D(dst, src, bytes)                                     \
-    CUDA_CHECK(cudaMemcpy((dst), (src), (bytes), cudaMemcpyHostToDevice))
+#define YK_CUDA_MEMCPY_H2D(dst, src, bytes)                                     \
+    YK_CUDA_CHECK(cudaMemcpy((dst), (src), (bytes), cudaMemcpyHostToDevice))
 
-#define CUDA_MEMCPY_D2H(dst, src, bytes)                                     \
-    CUDA_CHECK(cudaMemcpy((dst), (src), (bytes), cudaMemcpyDeviceToHost))
+#define YK_CUDA_MEMCPY_D2H(dst, src, bytes)                                     \
+    YK_CUDA_CHECK(cudaMemcpy((dst), (src), (bytes), cudaMemcpyDeviceToHost))
 
-#define CUDA_MEMSET(ptr, value, bytes)                                       \
-    CUDA_CHECK(cudaMemset((ptr), (value), (bytes)))
+#define YK_CUDA_MEMSET(ptr, value, bytes)                                       \
+    YK_CUDA_CHECK(cudaMemset((ptr), (value), (bytes)))
 
 // ============================================================
 // 6. CUDA stream helpers
 // ============================================================
 
-#define CUDA_STREAM_CREATE(stream)                                           \
-    CUDA_CHECK(cudaStreamCreate(&(stream)))
+#define YK_CUDA_STREAM_CREATE(stream)                                           \
+    YK_CUDA_CHECK(cudaStreamCreate(&(stream)))
 
 #define CUDA_STREAM_DESTROY(stream)                                          \
-    CUDA_CHECK(cudaStreamDestroy((stream)))
+    YK_CUDA_CHECK(cudaStreamDestroy((stream)))
 
 #define CUDA_SYNC_STREAM(stream)                                             \
-    CUDA_CHECK(cudaStreamSynchronize((stream)))
+    YK_CUDA_CHECK(cudaStreamSynchronize((stream)))
 
-#define CUDA_SYNC_DEVICE()                                                   \
-    CUDA_CHECK(cudaDeviceSynchronize())
+#define YK_CUDA_SYNC_DEVICE()                                                   \
+    YK_CUDA_CHECK(cudaDeviceSynchronize())
 
 // ============================================================
 // 7. Device index helper
@@ -304,20 +371,20 @@ __constant__ FdkAffineCoeff gC_coeffs[kMaxChunkAng];
 
 inline void cuda_set_device(int device_id) {
     int count = 0;
-    CUDA_CHECK(cudaGetDeviceCount(&count));
+    YK_CUDA_CHECK(cudaGetDeviceCount(&count));
     if (device_id < 0 || device_id >= count) {
         fprintf(stderr, "[CUDA ERROR] Invalid device id %d\n", device_id);
         std::abort();
     }
-    CUDA_CHECK(cudaSetDevice(device_id));
+    YK_CUDA_CHECK(cudaSetDevice(device_id));
 }
 
 // ============================================================
 // 8. Debug helpers
 // ============================================================
 
-#ifndef CUDA_DEBUG_PRINT
-#define CUDA_DEBUG_PRINT(fmt, ...)                                           \
+#ifndef YK_CUDA_DEBUG_PRINT
+#define YK_CUDA_DEBUG_PRINT(fmt, ...)                                           \
     printf("[CUDA DEBUG] " fmt "\n", ##__VA_ARGS__)
 #endif
 

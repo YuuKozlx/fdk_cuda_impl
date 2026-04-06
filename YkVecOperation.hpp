@@ -34,7 +34,7 @@ namespace YK {
     // ============================================================
     __host__ __device__ __forceinline__ vector3 f3_add(vector3 a, vector3 b) { return f3(a.x + b.x, a.y + b.y, a.z + b.z); }
     __host__ __device__ __forceinline__ vector3 f3_sub(vector3 a, vector3 b) { return f3(a.x - b.x, a.y - b.y, a.z - b.z); }
-    __host__ __device__ __forceinline__ vector3 f3_mul(vector3 a, float t) { return f3(a.x * t, a.y * t, a.z * t); }
+    __host__ __device__ __forceinline__ vector3 f3_scale(vector3 a, float t) { return f3(a.x * t, a.y * t, a.z * t); }
     __host__ __device__ __forceinline__ vector3 f3_mul(float t, vector3 a) { return f3(a.x * t, a.y * t, a.z * t); }
     __host__ __device__ __forceinline__ vector3 f3_div(vector3 a, float t) { float inv = 1.f / t; return f3(a.x * inv, a.y * inv, a.z * inv); }
 
@@ -192,7 +192,7 @@ namespace YK {
         point3 f3_reflect_plane_origin(point3 p, vector3 n_unit)
     {
         float k = 2.0f * f3_dot(p, n_unit);
-        return f3_sub(p, f3_mul(n_unit, k));
+        return f3_sub(p, f3_scale(n_unit, k));
     }
 
     // Plane passes through point p0, with unit normal n_unit
@@ -214,7 +214,7 @@ namespace YK {
         point3 f3_reflect_axis_origin(point3 p, vector3 u_unit)
     {
         float k = 2.0f * f3_dot(p, u_unit);
-        return f3_sub(f3_mul(u_unit, k), p);
+        return f3_sub(f3_scale(u_unit, k), p);
     }
 
     // 轴通过点 p0，方向为 u_unit
@@ -328,8 +328,8 @@ namespace YK {
         float  d = f3_dot(k_unit, v);
 
         return f3_add(
-            f3_add(f3_mul(v, c), f3_mul(kv, s)),
-            f3_mul(k_unit, d * (1.0f - c))
+            f3_add(f3_scale(v, c), f3_scale(kv, s)),
+            f3_scale(k_unit, d * (1.0f - c))
         );
     }
 
@@ -361,8 +361,8 @@ namespace YK {
             vector3 apply_vec(vector3 v) const
         {
             return f3_add(
-                f3_add(f3_mul(ex, v.x), f3_mul(ey, v.y)),
-                f3_mul(ez, v.z)
+                f3_add(f3_scale(ex, v.x), f3_scale(ey, v.y)),
+                f3_scale(ez, v.z)
             );
         }
 

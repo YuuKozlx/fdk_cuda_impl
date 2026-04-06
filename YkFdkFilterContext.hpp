@@ -1,13 +1,14 @@
 #pragma once
-#include "YkVecGeo.hpp"
 #include "YkFDKCreateFilterKernel.hpp"
+#include "YkGlobals.h"
+#include "YkVecGeo.hpp"
 
 namespace YK {
 
     // 初始化阶段配置
     struct FdkFilterInitContext {
-        SDimensions3D       dims;           // dims.iPAng = Kchunk
-        FilterKernelDesc    desc;
+        SProjDims       dims;           // dims.iPAng = Kchunk
+        SFilterKernelDesc    desc;
         SKernelLaunchPolicy policy = {};
         cudaStream_t        stream = 0;
     };
@@ -18,15 +19,13 @@ namespace YK {
         int                        K = 0;         // 当前 chunk 实际视角数
     };
 
-
-
     // ============================================================
     // Context 结构体
     // ============================================================
 
     // setInitContext 注入
     struct PreweightInitContext {
-        SDimensions3D       dims = {};
+        SProjDims      dims = {};
         SKernelLaunchPolicy policy = {};
     };
 
@@ -39,43 +38,22 @@ namespace YK {
 
 
 
-    //    // ----------------------------------------------------------------
-    //// Init context（对应 PreweightInitContext 的角色）
-    //// ----------------------------------------------------------------
-    //    struct BpInitContext {
-    //        SDimensions3D dims;
-    //        float         vox;
-    //    };
-    //
-    //    // ----------------------------------------------------------------
-    //    // Chunk context（对应 PreweightChunkContext 的角色）
-    //    // ----------------------------------------------------------------
-    //    struct BpChunkContext {
-    //        const cudaTextureObject_t* d_texObjs;  // chunk 内各帧 texture
-    //        const SConeProjectionVec* d_geo;      // ctx.d_geo + base
-    //        const SFDKGeoParamPerView* d_gv;       // ctx.d_gv  + base
-    //        float* d_vol;      // 外部 volume buffer
-    //        int                        K;
-    //    };
-
-
-        // ----------------------------------------------------------------
-    // Init context（对应 PreweightInitContext 的角色）
+    // ----------------------------------------------------------------
+    // Init / Chunk context
     // ----------------------------------------------------------------
     struct BpInitContext {
-        SDimensions3D dims;
-        float         vox;
+        SVolumeGeometry vol_geom;
+        bool use_precomputed = true;  // true: 预计算版本，false: 非预计算版本
     };
 
-    // ----------------------------------------------------------------
-    // Chunk context（对应 PreweightChunkContext 的角色）
-    // ----------------------------------------------------------------
     struct BpChunkContext {
-        const cudaTextureObject_t* d_texObjs;  // chunk 内各帧 texture
-        const SConeProjectionVec* d_geo;      // ctx.d_geo + base
-        const SFDKGeoParamPerView* d_gv;       // ctx.d_gv  + base
-        float* d_vol;      // 外部 volume buffer
-        int                        K;
+        const cudaTextureObject_t* d_texObjs = nullptr;
+        const SConeProjectionVec* d_geo = nullptr;  // 非预计算版本需要
+        const SFDKGeoParamPerView* d_gv = nullptr;  // 非预计算版本需要
+        float* d_vol = nullptr;
+        int                        K = 0;
     };
+
+
 
 } // namespace YK

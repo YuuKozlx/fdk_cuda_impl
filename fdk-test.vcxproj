@@ -149,6 +149,7 @@
     <ClInclude Include="YkVecFDK.hpp" />
     <ClInclude Include="YkVecGeo.hpp" />
     <ClInclude Include="YkFdkFilterContext.hpp" />
+    <ClInclude Include="YkParams.h" />
     <CudaCompile Include="testmain.cu" />
   </ItemGroup>
   <ItemGroup>
