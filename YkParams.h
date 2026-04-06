@@ -2,6 +2,7 @@
 #include <vector>
 #include "YkGlobals.h"
 
+#define PI 3.14159265358979323846f
 
 struct SCBCTParams {
     // projection params
@@ -9,6 +10,8 @@ struct SCBCTParams {
     int iPU; // number of detectors in the U direction
     int iPV; // number of detectors in the V direction
     int iPAng; // number of projection angles
+    float ScanRange_rad = 2 * PI; // total scan range in radians (e.g. 2*PI for full scan, PI for short scan)
+    bool bShortScan = false; // whether it's a short scan (if true, Parker weighting will be applied)
     float du_mm = 1.0f;; // detector pixel size in U direction in mm
     float dv_mm = 1.0f;; // detector pixel size in V direction in mm
     float offsetU_mm = 0.0f; // detector offset in U direction in mm

@@ -14,7 +14,7 @@ namespace YK {
         virtual bool init() = 0;
 
         // 处理接口：输入输出均为 device pointer，in-place 亦可
-        virtual void process(const float* d_input, float* d_output, cudaStream_t stream = 0) = 0;
+        virtual void process(const void* d_input, void* d_output, cudaStream_t stream = 0) = 0;
 
         // 资源释放接口：析构时自动调用；也可手动调用 release() 以提前释放资源
         virtual void release() = 0;

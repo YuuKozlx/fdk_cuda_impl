@@ -249,11 +249,14 @@ namespace YK {
         // ----------------------------------------------------------------
         // IProcessor::process
         // ----------------------------------------------------------------
-        void process(const float* d_input,
-            float* d_output,
+        void process(const void* d_input,
+            void* d_output,
             cudaStream_t stream = 0) override
         {
-            if (!validateApply_(d_input, d_output)) return;
+            const float* d_in = static_cast<const float*>(d_input);
+            float* d_out = static_cast<float*>(d_output);
+
+            if (!validateApply_(d_in, d_out)) return;
             if (stream != 0 && stream != stream_) setStream_(stream);
 
             ensureWeights_();
@@ -261,9 +264,9 @@ namespace YK {
                 YK_LOGE("process aborted: weights not ready."); return;
             }
 
-            launchPad_(d_input, current_K_);
+            launchPad_(d_in, current_K_);
             runFilter_(current_K_);
-            launchCrop_(d_output, current_K_);
+            launchCrop_(d_out, current_K_);
         }
 
         // ----------------------------------------------------------------

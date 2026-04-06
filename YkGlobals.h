@@ -31,6 +31,8 @@ struct SProjDims {
     static SProjDims from(const SDimensions3D& d) {
         return { (int)d.iPU, (int)d.iPV, (int)d.iPAng };
     }
+    SProjDims() = default;
+    SProjDims(int iPU, int iPV, int iPAng) : iPU(iPU), iPV(iPV), iPAng(iPAng) {}
 };
 
 struct SVolDims {
@@ -41,10 +43,12 @@ struct SVolDims {
     static SVolDims from(const SDimensions3D& d) {
         return { (int)d.iVX, (int)d.iVY, (int)d.iVZ };
     }
+    SVolDims() = default;
+    SVolDims(int Nx, int Ny, int Nz) : Nx(Nx), Ny(Ny), Nz(Nz) {}
 };
 
 
-struct SVolumeGeometry {
+struct SVolGeom {
     // volume 尺寸（体素数）
     int Nx = 0, Ny = 0, Nz = 0;
 
@@ -55,16 +59,16 @@ struct SVolumeGeometry {
     float3 center = make_float3(0.f, 0.f, 0.f);
 
     // 便捷构造：等体素，中心对齐世界原点
-    static SVolumeGeometry make_centered(int Nx, int Ny, int Nz, float vox) {
-        SVolumeGeometry g;
+    static SVolGeom make_centered(int Nx, int Ny, int Nz, float vox) {
+        SVolGeom g;
         g.Nx = Nx; g.Ny = Ny; g.Nz = Nz;
         g.vox_x = g.vox_y = g.vox_z = vox;
         g.center = make_float3(0.f, 0.f, 0.f);
         return g;
     }
 
-    static SVolumeGeometry make_centered(int Nx, int Ny, int Nz, float vox_xy, float vox_z) {
-        SVolumeGeometry g;
+    static SVolGeom make_centered(int Nx, int Ny, int Nz, float vox_xy, float vox_z) {
+        SVolGeom g;
         g.Nx = Nx; g.Ny = Ny; g.Nz = Nz;
         g.vox_x = g.vox_y = vox_xy; g.vox_z = vox_z;
         g.center = make_float3(0.f, 0.f, 0.f);
@@ -81,7 +85,7 @@ struct SVolumeGeometry {
 };
 
 
-struct alignas(16) SConeProjectionVec {
+struct alignas(16) SConeProjGeomVec {
     float3 src;      // tube params : source position (world);
     float3 srcCR; // tube params：center ray direction [unit vector];
     float3 detS;     // detector pixel (0,0) position (world)
@@ -105,6 +109,7 @@ struct alignas(16) SFDKGeoParamPerView
 {
     float theta = 0.0f;
     float dtheta = 0.0f;
+    float fScaleDTheta = 1.0f; // 扫描角度为2Pi是为1.0f，短扫描时为 2Pi / (maxTheta - minTheta)，权重用
 
     // IMPORTANT: this stores SID by your definition (NOT classic SOD)
     float SOD_mm = 0.0f;   // == SID_mm
@@ -143,6 +148,7 @@ struct FdkAffineCoeff {
     float4 Cd;  // 分母系数
     float  dtheta;
     float  SID2; // SOD^2，权重用
+    float fScaleDTheta; // 权重用，等于 2Pi / scan_range_rad，扫描角度为2Pi时为1.0f
 };
 
 // constant 内存，按 chunk 上传

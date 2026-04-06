@@ -11,7 +11,7 @@ namespace YK {
     // project_uv_and_terms_derived
     // ============================================================
     __device__ __forceinline__ bool project_uv_and_terms_derived(
-        const SConeProjectionVec& g,
+        const SConeProjGeomVec& g,
         const SFDKGeoParamPerView& gv,
         float3 P,
         float& u_pix,
@@ -43,7 +43,7 @@ namespace YK {
     __global__ void fdk_bp_kernel(
         const cudaTextureObject_t* __restrict__ tex_views,
         float* __restrict__ vol,
-        SVolumeGeometry vg,
+        SVolGeom vg,
         int K)
     {
         const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -72,7 +72,7 @@ namespace YK {
             const float vStep = c.Cv.z * vg.vox_z;
             const float dStep = c.Cd.z * vg.vox_z;
 
-            const float w_base = c.SID2 * c.dtheta;
+            const float w_base = c.SID2 * c.dtheta * c.fScaleDTheta;
 
 #pragma unroll
             for (int iz = 0; iz < ZSIZE; ++iz) {
@@ -105,10 +105,10 @@ namespace YK {
     template<int ZSIZE>
     __global__ void fdk_bp_kernel(
         const cudaTextureObject_t* __restrict__ tex_views,
-        const SConeProjectionVec* __restrict__ d_geo,
+        const SConeProjGeomVec* __restrict__ d_geo,
         const SFDKGeoParamPerView* __restrict__ d_gv,
         float* __restrict__ vol,
-        SVolumeGeometry vg,
+        SVolGeom vg,
         int K)
     {
         const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -123,7 +123,7 @@ namespace YK {
         for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
 
         for (int i = 0; i < K; ++i) {
-            const SConeProjectionVec& g = d_geo[i];
+            const SConeProjGeomVec& g = d_geo[i];
             const SFDKGeoParamPerView& gv = d_gv[i];
 
             const float fX = vg.origin().x + y * vg.vox_x;
@@ -142,7 +142,7 @@ namespace YK {
 
                 float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
                 float w = (gv.SOD_mm * gv.SOD_mm) / (denom_c * denom_c);
-                Z[iz] += p * w * gv.dtheta;
+                Z[iz] += p * w * gv.dtheta * gv.fScaleDTheta;
             }
         }
 
@@ -163,7 +163,7 @@ namespace YK {
     inline void launchBpKernel(
         const cudaTextureObject_t* d_texObjs,
         float* d_vol,
-        const SVolumeGeometry& vol_geom,
+        const SVolGeom& vol_geom,
         int K, cudaStream_t stream)
     {
 
@@ -184,10 +184,10 @@ namespace YK {
     // ============================================================
     inline void launchBpKernel(
         const cudaTextureObject_t* d_texObjs,
-        const SConeProjectionVec* d_geo,
+        const SConeProjGeomVec* d_geo,
         const SFDKGeoParamPerView* d_gv,
         float* d_vol,
-        const SVolumeGeometry& vol_geom,
+        const SVolGeom& vol_geom,
         int K, cudaStream_t stream)
     {
 
@@ -262,7 +262,7 @@ namespace YK {
             }
             const auto* cc = static_cast<const BpChunkContext*>(ctx);
 
-            if (!cc->d_texObjs || !cc->d_vol || cc->K <= 0) {
+            if (cc->K <= 0) {
                 std::fprintf(stderr, "[YK][Bp][E] setContext: invalid base fields.\n");
                 return;
             }
@@ -277,34 +277,37 @@ namespace YK {
             chunk_ = *cc;
         }
 
-        void process(const float* /*d_input*/,
-            float*       /*d_output*/,
+        void process(const void* d_input/*d_input*/,
+            void* d_output      /*d_output*/,
             cudaStream_t stream = 0) override
         {
             if (!is_initialized_) {
                 std::fprintf(stderr, "[YK][Bp][E] process: not initialized.\n");
                 return;
             }
-            if (!chunk_.d_texObjs || !chunk_.d_vol || chunk_.K <= 0) {
+            if (!d_input || !d_output || chunk_.K <= 0) {
                 std::fprintf(stderr, "[YK][Bp][E] process: setContext() not called.\n");
                 return;
             }
 
+            const cudaTextureObject_t* d_texObjs = static_cast<const cudaTextureObject_t*>(d_input);
+            float* d_vol = static_cast<float*>(d_output);
+
             if (use_precomputed_) {
                 // 预计算版本：gC_coeffs 已通过 cudaMemcpyToSymbol 上传
                 launchBpKernel(
-                    chunk_.d_texObjs,
-                    chunk_.d_vol,
+                    d_texObjs,
+                    d_vol,
                     vol_geom_,
                     chunk_.K, stream);
             }
             else {
                 // 非预计算版本：直接在 kernel 内计算投影坐标
                 launchBpKernel(
-                    chunk_.d_texObjs,
+                    d_texObjs,
                     chunk_.d_geo,
                     chunk_.d_gv,
-                    chunk_.d_vol,
+                    d_vol,
                     vol_geom_,
                     chunk_.K, stream);
             }
@@ -323,7 +326,7 @@ namespace YK {
         const char* name()          const override { return "BpProcessor"; }
 
     private:
-        SVolumeGeometry vol_geom_ = {};
+        SVolGeom vol_geom_ = {};
         bool            use_precomputed_ = true;
         BpChunkContext  chunk_ = {};
         bool            is_initialized_ = false;

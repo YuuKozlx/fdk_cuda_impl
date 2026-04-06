@@ -130,7 +130,7 @@ namespace YK {
 
 
     inline void build_circular_vec_geometry_from_theta(
-        std::vector<SConeProjectionVec>& geo,
+        std::vector<SConeProjGeomVec>& geo,
         const std::vector<float>& theta,
         int Ang, int Nu, int Nv,
         float du, float dv,
@@ -207,7 +207,7 @@ namespace YK {
             float3 detS = f3_sub(detC, f3_add(f3_scale(U, cu), f3_scale(V, cv)));
 
             // 6) 保存
-            geo[a] = SConeProjectionVec{
+            geo[a] = SConeProjGeomVec{
                 src,
                 srcCR,
                 detS,
@@ -219,7 +219,7 @@ namespace YK {
     }
 
     inline void build_circular_vec_geometry(
-        std::vector<SConeProjectionVec>& geo,
+        std::vector<SConeProjGeomVec>& geo,
         int Ang, int Nu, int Nv,
         float du, float dv,
         float SID, float IDD,
@@ -258,7 +258,7 @@ namespace YK {
 
 
 
-    SConeProjectionVec build_from_rtk_single(
+    SConeProjGeomVec build_from_rtk_single(
         float gantryAngle,      // RTK: GantryAngle [rad]
         float outOfPlaneAngle,  // RTK: OutOfPlaneAngle [rad]
         float inPlaneAngle,     // RTK: InPlaneAngle [rad]
@@ -303,7 +303,7 @@ namespace YK {
         // ----------------------------------------
         // 构造单个投影
         // ----------------------------------------
-        std::vector<SConeProjectionVec> geo;
+        std::vector<SConeProjGeomVec> geo;
         std::vector<float> theta = { gantryAngle };
 
         build_circular_vec_geometry_from_theta(
@@ -323,7 +323,7 @@ namespace YK {
 
     // 批量版本：从 RTK XML 读出的 per-projection 参数数组转换
     void build_from_rtk_geometry(
-        std::vector<SConeProjectionVec>& geo,
+        std::vector<SConeProjGeomVec>& geo,
         const std::vector<float>& gantryAngles,
         float SAD, float SID,                    // 若全局相同
         int Nu, int Nv, float du, float dv,

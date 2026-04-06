@@ -7,7 +7,7 @@
 namespace YK {
 
     __global__ void fdk_precompute_coeffs_kernel(
-        const SConeProjectionVec* __restrict__ d_geo,
+        const SConeProjGeomVec* __restrict__ d_geo,
         const SFDKGeoParamPerView* __restrict__ d_gv,
         FdkAffineCoeff* __restrict__ d_coeffs,
         int Ang)
@@ -15,7 +15,7 @@ namespace YK {
         int a = blockIdx.x * blockDim.x + threadIdx.x;
         if (a >= Ang) return;
 
-        const SConeProjectionVec& g = d_geo[a];
+        const SConeProjGeomVec& g = d_geo[a];
         const SFDKGeoParamPerView& gv = d_gv[a];
 
         // 全部用 double 中间计算
@@ -73,12 +73,13 @@ namespace YK {
             (float)Cd_z, (float)Cd_w);
         c.dtheta = gv.dtheta;
         c.SID2 = (float)(gv.SOD_mm * gv.SOD_mm);
+        c.fScaleDTheta = gv.fScaleDTheta;
 
         d_coeffs[a] = c;
     }
 
     inline void launchPrecomputeCoeffs(
-        const SConeProjectionVec* d_geo,
+        const SConeProjGeomVec* d_geo,
         const SFDKGeoParamPerView* d_gv,
         FdkAffineCoeff* d_coeffs,
         int Ang, cudaStream_t stream)

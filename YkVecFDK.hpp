@@ -44,178 +44,168 @@ namespace YK {
             return;
         }
 
-        int iPA = params.iPAng;
-        int iPU = params.iPU;
-        int iPV = params.iPV;
-        int iVX = params.iVX;
-        int iVY = params.iVY;
-        int iVZ = params.iVZ;
-        float du_mm = params.du_mm;
-        float dv_mm = params.dv_mm;
-        float SID = params.SID;
-        float SDD = params.SDD;
-        float vox_xy = params.vox_xy_mm;
-        float vox_z = params.vox_z_mm;
+        const int   iPA = params.iPAng;
+        const int   iPU = params.iPU;
+        const int   iPV = params.iPV;
+        const int   iVX = params.iVX;
+        const int   iVY = params.iVY;
+        const int   iVZ = params.iVZ;
+        const float du_mm = params.du_mm;
+        const float dv_mm = params.dv_mm;
+        const float vox_xy = params.vox_xy_mm;
+        const float vox_z = params.vox_z_mm;
 
-        float offsetU_mm = params.offsetU_mm;
-        float offsetV_mm = params.offsetV_mm;
+        auto rad2deg = [](float r) { return r * 180.f / CUDA_PI; };
+        const float skew_deg = rad2deg(params.skew_angle_rad);
+        const float slant_deg = rad2deg(params.slant_angle_rad);
+        const float tilt_deg = rad2deg(params.tilt_angle_rad);
 
-        auto rad2deg = [](float rad) { return rad * 180.f / CUDA_PI; };
+        // ---- 1. 构建投影几何参数 ----
+        std::vector<SConeProjGeomVec> h_geo(iPA);
+        build_circular_vec_geometry_from_theta(
+            h_geo, params.angle_list, iPA, iPU, iPV,
+            du_mm, dv_mm, params.SID, params.SDD - params.SID,
+            f3(params.offsetU_mm, params.offsetV_mm, 0.f),
+            f3(slant_deg, skew_deg, tilt_deg));
 
-        float skew_deg = rad2deg(params.skew_angle_rad);
-        float slant_deg = rad2deg(params.slant_angle_rad);
-        float tilt_deg = rad2deg(params.tilt_angle_rad);
-
-
-        SVolumeGeometry vol_geom = SVolumeGeometry::make_centered(
-            iVX, iVY, iVZ,
-            vox_xy, vox_z);
-        vol_geom.center = make_float3(params.vol_offset_x_mm, params.vol_offset_y_mm, params.vol_offset_z_mm); // 可选：调整体积中心位置
-
-
-        std::vector<float> angles = params.angle_list;
-        float3 offset = f3(offsetU_mm, offsetV_mm, 0.0f);
-        // ---- 0. 构建几何参数 ----
-        std::vector<SConeProjectionVec> h_geo(iPA);
-        build_circular_vec_geometry_from_theta(h_geo, angles, iPA, iPU, iPV, du_mm, dv_mm, SID, SDD - SID, f3(offsetU_mm, offsetV_mm, 0.0f), f3(slant_deg, skew_deg, tilt_deg));
-
-
-        // ---- 1. 推导 per-view 参数 ----
         std::vector<SFDKGeoParamPerView> h_gv(iPA);
-        GeoDerivedManagerVec{}.build_geo_params(iPU, iPV, h_geo, h_gv);
+        GeoDerivedManagerVec{}.build_geo_params(iPU, iPV, params.ScanRange_rad, h_geo, h_gv);
 
-        // ---- 2. 管线工具 ----
+        // ---- 2. 初始化处理器 ----
         PreweightProcessor pw;
         {
             PreweightInitContext ictx{};
-            SProjDims dims;
-            dims.iPU = iPU;
-            dims.iPV = iPV;
-            dims.iPAng = Kchunk;
-            ictx.dims = dims;
+            ictx.dims = SProjDims{ iPU, iPV, Kchunk };
             ictx.policy = {};
             IProcessor* proc = &pw;
             proc->setInitContext(&ictx);
-            if (!proc->init()) {
+            if (!pw.init()) {
                 std::fprintf(stderr, "[fdk_recon_impl] PreweightProcessor init failed.\n");
                 return;
             }
         }
 
-        FilterProcessor fp;
+        // Parker weighting（可选，短扫描时启用）
+        ParkerWeightProcessor pkw;
+        const bool bParker = params.bShortScan && iPA > 1;
+        if (bParker) {
+            ParkerWeightInitContext ictx{};
+            ictx.dims = SProjDims{ iPU, iPV, Kchunk };
+            ictx.fDetUSize = params.du_mm;
+            ictx.fSrcOrigin = params.SID;
+            ictx.fDetOrigin = params.SDD - params.SID;
+            ictx.h_angles = params.angle_list.data();
+            ictx.iPA = iPA;
+            IProcessor* proc = &pkw;
+            proc->setInitContext(&ictx);
+            if (!pkw.init()) {
+                std::fprintf(stderr, "[fdk_recon_impl] ParkerWeightProcessor init failed.\n");
+                return;
+            }
+        }
+
+        FilterProcessor flt;
         {
             FdkFilterInitContext ictx{};
-            SProjDims dims;
-            dims.iPU = iPU;
-            dims.iPV = iPV;
-            dims.iPAng = Kchunk;
-            ictx.dims = dims;
+            ictx.dims = SProjDims{ iPU, iPV, Kchunk };
             ictx.desc = params.desc;
             ictx.policy = {};
             ictx.stream = stream;
-
-            IProcessor* proc = &fp;
+            IProcessor* proc = &flt;
             proc->setInitContext(&ictx);
-            if (!proc->init()) {
+            if (!flt.init()) {
                 std::fprintf(stderr, "[fdk_recon_impl] FilterProcessor init failed.\n");
                 return;
             }
         }
 
+        // ---- 体积几何 ----
+        SVolGeom vol_geom = SVolGeom::make_centered(iVX, iVY, iVZ, vox_xy, vox_z);
+        vol_geom.center = make_float3(
+            params.vol_offset_x_mm, params.vol_offset_y_mm, params.vol_offset_z_mm);
+
         BpProcessor bp;
         {
             BpInitContext ictx{};
             ictx.vol_geom = vol_geom;
-            ictx.use_precomputed = true;   // 或 false
+            ictx.use_precomputed = true;
             IProcessor* proc = &bp;
             proc->setInitContext(&ictx);
-            if (!proc->init()) {
+            if (!bp.init()) {
                 std::fprintf(stderr, "[fdk_recon_impl] BpProcessor init failed.\n");
                 return;
             }
         }
 
-
-
-        // ---- 3. GPU 资源 ----
+        // ---- 3. 清零体积 & 初始化 GPU 资源 ----
         if (clear_vol) {
             const size_t n = (size_t)iVX * iVY * iVZ;
             YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0, n * sizeof(float), stream));
         }
 
+        SProjDims dims{ iPU, iPV, iPA };
         FdkGpuContext ctx;
-        SProjDims dims;
-        dims.iPU = iPU;
-        dims.iPV = iPV;
-        dims.iPAng = iPA;
         ctx.init(dims, h_geo, h_gv, Kchunk, stream);
 
-        std::vector<FdkAffineCoeff> h_coeffs(iPA);
-        YK_CUDA_CHECK(cudaMemcpyAsync(h_coeffs.data(), ctx.d_coeffs,
-            iPA * sizeof(FdkAffineCoeff),
-            cudaMemcpyDeviceToHost, stream));
-        cudaStreamSynchronize(stream);
-
-        // ---- 4. 主循环 ----
+        // ---- 4. 分块主循环 ----
         const size_t view_elems = (size_t)iPU * iPV;
 
         IProcessor* pw_proc = &pw;
-        IProcessor* fp_proc = &fp;
+        IProcessor* pkw_proc = &pkw;
+        IProcessor* fp_proc = &flt;
         IProcessor* bp_proc = &bp;
 
+        float* d_chunk_in = ctx.proj.chunk_in.data();
+        float* d_chunk_pw = ctx.proj.chunk_pw.data();
+        float* d_chunk_flt = ctx.proj.chunk_flt.data();
+
         for (int base = 0; base < iPA; base += Kchunk) {
-            const int K = std::min(Kchunk, (int)iPA - base);
+            const int K = std::min(Kchunk, iPA - base);
 
-            YK_CUDA_CHECK(cudaMemcpyToSymbol(gC_coeffs,
-                h_coeffs.data() + base,
-                K * sizeof(FdkAffineCoeff)));
+            ctx.geo.uploadCoeffsChunk(ctx.geo.d_coeffs() + base, K, stream);
+            ctx.proj.uploadProjChunk(h_proj + (size_t)base * view_elems, K, stream);
 
-            YK_CUDA_CHECK(cudaMemcpyAsync(
-                ctx.d_chunk_in,
-                h_proj + (size_t)base * view_elems,
-                (size_t)K * view_elems * sizeof(float),
-                cudaMemcpyHostToDevice, stream));
-
+            // Preweight（cos 加权）
             PreweightChunkContext pctx{};
-            pctx.d_geo = ctx.d_geo + base;
-            pctx.d_gv = ctx.d_gv + base;
+            pctx.d_geo = ctx.geo.d_geo() + base;
+            pctx.d_gv = ctx.geo.d_gv() + base;
             pctx.K = K;
             pw_proc->setContext(&pctx);
-            pw_proc->process(ctx.d_chunk_in, ctx.d_chunk_pw, stream);
+            pw_proc->process(d_chunk_in, d_chunk_pw, stream);
 
             if (onDump)
                 for (int i = 0; i < K; ++i)
-                    onDump(base + i, "pw", ctx.d_chunk_pw + i * view_elems, view_elems);
+                    onDump(base + i, "pw", d_chunk_pw + i * view_elems, view_elems);
 
+            // Parker weighting（in-place，短扫描时才执行）
+            if (bParker) {
+                ParkerWeightChunkContext pkctx{};
+                pkctx.baseAngle = base;
+                pkctx.K = K;
+                pkw_proc->setContext(&pkctx);
+                pkw_proc->process(d_chunk_pw, d_chunk_pw, stream);
+
+                if (onDump)
+                    for (int i = 0; i < K; ++i)
+                        onDump(base + i, "parker", d_chunk_pw + i * view_elems, view_elems);
+            }
+
+            // Filter
             FdkFilterContext fctx{ h_gv.data() + base, K };
             fp_proc->setContext(&fctx);
-            fp_proc->process(ctx.d_chunk_pw, ctx.d_chunk_flt, stream);
+            fp_proc->process(d_chunk_pw, d_chunk_flt, stream);
 
             if (onDump)
                 for (int i = 0; i < K; ++i)
-                    onDump(base + i, "flt", ctx.d_chunk_flt + i * view_elems, view_elems);
+                    onDump(base + i, "flt", d_chunk_flt + i * view_elems, view_elems);
 
-            for (int i = 0; i < K; ++i)
-                YK_CUDA_CHECK(cudaMemcpyAsync(
-                    ctx.chunk.slotPtr(i),
-                    ctx.d_chunk_flt + i * view_elems,
-                    view_elems * sizeof(float),
-                    cudaMemcpyDeviceToDevice, stream));
-
-            ctx.chunk.uploadTexObjs(K, stream);
-
-
-            // 循环内 setContext 时，非预计算版本需要额外传 d_geo / d_gv
+            // Backproject
             BpChunkContext bctx{};
-            bctx.d_texObjs = ctx.chunk.d_texObjs;
-            bctx.d_geo = ctx.d_geo + base;  // 非预计算版本用，预计算版本传 nullptr 也可
-            bctx.d_gv = ctx.d_gv + base;
-            bctx.d_vol = d_vol_out;
+            bctx.d_geo = ctx.geo.d_geo() + base;
+            bctx.d_gv = ctx.geo.d_gv() + base;
             bctx.K = K;
             bp_proc->setContext(&bctx);
-            bp_proc->process(nullptr, nullptr, stream);
-
-
+            bp_proc->process(ctx.proj.d_texObjs(), d_vol_out, stream);
         }
     }
 

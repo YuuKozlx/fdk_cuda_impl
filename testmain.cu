@@ -47,13 +47,15 @@ static bool write_raw_float(const char* path, const float* data, uint64_t elemen
 int main_fdk() {
     SCBCTParams params;
 
-    params.iPU = 1024; params.iPV = 1024; params.iPAng = 720;
+    params.iPU = 1024; params.iPV = 1024; params.iPAng = 480;
     params.iVX = 512; params.iVY = 512; params.iVZ = 100;
+    params.bShortScan = true;
+    params.ScanRange_rad = (float)M_PI * 4.0f / 3.0f; // 270 degree short scan
 
 
     std::vector<float> angle_list(params.iPAng);
     for (int i = 0; i < params.iPAng; ++i)
-        angle_list[i] = i * 2.0f * (float)M_PI / params.iPAng;
+        angle_list[i] = i * 2.0f * (float)M_PI / 720;
 
     params.angle_list = angle_list;
 

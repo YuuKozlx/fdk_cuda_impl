@@ -129,7 +129,6 @@
   <ItemGroup>
     <ClInclude Include="IProcessor.hpp" />
     <ClInclude Include="YkBackProject.hpp" />
-    <ClInclude Include="YkFDKChunkBuffer.hpp" />
     <ClInclude Include="minimha.h" />
     <ClInclude Include="YkDataObj.hpp" />
     <ClInclude Include="YkFDKFilterProcessor.hpp" />
@@ -137,7 +136,6 @@
     <ClInclude Include="YkFDKPrecompute.hpp" />
     <ClInclude Include="YkFDKVecGeoDerived.hpp" />
     <ClInclude Include="YkFDKPreWeightProcessor.hpp" />
-    <ClInclude Include="YkFDKViewTexSlot.hpp" />
     <ClInclude Include="YkIoDump.hpp" />
     <ClInclude Include="YkMacro.hpp" />
     <ClInclude Include="YkMem3d.hpp" />

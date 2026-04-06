@@ -31,26 +31,39 @@ namespace YK {
 
     // setContext 注入（每 chunk 前调用）
     struct PreweightChunkContext {
-        const SConeProjectionVec* d_geo = nullptr;  // device，已偏移到 chunk 起始
+        const SConeProjGeomVec* d_geo = nullptr;  // device，已偏移到 chunk 起始
         const SFDKGeoParamPerView* d_gv = nullptr;  // device，已偏移到 chunk 起始
         int                        K = 0;         // 当前 chunk 实际视角数
     };
 
+    // ============================================================
+// ParkerWeightInitContext / ParkerWeightChunkContext
+// ============================================================
+    struct ParkerWeightInitContext {
+        SProjDims    dims = {};
+        float        fDetUSize = 1.f;
+        float        fSrcOrigin = 0.f;
+        float        fDetOrigin = 0.f;
+        const float* h_angles = nullptr;
+        int          iPA = 0;
+    };
 
+    struct ParkerWeightChunkContext {
+        int baseAngle = 0;
+        int K = 0;
+    };
 
     // ----------------------------------------------------------------
     // Init / Chunk context
     // ----------------------------------------------------------------
     struct BpInitContext {
-        SVolumeGeometry vol_geom;
+        SVolGeom vol_geom;
         bool use_precomputed = true;  // true: 预计算版本，false: 非预计算版本
     };
 
     struct BpChunkContext {
-        const cudaTextureObject_t* d_texObjs = nullptr;
-        const SConeProjectionVec* d_geo = nullptr;  // 非预计算版本需要
-        const SFDKGeoParamPerView* d_gv = nullptr;  // 非预计算版本需要
-        float* d_vol = nullptr;
+        const SConeProjGeomVec* d_geo = nullptr;
+        const SFDKGeoParamPerView* d_gv = nullptr;
         int                        K = 0;
     };
 

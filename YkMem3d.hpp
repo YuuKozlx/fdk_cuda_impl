@@ -458,4 +458,111 @@ namespace YK {
 
 
     } // namespace Util
+
+    namespace Mem {
+        // 线性设备缓冲，专门给结构体/POD 数组用
+        template<typename T>
+        class DeviceLinearBuffer {
+        public:
+            DeviceLinearBuffer() = default;
+            ~DeviceLinearBuffer() { reset(); }
+
+            DeviceLinearBuffer(const DeviceLinearBuffer&) = delete;
+            DeviceLinearBuffer& operator=(const DeviceLinearBuffer&) = delete;
+            DeviceLinearBuffer(DeviceLinearBuffer&& o) noexcept {
+                ptr_ = o.ptr_; o.ptr_ = nullptr;
+                n_ = o.n_;   o.n_ = 0;
+                deviceId_ = o.deviceId_; o.deviceId_ = 0;
+            }
+            DeviceLinearBuffer& operator=(DeviceLinearBuffer&& o) noexcept {
+                if (this != &o) {
+                    reset(); ptr_ = o.ptr_; o.ptr_ = nullptr;
+                    n_ = o.n_; o.n_ = 0; deviceId_ = o.deviceId_;
+                }
+                return *this;
+            }
+
+            void alloc(int n, int deviceId = 0) {
+                reset();
+                deviceId_ = deviceId;
+                n_ = n;
+                cudaSetDevice(deviceId_);
+                YK_CUDA_CHECK(cudaMalloc(&ptr_, n * sizeof(T)));
+            }
+
+            void reset() {
+                if (ptr_) { cudaSetDevice(deviceId_); cudaFree(ptr_); ptr_ = nullptr; }
+                n_ = 0;
+            }
+
+            T* data()     const noexcept { return ptr_; }
+            int      count()    const noexcept { return n_; }
+            int      deviceId() const noexcept { return deviceId_; }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+        private:
+            T* ptr_ = nullptr;
+            int n_ = 0;
+            int deviceId_ = 0;
+        };
+
+        class PodDataController {
+        public:
+            template<typename T>
+            DeviceLinearBuffer<T> allocate(int n, int deviceId = 0) const {
+                DeviceLinearBuffer<T> buf;
+                buf.alloc(n, deviceId);
+                return buf;
+            }
+
+            template<typename T>
+            DeviceLinearBuffer<T> allocateAndUpload(
+                const std::vector<T>& src,
+                cudaStream_t stream = 0, int deviceId = 0) const
+            {
+                auto buf = allocate<T>((int)src.size(), deviceId);
+                upload(buf, src, stream);
+                return buf;
+            }
+
+            template<typename T>
+            void upload(const DeviceLinearBuffer<T>& dst,
+                const std::vector<T>& src,
+                cudaStream_t stream = 0) const
+            {
+                if (src.empty() || !dst)
+                    throw std::invalid_argument("upload: null or empty");
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    dst.data(), src.data(),
+                    src.size() * sizeof(T),
+                    cudaMemcpyHostToDevice, stream));
+            }
+
+            template<typename T>
+            void upload(const DeviceLinearBuffer<T>& dst,
+                const T* src, int n,
+                cudaStream_t stream = 0) const
+            {
+                if (!src || !dst)
+                    throw std::invalid_argument("upload: null ptr");
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    dst.data(), src,
+                    n * sizeof(T),
+                    cudaMemcpyHostToDevice, stream));
+            }
+
+            template<typename T>
+            void download(std::vector<T>& dst,
+                const DeviceLinearBuffer<T>& src,
+                cudaStream_t stream = 0) const
+            {
+                dst.resize(src.count());
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    dst.data(), src.data(),
+                    src.count() * sizeof(T),
+                    cudaMemcpyDeviceToHost, stream));
+                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+            }
+        };
+    }
 } // namespace YK

@@ -52,8 +52,8 @@ namespace YK {
         }
 
         bool build_geo_params(
-            int detector_pixels_u, int detector_pixels_v,
-            const std::vector<SConeProjectionVec>& host_geo_per_view,
+            int detector_pixels_u, int detector_pixels_v, float scan_angle_rad,
+            const std::vector<SConeProjGeomVec>& host_geo_per_view,
             std::vector<SFDKGeoParamPerView>& out_view_params) const
         {
             if (detector_pixels_u <= 0 || detector_pixels_v <= 0) return false;
@@ -71,7 +71,7 @@ namespace YK {
 
             // ---- per view ----
             for (int view = 0; view < view_count; ++view) {
-                const SConeProjectionVec& geo = host_geo_per_view[view];
+                const SConeProjGeomVec& geo = host_geo_per_view[view];
                 SFDKGeoParamPerView& gv = out_view_params[view];
 
                 // 0) meta
@@ -87,6 +87,7 @@ namespace YK {
                 // 2) dtheta
                 // =========================================================
                 gv.dtheta = compute_dtheta(unwrapped_theta, view, opt_.dtheta_eps);
+                gv.fScaleDTheta = 2.f * CUDA_PI / scan_angle_rad;
 
                 // =========================================================
                 // 3) du/dv
@@ -189,7 +190,7 @@ namespace YK {
         //   Cache UU,VV,UV,invDet for solving D = u*U + v*V
         // -----------------------------
         static inline void compute_detector_basis_cache(
-            const SConeProjectionVec& geo,
+            const SConeProjGeomVec& geo,
             float& UU, float& VV, float& UV, float& invDetUV)
         {
             UU = f3_dot(geo.detU, geo.detU);
@@ -220,7 +221,7 @@ namespace YK {
         //   offset_valid, offsetU_pix, offsetV_pix, SDD_mm
         // -----------------------------
         static inline bool compute_SDD_offsets(
-            const SConeProjectionVec& geo,
+            const SConeProjGeomVec& geo,
             int detector_pixels_u,
             int detector_pixels_v,
             float& out_offsetU_pix,
