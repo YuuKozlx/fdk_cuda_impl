@@ -85,7 +85,7 @@ int main_fdk() {
     YK::fdk_recon(
         h_proj.data(), d_vol_buf.data(),
         params,
-        /*Kchunk=*/8, s,
+        /*Kchunk=*/30, s,
         /*clear_vol=*/true);
 
 

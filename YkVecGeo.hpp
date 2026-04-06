@@ -7,6 +7,7 @@
 #include <vector_functions.hpp>
 #include <vector_types.h>
 #include "YkGlobals.h"
+#include "YkMacro.hpp"
 #include "YkVecOperation.hpp"
 
 namespace YK {

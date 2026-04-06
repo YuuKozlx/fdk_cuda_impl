@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "YkGlobals.h" // YK_CUDA_CHECK
+#include "YkMacro.hpp"
 
 namespace YK {
     namespace IO {

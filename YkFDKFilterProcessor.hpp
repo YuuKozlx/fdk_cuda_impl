@@ -16,6 +16,7 @@
 #include "YkGlobals.h"
 #include "IProcessor.hpp"
 #include "YkFdkFilterContext.hpp"
+#include "YkMacro.hpp"
 
 
 

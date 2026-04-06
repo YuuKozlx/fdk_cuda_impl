@@ -228,7 +228,10 @@ namespace YK {
         int Kchunk, cudaStream_t stream,
         bool clear_vol = true) // ← 新增)
     {
-        fdk_recon_impl(h_proj, d_vol_out, params, Kchunk, stream, clear_vol);
+        {
+            YK::Util::CudaTimer t("fdk_recon_impl", stream);
+            fdk_recon_impl(h_proj, d_vol_out, params, Kchunk, stream, clear_vol);
+        }
     }
 
     // 有 dump 版本

@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "YkGlobals.h"
+#include "YkMacro.hpp"
 
 namespace YK {
 

@@ -3,6 +3,7 @@
 #include <cufft.h>
 #include <device_launch_parameters.h>
 #include "YkFFT.hpp"  // ÉÏÃæµÄ CudaFFTPlan
+#include "YkMacro.hpp"
 
 namespace YK {
 

@@ -8,6 +8,7 @@
 
 #include "YkGlobals.h"
 #include "YkFDKCreateFilterKernel.hpp"   // FilterKernelFFT, FilterKernelDesc, EFilterKernel, EWeightsBuildSource,...
+#include "YkMacro.hpp"
 
 namespace YKTest {
 

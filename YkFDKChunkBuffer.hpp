@@ -5,6 +5,7 @@
 #include "YkFDKViewTexSlot.hpp"
 #include "YkUtil.hpp"
 #include "YkGlobals.h"
+#include "YkMacro.hpp"
 
 namespace YK {
 

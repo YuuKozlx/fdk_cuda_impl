@@ -139,6 +139,7 @@
     <ClInclude Include="YkFDKPreWeightProcessor.hpp" />
     <ClInclude Include="YkFDKViewTexSlot.hpp" />
     <ClInclude Include="YkIoDump.hpp" />
+    <ClInclude Include="YkMacro.hpp" />
     <ClInclude Include="YkMem3d.hpp" />
     <ClInclude Include="YkSampling2D.hpp" />
     <ClInclude Include="Yktest_dataobject.hpp" />

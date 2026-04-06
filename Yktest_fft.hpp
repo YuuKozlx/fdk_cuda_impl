@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <algorithm>
 #include "YKtestconv.hpp"
+#include "YkMacro.hpp"
 
 namespace YKTest {
     using namespace YK;

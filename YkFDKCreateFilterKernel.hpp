@@ -1,12 +1,13 @@
 #pragma once
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <cufft.h>
 #include <cmath>
+#include <cuda_runtime.h>
+#include <cufft.h>
+#include <device_launch_parameters.h>
 #include <utility>
 
-#include "YkGlobals.h"
 #include "YkFFT.hpp"
+#include "YkGlobals.h"
+#include "YkMacro.hpp"
 
 namespace YK {
     // ============================================================
