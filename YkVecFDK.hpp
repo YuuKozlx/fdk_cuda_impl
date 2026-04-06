@@ -149,12 +149,25 @@ namespace YK {
 
             ctx.chunk.uploadTexObjs(K, stream);
 
+            //BpChunkContext bctx{};
+            //bctx.d_texObjs = ctx.chunk.d_texObjs;
+            //bctx.d_vol = d_vol_out;
+            //bctx.K = K;
+            //bp_proc->setContext(&bctx);
+            //bp_proc->process(nullptr, nullptr, stream);
+
+            // 循环内替换 launchBpKernel 直接调用
             BpChunkContext bctx{};
             bctx.d_texObjs = ctx.chunk.d_texObjs;
+            bctx.d_geo = ctx.d_geo + base;
+            bctx.d_gv = ctx.d_gv + base;
             bctx.d_vol = d_vol_out;
             bctx.K = K;
+            IProcessor* bp_proc = &bp;
             bp_proc->setContext(&bctx);
             bp_proc->process(nullptr, nullptr, stream);
+
+
         }
     }
 

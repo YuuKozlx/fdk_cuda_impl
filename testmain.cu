@@ -35,13 +35,22 @@ static bool write_raw_float(const char* path, const std::vector<float>& data) {
     return n == data.size();
 }
 
+
+static bool write_raw_float(const char* path, const float* data, uint64_t element_count) {
+    FILE* fp = std::fopen(path, "wb");
+    if (!fp) return false;
+    size_t n = std::fwrite(data, sizeof(float), element_count, fp);
+    std::fclose(fp);
+    return n == element_count;
+}
+
 int main_fdk() {
     SDimensions3D dims;
-    dims.iPU = 256; dims.iPV = 256; dims.iPAng = 360;
-    dims.iVX = 1024; dims.iVY = 1024; dims.iVZ = 400;
+    dims.iPU = 1024; dims.iPV = 1024; dims.iPAng = 720;
+    dims.iVX = 512; dims.iVY = 512; dims.iVZ = 100;
 
     const float SID = 500.0f, SDD = 1000.0f;
-    const float du = 1.0f, dv = 1.0f, vox = 0.125f;
+    const float du = 0.25f, dv = 0.25f, vox = 0.0125f;
 
     const int Ang = dims.iPAng;
     const int Nx = dims.iVX, Ny = dims.iVY, Nz = dims.iVZ;
@@ -53,13 +62,13 @@ int main_fdk() {
     // 读投影
     std::vector<float> h_proj(proj_elems);
     if (!read_raw_float("proj_256x256.raw", h_proj)) {
-        std::printf("Error: cannot read proj_256x256.raw (expect %zu floats)\n", proj_elems);
+        std::printf("Error: cannot read proj_1024x1024.raw (expect %zu floats)\n", proj_elems);
         return -1;
     }
 
     // 构建完整圆轨迹几何
     std::vector<SConeProjectionVec> geo;
-    const float offsetU_mm = 5.5f * du;
+    const float offsetU_mm = 0.0f;
     YK::build_circular_vec_geometry(
         geo, Ang, dims.iPU, dims.iPV, du, dv,
         SID, SDD - SID,
@@ -69,8 +78,30 @@ int main_fdk() {
     cudaStream_t s = nullptr;
     YK_CUDA_CHECK(cudaStreamCreate(&s));
 
-    float* d_vol = nullptr;
-    YK_CUDA_CHECK(cudaMalloc(&d_vol, vol_elems * sizeof(float)));
+    MemoryController ctrl;
+    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false, s);
+    // 离线重建（一次性全量）
+    YK::fdk_recon(
+        h_proj.data(), d_vol_buf.data(),
+        geo, dims, vox,
+        /*Kchunk=*/8, s,
+        /*clear_vol=*/true);
+
+
+
+    auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+
+    ctrl.download3D(h_vol, d_vol_buf, s);
+    ctrl.sync();
+
+    uint64_t total_elements = (uint64_t)Nx * Ny * Nz;
+    if (!write_raw_float("fdk_vec_vol_offlne.raw", h_vol.cdata(), total_elements)) {
+        std::printf("Error: cannot write fdk_vec_vol_new.raw\n");
+        return -2;
+    }
+
+
+    auto d_vol = d_vol_buf.data(); // 直接借用之前分配的设备内存
 
     // 在线重建
     const int batches = 12;
@@ -99,20 +130,18 @@ int main_fdk() {
 
     YK_CUDA_CHECK(cudaStreamSynchronize(s));
 
-    // D2H & 写文件
-    std::vector<float> h_vol(vol_elems);
-    YK_CUDA_CHECK(cudaMemcpy(h_vol.data(), d_vol,
-        vol_elems * sizeof(float), cudaMemcpyDeviceToHost));
+    ctrl.download3D(h_vol, d_vol_buf, s);
 
-    if (!write_raw_float("fdk_vec_vol_new.raw", h_vol)) {
-        std::printf("Error: cannot write fdk_vec_vol_new.raw\n");
+    // D2H & 写文件
+    if (!write_raw_float("fdk_vec_vol_online.raw", h_vol.data(), h_vol.size())) {
+        std::printf("Error: cannot write fdk_vec_vol_online.raw\n");
         return -2;
     }
 
-    YK_CUDA_CHECK(cudaFree(d_vol));
+
     YK_CUDA_CHECK(cudaStreamDestroy(s));
 
-    std::printf("Done: wrote fdk_vec_vol_new.raw (%d x %d x %d)\n", Nx, Ny, Nz);
+    std::printf("Done: wrote fdk_vec_vol_online.raw (%d x %d x %d)\n", Nx, Ny, Nz);
     return 0;
 }
 

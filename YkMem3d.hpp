@@ -103,6 +103,7 @@ namespace YK {
 
             Shape3D shape() const noexcept { return sh_; }
             T* data() noexcept { return ptr_.get(); }
+            uint64_t size() const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
             const T* cdata() const noexcept { return ptr_.get(); }
             explicit operator bool() const noexcept { return ptr_ != nullptr; }
 
@@ -162,6 +163,7 @@ namespace YK {
 
             // 形状
             Shape3D shape() const noexcept { return sh_; }
+            uint64_t size() const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
 
             // 转 bool
             explicit operator bool() const noexcept { return ptr_ != nullptr; }
@@ -219,13 +221,12 @@ namespace YK {
             Shape3D shape() const noexcept { return sh_; }
             size_t pitch() const noexcept { return pitchBytes_; }
             size_t slice() const noexcept { return sliceBytes_; }
+            uint64_t size() const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
             OwnerTag owner() const noexcept { return owner_; }
             int deviceId() const noexcept { return deviceId_; }
             explicit operator bool() const noexcept { return ptr_ != nullptr; }
             T* data() const noexcept { return ptr_; }
             const T* cdata() const { return ptr_; }
-
-
 
             void reset() noexcept { reset_noexcept(); }
 
@@ -234,6 +235,11 @@ namespace YK {
 
             static DeviceBuffer3D make_owning(T* ptr, Shape3D sh, size_t pitchBytes, int deviceId) {
                 return DeviceBuffer3D{ ptr, sh, pitchBytes, pitchBytes * sh.ny, OwnerTag::Owning, deviceId };
+            }
+
+            // 新增：借用外部指针，不持有所有权
+            static DeviceBuffer3D make_borrowed(T* ptr, Shape3D sh, size_t pitchBytes, int deviceId) {
+                return DeviceBuffer3D{ ptr, sh, pitchBytes, pitchBytes * sh.ny, OwnerTag::Borrowed, deviceId };
             }
 
             void reset_noexcept() noexcept {
@@ -262,6 +268,77 @@ namespace YK {
             size_t pitchBytes_ = 0, sliceBytes_ = 0;
             OwnerTag owner_ = OwnerTag::Borrowed;
             int deviceId_ = 0;
+        };
+
+
+        template<typename T>
+        class DeviceBuffer3DBorrowed {
+        public:
+            using ValueType = T;
+
+            DeviceBuffer3DBorrowed(T* ptr, int nx, int ny, int nz,
+                size_t pitchBytes, int deviceId = 0)
+                : ptr_(ptr), sh_{ nx, ny, nz }
+                , pitchBytes_(pitchBytes)
+                , sliceBytes_(pitchBytes* ny)
+                , deviceId_(deviceId)
+            {
+                if (!ptr)
+                    throw std::invalid_argument("DeviceBuffer3DBorrowed: ptr is null");
+                if (nx <= 0 || ny <= 0 || nz <= 0)
+                    throw std::invalid_argument("DeviceBuffer3DBorrowed: nx/ny/nz>0");
+            }
+
+            // 线性指针便捷构造（pitch = nx*sizeof(T)）
+            static DeviceBuffer3DBorrowed linear(T* ptr, int nx, int ny, int nz, int deviceId = 0) {
+                return DeviceBuffer3DBorrowed(ptr, nx, ny, nz, nx * sizeof(T), deviceId);
+            }
+
+            // 禁用拷贝
+            DeviceBuffer3DBorrowed(const DeviceBuffer3DBorrowed&) = delete;
+            DeviceBuffer3DBorrowed& operator=(const DeviceBuffer3DBorrowed&) = delete;
+
+            // 支持移动
+            DeviceBuffer3DBorrowed(DeviceBuffer3DBorrowed&& o) noexcept
+                : ptr_(o.ptr_), sh_(o.sh_)
+                , pitchBytes_(o.pitchBytes_), sliceBytes_(o.sliceBytes_)
+                , deviceId_(o.deviceId_)
+            {
+                o.ptr_ = nullptr; o.sh_ = {};
+                o.pitchBytes_ = o.sliceBytes_ = 0;
+            }
+
+            DeviceBuffer3DBorrowed& operator=(DeviceBuffer3DBorrowed&& o) noexcept {
+                if (this != &o) {
+                    ptr_ = o.ptr_;        o.ptr_ = nullptr;
+                    sh_ = o.sh_;         o.sh_ = {};
+                    pitchBytes_ = o.pitchBytes_; o.pitchBytes_ = 0;
+                    sliceBytes_ = o.sliceBytes_; o.sliceBytes_ = 0;
+                    deviceId_ = o.deviceId_;   o.deviceId_ = 0;
+                }
+                return *this;
+            }
+
+            ~DeviceBuffer3DBorrowed() = default;   // 不 cudaFree，外部管理
+
+            DeviceView3D<T>       view()  const noexcept { return { ptr_, sh_.nx, sh_.ny, sh_.nz, pitchBytes_, sliceBytes_ }; }
+            DeviceView3D<const T> cview() const noexcept { return { ptr_, sh_.nx, sh_.ny, sh_.nz, pitchBytes_, sliceBytes_ }; }
+
+            Shape3D      shape()    const noexcept { return sh_; }
+            uint64_t size() const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
+            size_t       pitch()    const noexcept { return pitchBytes_; }
+            size_t       slice()    const noexcept { return sliceBytes_; }
+            int          deviceId() const noexcept { return deviceId_; }
+            T* data()     const noexcept { return ptr_; }
+            const T* cdata()    const noexcept { return ptr_; }
+            explicit operator bool()const noexcept { return ptr_ != nullptr; }
+
+        private:
+            T* ptr_ = nullptr;
+            Shape3D sh_ = {};
+            size_t  pitchBytes_ = 0;
+            size_t  sliceBytes_ = 0;
+            int     deviceId_ = 0;
         };
 
         // -------------------------- MemoryController --------------------------
@@ -323,10 +400,62 @@ namespace YK {
                 copyParams.kind = cudaMemcpyDeviceToHost;
 
                 YK_CUDA_CHECK(cudaMemcpy3DAsync(&copyParams, stream));
+                sync(stream);
             }
 
             void sync(cudaStream_t stream = 0) const { YK_CUDA_CHECK(cudaStreamSynchronize(stream)); }
+
+
+
+            template<typename T>
+            DeviceBuffer3DBorrowed<T> borrowDevice3D(
+                T* ptr, int nx, int ny, int nz,
+                size_t pitchBytes, int deviceId = 0) const
+            {
+                return DeviceBuffer3DBorrowed<T>(ptr, nx, ny, nz, pitchBytes, deviceId);
+            }
+
+            template<typename T>
+            DeviceBuffer3DBorrowed<T> borrowDevice3DLinear(
+                T* ptr, int nx, int ny, int nz, int deviceId = 0) const
+            {
+                return DeviceBuffer3DBorrowed<T>::linear(ptr, nx, ny, nz, deviceId);
+            }
+
+
+            template<typename T>
+            CpuBuffer3DBorrowed<T> borrowCpu3D(
+                T* ptr, int nx, int ny, int nz) const
+            {
+                return CpuBuffer3DBorrowed<T>(ptr, nx, ny, nz);
+            }
+
+            //template<typename T>
+            //DeviceBuffer3D<T> borrowDevice3D(
+            //    T* ptr, int nx, int ny, int nz,
+            //    size_t pitchBytes, int deviceId = 0) const
+            //{
+            //    if (!ptr) throw std::invalid_argument("borrowDevice3D: ptr is null");
+            //    if (nx <= 0 || ny <= 0 || nz <= 0)
+            //        throw std::invalid_argument("borrowDevice3D: nx/ny/nz>0");
+            //    return DeviceBuffer3D<T>::make_borrowed(ptr, { nx, ny, nz }, pitchBytes, deviceId);
+            //}
+
+            //// 借用外部线性指针（cudaMalloc 分配的，pitch = nx*sizeof(T)）
+            //template<typename T>
+            //DeviceBuffer3D<T> borrowDevice3DLinear(
+            //    T* ptr, int nx, int ny, int nz,
+            //    int deviceId = 0) const
+            //{
+            //    if (!ptr) throw std::invalid_argument("borrowDevice3DLinear: ptr is null");
+            //    if (nx <= 0 || ny <= 0 || nz <= 0)
+            //        throw std::invalid_argument("borrowDevice3DLinear: nx/ny/nz>0");
+            //    const size_t pitchBytes = nx * sizeof(T);
+            //    return DeviceBuffer3D<T>::make_borrowed(ptr, { nx, ny, nz }, pitchBytes, deviceId);
+            //}
         };
+
+
 
     } // namespace Util
 } // namespace YK
