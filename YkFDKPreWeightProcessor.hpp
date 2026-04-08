@@ -10,6 +10,7 @@
 #include "YkVecGeo.hpp"
 #include "YkVecOperation.hpp"
 #include "IProcessor.hpp"
+#include "YkFdkFilterContext.hpp"
 
 namespace YK {
     namespace cg = cooperative_groups;
@@ -213,6 +214,16 @@ namespace YK {
 };
 namespace YK {
 
+    __global__ void print_d_out_kernel(const float* data, int Nu, int Nv, int K) {
+        const int u = blockIdx.x * blockDim.x + threadIdx.x;
+        const int angle = blockIdx.y * blockDim.y + threadIdx.y;
+        if (u >= Nu || angle >= K) return;
+        for (int v = 0; v < Nv; ++v) {
+            const int idx = (angle * Nv + v) * Nu + u;
+            printf("data[%d] = %f\n", idx, data[idx]);
+        }
+    }
+
     // ============================================================
     // Constant memory
     // ============================================================
@@ -236,6 +247,9 @@ namespace YK {
     {
         const int u = blockIdx.x * blockDim.x + threadIdx.x;
         const int angle = blockIdx.y * blockDim.y + threadIdx.y;
+
+        /*      printf("threadIdx=(%d,%d) blockIdx=(%d,%d) u=%d angle=%d, data[%d] = %f\n",
+                  threadIdx.x, threadIdx.y, blockIdx.x, blockIdx.y, u, angle, angle * Nv * Nu + 0 * Nv + u, data[angle * Nv * Nu + u]);*/
 
         if (u >= Nu || angle >= K) return;
 
@@ -276,11 +290,18 @@ namespace YK {
         }
 
         w *= fScale;
+        //printf("w = %.4f \n", w);
+
+        //printf("angle=%d u=%d beta=%.4f gamma=%.4f w=%.4f\n", angle, u, beta, gamma, w);
+
 
         // 沿 v 方向写回，同一 (angle, u) 所有 v 权重相同
         for (int v = 0; v < Nv; ++v) {
-            const size_t idx = ((size_t)angle * Nv + v) * Nu + u;
+            const int idx = (angle * Nv + v) * Nu + u;
             data[idx] *= w;
+            // printf("data = %.4f\n", data[idx]);
+            //if (v == 0)
+            //    printf("idx=%d w=%.4f data=%.4f\n", idx, w, data[idx]);
         }
     }
 
@@ -312,10 +333,9 @@ namespace YK {
             fSrcOrigin_ = ic->fSrcOrigin;
             fDetOrigin_ = ic->fDetOrigin;
 
-            if (ic->h_angles && ic->iPA > 1)
-                computeParkerAngles_(ic->h_angles, ic->iPA);
-            else
-                std::fprintf(stderr, "[YK][Parker][W] setInitContext: no angle data.\n");
+            // fScale = π / range，使冗余区域积分为 1
+            fScale_ = ic->fScanRangeRad / (float)CUDA_PI;
+            fAngleBase_ = ic->fStartAngleRad;
 
             cfg_ready_ = true;
         }
@@ -334,10 +354,7 @@ namespace YK {
                     Nu_, Nv_);
                 return false;
             }
-            if (h_relAngles_.empty()) {
-                std::fprintf(stderr, "[YK][Parker][E] init: no relative angles computed.\n");
-                return false;
-            }
+
 
             const float fSDD = fSrcOrigin_ + fDetOrigin_;
             fCentralFanAngle_ = std::fabs(
@@ -386,6 +403,7 @@ namespace YK {
             void* d_output,
             cudaStream_t stream = 0) override
         {
+
             if (!is_initialized_) {
                 std::fprintf(stderr, "[YK][Parker][E] process: not initialized.\n");
                 return;
@@ -394,28 +412,54 @@ namespace YK {
                 std::fprintf(stderr, "[YK][Parker][E] process: null pointer.\n");
                 return;
             }
+
+            if (d_input != d_output) {
+                std::fprintf(stderr, "[YK][Parker][W] process: in-place only, d_input ignored.\n");
+                return;
+            }
             if (chunk_.K <= 0) {
                 std::fprintf(stderr, "[YK][Parker][E] process: setContext() not called.\n");
                 return;
             }
 
-            const int base = chunk_.baseAngle;
+
+
+
+
+            auto d_out = static_cast<float*>(d_output);
+            auto d_in = static_cast<const float*>(d_input);
+
+
+
+            std::vector<float> rel(chunk_.K);
+            for (int i = 0; i < chunk_.K; ++i) {
+                float f = chunk_.h_angles[i] - fAngleBase_;
+                while (f < 0.f)           f += 2.f * CUDA_PI;
+                while (f >= 2.f * CUDA_PI) f -= 2.f * CUDA_PI;
+                rel[i] = f;
+            }
+
             const int K = chunk_.K;
 
             // 上传本 chunk 的相对角度到 constant memory
-            YK_CUDA_CHECK(cudaMemcpyToSymbolAsync(
+
+            YK_CUDA_CHECK(cudaMemcpyToSymbol(
                 gC_parker_angle,
-                h_relAngles_.data() + base,
+                rel.data(),
                 K * sizeof(float),
-                0, cudaMemcpyHostToDevice, stream));
+                0,
+                cudaMemcpyHostToDevice));
+
 
             dim3 dimBlock(32, 8);
             dim3 dimGrid(
                 (Nu_ + 31) / 32,
                 (K + 7) / 8);
 
+
+
             parker_weight_kernel << <dimGrid, dimBlock, 0, stream >> > (
-                static_cast<float*>(d_output),
+                d_out,
                 Nu_, Nv_, K,
                 fSrcOrigin_ + fDetOrigin_,
                 fDetUSize_,
@@ -437,7 +481,6 @@ namespace YK {
             fDetOrigin_ = 0.f;
             fCentralFanAngle_ = 0.f;
             fScale_ = 1.f;
-            h_relAngles_.clear();
             chunk_ = {};
             is_initialized_ = false;
             cfg_ready_ = false;
@@ -447,38 +490,6 @@ namespace YK {
         const char* name()          const override { return "ParkerWeightProcessor"; }
 
     private:
-        // ----------------------------------------------------------------
-        // Parker 相对角度预计算（host 端，setInitContext 时调用一次）
-        // ----------------------------------------------------------------
-        void computeParkerAngles_(const float* h_angles, int iPA)
-        {
-            // 判断角度递增还是递减，取最小端作为基准
-            float fdA = h_angles[1] - h_angles[0];
-            while (fdA < -(float)CUDA_PI) fdA += 2.f * (float)CUDA_PI;
-            while (fdA >= (float)CUDA_PI) fdA -= 2.f * (float)CUDA_PI;
-
-            const float fAngleBase = (fdA >= 0.f)
-                ? h_angles[0]
-                : h_angles[iPA - 1];
-
-            // 所有角度归一化到 [0, 2π)
-            h_relAngles_.resize(iPA);
-            for (int i = 0; i < iPA; ++i) {
-                float f = h_angles[i] - fAngleBase;
-                while (f >= 2.f * (float)CUDA_PI) f -= 2.f * (float)CUDA_PI;
-                while (f < 0.f)                   f += 2.f * (float)CUDA_PI;
-                h_relAngles_[i] = f;
-            }
-
-            // 扫描范围（离散化修正）
-            float fRange = std::fabs(h_relAngles_[iPA - 1] - h_relAngles_[0]);
-            fRange /= (float)(iPA - 1);
-            fRange *= (float)iPA;
-
-            // fScale = π / range，使冗余区域积分为 1
-            fScale_ = fRange / (float)CUDA_PI;
-        }
-
         int   Nu_ = 0;
         int   Nv_ = 0;
         float fDetUSize_ = 1.f;
@@ -486,8 +497,8 @@ namespace YK {
         float fDetOrigin_ = 0.f;
         float fCentralFanAngle_ = 0.f;
         float fScale_ = 1.f;
+        float fAngleBase_ = 0.f;  // 可选：基准角度，默认为 0（即第一个视角的绝对角度）；如果设置为其他值，则相对角度 = 绝对角度 - 基准角度
 
-        std::vector<float>      h_relAngles_;
         ParkerWeightChunkContext chunk_ = {};
         bool                    is_initialized_ = false;
         bool                    cfg_ready_ = false;

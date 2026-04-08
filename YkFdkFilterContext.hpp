@@ -44,13 +44,14 @@ namespace YK {
         float        fDetUSize = 1.f;
         float        fSrcOrigin = 0.f;
         float        fDetOrigin = 0.f;
-        const float* h_angles = nullptr;
-        int          iPA = 0;
+        int          iPAnglesTotal = 0; // 整个扫描的总视角数（非 chunk 内），用于计算相对角度
+        float        fScanRangeRad = 2.f * CUDA_PI; // 扫描范围（弧度），短扫描时 < 2Pi
+        float        fStartAngleRad;     // 全局起始角度
     };
 
     struct ParkerWeightChunkContext {
-        int baseAngle = 0;
-        int K = 0;
+        const float* h_angles = nullptr;  // 本 chunk 的角度列表，大小 = K
+        int          K = 0;
     };
 
     // ----------------------------------------------------------------

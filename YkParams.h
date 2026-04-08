@@ -10,8 +10,8 @@ struct SCBCTParams {
     int iPU; // number of detectors in the U direction
     int iPV; // number of detectors in the V direction
     int iPAng; // number of projection angles
-    float ScanRange_rad = 2 * PI; // total scan range in radians (e.g. 2*PI for full scan, PI for short scan)
-    bool bShortScan = false; // whether it's a short scan (if true, Parker weighting will be applied)
+    int iPAngTotal; // total number of angles in the full scan (e.g. 360 for full scan, 180 for short scan)
+
     float du_mm = 1.0f;; // detector pixel size in U direction in mm
     float dv_mm = 1.0f;; // detector pixel size in V direction in mm
     float offsetU_mm = 0.0f; // detector offset in U direction in mm
@@ -20,6 +20,12 @@ struct SCBCTParams {
     float slant_angle_rad = 0.0f; // detector slant angle in radians (探测器平面绕水平轴的旋转角，右手规则，正值表示前倾)
     float tilt_angle_rad = 0.0f; // detector tilt angle in radians (探测器平面绕垂直轴的旋转角，右手规则，正值表示左倾)
 
+
+
+    //Scan params
+    float scan_range_rad = 2 * PI; // total scan range in radians (e.g. 2*PI for full scan, PI for short scan)
+    float scan_start_angle_rad = 0.0f; // start angle of the scan in radians (e.g. 0 for full scan, -PI/2 for short scan)
+    bool bShortScan = false; // whether it's a short scan (if true, Parker weighting will be applied)
 
     // geometry params
     float SID; // source-to-isocenter distance in mm 

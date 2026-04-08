@@ -116,7 +116,7 @@ namespace YK {
                     gv.offsetU_pix,
                     gv.offsetV_pix,
                     gv.SDD_mm);
-                printf("SDD = %.3f\n", gv.SDD_mm);
+
 
 
                 // 5) detector basis cache (for device-side u/v solve)
