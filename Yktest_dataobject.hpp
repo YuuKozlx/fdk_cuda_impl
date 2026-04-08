@@ -72,8 +72,11 @@ namespace YKTest {
         ////////////////////////////////////////////////////////////
         // copy wrapped CPU ¡ú GPU
         ////////////////////////////////////////////////////////////
+        int device = 0;
+        cudaStream_t stream;
+        YK_CUDA_CHECK(cudaStreamCreate(&stream));
 
-        auto gpuVol = data.createGpuVolume<float>(NX, NY, NZ);
+        auto gpuVol = data.createGpuVolume<float>(NX, NY, NZ, device, stream);
 
         mem.upload3D(
             gpuVol.buffer(),

@@ -104,16 +104,21 @@ int main_fdk() {
     MemoryController ctrl;
     auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false, s);
     // 离线重建（一次性全量）
-    YK::fdk_recon(
-        h_proj.data(), d_vol_buf.data(),
-        params,
-        /*Kchunk=*/30, s,
-        /*clear_vol=*/true, dump);
+
+    {
+        YK::Util::CudaTimer timer("offline", s);
+        YK::fdk_recon(
+            h_proj.data(), d_vol_buf.data(),
+            params,
+            /*Kchunk=*/30, s,
+            /*clear_vol=*/true, dump);
+    }
+
 
 
     auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
 
-    ctrl.download3D(h_vol, d_vol_buf, s);
+    ctrl.download3D(h_vol, d_vol_buf);
 
 
     uint64_t total_elements = (uint64_t)Nx * Ny * Nz;
@@ -130,10 +135,11 @@ int main_fdk() {
 
     // batch_size = 60; batch_num = Ang + batch_size - 1) / batch_size;;
 // 在线重建
-    int batch_size = 60;
+    int batch_size = 64;
     int batch_num = (Ang + batch_size - 1) / batch_size;
 
     FdkReconstructor recon;
+    recon.init(params, /*Kchunk=*/32, s);
 
     for (int i = 0; i < batch_num; ++i) {
         const int base = i * batch_size;
@@ -147,7 +153,7 @@ int main_fdk() {
 
         recon.feed(
             h_proj.data() + base * view_elems,
-            batch_params, 30, s,
+            batch_params, s,
             d_vol_buf.data(),
             /*clear_vol=*/(i == 0));
     }
@@ -156,7 +162,7 @@ int main_fdk() {
     recon.reset();
 
     auto h_vol_online = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
-    ctrl.download3D(h_vol_online, d_vol_buf, s);
+    ctrl.download3D(h_vol_online, d_vol_buf);
 
     if (!write_raw_float("fdk_vec_vol_online.raw",
         h_vol_online.cdata(), total_elements)) {  // ← 修正变量名

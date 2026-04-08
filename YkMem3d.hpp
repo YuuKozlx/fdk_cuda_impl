@@ -22,6 +22,129 @@
 #define YK_HD
 #endif
 
+// ============================================================
+// [YK] CUDA 内存传输规范
+// ============================================================
+//
+// 一、同步 vs 异步传输的核心规则
+// ─────────────────────────────────────────────────────────────
+//
+// 【同步传输】cudaMemcpy / cudaMemcpy3D / cudaMemcpyToSymbol
+//
+//   - host 端内存可以是任意类型：std::vector、裸指针、栈变量均可
+//   - 函数返回时传输已完成，数据立即可用
+//   - 适用场景：
+//       · 一次性初始化（几何参数、校正表、LUT）
+//       · 调试 dump（本来就要等结果）
+//       · 不在热路径上的传输
+//
+// 【异步传输】cudaMemcpyAsync / cudaMemcpy3DAsync / cudaMemcpyToSymbolAsync
+//
+//   - host 端内存【必须】是 pinned memory（cudaMallocHost 分配）
+//     普通堆内存（new / malloc / std::vector）用于异步传输是 UB：
+//     函数立即返回，DMA 在后台进行，OS 随时可能换出物理页，
+//     导致 DMA 读到垃圾数据，且不报错、不崩溃，只产生错误结果。
+//   - 函数立即返回，传输在指定 stream 上异步执行
+//   - 调用方必须保证 host 端内存在传输完成前不被修改或释放
+//   - 适用场景：
+//       · 热路径上需要与 GPU kernel 重叠执行的传输
+//       · pipeline 中 CPU 准备下一帧数据同时 GPU 处理当前帧
+//
+// ─────────────────────────────────────────────────────────────
+// 二、Pinned Memory 注意事项
+// ─────────────────────────────────────────────────────────────
+//
+//   分配：cudaMallocHost(&ptr, size)
+//   释放：cudaFreeHost(ptr)
+//
+//   - 物理页被 OS 锁定，不会被换出，GPU DMA 可直接访问
+//   - 传输带宽高于普通内存（省去一次内部 staging 拷贝）
+//   - 是稀缺资源，过度分配会压缩系统可用物理内存，影响 OS 调度
+//   - 只在需要异步传输的成员变量上使用，临时局部变量不值得用
+//
+//   判断是否需要 pinned memory 的三个条件（缺一不可）：
+//     1. host 端内存生命周期覆盖整个异步传输过程
+//     2. 传输完成前 host 端数据不会被修改或释放
+//     3. 有实际的异步重叠收益（CPU 和 GPU 真正并行）
+//   三个条件不全满足时，直接用同步传输。
+//
+// ─────────────────────────────────────────────────────────────
+// 三、Stream 使用规范
+// ─────────────────────────────────────────────────────────────
+//
+//   【禁止使用默认参数 stream = 0】
+//   所有接受 stream 的函数不提供默认值，调用方必须显式传入。
+//   原因：忘传 stream 时悄悄退回 default stream，与其他非 0
+//   stream 上的操作产生隐式同步 bug，极难排查。
+//
+//   【Default stream（stream = 0 / nullptr）的特殊语义】
+//   - 提交到 default stream 之前，等待所有其他 stream 完成
+//   - 其他 stream 提交之前，等待 default stream 完成
+//   - 全程只用 default stream 时不存在同步问题，但失去并行性
+//   - cudaStreamCreate 之后返回的是非 0 stream，不再是 default stream
+//
+//   【统一 stream 原则】
+//   同一 pipeline 内所有操作（memcpy、kernel、symbol upload）
+//   提交到同一个 stream，stream 内操作严格顺序执行，无需额外同步：
+//
+//     cudaMemcpyToSymbolAsync(sym, h_pinned, size, 0,
+//                             cudaMemcpyHostToDevice, stream);
+//     my_kernel<<<grid, block, 0, stream>>>(...);   // 一定在 symbol 上传后执行
+//
+//   跨 stream 操作需要显式同步点（cudaStreamSynchronize 或 cudaEvent）。
+//
+//   【同步点由调用方管理】
+//   process() / upload() 等函数内部只负责向 stream 提交操作，
+//   不在内部调用 cudaStreamSynchronize，由外层 pipeline 统一决定
+//   在何处等待。例外：带 *Sync 后缀的函数在内部封装了 sync()，
+//   适用于不需要重叠、但希望接口简单的场景。
+//
+// ─────────────────────────────────────────────────────────────
+// 四、本文件接口命名约定
+// ─────────────────────────────────────────────────────────────
+//
+//   upload / download
+//     同步传输，host 端为普通内存（std::vector / CpuBuffer3D）
+//     函数返回即完成，无需传入 stream
+//
+//   uploadAsync / downloadAsync
+//     异步传输，host 端必须为 HostPinnedBuffer / HostPinnedBuffer3D
+//     函数返回时传输仍在进行，调用方负责在合适位置 sync(stream)
+//
+//   uploadAsyncSync / downloadAsyncSync
+//     异步传输 + 内部 sync，host 端必须为 pinned buffer
+//     函数返回时传输已完成，调用方无需手动 sync
+//     适用于需要 pinned 带宽但不需要重叠的场景
+//
+//   sync(stream)
+//     所有需要等待 stream 完成的地方统一调用此函数，
+//     不直接散用 cudaStreamSynchronize
+//
+// ─────────────────────────────────────────────────────────────
+// 五、常见错误速查
+// ─────────────────────────────────────────────────────────────
+//
+//   [错误] std::vector + cudaMemcpyAsync
+//     → UB，改用 cudaMemcpy（同步）或改用 HostPinnedBuffer + Async
+//
+//   [错误] 局部变量 + cudaMemcpyToSymbolAsync
+//     → 函数返回后局部变量析构，DMA 读野指针
+//     → 改用 cudaMemcpyToSymbol（同步），或将 buffer 提升为成员变量
+//
+//   [错误] host 端 for 循环直接赋值 __constant__ 变量
+//     → 只写了 host shadow copy，device 端不更新，kernel 读到全 0
+//     → 必须通过 cudaMemcpyToSymbol / cudaMemcpyToSymbolAsync 写入
+//
+//   [错误] cudaMemcpy（default stream）+ kernel（非 0 stream）之间无同步
+//     → 两者在不同 stream 上，无隐式顺序保证
+//     → 统一到同一 stream，或在两者之间插入 cudaStreamSynchronize
+//
+//   [错误] process() 内部调用 cudaStreamSynchronize 阻塞整个 pipeline
+//     → 破坏流水线并行性
+//     → sync 点交给调用方，process() 只提交操作
+//
+// ============================================================
+
 namespace YK {
     namespace Mem {
 
@@ -112,6 +235,56 @@ namespace YK {
             Shape3D sh_{};
             size_t sliceStride_ = 0;
         };
+
+        template<typename T>
+        class HostPinnedBuffer3D {
+        public:
+            HostPinnedBuffer3D() = default;
+            ~HostPinnedBuffer3D() { reset(); }
+
+            HostPinnedBuffer3D(const HostPinnedBuffer3D&) = delete;
+            HostPinnedBuffer3D& operator=(const HostPinnedBuffer3D&) = delete;
+            HostPinnedBuffer3D(HostPinnedBuffer3D&& o) noexcept {
+                ptr_ = o.ptr_; o.ptr_ = nullptr;
+                sh_ = o.sh_;  o.sh_ = {};
+            }
+            HostPinnedBuffer3D& operator=(HostPinnedBuffer3D&& o) noexcept {
+                if (this != &o) {
+                    reset();
+                    ptr_ = o.ptr_; o.ptr_ = nullptr;
+                    sh_ = o.sh_;  o.sh_ = {};
+                }
+                return *this;
+            }
+
+            void alloc(int nx, int ny, int nz) {
+                reset();
+                sh_ = { nx, ny, nz };
+                YK_CUDA_CHECK(cudaMallocHost(&ptr_, uint64_t(nx) * ny * nz * sizeof(T)));
+            }
+
+            void reset() {
+                if (ptr_) { cudaFreeHost(ptr_); ptr_ = nullptr; }
+                sh_ = {};
+            }
+
+            void copyFrom(const CpuBuffer3D<T>& src) {
+                if (src.size() > uint64_t(sh_.nx) * sh_.ny * sh_.nz)
+                    throw std::invalid_argument("HostPinnedBuffer3D::copyFrom: src too large");
+                std::memcpy(ptr_, src.cdata(), src.size() * sizeof(T));
+            }
+
+            T* data()  const noexcept { return ptr_; }
+            Shape3D  shape() const noexcept { return sh_; }
+            uint64_t size()  const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+        private:
+            T* ptr_ = nullptr;
+            Shape3D sh_ = {};
+        };
+
+
 
         template<typename T>
         class CpuBuffer3DBorrowed {
@@ -346,19 +519,43 @@ namespace YK {
         public:
             void setDevice(int id) const { YK_CUDA_CHECK(cudaSetDevice(id)); }
 
+            // ----------------------------------------------------------------
+            // 底层 sync，统一调用
+            // ----------------------------------------------------------------
+            void sync(cudaStream_t stream) const
+            {
+                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+            }
+
             // ---------------- CPU Buffers ----------------
 
-            // allocate owning CPU buffer
             template<typename T>
-            CpuBuffer3D<T> allocateCpu3D(int nx, int ny, int nz, bool zero = false) const {
+            CpuBuffer3D<T> allocateCpu3D(int nx, int ny, int nz, bool zero = false) const
+            {
                 return CpuBuffer3D<T>(nx, ny, nz, zero);
+            }
+
+            // ---------------- Pinned CPU Buffers ----------------
+
+            template<typename T>
+            HostPinnedBuffer3D<T> allocatePinnedCpu3D(int nx, int ny, int nz) const
+            {
+                HostPinnedBuffer3D<T> buf;
+                buf.alloc(nx, ny, nz);
+                return buf;
             }
 
             // ---------------- GPU Buffers ----------------
 
             template<typename T>
-            DeviceBuffer3D<T> allocateDevice3D(int nx, int ny, int nz, int deviceId = 0, bool zero = false, cudaStream_t stream = 0) const {
-                if (nx <= 0 || ny <= 0 || nz <= 0) throw std::invalid_argument("allocateDevice3D: nx/ny/nz>0");
+            DeviceBuffer3D<T> allocateDevice3D(
+                int nx, int ny, int nz,
+                int deviceId,               // 去掉默认值，调用方显式传
+                cudaStream_t stream,        // 去掉默认值
+                bool zero = false) const
+            {
+                if (nx <= 0 || ny <= 0 || nz <= 0)
+                    throw std::invalid_argument("allocateDevice3D: nx/ny/nz>0");
 
                 cudaSetDevice(deviceId);
                 cudaExtent extent = make_cudaExtent(nx * sizeof(T), ny, nz);
@@ -369,59 +566,154 @@ namespace YK {
                     YK_CUDA_CHECK(cudaMemset3DAsync(dptr, 0, extent, stream));
                 }
 
-                return DeviceBuffer3D<T>::make_owning((T*)dptr.ptr, { nx, ny, nz }, dptr.pitch, deviceId);
+                return DeviceBuffer3D<T>::make_owning(
+                    (T*)dptr.ptr, { nx, ny, nz }, dptr.pitch, deviceId);
             }
 
-            // ---------------- Upload / Download ----------------
+            // ---------------- Upload（同步，普通 CPU buffer）----------------
 
             template<typename T, typename Buf>
-            void upload3D(const DeviceBuffer3D<T>& dst, const Buf& src, cudaStream_t stream = 0) const {
-                if (!dst || !src) throw std::invalid_argument("upload3D: null ptr");
+            void upload3D(const DeviceBuffer3D<T>& dst,
+                const Buf& src) const         // 无 stream，同步
+            {
+                if (!dst || !src)
+                    throw std::invalid_argument("upload3D: null ptr");
 
                 cudaSetDevice(dst.deviceId());
-                cudaMemcpy3DParms copyParams = {};
-                copyParams.srcPtr = make_cudaPitchedPtr((void*)src.cdata(), src.shape().nx * sizeof(T), src.shape().nx, src.shape().ny);
-                copyParams.dstPtr = make_cudaPitchedPtr((void*)dst.data(), dst.pitch(), dst.shape().nx, dst.shape().ny);
-                copyParams.extent = make_cudaExtent(src.shape().nx * sizeof(T), src.shape().ny, src.shape().nz);
-                copyParams.kind = cudaMemcpyHostToDevice;
+                cudaMemcpy3DParms p = {};
+                p.srcPtr = make_cudaPitchedPtr(
+                    (void*)src.cdata(),
+                    src.shape().nx * sizeof(T),
+                    src.shape().nx, src.shape().ny);
+                p.dstPtr = make_cudaPitchedPtr(
+                    (void*)dst.data(),
+                    dst.pitch(),
+                    dst.shape().nx, dst.shape().ny);
+                p.extent = make_cudaExtent(
+                    src.shape().nx * sizeof(T),
+                    src.shape().ny, src.shape().nz);
+                p.kind = cudaMemcpyHostToDevice;
 
-                YK_CUDA_CHECK(cudaMemcpy3DAsync(&copyParams, stream));
+                YK_CUDA_CHECK(cudaMemcpy3D(&p));    // 同步版本
             }
 
-            template<typename T, typename Buf>
-            void download3D(Buf& dst, const DeviceBuffer3D<T>& src, cudaStream_t stream = 0) const {
-                if (!dst || !src) throw std::invalid_argument("download3D: null ptr");
+            // ---------------- Upload（异步，需要 pinned CPU buffer）----------------
 
-                cudaSetDevice(src.deviceId());
-                cudaMemcpy3DParms copyParams = {};
-                copyParams.srcPtr = make_cudaPitchedPtr((void*)src.cdata(), src.pitch(), src.shape().nx, src.shape().ny);
-                copyParams.dstPtr = make_cudaPitchedPtr((void*)dst.data(), dst.shape().nx * sizeof(T), dst.shape().nx, dst.shape().ny);
-                copyParams.extent = make_cudaExtent(dst.shape().nx * sizeof(T), dst.shape().ny, dst.shape().nz);
-                copyParams.kind = cudaMemcpyDeviceToHost;
+            template<typename T>
+            void upload3DAsync(const DeviceBuffer3D<T>& dst,
+                const HostPinnedBuffer3D<T>& src,
+                cudaStream_t stream) const
+            {
+                if (!dst || !src)
+                    throw std::invalid_argument("upload3DAsync: null ptr");
 
-                YK_CUDA_CHECK(cudaMemcpy3DAsync(&copyParams, stream));
+                cudaSetDevice(dst.deviceId());
+                cudaMemcpy3DParms p = {};
+                p.srcPtr = make_cudaPitchedPtr(
+                    (void*)src.data(),
+                    src.shape().nx * sizeof(T),
+                    src.shape().nx, src.shape().ny);
+                p.dstPtr = make_cudaPitchedPtr(
+                    (void*)dst.data(),
+                    dst.pitch(),
+                    dst.shape().nx, dst.shape().ny);
+                p.extent = make_cudaExtent(
+                    src.shape().nx * sizeof(T),
+                    src.shape().ny, src.shape().nz);
+                p.kind = cudaMemcpyHostToDevice;
+
+                YK_CUDA_CHECK(cudaMemcpy3DAsync(&p, stream));
+            }
+
+            template<typename T>
+            void upload3DAsyncSync(const DeviceBuffer3D<T>& dst,
+                const HostPinnedBuffer3D<T>& src,
+                cudaStream_t stream) const
+            {
+                upload3DAsync(dst, src, stream);
                 sync(stream);
             }
 
-            void sync(cudaStream_t stream = 0) const { YK_CUDA_CHECK(cudaStreamSynchronize(stream)); }
+            // ---------------- Download（同步，普通 CPU buffer）----------------
 
+            template<typename T, typename Buf>
+            void download3D(Buf& dst,
+                const DeviceBuffer3D<T>& src) const    // 无 stream，同步
+            {
+                if (!dst || !src)
+                    throw std::invalid_argument("download3D: null ptr");
 
+                cudaSetDevice(src.deviceId());
+                cudaMemcpy3DParms p = {};
+                p.srcPtr = make_cudaPitchedPtr(
+                    (void*)src.cdata(),
+                    src.pitch(),
+                    src.shape().nx, src.shape().ny);
+                p.dstPtr = make_cudaPitchedPtr(
+                    (void*)dst.data(),
+                    dst.shape().nx * sizeof(T),
+                    dst.shape().nx, dst.shape().ny);
+                p.extent = make_cudaExtent(
+                    dst.shape().nx * sizeof(T),
+                    dst.shape().ny, dst.shape().nz);
+                p.kind = cudaMemcpyDeviceToHost;
+
+                YK_CUDA_CHECK(cudaMemcpy3D(&p));    // 同步版本
+            }
+
+            // ---------------- Download（异步，需要 pinned CPU buffer）----------------
+
+            template<typename T>
+            void download3DAsync(HostPinnedBuffer3D<T>& dst,
+                const DeviceBuffer3D<T>& src,
+                cudaStream_t stream) const
+            {
+                if (!dst || !src)
+                    throw std::invalid_argument("download3DAsync: null ptr");
+
+                cudaSetDevice(src.deviceId());
+                cudaMemcpy3DParms p = {};
+                p.srcPtr = make_cudaPitchedPtr(
+                    (void*)src.cdata(),
+                    src.pitch(),
+                    src.shape().nx, src.shape().ny);
+                p.dstPtr = make_cudaPitchedPtr(
+                    (void*)dst.data(),
+                    dst.shape().nx * sizeof(T),
+                    dst.shape().nx, dst.shape().ny);
+                p.extent = make_cudaExtent(
+                    dst.shape().nx * sizeof(T),
+                    dst.shape().ny, dst.shape().nz);
+                p.kind = cudaMemcpyDeviceToHost;
+
+                YK_CUDA_CHECK(cudaMemcpy3DAsync(&p, stream));
+            }
+
+            template<typename T>
+            void download3DAsyncSync(HostPinnedBuffer3D<T>& dst,
+                const DeviceBuffer3D<T>& src,
+                cudaStream_t stream) const
+            {
+                download3DAsync(dst, src, stream);
+                sync(stream);
+            }
+
+            // ---------------- Borrow ----------------
 
             template<typename T>
             DeviceBuffer3DBorrowed<T> borrowDevice3D(
                 T* ptr, int nx, int ny, int nz,
-                size_t pitchBytes, int deviceId = 0) const
+                size_t pitchBytes, int deviceId) const
             {
                 return DeviceBuffer3DBorrowed<T>(ptr, nx, ny, nz, pitchBytes, deviceId);
             }
 
             template<typename T>
             DeviceBuffer3DBorrowed<T> borrowDevice3DLinear(
-                T* ptr, int nx, int ny, int nz, int deviceId = 0) const
+                T* ptr, int nx, int ny, int nz, int deviceId) const
             {
                 return DeviceBuffer3DBorrowed<T>::linear(ptr, nx, ny, nz, deviceId);
             }
-
 
             template<typename T>
             CpuBuffer3DBorrowed<T> borrowCpu3D(
@@ -506,8 +798,64 @@ namespace YK {
             int deviceId_ = 0;
         };
 
+        // ============================================================
+    // HostPinnedBuffer：pinned memory，专供异步传输使用
+    // ============================================================
+        template<typename T>
+        class HostPinnedBuffer {
+        public:
+            HostPinnedBuffer() = default;
+            ~HostPinnedBuffer() { reset(); }
+
+            HostPinnedBuffer(const HostPinnedBuffer&) = delete;
+            HostPinnedBuffer& operator=(const HostPinnedBuffer&) = delete;
+            HostPinnedBuffer(HostPinnedBuffer&& o) noexcept {
+                ptr_ = o.ptr_; o.ptr_ = nullptr;
+                n_ = o.n_;   o.n_ = 0;
+            }
+            HostPinnedBuffer& operator=(HostPinnedBuffer&& o) noexcept {
+                if (this != &o) {
+                    reset();
+                    ptr_ = o.ptr_; o.ptr_ = nullptr;
+                    n_ = o.n_;   o.n_ = 0;
+                }
+                return *this;
+            }
+
+            void alloc(int n) {
+                reset();
+                n_ = n;
+                YK_CUDA_CHECK(cudaMallocHost(&ptr_, n * sizeof(T)));
+            }
+
+            void reset() {
+                if (ptr_) { cudaFreeHost(ptr_); ptr_ = nullptr; }
+                n_ = 0;
+            }
+
+            // 从 std::vector 拷贝到 pinned buffer
+            void copyFrom(const std::vector<T>& src) {
+                if ((int)src.size() > n_)
+                    throw std::invalid_argument("HostPinnedBuffer::copyFrom: src too large");
+                std::memcpy(ptr_, src.data(), src.size() * sizeof(T));
+            }
+
+            T* data()  const noexcept { return ptr_; }
+            int      count() const noexcept { return n_; }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+        private:
+            T* ptr_ = nullptr;
+            int n_ = 0;
+        };
+
+
+        // ============================================================
+            // PodDataController
+            // ============================================================
         class PodDataController {
         public:
+
             template<typename T>
             DeviceLinearBuffer<T> allocate(int n, int deviceId = 0) const {
                 DeviceLinearBuffer<T> buf;
@@ -515,54 +863,108 @@ namespace YK {
                 return buf;
             }
 
-            template<typename T>
-            DeviceLinearBuffer<T> allocateAndUpload(
-                const std::vector<T>& src,
-                cudaStream_t stream = 0, int deviceId = 0) const
-            {
-                auto buf = allocate<T>((int)src.size(), deviceId);
-                upload(buf, src, stream);
-                return buf;
-            }
-
+            // ----------------------------------------------------------------
+            // 同步上传：src 是普通内存，安全
+            // ----------------------------------------------------------------
             template<typename T>
             void upload(const DeviceLinearBuffer<T>& dst,
-                const std::vector<T>& src,
-                cudaStream_t stream = 0) const
+                const std::vector<T>& src) const
             {
                 if (src.empty() || !dst)
                     throw std::invalid_argument("upload: null or empty");
-                YK_CUDA_CHECK(cudaMemcpyAsync(
+                YK_CUDA_CHECK(cudaMemcpy(
                     dst.data(), src.data(),
                     src.size() * sizeof(T),
-                    cudaMemcpyHostToDevice, stream));
+                    cudaMemcpyHostToDevice));
             }
 
             template<typename T>
             void upload(const DeviceLinearBuffer<T>& dst,
-                const T* src, int n,
-                cudaStream_t stream = 0) const
+                const T* src, int n) const
             {
                 if (!src || !dst)
                     throw std::invalid_argument("upload: null ptr");
-                YK_CUDA_CHECK(cudaMemcpyAsync(
+                YK_CUDA_CHECK(cudaMemcpy(
                     dst.data(), src,
+                    n * sizeof(T),
+                    cudaMemcpyHostToDevice));
+            }
+
+            // ----------------------------------------------------------------
+            // 异步上传：src 必须是 HostPinnedBuffer，调用方管理生命周期
+            // ----------------------------------------------------------------
+            template<typename T>
+            void uploadAsync(const DeviceLinearBuffer<T>& dst,
+                const HostPinnedBuffer<T>& src,
+                int n,
+                cudaStream_t stream) const
+            {
+                if (!src || !dst)
+                    throw std::invalid_argument("uploadAsync: null ptr");
+                if (n > src.count())
+                    throw std::invalid_argument("uploadAsync: n > src.count()");
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    dst.data(), src.data(),
                     n * sizeof(T),
                     cudaMemcpyHostToDevice, stream));
             }
 
+            // ----------------------------------------------------------------
+            // 同步下载：dst 是普通 vector，安全
+            // ----------------------------------------------------------------
             template<typename T>
             void download(std::vector<T>& dst,
-                const DeviceLinearBuffer<T>& src,
-                cudaStream_t stream = 0) const
+                const DeviceLinearBuffer<T>& src) const
             {
+                if (!src)
+                    throw std::invalid_argument("download: null src");
                 dst.resize(src.count());
+                YK_CUDA_CHECK(cudaMemcpy(
+                    dst.data(), src.data(),
+                    src.count() * sizeof(T),
+                    cudaMemcpyDeviceToHost));
+            }
+
+            // ----------------------------------------------------------------
+            // 异步下载：dst 必须是 HostPinnedBuffer，调用方负责 sync
+            // ----------------------------------------------------------------
+            template<typename T>
+            void downloadAsync(HostPinnedBuffer<T>& dst,
+                const DeviceLinearBuffer<T>& src,
+                cudaStream_t stream) const
+            {
+                if (!src || !dst)
+                    throw std::invalid_argument("downloadAsync: null ptr");
+                if (src.count() > dst.count())
+                    throw std::invalid_argument("downloadAsync: dst too small");
                 YK_CUDA_CHECK(cudaMemcpyAsync(
                     dst.data(), src.data(),
                     src.count() * sizeof(T),
                     cudaMemcpyDeviceToHost, stream));
+                // 不在这里 sync，调用方在合适的地方 cudaStreamSynchronize
+            }
+
+            // ----------------------------------------------------------------
+            // 便捷函数：alloc + 同步上传一步完成
+            // ----------------------------------------------------------------
+            template<typename T>
+            DeviceLinearBuffer<T> allocateAndUpload(
+                const std::vector<T>& src,
+                int deviceId = 0) const
+            {
+                auto buf = allocate<T>((int)src.size(), deviceId);
+                upload(buf, src);
+                return buf;
+            }
+
+            // ----------------------------------------------------------------
+            // 底层 sync，所有需要同步的地方统一调用这里
+            // ----------------------------------------------------------------
+            void sync(cudaStream_t stream) const
+            {
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
             }
+
         };
     }
 } // namespace YK

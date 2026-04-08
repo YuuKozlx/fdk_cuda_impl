@@ -40,9 +40,9 @@ namespace YK {
             const size_t view_elems = (size_t)Nu * Nv;
 
             Mem::MemoryController mc;
-            chunk_in = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
-            chunk_pw = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
-            chunk_flt = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
+            chunk_in = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId, stream);
+            chunk_pw = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId, stream);
+            chunk_flt = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId, stream);
 
             Mem::PodDataController dc;
             tex_objs = dc.allocate<cudaTextureObject_t>(Kchunk, deviceId);
@@ -52,7 +52,7 @@ namespace YK {
             buildTexObjs_(Nu, Nv, Kchunk);
 
             // 上传一次，之后不再需要重复上传
-            dc.upload(tex_objs, h_tex_objs.data(), Kchunk, stream);
+            dc.upload(tex_objs, h_tex_objs.data(), Kchunk);
         }
 
         void uploadProjChunk(const float* h_src, int K, cudaStream_t stream) const
@@ -133,8 +133,8 @@ namespace YK {
             int deviceId = 0)
         {
             PodDataController dc;
-            geo = dc.allocateAndUpload(h_geo, stream, deviceId);
-            gv = dc.allocateAndUpload(h_gv, stream, deviceId);
+            geo = dc.allocateAndUpload(h_geo, deviceId);
+            gv = dc.allocateAndUpload(h_gv, deviceId);
             coeffs = dc.allocate<FdkAffineCoeff>(iPA, deviceId);
 
             launchPrecomputeCoeffs(
@@ -153,7 +153,7 @@ namespace YK {
                 0, cudaMemcpyDeviceToDevice, stream));
 
             int threads = kMaxChunkAng;
-            printGCoeff << <1, threads, 0, stream >> > (32); // 打印第一个系数作为示例
+            //printGCoeff << <1, threads, 0, stream >> > (32); // 打印第一个系数作为示例
         }
 
         SConeProjGeomVec* d_geo()    const { return geo.data(); }

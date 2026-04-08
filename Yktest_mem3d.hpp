@@ -19,10 +19,14 @@ namespace YKTest {
             return;
         }
 
+        cudaStream_t s = nullptr; // 这里不使用 stream，保持同步调用
+        YK_CUDA_CHECK(cudaStreamCreate(&s)); // 创建 stream，虽然不使用，但确保 API 调用正确
+
+
         int deviceId = 0; // 测试第一个 GPU
 
         // 1. 分配 3D DeviceBuffer
-        auto buf = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, true);
+        auto buf = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, s, true);
         assert(buf);
         std::cout << "Allocated DeviceBuffer3D: "
             << buf.shape().nx << "x" << buf.shape().ny << "x" << buf.shape().nz
@@ -61,7 +65,7 @@ namespace YKTest {
         std::cout << "Move constructor test passed." << std::endl;
 
         // 6. 移动赋值
-        auto buf3 = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId);
+        auto buf3 = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, s);
         buf3 = std::move(buf2);
         assert(buf3);
         assert(!buf2);

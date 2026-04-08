@@ -38,39 +38,181 @@ namespace YK {
             total_received_ = 0;
         }
 
-        int totalReceived() const { return total_received_; }
+        int  totalReceived()  const { return total_received_; }
+        bool isInitialized()  const { return is_initialized_; }
 
-        // 无 dump
+        // ----------------------------------------------------------------
+        // init：固定参数确定后调一次，processor 和 GPU 资源在此分配
+        // ----------------------------------------------------------------
+        bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream)
+        {
+            Kchunk_ = Kchunk;
+            bParker_ = params.bShortScan;
+
+            const int iPU = params.iPU;
+            const int iPV = params.iPV;
+            const int iVX = params.iVX;
+            const int iVY = params.iVY;
+            const int iVZ = params.iVZ;
+
+            // PreweightProcessor
+            {
+                PreweightInitContext ictx{};
+                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
+                ictx.policy = {};
+                pw_.setInitContext(&ictx);
+                if (!pw_.init()) {
+                    fprintf(stderr, "[FdkReconstructor] PreweightProcessor init failed\n");
+                    return false;
+                }
+            }
+
+            // ParkerWeightProcessor
+            if (bParker_) {
+                ParkerWeightInitContext ictx{};
+                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
+                ictx.fDetUSize = params.du_mm;
+                ictx.fSrcOrigin = params.SID;
+                ictx.fDetOrigin = params.SDD - params.SID;
+                ictx.iPAnglesTotal = params.iPAngTotal;
+                ictx.fScanRangeRad = params.scan_range_rad;
+                ictx.fStartAngleRad = params.scan_start_angle_rad;
+                pkw_.setInitContext(&ictx);
+                if (!pkw_.init()) {
+                    fprintf(stderr, "[FdkReconstructor] ParkerWeightProcessor init failed\n");
+                    return false;
+                }
+            }
+
+            // FilterProcessor（FFT plan 在此创建，只做一次）
+            {
+                FdkFilterInitContext ictx{};
+                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
+                ictx.desc = params.desc;
+                ictx.policy = {};
+                ictx.stream = stream;
+                flt_.setInitContext(&ictx);
+                if (!flt_.init()) {
+                    fprintf(stderr, "[FdkReconstructor] FilterProcessor init failed\n");
+                    return false;
+                }
+            }
+
+            // BpProcessor
+            {
+                SVolGeom vol_geom = SVolGeom::make_centered(
+                    iVX, iVY, iVZ, params.vox_xy_mm, params.vox_z_mm);
+                vol_geom.center = make_float3(
+                    params.vol_offset_x_mm,
+                    params.vol_offset_y_mm,
+                    params.vol_offset_z_mm);
+
+                BpInitContext ictx{};
+                ictx.vol_geom = vol_geom;
+                ictx.use_precomputed = true;
+                bp_.setInitContext(&ictx);
+                if (!bp_.init()) {
+                    fprintf(stderr, "[FdkReconstructor] BpProcessor init failed\n");
+                    return false;
+                }
+            }
+
+            is_initialized_ = true;
+            return true;
+        }
+
+        bool reinitProcessors(const SCBCTParams& params, int K, cudaStream_t stream)
+        {
+            // PreweightProcessor
+            {
+                PreweightInitContext ictx{};
+                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
+                ictx.policy = {};
+                pw_.setInitContext(&ictx);
+                if (!pw_.init()) {
+                    fprintf(stderr, "[FdkReconstructor] PreweightProcessor reinit failed\n");
+                    return false;
+                }
+            }
+
+            if (bParker_) {
+                ParkerWeightInitContext ictx{};
+                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
+                ictx.fDetUSize = params.du_mm;
+                ictx.fSrcOrigin = params.SID;
+                ictx.fDetOrigin = params.SDD - params.SID;
+                ictx.iPAnglesTotal = params.iPAngTotal;
+                ictx.fScanRangeRad = params.scan_range_rad;
+                ictx.fStartAngleRad = params.scan_start_angle_rad;
+                pkw_.setInitContext(&ictx);
+                if (!pkw_.init()) {
+                    fprintf(stderr, "[FdkReconstructor] ParkerWeightProcessor reinit failed\n");
+                    return false;
+                }
+            }
+
+            {
+                FdkFilterInitContext ictx{};
+                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
+                ictx.desc = params.desc;
+                ictx.policy = {};
+                ictx.stream = stream;
+                flt_.setInitContext(&ictx);
+                if (!flt_.init()) {
+                    fprintf(stderr, "[FdkReconstructor] FilterProcessor reinit failed\n");
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // ----------------------------------------------------------------
+        // feed（无 dump）
+        // ----------------------------------------------------------------
         bool feed(
             const float* h_proj_batch,
             const SCBCTParams& params,
-            int                Kchunk,
             cudaStream_t       stream,
             float* d_vol_out,
             bool               clear_vol = false)
         {
-            return feed_impl(h_proj_batch, params, Kchunk, stream,
+            return feed_impl(h_proj_batch, params, Kchunk_, stream,
                 d_vol_out, clear_vol, {});
         }
 
-        // 有 dump
+        // ----------------------------------------------------------------
+        // feed（有 dump）
+        // ----------------------------------------------------------------
         bool feed(
             const float* h_proj_batch,
             const SCBCTParams& params,
-            int                Kchunk,
             cudaStream_t       stream,
             float* d_vol_out,
             bool               clear_vol,
             std::function<void(int, const char*, float*, size_t)> onDump)
         {
-            return feed_impl(h_proj_batch, params, Kchunk, stream,
+            return feed_impl(h_proj_batch, params, Kchunk_, stream,
                 d_vol_out, clear_vol, onDump);
         }
 
     private:
+        int  Kchunk_ = 0;
+        bool bParker_ = false;
+        bool is_initialized_ = false;
+
         int                total_received_ = 0;
         std::vector<float> angle_accum_;
 
+        // processor 持久化，init() 后常驻
+        PreweightProcessor    pw_;
+        ParkerWeightProcessor pkw_;
+        FilterProcessor       flt_;
+        BpProcessor           bp_;
+
+        // ----------------------------------------------------------------
+        // feed_impl
+        // ----------------------------------------------------------------
         bool feed_impl(
             const float* h_proj_batch,
             const SCBCTParams& params,
@@ -80,6 +222,10 @@ namespace YK {
             bool               clear_vol,
             std::function<void(int, const char*, float*, size_t)> onDump)
         {
+            if (!is_initialized_) {
+                fprintf(stderr, "[FdkReconstructor] not initialized, call init() first\n");
+                return false;
+            }
             if (Kchunk > kMaxChunkAng) {
                 fprintf(stderr, "[FdkReconstructor] Kchunk=%d exceeds kMaxChunkAng=%d\n",
                     Kchunk, kMaxChunkAng);
@@ -97,21 +243,19 @@ namespace YK {
             const int batch_count = params.iPAng;
             const int prev_total = total_received_;
 
-            // 累积角度
             angle_accum_.insert(angle_accum_.end(),
                 params.angle_list.begin(), params.angle_list.end());
             total_received_ += batch_count;
             const int new_total = total_received_;
 
-            const int   iPU = params.iPU;
-            const int   iPV = params.iPV;
-            const int   iVX = params.iVX;
-            const int   iVY = params.iVY;
-            const int   iVZ = params.iVZ;
+            const int iPU = params.iPU;
+            const int iPV = params.iPV;
+            const int iVX = params.iVX;
+            const int iVY = params.iVY;
+            const int iVZ = params.iVZ;
 
             auto rad2deg = [](float r) { return r * 180.f / CUDA_PI; };
 
-            // 全量 geo/gv，保证 dtheta 全局一致
             std::vector<SConeProjGeomVec>    h_geo_full(new_total);
             std::vector<SFDKGeoParamPerView> h_gv_full(new_total);
 
@@ -127,86 +271,15 @@ namespace YK {
             GeoDerivedManagerVec{}.build_geo_params(
                 iPU, iPV, params.scan_range_rad, h_geo_full, h_gv_full);
 
-            // 截取本批切片
             std::vector<SConeProjGeomVec>    h_geo(
                 h_geo_full.begin() + prev_total, h_geo_full.end());
             std::vector<SFDKGeoParamPerView> h_gv(
                 h_gv_full.begin() + prev_total, h_gv_full.end());
 
-            // 初始化处理器
-            PreweightProcessor pw;
-            {
-                PreweightInitContext ictx{};
-                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
-                ictx.policy = {};
-                IProcessor* proc = &pw;
-                proc->setInitContext(&ictx);
-                if (!pw.init()) {
-                    fprintf(stderr, "[FdkReconstructor] PreweightProcessor init failed\n");
-                    return false;
-                }
-            }
-
-            ParkerWeightProcessor pkw;
-            const bool bParker = params.bShortScan && batch_count > 1;
-            if (bParker) {
-                ParkerWeightInitContext ictx{};
-                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
-                ictx.fDetUSize = params.du_mm;
-                ictx.fSrcOrigin = params.SID;
-                ictx.fDetOrigin = params.SDD - params.SID;
-                ictx.iPAnglesTotal = params.iPAngTotal;
-                ictx.fScanRangeRad = params.scan_range_rad;
-                ictx.fStartAngleRad = params.scan_start_angle_rad;
-                IProcessor* proc = &pkw;
-                proc->setInitContext(&ictx);
-                if (!pkw.init()) {
-                    fprintf(stderr, "[FdkReconstructor] ParkerWeightProcessor init failed\n");
-                    return false;
-                }
-            }
-
-            FilterProcessor flt;
-            {
-                FdkFilterInitContext ictx{};
-                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
-                ictx.desc = params.desc;
-                ictx.policy = {};
-                ictx.stream = stream;
-                IProcessor* proc = &flt;
-                proc->setInitContext(&ictx);
-                if (!flt.init()) {
-                    fprintf(stderr, "[FdkReconstructor] FilterProcessor init failed\n");
-                    return false;
-                }
-            }
-
-            SVolGeom vol_geom = SVolGeom::make_centered(
-                iVX, iVY, iVZ, params.vox_xy_mm, params.vox_z_mm);
-            vol_geom.center = make_float3(
-                params.vol_offset_x_mm,
-                params.vol_offset_y_mm,
-                params.vol_offset_z_mm);
-
-            BpProcessor bp;
-            {
-                BpInitContext ictx{};
-                ictx.vol_geom = vol_geom;
-                ictx.use_precomputed = true;
-                IProcessor* proc = &bp;
-                proc->setInitContext(&ictx);
-                if (!bp.init()) {
-                    fprintf(stderr, "[FdkReconstructor] BpProcessor init failed\n");
-                    return false;
-                }
-            }
-
-            // 清零 & GPU 资源
             if (clear_vol) {
                 const size_t n = (size_t)iVX * iVY * iVZ;
                 YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0, n * sizeof(float), stream));
             }
-
 
             SProjDims dims{ iPU, iPV, batch_count };
             FdkGpuContext ctx;
@@ -217,13 +290,16 @@ namespace YK {
             float* d_chunk_pw = ctx.proj.chunk_pw.data();
             float* d_chunk_flt = ctx.proj.chunk_flt.data();
 
-            IProcessor* pw_proc = &pw;
-            IProcessor* pkw_proc = &pkw;
-            IProcessor* fp_proc = &flt;
-            IProcessor* bp_proc = &bp;
+            bool filter_dirty = false;
 
             for (int base = 0; base < batch_count; base += Kchunk) {
                 const int K = std::min(Kchunk, batch_count - base);
+
+                // 尾包时重建所有 processor
+                if (K != Kchunk_) {
+                    if (!reinitProcessors(params, K, stream)) return false;
+                    filter_dirty = true;
+                }
 
                 ctx.geo.uploadCoeffsChunk(ctx.geo.d_coeffs() + base, K, stream);
                 ctx.proj.uploadProjChunk(
@@ -233,21 +309,20 @@ namespace YK {
                 pctx.d_geo = ctx.geo.d_geo() + base;
                 pctx.d_gv = ctx.geo.d_gv() + base;
                 pctx.K = K;
-                pw_proc->setContext(&pctx);
-                pw_proc->process(d_chunk_in, d_chunk_pw, stream);
+                pw_.setContext(&pctx);
+                pw_.process(d_chunk_in, d_chunk_pw, stream);
 
                 if (onDump)
                     for (int i = 0; i < K; ++i)
                         onDump(base + i, "pw",
                             d_chunk_pw + i * view_elems, view_elems);
 
-                if (bParker) {
+                if (bParker_) {
                     ParkerWeightChunkContext pkctx{};
-                    pkctx.h_angles = params.angle_list.data() + base;  // 本批内偏移
+                    pkctx.h_angles = params.angle_list.data() + base;
                     pkctx.K = K;
-                    pkw_proc->setContext(&pkctx);
-
-                    pkw_proc->process(d_chunk_pw, d_chunk_pw, stream);
+                    pkw_.setContext(&pkctx);
+                    pkw_.process(d_chunk_pw, d_chunk_pw, stream);
 
                     if (onDump)
                         for (int i = 0; i < K; ++i)
@@ -256,8 +331,8 @@ namespace YK {
                 }
 
                 FdkFilterContext fctx{ h_gv.data() + base, K };
-                fp_proc->setContext(&fctx);
-                fp_proc->process(d_chunk_pw, d_chunk_flt, stream);
+                flt_.setContext(&fctx);
+                flt_.process(d_chunk_pw, d_chunk_flt, stream);
 
                 if (onDump)
                     for (int i = 0; i < K; ++i)
@@ -268,8 +343,14 @@ namespace YK {
                 bctx.d_geo = ctx.geo.d_geo() + base;
                 bctx.d_gv = ctx.geo.d_gv() + base;
                 bctx.K = K;
-                bp_proc->setContext(&bctx);
-                bp_proc->process(ctx.proj.d_texObjs(), d_vol_out, stream);
+                bp_.setContext(&bctx);
+                bp_.process(ctx.proj.d_texObjs(), d_vol_out, stream);
+            }
+
+
+            // 恢复标准尺寸，供下次 feed 使用
+            if (filter_dirty) {
+                if (!reinitProcessors(params, Kchunk_, stream)) return false;
             }
 
             return true;
@@ -277,34 +358,21 @@ namespace YK {
     };
 
     // ================================================================
-    // 全局便捷函数
+    // 全局便捷函数（单次全量重建）
     // ================================================================
-
-    // 无 dump
     inline bool fdk_recon(
         const float* h_proj,
         float* d_vol_out,
         const SCBCTParams& params,
         int                Kchunk,
         cudaStream_t       stream,
-        bool               clear_vol = true)
+        bool               clear_vol = true,
+        std::function<void(int, const char*, float*, size_t)> onDump = nullptr)
     {
         FdkReconstructor recon;
-        return recon.feed(h_proj, params, Kchunk, stream, d_vol_out, clear_vol);
-    }
-
-    // 有 dump
-    inline bool fdk_recon(
-        const float* h_proj,
-        float* d_vol_out,
-        const SCBCTParams& params,
-        int                Kchunk,
-        cudaStream_t       stream,
-        bool               clear_vol,
-        std::function<void(int, const char*, float*, size_t)> onDump)
-    {
-        FdkReconstructor recon;
-        return recon.feed(h_proj, params, Kchunk, stream,
+        if (!recon.init(params, Kchunk, stream))
+            return false;
+        return recon.feed(h_proj, params, stream,
             d_vol_out, clear_vol, onDump);
     }
 

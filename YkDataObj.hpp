@@ -281,6 +281,26 @@ namespace YK {
         template<typename T>
         using CpuSinogramBorrowed = SinogramData<T, Mem::CpuBuffer3DBorrowed<T>>;
 
+        // Pinned
+        template<typename T>
+        using PinnedVolume = VolumeData<T, Mem::HostPinnedBuffer3D<T>>;
+
+        template<typename T>
+        using PinnedProjection = ProjectionData<T, Mem::HostPinnedBuffer3D<T>>;
+
+        template<typename T>
+        using PinnedSinogram = SinogramData<T, Mem::HostPinnedBuffer3D<T>>;
+
+        // GPU Borrowed
+        template<typename T>
+        using GpuVolumeBorrowed = VolumeData<T, Mem::DeviceBuffer3DBorrowed<T>>;
+
+        template<typename T>
+        using GpuProjectionBorrowed = ProjectionData<T, Mem::DeviceBuffer3DBorrowed<T>>;
+
+        template<typename T>
+        using GpuSinogramBorrowed = SinogramData<T, Mem::DeviceBuffer3DBorrowed<T>>;
+
     } // namespace DataObj
 } // namespace YK
 
@@ -288,102 +308,155 @@ namespace YK {
 namespace YK {
     namespace DataObj {
 
-        class DataController
-        {
+        class DataController {
         public:
-            explicit DataController(Mem::MemoryController& mem)
-                : mem_(mem) {
-            }
+            explicit DataController(Mem::MemoryController& mem) : mem_(mem) {}
 
             ////////////////////////////////////////////////////////////
-            /// ------------------- CPU Volume -----------------------
+            // CPU Volume
             ////////////////////////////////////////////////////////////
-
             template<typename T>
             CpuVolume<T> createCpuVolume(int nx, int ny, int nz)
             {
-                auto buf = mem_.allocateCpu3D<T>(nx, ny, nz);
-                return CpuVolume<T>(std::move(buf));
+                return CpuVolume<T>(mem_.allocateCpu3D<T>(nx, ny, nz));
             }
 
             template<typename T>
-            CpuVolumeBorrowed<T> wrapCpuVolume(T* externalPtr, int nx, int ny, int nz)
+            CpuVolumeBorrowed<T> wrapCpuVolume(T* ptr, int nx, int ny, int nz)
             {
-                Mem::CpuBuffer3DBorrowed<T> buf(externalPtr, nx, ny, nz); // borrowed
-                return CpuVolumeBorrowed<T>(std::move(buf));
+                return CpuVolumeBorrowed<T>(mem_.borrowCpu3D<T>(ptr, nx, ny, nz));
             }
-
-            ////////////////////////////////////////////////////////////
-            /// ------------------- GPU Volume -----------------------
-            ////////////////////////////////////////////////////////////
 
             template<typename T>
-            GpuVolume<T> createGpuVolume(int nx, int ny, int nz, int device = 0)
+            PinnedVolume<T> createPinnedVolume(int nx, int ny, int nz)
             {
-                auto buf = mem_.template allocateDevice3D<T>(nx, ny, nz, device);
-                return GpuVolume<T>(std::move(buf));
+                return PinnedVolume<T>(mem_.allocatePinnedCpu3D<T>(nx, ny, nz));
             }
 
             ////////////////////////////////////////////////////////////
-            /// ------------------- CPU Projection -------------------
+            // GPU Volume
             ////////////////////////////////////////////////////////////
+            template<typename T>
+            GpuVolume<T> createGpuVolume(int nx, int ny, int nz,
+                int device, cudaStream_t stream)
+            {
+                return GpuVolume<T>(mem_.allocateDevice3D<T>(nx, ny, nz, device, stream));
+            }
 
+            template<typename T>
+            GpuVolumeBorrowed<T> wrapGpuVolume(T* ptr, int nx, int ny, int nz,
+                size_t pitchBytes, int device)
+            {
+                return GpuVolumeBorrowed<T>(
+                    mem_.borrowDevice3D<T>(ptr, nx, ny, nz, pitchBytes, device));
+            }
+
+            template<typename T>
+            GpuVolumeBorrowed<T> wrapGpuVolumeLinear(T* ptr, int nx, int ny, int nz,
+                int device)
+            {
+                return GpuVolumeBorrowed<T>(
+                    mem_.borrowDevice3DLinear<T>(ptr, nx, ny, nz, device));
+            }
+
+            ////////////////////////////////////////////////////////////
+            // CPU Projection
+            ////////////////////////////////////////////////////////////
             template<typename T>
             CpuProjection<T> createCpuProjection(int nu, int nv, int views)
             {
-                auto buf = mem_.allocateCpu3D<T>(nu, nv, views);
-                return CpuProjection<T>(std::move(buf), views);
+                return CpuProjection<T>(mem_.allocateCpu3D<T>(nu, nv, views), views);
             }
 
             template<typename T>
-            CpuProjectionBorrowed<T> wrapCpuProjection(T* externalPtr, int nu, int nv, int views)
+            CpuProjectionBorrowed<T> wrapCpuProjection(T* ptr, int nu, int nv, int views)
             {
-                YK::Mem::CpuBuffer3DBorrowed<T> buf(externalPtr, nu, nv, views); // borrowed
-                return CpuProjectionBorrowed<T>(std::move(buf), views);
+                return CpuProjectionBorrowed<T>(mem_.borrowCpu3D<T>(ptr, nu, nv, views), views);
             }
-
-            ////////////////////////////////////////////////////////////
-            /// ------------------- GPU Projection -------------------
-            ////////////////////////////////////////////////////////////
 
             template<typename T>
-            GpuProjection<T> createGpuProjection(int nu, int nv, int views, int device = 0)
+            PinnedProjection<T> createPinnedProjection(int nu, int nv, int views)
             {
-                auto buf = mem_.template allocateDevice3D<T>(nu, nv, views, device);
-                return GpuProjection<T>(std::move(buf), views);
+                return PinnedProjection<T>(mem_.allocatePinnedCpu3D<T>(nu, nv, views), views);
             }
 
             ////////////////////////////////////////////////////////////
-            /// ------------------- CPU Sinogram ---------------------
+            // GPU Projection
             ////////////////////////////////////////////////////////////
+            template<typename T>
+            GpuProjection<T> createGpuProjection(int nu, int nv, int views,
+                int device, cudaStream_t stream)
+            {
+                return GpuProjection<T>(
+                    mem_.allocateDevice3D<T>(nu, nv, views, device, stream), views);
+            }
 
+            template<typename T>
+            GpuProjectionBorrowed<T> wrapGpuProjection(T* ptr, int nu, int nv, int views,
+                size_t pitchBytes, int device)
+            {
+                return GpuProjectionBorrowed<T>(
+                    mem_.borrowDevice3D<T>(ptr, nu, nv, views, pitchBytes, device), views);
+            }
+
+            template<typename T>
+            GpuProjectionBorrowed<T> wrapGpuProjectionLinear(T* ptr, int nu, int nv,
+                int views, int device)
+            {
+                return GpuProjectionBorrowed<T>(
+                    mem_.borrowDevice3DLinear<T>(ptr, nu, nv, views, device), views);
+            }
+
+            ////////////////////////////////////////////////////////////
+            // CPU Sinogram
+            ////////////////////////////////////////////////////////////
             template<typename T>
             CpuSinogram<T> createCpuSinogram(int nu, int views, int nv)
             {
-                auto buf = mem_.allocateCpu3D<T>(nu, views, nv);
-                return CpuSinogram<T>(std::move(buf));
+                return CpuSinogram<T>(mem_.allocateCpu3D<T>(nu, views, nv));
             }
 
             template<typename T>
-            CpuSinogramBorrowed<T> wrapCpuSinogram(T* externalPtr, int nu, int views, int nv)
+            CpuSinogramBorrowed<T> wrapCpuSinogram(T* ptr, int nu, int views, int nv)
             {
-                YK::Mem::CpuBuffer3DBorrowed<T> buf(externalPtr, nu, views, nv); // borrowed
-                return CpuSinogramBorrowed<T>(std::move(buf));
+                return CpuSinogramBorrowed<T>(mem_.borrowCpu3D<T>(ptr, nu, views, nv));
+            }
+
+            template<typename T>
+            PinnedSinogram<T> createPinnedSinogram(int nu, int views, int nv)
+            {
+                return PinnedSinogram<T>(mem_.allocatePinnedCpu3D<T>(nu, views, nv));
             }
 
             ////////////////////////////////////////////////////////////
-            /// ------------------- GPU Sinogram ---------------------
+            // GPU Sinogram
             ////////////////////////////////////////////////////////////
+            template<typename T>
+            GpuSinogram<T> createGpuSinogram(int nu, int views, int nv,
+                int device, cudaStream_t stream)
+            {
+                return GpuSinogram<T>(
+                    mem_.allocateDevice3D<T>(nu, views, nv, device, stream));
+            }
 
             template<typename T>
-            GpuSinogram<T> createGpuSinogram(int nu, int views, int nv, int device = 0)
+            GpuSinogramBorrowed<T> wrapGpuSinogram(T* ptr, int nu, int views, int nv,
+                size_t pitchBytes, int device)
             {
-                auto buf = mem_.template allocateDevice3D<T>(nu, views, nv, device);
-                return GpuSinogram<T>(std::move(buf));
+                return GpuSinogramBorrowed<T>(
+                    mem_.borrowDevice3D<T>(ptr, nu, views, nv, pitchBytes, device));
+            }
+
+            template<typename T>
+            GpuSinogramBorrowed<T> wrapGpuSinogramLinear(T* ptr, int nu, int views,
+                int nv, int device)
+            {
+                return GpuSinogramBorrowed<T>(
+                    mem_.borrowDevice3DLinear<T>(ptr, nu, views, nv, device));
             }
 
         private:
-            YK::Mem::MemoryController& mem_;
+            Mem::MemoryController& mem_;
         };
 
     } // namespace DataObj
