@@ -48,7 +48,8 @@ int main_fdk() {
     SCBCTParams params;
 
     params.iPU = 1024; params.iPV = 1024; params.iPAng = 480; params.iPAngTotal = 480;
-    params.iVX = 512; params.iVY = 512; params.iVZ = 100;
+    params.tiltn_angle_rad = 1 * CUDA_PI / 180;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
     params.scan_range_rad = (float)M_PI * 4.0f / 3.0f; // 270 degree short scan
 
@@ -58,6 +59,7 @@ int main_fdk() {
 
     params.scan_start_angle_rad = angle_list[0]; // start at -30 degree
     params.angle_list = angle_list;
+
 
     params.SID = 500.0f, params.SDD = 1000.0f;
     params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_xy_mm = 0.25f;
@@ -102,7 +104,7 @@ int main_fdk() {
         };
 
     MemoryController ctrl;
-    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false, s);
+    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
     // 离线重建（一次性全量）
 
     {
@@ -110,7 +112,7 @@ int main_fdk() {
         YK::fdk_recon(
             h_proj.data(), d_vol_buf.data(),
             params,
-            /*Kchunk=*/30, s,
+            /*Kchunk=*/32, s,
             /*clear_vol=*/true, dump);
     }
 
@@ -184,13 +186,155 @@ int main_fdk() {
     return 0;
 }
 
+int main_fdk2() {
+    SCBCTParams params;
+
+    params.iPU = 768; params.iPV = 768; params.iPAng = 360; params.iPAngTotal = 360;
+    params.tiltn_angle_rad = 3 * CUDA_PI / 180;
+    params.iVX = 768; params.iVY = 768; params.iVZ = 600;
+    params.bShortScan = false;
+    params.scan_range_rad = (float)M_PI * 6.0f / 3.0f; // 270 degree short scan
+
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)M_PI / 360;
+
+    params.scan_start_angle_rad = angle_list[0]; // start at -30 degree
+    params.angle_list = angle_list;
+
+
+    params.SID = 430.0f, params.SDD = 760.0f;
+    params.du_mm = 0.556f, params.dv_mm = 0.556f, params.vox_xy_mm = 0.3f;
+    params.vox_z_mm = 0.3f;
+
+    const int Ang = params.iPAng;
+    const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * Ang;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    // 读投影
+    std::vector<float> h_proj(proj_elems);
+    if (!read_raw_float("proj_768x768.raw", h_proj)) {
+        std::printf("Error: cannot read proj_1024x1024.raw (expect %zu floats)\n", proj_elems);
+        return -1;
+    }
+
+    // CUDA 资源
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+
+
+
+    // 调用
+    auto dump = [](int a, const char* tag, float* d_buf, size_t n) {
+        // 只看第0帧
+        if (a != 0) return;
+
+        std::vector<float> h(n);
+        cudaMemcpy(h.data(), d_buf, n * sizeof(float), cudaMemcpyDeviceToHost);
+
+        float sum = 0.f, maxv = -1e30f, minv = 1e30f;
+        for (auto v : h) {
+            sum += v;
+            maxv = std::max(maxv, v);
+            minv = std::min(minv, v);
+        }
+        printf("[dump][a=%d][%s] n=%zu min=%.4f max=%.4f mean=%.6f\n",
+            a, tag, n, minv, maxv, sum / (float)n);
+        };
+
+    MemoryController ctrl;
+    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+    // 离线重建（一次性全量）
+
+    {
+        YK::Util::CudaTimer timer("offline", s);
+        YK::fdk_recon(
+            h_proj.data(), d_vol_buf.data(),
+            params,
+            /*Kchunk=*/32, s,
+            /*clear_vol=*/true, dump);
+    }
+
+
+
+    auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+
+    ctrl.download3D(h_vol, d_vol_buf);
+
+
+    uint64_t total_elements = (uint64_t)Nx * Ny * Nz;
+    if (!write_raw_float("fdk_vec_vol_offline2.raw", h_vol.cdata(), total_elements)) {
+        std::printf("Error: cannot write fdk_vec_vol_new.raw\n");
+        return -2;
+    }
+
+    // 模拟在线重建，每次传输iPBatch个角度，进行重建。保持KChunk=30不变，测试在线重建的正确性和性能。
+    // 待更改参数 
+    // 1. params.iPAng = iPBatch，角度list也相应缩减为当前批次的角度
+    // 2. 每次循环传入的数据指针起点偏置
+    // 3. 仅在第一批时 clear_vol=true，后续批次 clear_vol=false
+
+    // batch_size = 60; batch_num = Ang + batch_size - 1) / batch_size;;
+// 在线重建
+    int batch_size = 32 * 3;
+    int batch_num = (Ang + batch_size - 1) / batch_size;
+
+    FdkReconstructor recon;
+    recon.init(params, /*Kchunk=*/32, s);
+
+    {
+        YK::Util::CudaTimer timer("online", s);
+
+        for (int i = 0; i < batch_num; ++i) {
+            const int base = i * batch_size;
+            const int count = std::min(batch_size, Ang - base);
+
+            SCBCTParams batch_params = params;
+            batch_params.iPAng = count;
+            batch_params.angle_list = std::vector<float>(
+                angle_list.begin() + base,
+                angle_list.begin() + base + count);
+
+            recon.feed(
+                h_proj.data() + base * view_elems,
+                batch_params, s,
+                d_vol_buf.data(),
+                /*clear_vol=*/(i == 0));
+        }
+    }
+
+
+    // 新一轮扫描时
+    recon.reset();
+
+    auto h_vol_online = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+    ctrl.download3D(h_vol_online, d_vol_buf);
+
+    if (!write_raw_float("fdk_vec_vol_online2.raw",
+        h_vol_online.cdata(), total_elements)) {  // ← 修正变量名
+        std::printf("Error: cannot write fdk_vec_vol_online.raw\n");
+        return -2;
+    }
+
+
+
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+
+    std::printf("Done: wrote fdk_vec_vol_online.raw (%d x %d x %d)\n", Nx, Ny, Nz);
+    return 0;
+}
+
 
 
 
 int main() {
     //YKTest::testFFT();
-    main_fdk();
-    //main_fdk_online();
+    main_fdk2();
+
     //YKTest::testFilterWeightsSpectra_RamLak();
     //YKTest::test_gpumem3d();
     //YKTest::test_mem_data_integration_wrap();

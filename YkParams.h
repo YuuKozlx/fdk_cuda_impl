@@ -16,9 +16,9 @@ struct SCBCTParams {
     float dv_mm = 1.0f;; // detector pixel size in V direction in mm
     float offsetU_mm = 0.0f; // detector offset in U direction in mm
     float offsetV_mm = 0.0f; // detector offset in V direction in mm
-    float skew_angle_rad = 0.0f; // detector skew angle in radians (探测器平面绕中心射线的旋转角，右手规则，正值表示逆时针旋转)
-    float slant_angle_rad = 0.0f; // detector slant angle in radians (探测器平面绕水平轴的旋转角，右手规则，正值表示前倾)
-    float tilt_angle_rad = 0.0f; // detector tilt angle in radians (探测器平面绕垂直轴的旋转角，右手规则，正值表示左倾)
+    float tiltn_angle_rad = 0.0f; // detector skew angle in radians (探测器平面绕中心射线的旋转角，右手规则，正值表示逆时针旋转)
+    float tiltu_angle_rad = 0.0f; // detector slant angle in radians (探测器平面绕水平轴的旋转角，右手规则，正值表示前倾)
+    float tiltv_angle_rad = 0.0f; // detector tilt angle in radians (探测器平面绕垂直轴的旋转角，右手规则，正值表示左倾)
 
 
 

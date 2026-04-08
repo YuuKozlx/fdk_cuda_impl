@@ -264,9 +264,9 @@ namespace YK {
                 params.du_mm, params.dv_mm,
                 params.SID, params.SDD - params.SID,
                 f3(params.offsetU_mm, params.offsetV_mm, 0.f),
-                f3(rad2deg(params.slant_angle_rad),
-                    rad2deg(params.skew_angle_rad),
-                    rad2deg(params.tilt_angle_rad)));
+                f3(rad2deg(params.tiltu_angle_rad),
+                    rad2deg(params.tiltn_angle_rad),
+                    rad2deg(params.tiltv_angle_rad)));
 
             GeoDerivedManagerVec{}.build_geo_params(
                 iPU, iPV, params.scan_range_rad, h_geo_full, h_gv_full);

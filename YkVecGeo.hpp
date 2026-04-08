@@ -145,21 +145,25 @@ namespace YK {
 
         auto deg2rad = [](float deg) { return deg * CUDA_PI / 180.f; };
 
+        float tiltu_deg = detTilt_deg.x;
+        float tiltv_deg = detTilt_deg.z;
+        float tiltn_deg = detTilt_deg.y;
+
         // ---- 探测器 U/V 方向向量（局部系） ----
         float3 detU_dir = make_float3(1.f, 0.f, 0.f);
         float3 detV_dir = make_float3(0.f, 0.f, 1.f);
         {
             const float3 axisU = detU_dir;
-            detU_dir = f3_rot_axis(detU_dir, axisU, deg2rad(detTilt_deg.x));
-            detV_dir = f3_rot_axis(detV_dir, axisU, deg2rad(detTilt_deg.x));
+            detU_dir = f3_rot_axis(detU_dir, axisU, deg2rad(tiltu_deg));
+            detV_dir = f3_rot_axis(detV_dir, axisU, deg2rad(tiltu_deg));
 
             const float3 axisV = detV_dir;
-            detU_dir = f3_rot_axis(detU_dir, axisV, deg2rad(detTilt_deg.y));
-            detV_dir = f3_rot_axis(detV_dir, axisV, deg2rad(detTilt_deg.y));
+            detU_dir = f3_rot_axis(detU_dir, axisV, deg2rad(tiltv_deg));
+            detV_dir = f3_rot_axis(detV_dir, axisV, deg2rad(tiltv_deg));
 
             const float3 normal = f3_normalize(f3_cross(detU_dir, detV_dir));
-            detU_dir = f3_rot_axis(detU_dir, normal, deg2rad(detTilt_deg.z));
-            detV_dir = f3_rot_axis(detV_dir, normal, deg2rad(detTilt_deg.z));
+            detU_dir = f3_rot_axis(detU_dir, normal, deg2rad(tiltn_deg));
+            detV_dir = f3_rot_axis(detV_dir, normal, deg2rad(tiltn_deg));
         }
 
         // ---- 主射线方向（局部系） ----
