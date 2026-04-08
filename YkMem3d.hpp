@@ -550,8 +550,7 @@ namespace YK {
             template<typename T>
             DeviceBuffer3D<T> allocateDevice3D(
                 int nx, int ny, int nz,
-                int deviceId,               // 去掉默认值，调用方显式传
-                cudaStream_t stream,        // 去掉默认值
+                int deviceId,
                 bool zero = false) const
             {
                 if (nx <= 0 || ny <= 0 || nz <= 0)
@@ -563,7 +562,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc3D(&dptr, extent));
 
                 if (zero) {
-                    YK_CUDA_CHECK(cudaMemset3DAsync(dptr, 0, extent, stream));
+                    YK_CUDA_CHECK(cudaMemset3D(dptr, 0, extent));
                 }
 
                 return DeviceBuffer3D<T>::make_owning(

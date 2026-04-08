@@ -40,9 +40,9 @@ namespace YK {
             const size_t view_elems = (size_t)Nu * Nv;
 
             Mem::MemoryController mc;
-            chunk_in = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId, stream);
-            chunk_pw = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId, stream);
-            chunk_flt = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId, stream);
+            chunk_in = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
+            chunk_pw = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
+            chunk_flt = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
 
             Mem::PodDataController dc;
             tex_objs = dc.allocate<cudaTextureObject_t>(Kchunk, deviceId);

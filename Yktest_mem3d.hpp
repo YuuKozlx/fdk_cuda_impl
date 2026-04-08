@@ -26,7 +26,7 @@ namespace YKTest {
         int deviceId = 0; // 测试第一个 GPU
 
         // 1. 分配 3D DeviceBuffer
-        auto buf = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, s, true);
+        auto buf = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, true);
         assert(buf);
         std::cout << "Allocated DeviceBuffer3D: "
             << buf.shape().nx << "x" << buf.shape().ny << "x" << buf.shape().nz

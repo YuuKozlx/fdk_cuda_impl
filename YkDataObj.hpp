@@ -340,7 +340,7 @@ namespace YK {
             GpuVolume<T> createGpuVolume(int nx, int ny, int nz,
                 int device, cudaStream_t stream)
             {
-                return GpuVolume<T>(mem_.allocateDevice3D<T>(nx, ny, nz, device, stream));
+                return GpuVolume<T>(mem_.allocateDevice3D<T>(nx, ny, nz, device));
             }
 
             template<typename T>
@@ -388,7 +388,7 @@ namespace YK {
                 int device, cudaStream_t stream)
             {
                 return GpuProjection<T>(
-                    mem_.allocateDevice3D<T>(nu, nv, views, device, stream), views);
+                    mem_.allocateDevice3D<T>(nu, nv, views, device), views);
             }
 
             template<typename T>
@@ -436,7 +436,7 @@ namespace YK {
                 int device, cudaStream_t stream)
             {
                 return GpuSinogram<T>(
-                    mem_.allocateDevice3D<T>(nu, views, nv, device, stream));
+                    mem_.allocateDevice3D<T>(nu, views, nv, device));
             }
 
             template<typename T>
