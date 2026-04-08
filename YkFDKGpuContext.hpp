@@ -141,8 +141,7 @@ namespace YK {
                 geo.data(), gv.data(),
                 coeffs.data(), iPA, stream);
 
-            int threads = kMaxChunkAng;
-            printGCoeff << <1, threads, 0, stream >> > (32); // 打印第一个系数作为示例
+
         }
 
         void uploadCoeffsChunk(const FdkAffineCoeff* d_src, int K, cudaStream_t stream) const
@@ -152,6 +151,9 @@ namespace YK {
                 d_src,
                 K * sizeof(FdkAffineCoeff),
                 0, cudaMemcpyDeviceToDevice, stream));
+
+            int threads = kMaxChunkAng;
+            printGCoeff << <1, threads, 0, stream >> > (32); // 打印第一个系数作为示例
         }
 
         SConeProjGeomVec* d_geo()    const { return geo.data(); }
