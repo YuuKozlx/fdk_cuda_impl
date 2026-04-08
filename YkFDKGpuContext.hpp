@@ -17,6 +17,9 @@ namespace YK {
     using Mem::DeviceLinearBuffer;
     using Mem::PodDataController;
     using Mem::DeviceBuffer3D;
+
+
+
     // ================================================================
     // FdkProjVolData
     // 投影中间缓冲：float 数据用 MemoryController
@@ -99,6 +102,21 @@ namespace YK {
         }
     };
 
+
+
+    __global__ void printGCoeff(int K) {
+        int idx = threadIdx.x;
+        if (idx >= K) return;
+
+        const FdkAffineCoeff& c = gC_coeffs[idx];
+        printf("gC_coeffs[%d] = { Cu=(%f,%f,%f,%f) Cv=(%f,%f,%f,%f) Cd=(%f,%f,%f,%f) dtheta=%f SID2=%f }\n",
+            idx,
+            c.Cu.x, c.Cu.y, c.Cu.z, c.Cu.w,
+            c.Cv.x, c.Cv.y, c.Cv.z, c.Cv.w,
+            c.Cd.x, c.Cd.y, c.Cd.z, c.Cd.w,
+            c.dtheta, c.SID2);
+    }
+
     // ================================================================
     // FdkGeoData
     // 几何参数：自定义结构体用 PodDataController + DeviceLinearBuffer
@@ -122,6 +140,9 @@ namespace YK {
             launchPrecomputeCoeffs(
                 geo.data(), gv.data(),
                 coeffs.data(), iPA, stream);
+
+            int threads = kMaxChunkAng;
+            printGCoeff << <1, threads, 0, stream >> > (32); // 打印第一个系数作为示例
         }
 
         void uploadCoeffsChunk(const FdkAffineCoeff* d_src, int K, cudaStream_t stream) const
