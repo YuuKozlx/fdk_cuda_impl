@@ -135,28 +135,33 @@ int main_fdk() {
 
     // batch_size = 60; batch_num = Ang + batch_size - 1) / batch_size;;
 // 在线重建
-    int batch_size = 64;
+    int batch_size = 32 * 3;
     int batch_num = (Ang + batch_size - 1) / batch_size;
 
     FdkReconstructor recon;
     recon.init(params, /*Kchunk=*/32, s);
 
-    for (int i = 0; i < batch_num; ++i) {
-        const int base = i * batch_size;
-        const int count = std::min(batch_size, Ang - base);
+    {
+        YK::Util::CudaTimer timer("online", s);
 
-        SCBCTParams batch_params = params;
-        batch_params.iPAng = count;
-        batch_params.angle_list = std::vector<float>(
-            angle_list.begin() + base,
-            angle_list.begin() + base + count);
+        for (int i = 0; i < batch_num; ++i) {
+            const int base = i * batch_size;
+            const int count = std::min(batch_size, Ang - base);
 
-        recon.feed(
-            h_proj.data() + base * view_elems,
-            batch_params, s,
-            d_vol_buf.data(),
-            /*clear_vol=*/(i == 0));
+            SCBCTParams batch_params = params;
+            batch_params.iPAng = count;
+            batch_params.angle_list = std::vector<float>(
+                angle_list.begin() + base,
+                angle_list.begin() + base + count);
+
+            recon.feed(
+                h_proj.data() + base * view_elems,
+                batch_params, s,
+                d_vol_buf.data(),
+                /*clear_vol=*/(i == 0));
+        }
     }
+
 
     // 新一轮扫描时
     recon.reset();
