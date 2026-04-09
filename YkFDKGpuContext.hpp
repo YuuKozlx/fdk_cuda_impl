@@ -2,8 +2,6 @@
 #pragma once
 #include <cuda_runtime.h>
 #include <vector>
-
-
 #include <channel_descriptor.h>
 #include "YkFDKPrecompute.hpp"
 #include "YkFDKVecGeoDerived.hpp"

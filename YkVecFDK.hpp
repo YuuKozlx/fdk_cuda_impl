@@ -15,13 +15,13 @@
 #include "YkFDKPreWeightProcessor.hpp"
 #include "YkFDKPrecompute.hpp"
 #include "YkFDKVecGeoDerived.hpp"
-#include "YkFdkFilterContext.hpp"
+
 #include "YkGlobals.h"
 #include "YkIoDump.hpp"
 #include "YkUtil.hpp"
 #include "YkVecGeo.hpp"
 #include "YkVecOperation.hpp"
-#include "YkParams.h"
+#include "YkCBCTParams.h"
 
 namespace YK {
 

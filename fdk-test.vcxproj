@@ -127,6 +127,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="CVP\cvp_back.cuh" />
+    <ClInclude Include="CVP\cvp_forward.cuh" />
+    <ClInclude Include="CVP\cvp_geometry.cuh" />
     <ClInclude Include="IProcessor.hpp" />
     <ClInclude Include="YkBackProject.hpp" />
     <ClInclude Include="minimha.h" />
@@ -147,8 +150,8 @@
     <ClInclude Include="Yktest_mem3d.hpp" />
     <ClInclude Include="YkVecFDK.hpp" />
     <ClInclude Include="YkVecGeo.hpp" />
-    <ClInclude Include="YkFdkFilterContext.hpp" />
-    <ClInclude Include="YkParams.h" />
+    <ClInclude Include="YkFdkPipelineContext.hpp" />
+    <ClInclude Include="YkCBCTParams.h" />
     <CudaCompile Include="testmain.cu" />
   </ItemGroup>
   <ItemGroup>

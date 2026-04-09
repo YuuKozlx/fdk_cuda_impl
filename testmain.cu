@@ -17,6 +17,10 @@
 #include "YkVecOperation.hpp"
 //#include "YkFdkVecOnlineStreamer.hpp"
 
+#include "CVP/cvp_forward.cuh"
+#include "CVP/cvp_geometry.cuh"
+
+
 
 
 static bool read_raw_float(const char* path, std::vector<float>& data) {
@@ -329,12 +333,145 @@ int main_fdk2() {
 }
 
 
+void forward_project_example()
+{
+    using namespace cvp;
+
+    // ----------------------------------------
+    // 1. 体积描述
+    // ----------------------------------------
+    SVolumeDesc vol;
+    vol.Nx = 768; vol.Ny = 768; vol.Nz = 600;
+    vol.a1 = 0.3f; vol.a2 = 0.3f; vol.a3 = 0.3f;
+
+    vol.origin = make_float3(
+        -(vol.Nx - 1) * 0.5f * vol.a1,
+        -(vol.Ny - 1) * 0.5f * vol.a2,
+        -(vol.Nz - 1) * 0.5f * vol.a3);
+
+    // ----------------------------------------
+    // 2. 基础几何（0°）
+    // ----------------------------------------
+    cvp::SConeProjGeomVec geom0;
+
+    geom0.src = make_float3(0.f, -430.f, 0.f);
+    geom0.srcCR = make_float3(0.f, 1.f, 0.f);
+
+    const int   M = 768, N = 768;
+    const float du = 0.556f, dv = 0.556f;
+
+    geom0.detU = make_float3(du, 0.f, 0.f);
+    geom0.detV = make_float3(0.f, 0.f, dv);
+
+    geom0.detS = make_float3(
+        -M * 0.5f * du,
+        330.f,
+        -N * 0.5f * dv);
+
+    // ----------------------------------------
+    // 3. GPU 内存
+    // ----------------------------------------
+    const size_t vol_size = (size_t)vol.Nx * vol.Ny * vol.Nz * sizeof(float);
+    const size_t sino_size = (size_t)M * N * sizeof(float);
+
+    float* d_volume = nullptr, * d_sino = nullptr, * d_cos_theta = nullptr;
+
+    cudaMalloc(&d_volume, vol_size);
+    cudaMalloc(&d_sino, sino_size);
+    cudaMalloc(&d_cos_theta, sino_size);
+
+    // ----------------------------------------
+    // 4. 读入体数据
+    // ----------------------------------------
+    size_t vol_elems = (size_t)vol.Nx * vol.Ny * vol.Nz;
+    std::vector<float> h_volume(vol_elems);
+
+    if (!read_raw_float("fdk_vec_vol_offline2.raw", h_volume)) {
+        printf("Error: cannot read volume\n");
+        return;
+    }
+
+    cudaMemcpy(d_volume, h_volume.data(), vol_size, cudaMemcpyHostToDevice);
+
+    // ----------------------------------------
+    // 5. 旋转函数（绕 Z）
+    // ----------------------------------------
+    auto rotate_z = [](float3 p, float angle)
+        {
+            float c = cosf(angle);
+            float s = sinf(angle);
+            return make_float3(
+                c * p.x - s * p.y,
+                s * p.x + c * p.y,
+                p.z);
+        };
+
+    // ----------------------------------------
+    // 6. 多角度 forward
+    // ----------------------------------------
+    const int num_views = 360;
+
+    std::vector<float> h_sino_all((size_t)num_views * M * N);
+
+    for (int iv = 0; iv < num_views; ++iv)
+    {
+        float angle = iv * 2.0f * M_PI / num_views;
+
+        cvp::SConeProjGeomVec geom;
+
+        // 旋转几何
+        geom.src = rotate_z(geom0.src, angle);
+        geom.srcCR = rotate_z(geom0.srcCR, angle);
+        geom.detS = rotate_z(geom0.detS, angle);
+        geom.detU = rotate_z(geom0.detU, angle);
+        geom.detV = rotate_z(geom0.detV, angle);
+        geom.angle = make_float3(angle, 0.f, 0.f);
+
+        // 清零
+        cudaMemset(d_sino, 0, sino_size);
+
+        // cache
+        SCVPViewCache cache = make_view_cache(geom, M, N, vol);
+
+        // forward
+        launch_cvp_forward(d_volume, d_sino, d_cos_theta, cache);
+
+        cudaDeviceSynchronize();
+
+        // 拷贝
+        cudaMemcpy(
+            h_sino_all.data() + (size_t)iv * M * N,
+            d_sino,
+            sino_size,
+            cudaMemcpyDeviceToHost);
+
+        if (iv % 30 == 0)
+            printf("View %d / %d done\n", iv, num_views);
+    }
+
+    // ----------------------------------------
+    // 7. 写出 3D sinogram
+    // ----------------------------------------
+    if (!write_raw_float("proj_360.raw", h_sino_all)) {
+        printf("Error: cannot write proj_360.raw\n");
+        return;
+    }
+
+    // ----------------------------------------
+    // 8. 释放
+    // ----------------------------------------
+    cudaFree(d_volume);
+    cudaFree(d_sino);
+    cudaFree(d_cos_theta);
+
+    printf("Forward projection finished.\n");
+}
 
 
 int main() {
     //YKTest::testFFT();
-    main_fdk2();
-
+    //main_fdk2();
+    forward_project_example();
     //YKTest::testFilterWeightsSpectra_RamLak();
     //YKTest::test_gpumem3d();
     //YKTest::test_mem_data_integration_wrap();

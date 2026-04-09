@@ -5,10 +5,6 @@
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
-    </Filter>
     <Filter Include="Resource Files">
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
@@ -22,37 +18,32 @@
     <Filter Include="util">
       <UniqueIdentifier>{2d0ce3a4-80aa-4183-8646-b9638168e8f2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="CVP">
+      <UniqueIdentifier>{1aa895d5-6027-45e2-8ac2-2637af3246d4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="global">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="FDK">
+      <UniqueIdentifier>{f174c337-cdd4-4305-a761-ea7370e40dcc}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="testmain.cu" />
-    <CudaCompile Include="YkUtil.cu">
-      <Filter>util</Filter>
-    </CudaCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YkConv.hpp">
-      <Filter>Header Files</Filter>
+      <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="YkFFT.hpp">
-      <Filter>Header Files</Filter>
+      <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="YkGlobals.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YkVecGeo.hpp">
-      <Filter>vec_fdk</Filter>
-    </ClInclude>
-    <ClInclude Include="YkVecFDKBackProjection.hpp">
-      <Filter>vec_fdk</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKCreateFilterKernel.hpp">
-      <Filter>vec_fdk</Filter>
+      <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="YkVecOperation.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YkSampling2D.hpp">
-      <Filter>Header Files</Filter>
+      <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="Yktest_fft.hpp">
       <Filter>tests</Filter>
@@ -66,20 +57,8 @@
     <ClInclude Include="YkUtil.hpp">
       <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="YkFDKVecPreWeight.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKVecAlignPadCrop.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKVecGeoDerived.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="YkIoDump.hpp">
       <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="YKFDKFilter.hpp">
-      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="YkMem3d.hpp">
       <Filter>util</Filter>
@@ -96,14 +75,56 @@
     <ClInclude Include="minimha.h">
       <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="YkFDKViewTexSlot.hpp">
-      <Filter>vec_fdk</Filter>
+    <ClInclude Include="IProcessor.hpp">
+      <Filter>global</Filter>
     </ClInclude>
-    <ClInclude Include="YkFDKChunkBuffer.hpp">
-      <Filter>vec_fdk</Filter>
+    <ClInclude Include="YkMacro.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="YkCBCTParams.h">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="CVP\cvp_back.cuh">
+      <Filter>CVP</Filter>
+    </ClInclude>
+    <ClInclude Include="CVP\cvp_forward.cuh">
+      <Filter>CVP</Filter>
+    </ClInclude>
+    <ClInclude Include="CVP\cvp_geometry.cuh">
+      <Filter>CVP</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFdkPipelineContext.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKFilterProcessor.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKPrecompute.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKPreWeightProcessor.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKVecGeoDerived.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkVecFDK.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKCreateFilterKernel.hpp">
+      <Filter>FDK</Filter>
     </ClInclude>
     <ClInclude Include="YkFDKGpuContext.hpp">
-      <Filter>vec_fdk</Filter>
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkVecGeo.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkBackProject.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="YkSampling2D.hpp">
+      <Filter>util</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
