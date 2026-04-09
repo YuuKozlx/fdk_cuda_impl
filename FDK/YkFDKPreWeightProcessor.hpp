@@ -6,10 +6,10 @@
 #include <algorithm>
 #include <cmath>
 
-#include "YkGlobals.h"
-#include "YkVecGeo.hpp"
-#include "YkVecOperation.hpp"
-#include "IProcessor.hpp"
+#include "global/YkGlobals.h"
+#include "FDK/YkVecGeo.hpp"
+#include "util/YkVecOperation.hpp"
+#include "global/IProcessor.hpp"
 
 namespace YK {
     namespace cg = cooperative_groups;

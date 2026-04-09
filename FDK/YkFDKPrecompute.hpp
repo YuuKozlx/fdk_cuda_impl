@@ -1,8 +1,8 @@
 #pragma once
 #include <cuda_runtime.h>
-#include "YkGlobals.h"
-#include "YkVecGeo.hpp"
-#include "YkFDKVecGeoDerived.hpp"
+#include "global/YkGlobals.h"
+#include "FDK/YkVecGeo.hpp"
+#include "FDK/YkFDKVecGeoDerived.hpp"
 
 namespace YK {
 

@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <cstdio>
 
-#include "YkGlobals.h"
-#include "YkMacro.hpp"
+#include "../global/YkGlobals.h"
+#include "../global/YkMacro.hpp"
 
 namespace YK {
 

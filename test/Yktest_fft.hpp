@@ -1,12 +1,12 @@
 #pragma once
-#include "YkFFT.hpp"
+#include "Filter/YkFFT.hpp"
 
 #include <vector>
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
 #include "YKtestconv.hpp"
-#include "YkMacro.hpp"
+#include "global/YkMacro.hpp"
 
 namespace YKTest {
     using namespace YK;

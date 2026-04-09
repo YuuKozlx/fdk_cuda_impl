@@ -5,9 +5,9 @@
 
 #include <vector_functions.hpp>
 
-#include "YkGlobals.h"
-#include "YkVecGeo.hpp"
-#include "YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
+#include "global/YkGlobals.h"
+#include "FDK/YkVecGeo.hpp"
+#include "util/YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
 
 namespace YK {
 

@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <cassert>
-#include "YkMem3d.hpp"  // 新版头文件
+#include "global/YkMem3d.hpp"  // 新版头文件
 
 namespace YKTest {
 

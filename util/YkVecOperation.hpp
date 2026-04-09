@@ -9,7 +9,7 @@
 #include <cmath>
 
 #include <vector_types.h>
-#include "YkGlobals.h"
+
 
 namespace YK {
     using vector3 = float3; // alias for clarity

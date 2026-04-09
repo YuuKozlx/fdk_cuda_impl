@@ -3,9 +3,10 @@
 #include <cufft.h>
 #include <utility>
 
-#include "../YkFFT.hpp"
-#include "../YkGlobals.h"
-#include "../YkMacro.hpp"
+
+#include "../global/YkGlobals.h"
+#include "../global/YkMacro.hpp"
+#include "../Filter/YkFFT.hpp"
 #include "YkFilterKernelKernels.cuh"
 
 namespace YK {

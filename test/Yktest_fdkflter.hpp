@@ -6,9 +6,10 @@
 
 #include <cuda_runtime.h>
 
-#include "YkGlobals.h"
-#include "YkFDKCreateFilterKernel.hpp"   // FilterKernelFFT, FilterKernelDesc, EFilterKernel, EWeightsBuildSource,...
-#include "YkMacro.hpp"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
+#include "../Filter/YkFilterKernelFFT.cuh"
+
 
 namespace YKTest {
 
@@ -107,7 +108,7 @@ namespace YKTest {
         // -----------------------------
         // Create builder
         // -----------------------------
-        FilterKernelFFT kernel;
+        Filter::FilterKernelFFT kernel;
         kernel.prepare(paddedN, stream);
 
         // device weights

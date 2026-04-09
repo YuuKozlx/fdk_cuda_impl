@@ -6,9 +6,9 @@
 #include <stdexcept>
 #include <vector_functions.hpp>
 #include <vector_types.h>
-#include "YkGlobals.h"
-#include "YkMacro.hpp"
-#include "YkVecOperation.hpp"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
+#include "util/YkVecOperation.hpp"
 
 namespace YK {
 

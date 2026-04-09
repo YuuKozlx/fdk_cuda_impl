@@ -1,8 +1,8 @@
 #include <iostream>
 #include <vector>
 
-#include "YkMem3d.hpp"
-#include "YkDataObj.hpp"
+#include "global/YkMem3d.hpp"
+#include "global/YkDataObj.hpp"
 
 using namespace YK;
 using namespace YK::Mem;

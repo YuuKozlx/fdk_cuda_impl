@@ -10,13 +10,13 @@
 #include <cufft.h>
 #include <device_launch_parameters.h>
 
-#include "IProcessor.hpp"
-#include "YkConv.hpp"
-#include "YkFDKCreateFilterKernel.hpp"
-#include "YkFFT.hpp"
-#include "YkFdkPipelineContext.hpp"
-#include "YkGlobals.h"
-#include "YkMacro.hpp"
+#include "global/IProcessor.hpp"
+#include "Filter/YkConv.hpp"
+#include "Filter/YkFFT.hpp"
+#include "Filter/YkFilterKernel.cuh"
+#include "FDK/YkFdkPipelineContext.hpp"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
 
 
 
@@ -342,7 +342,7 @@ namespace YK {
         cufftComplex* d_complex_buf_ = nullptr; // [K_*Nv_*n_cmplx_]
 
         CudaFFT         fft_batch_;
-        FilterKernelFFT kernel_fft_;
+        YK::Filter::FilterKernelFFT kernel_fft_;
 
         std::vector<int> host_startu_;
 

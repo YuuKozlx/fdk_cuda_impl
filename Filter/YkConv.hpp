@@ -2,8 +2,8 @@
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <device_launch_parameters.h>
-#include "YkFFT.hpp"  // 上面的 CudaFFTPlan
-#include "YkMacro.hpp"
+#include "Filter/YkFFT.hpp"  // 上面的 CudaFFTPlan
+#include "global/YkMacro.hpp"
 
 namespace YK {
 

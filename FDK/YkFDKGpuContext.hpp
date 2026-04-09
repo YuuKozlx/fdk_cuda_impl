@@ -3,12 +3,12 @@
 #include <cuda_runtime.h>
 #include <vector>
 #include <channel_descriptor.h>
-#include "YkFDKPrecompute.hpp"
-#include "YkFDKVecGeoDerived.hpp"
-#include "YkGlobals.h"
-#include "YkMacro.hpp"
-#include "YkMem3d.hpp"
-#include "YkVecGeo.hpp"
+#include "FDK/YkFDKPrecompute.hpp"
+#include "FDK/YkFDKVecGeoDerived.hpp"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
+#include "global/YkMem3d.hpp"
+#include "FDK/YkVecGeo.hpp"
 
 namespace YK {
     // 在 namespace YK { 内部顶部加：

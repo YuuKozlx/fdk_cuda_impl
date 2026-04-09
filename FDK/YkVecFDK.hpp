@@ -8,20 +8,20 @@
 #include <functional>
 #include <vector_functions.hpp>
 #include <vector_types.h>
-#include "IProcessor.hpp"
-#include "YkBackProject.hpp"
-#include "YkFDKFilterProcessor.hpp"
-#include "YkFDKGpuContext.hpp"
-#include "YkFDKPreWeightProcessor.hpp"
-#include "YkFDKPrecompute.hpp"
-#include "YkFDKVecGeoDerived.hpp"
+#include "global/IProcessor.hpp"
+#include "FDK/YkBackProject.hpp"
+#include "FDK/YkFDKFilterProcessor.hpp"
+#include "FDK/YkFDKGpuContext.hpp"
+#include "FDK/YkFDKPreWeightProcessor.hpp"
+#include "FDK/YkFDKPrecompute.hpp"
+#include "FDK/YkFDKVecGeoDerived.hpp"
 
-#include "YkGlobals.h"
-#include "YkIoDump.hpp"
-#include "YkUtil.hpp"
-#include "YkVecGeo.hpp"
-#include "YkVecOperation.hpp"
-#include "YkCBCTParams.h"
+#include "global/YkGlobals.h"
+#include "util/YkIoDump.hpp"
+#include "util/YkUtil.hpp"
+#include "FDK/YkVecGeo.hpp"
+#include "util/YkVecOperation.hpp"
+#include "global/YkCBCTParams.h"
 
 namespace YK {
 

@@ -1,10 +1,10 @@
 #pragma once
 #include <cuda_runtime.h>
-#include "YkGlobals.h"
-#include "YkMacro.hpp"
-#include "YkVecGeo.hpp"
-#include "YkVecOperation.hpp"
-#include "YkFdkPipelineContext.hpp"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
+#include "FDK/YkVecGeo.hpp"
+#include "util/YkVecOperation.hpp"
+#include "FDK/YkFdkPipelineContext.hpp"
 
 namespace YK {
     // ============================================================
