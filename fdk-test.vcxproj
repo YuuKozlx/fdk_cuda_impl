@@ -130,6 +130,10 @@
     <ClInclude Include="CVP\cvp_back.cuh" />
     <ClInclude Include="CVP\cvp_forward.cuh" />
     <ClInclude Include="CVP\cvp_geometry.cuh" />
+    <ClInclude Include="Filter\YkFilterKernel.cuh" />
+    <ClInclude Include="Filter\YkFilterKernelFFT.cuh" />
+    <ClInclude Include="Filter\YkFilterKernelHelpers.cuh" />
+    <ClInclude Include="Filter\YkFilterKernelKernels.cuh" />
     <ClInclude Include="IProcessor.hpp" />
     <ClInclude Include="YkBackProject.hpp" />
     <ClInclude Include="YkCudaTimer.hpp" />
@@ -147,7 +151,6 @@
     <ClInclude Include="Yktest_dataobject.hpp" />
     <ClInclude Include="Yktest_fdkflter.hpp" />
     <ClInclude Include="Yktest_fft.hpp" />
-    <ClInclude Include="YkFDKCreateFilterKernel.hpp" />
     <ClInclude Include="Yktest_mem3d.hpp" />
     <ClInclude Include="YkVecFDK.hpp" />
     <ClInclude Include="YkVecGeo.hpp" />

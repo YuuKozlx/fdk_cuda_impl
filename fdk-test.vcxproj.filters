@@ -26,6 +26,9 @@
     <Filter Include="Filter">
       <UniqueIdentifier>{92f9651c-d67e-4a83-a0a4-35bef4ea0fd7}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Filter\detail">
+      <UniqueIdentifier>{6e460dcd-c463-4a99-a609-ab8e5268000f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="testmain.cu" />
@@ -94,9 +97,6 @@
     <ClInclude Include="YkVecFDK.hpp">
       <Filter>FDK</Filter>
     </ClInclude>
-    <ClInclude Include="YkFDKCreateFilterKernel.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
     <ClInclude Include="YkFDKGpuContext.hpp">
       <Filter>FDK</Filter>
     </ClInclude>
@@ -126,6 +126,18 @@
     </ClInclude>
     <ClInclude Include="YkFFT.hpp">
       <Filter>Filter</Filter>
+    </ClInclude>
+    <ClInclude Include="Filter\YkFilterKernel.cuh">
+      <Filter>Filter</Filter>
+    </ClInclude>
+    <ClInclude Include="Filter\YkFilterKernelFFT.cuh">
+      <Filter>Filter</Filter>
+    </ClInclude>
+    <ClInclude Include="Filter\YkFilterKernelHelpers.cuh">
+      <Filter>Filter\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="Filter\YkFilterKernelKernels.cuh">
+      <Filter>Filter\detail</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -3,19 +3,19 @@
 #include <cuda_runtime.h>
 #include <vector>
 
-#include "YkGlobals.h"
-#include "YkVecFDK.hpp"
-#include "YkVecGeo.hpp"
+#include "global/YkGlobals.h"
+#include "FDK/YkVecFDK.hpp"
+#include "FDK/YkVecGeo.hpp"
 
 
 
-#include "Yktest_fft.hpp"
-#include "Yktest_fdkflter.hpp"
-#include "YkMem3d.hpp"
-#include "Yktest_mem3d.hpp"
-#include "Yktest_dataobject.hpp"
-#include "YkVecOperation.hpp"
-#include "YkCudaTimer.hpp"
+#include "test/Yktest_fft.hpp"
+#include "test/Yktest_fdkflter.hpp"
+#include "global/YkMem3d.hpp"
+#include "test/Yktest_mem3d.hpp"
+#include "test/Yktest_dataobject.hpp"
+#include "util/YkVecOperation.hpp"
+#include "util/YkCudaTimer.hpp"
 
 
 #include "CVP/cvp_forward.cuh"
