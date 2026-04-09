@@ -9,7 +9,7 @@
 #include <vector_functions.hpp>
 #include <vector_types.h>
 #include "global/IProcessor.hpp"
-#include "FDK/YkBackProject.hpp"
+#include "FDK/YkBackProjectProcessor.hpp"
 #include "FDK/YkFDKFilterProcessor.hpp"
 #include "FDK/YkFDKGpuContext.hpp"
 #include "FDK/YkFDKPreWeightProcessor.hpp"
@@ -207,7 +207,7 @@ namespace YK {
         // processor 持久化，init() 后常驻
         PreweightProcessor    pw_;
         ParkerWeightProcessor pkw_;
-        FilterProcessor       flt_;
+        Fdk::FilterProcessor       flt_;
         BpProcessor           bp_;
 
         // ----------------------------------------------------------------

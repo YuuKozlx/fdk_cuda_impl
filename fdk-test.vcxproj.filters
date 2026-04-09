@@ -29,6 +29,21 @@
     <Filter Include="Filter\detail">
       <UniqueIdentifier>{6e460dcd-c463-4a99-a609-ab8e5268000f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="FDK\pw">
+      <UniqueIdentifier>{2190d0aa-606d-4766-b676-87092a292a5c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FDK\flt">
+      <UniqueIdentifier>{c795a6d0-d9a2-4d39-83e4-c838b99ea445}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FDK\ctx">
+      <UniqueIdentifier>{a5f742fa-5ec0-40f8-b54b-838db3b5cb23}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FDK\bp">
+      <UniqueIdentifier>{d20bcdc7-8d3f-43e8-99b2-d764c7f38bf0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FDK\flt\detail">
+      <UniqueIdentifier>{ba52cd74-297d-4e20-b104-8b59623da93b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="testmain.cu" />
@@ -50,9 +65,6 @@
       <Filter>util</Filter>
     </ClInclude>
     <ClInclude Include="YkIoDump.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="YkMem3d.hpp">
       <Filter>util</Filter>
     </ClInclude>
     <ClInclude Include="Yktest_mem3d.hpp">
@@ -79,31 +91,7 @@
     <ClInclude Include="CVP\cvp_geometry.cuh">
       <Filter>CVP</Filter>
     </ClInclude>
-    <ClInclude Include="YkFdkPipelineContext.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKFilterProcessor.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKPrecompute.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKPreWeightProcessor.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKVecGeoDerived.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
     <ClInclude Include="YkVecFDK.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKGpuContext.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="YkVecGeo.hpp">
-      <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="YkBackProject.hpp">
       <Filter>FDK</Filter>
     </ClInclude>
     <ClInclude Include="YkSampling2D.hpp">
@@ -138,6 +126,45 @@
     </ClInclude>
     <ClInclude Include="Filter\YkFilterKernelKernels.cuh">
       <Filter>Filter\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="YkMem3d.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKVecGeoDerived.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFdkPipelineContext.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKGpuContext.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="YkVecGeo.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkBackProjectProcessor.hpp">
+      <Filter>FDK\bp</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKPreWeightProcessor.hpp">
+      <Filter>FDK\pw</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFDKPrecompute.hpp">
+      <Filter>FDK\bp</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKFilter.cuh">
+      <Filter>FDK\flt</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKFilterProcessor.hpp">
+      <Filter>FDK\flt</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKFilterHelpers.cuh">
+      <Filter>FDK\flt\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKFilterKernels.cuh">
+      <Filter>FDK\flt\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKFilterLaunch.cuh">
+      <Filter>FDK\flt\detail</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
