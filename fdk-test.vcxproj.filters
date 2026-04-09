@@ -1,17 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
-    </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
-    </Filter>
-    <Filter Include="vec_fdk">
-      <UniqueIdentifier>{9e40fc35-59ce-4392-9c6b-669f352f926a}</UniqueIdentifier>
-    </Filter>
     <Filter Include="tests">
       <UniqueIdentifier>{3b6c95cb-c5c2-46c4-bad8-337e9863a850}</UniqueIdentifier>
     </Filter>
@@ -28,21 +17,21 @@
     <Filter Include="FDK">
       <UniqueIdentifier>{f174c337-cdd4-4305-a761-ea7370e40dcc}</UniqueIdentifier>
     </Filter>
+    <Filter Include="interface">
+      <UniqueIdentifier>{1453e4f2-9eee-4f05-9107-40ecab93c3f8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FP">
+      <UniqueIdentifier>{dfca4305-4438-4c52-bac8-dcaea329e48b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Filter">
+      <UniqueIdentifier>{92f9651c-d67e-4a83-a0a4-35bef4ea0fd7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="testmain.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="YkConv.hpp">
-      <Filter>global</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFFT.hpp">
-      <Filter>global</Filter>
-    </ClInclude>
     <ClInclude Include="YkGlobals.h">
-      <Filter>global</Filter>
-    </ClInclude>
-    <ClInclude Include="YkVecOperation.hpp">
       <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="Yktest_fft.hpp">
@@ -66,22 +55,16 @@
     <ClInclude Include="Yktest_mem3d.hpp">
       <Filter>tests</Filter>
     </ClInclude>
-    <ClInclude Include="YkDataObj.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
     <ClInclude Include="Yktest_dataobject.hpp">
       <Filter>tests</Filter>
     </ClInclude>
-    <ClInclude Include="minimha.h">
+    <ClInclude Include="YkMiniMHA.h">
       <Filter>util</Filter>
     </ClInclude>
     <ClInclude Include="IProcessor.hpp">
       <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="YkMacro.hpp">
-      <Filter>global</Filter>
-    </ClInclude>
-    <ClInclude Include="YkCBCTParams.h">
       <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="CVP\cvp_back.cuh">
@@ -125,6 +108,24 @@
     </ClInclude>
     <ClInclude Include="YkSampling2D.hpp">
       <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="YkVecOperation.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="YkCudaTimer.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="YkDataObj.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="YkCBCTParams.h">
+      <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="YkConv.hpp">
+      <Filter>Filter</Filter>
+    </ClInclude>
+    <ClInclude Include="YkFFT.hpp">
+      <Filter>Filter</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

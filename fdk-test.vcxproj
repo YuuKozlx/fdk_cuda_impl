@@ -132,7 +132,8 @@
     <ClInclude Include="CVP\cvp_geometry.cuh" />
     <ClInclude Include="IProcessor.hpp" />
     <ClInclude Include="YkBackProject.hpp" />
-    <ClInclude Include="minimha.h" />
+    <ClInclude Include="YkCudaTimer.hpp" />
+    <ClInclude Include="YkMiniMHA.h" />
     <ClInclude Include="YkDataObj.hpp" />
     <ClInclude Include="YkFDKFilterProcessor.hpp" />
     <ClInclude Include="YkFDKGpuContext.hpp" />

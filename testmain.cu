@@ -6,7 +6,7 @@
 #include "YkGlobals.h"
 #include "YkVecFDK.hpp"
 #include "YkVecGeo.hpp"
-//#include "YkFDKBackProjection.hpp"
+
 
 
 #include "Yktest_fft.hpp"
@@ -15,7 +15,8 @@
 #include "Yktest_mem3d.hpp"
 #include "Yktest_dataobject.hpp"
 #include "YkVecOperation.hpp"
-//#include "YkFdkVecOnlineStreamer.hpp"
+#include "YkCudaTimer.hpp"
+
 
 #include "CVP/cvp_forward.cuh"
 #include "CVP/cvp_geometry.cuh"
@@ -470,8 +471,8 @@ void forward_project_example()
 
 int main() {
     //YKTest::testFFT();
-    //main_fdk2();
-    forward_project_example();
+    main_fdk2();
+    //forward_project_example();
     //YKTest::testFilterWeightsSpectra_RamLak();
     //YKTest::test_gpumem3d();
     //YKTest::test_mem_data_integration_wrap();

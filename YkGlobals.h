@@ -182,7 +182,6 @@ enum class ERampExtractMode {
     Magnitude = 1
 };
 
-
 struct SFilterKernelDesc {
     EFilterKernel kind = EFilterKernel::RamLak;
 
