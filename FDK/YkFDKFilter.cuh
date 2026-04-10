@@ -8,7 +8,7 @@
 //
 //   外部只需 #include 本文件即可使用 YK::Fdk::FilterProcessor。
 
-#include "detail/YkFDKFilterHelpers.cuh"
-#include "detail/YkFDKFilterKernels.cuh"
-#include "detail/YkFDKFilterLaunch.cuh"
+#include "cuh/YkFDKFilterHelpers.cuh"
+#include "cuh/YkFDKFilterKernels.cuh"
+#include "cuh/YkFDKFilterLaunch.cuh"
 #include "YkFDKFilterProcessor.hpp"

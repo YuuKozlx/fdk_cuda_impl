@@ -1,336 +1,154 @@
 #pragma once
+#include <cstdio>
+
 #include <cuda_runtime.h>
-#include "global/YkGlobals.h"
-#include "global/YkMacro.hpp"
-#include "FDK/YkVecGeo.hpp"
-#include "util/YkVecOperation.hpp"
-#include "FDK/YkFdkPipelineContext.hpp"
+
+#include "../global/IProcessor.hpp"
+#include "YkVecGeo.hpp"
+#include "YkFDKVecGeoDerived.hpp"
+#include "YkFdkPipelineContext.hpp"
+#include "../global/YkGlobals.h"
+#include "../global/YkMacro.hpp"
+
+#include "cuh/YkFDKBpLaunch.cuh"
 
 namespace YK {
-    // ============================================================
-    // project_uv_and_terms_derived
-    // ============================================================
-    __device__ __forceinline__ bool project_uv_and_terms_derived(
-        const SConeProjGeomVec& g,
-        const SFDKGeoParamPerView& gv,
-        float3 P,
-        float& u_pix,
-        float& v_pix,
-        float& denom_c)
-    {
-        const float3 dir = f3_sub(P, g.src);
+    namespace Fdk {
 
-        denom_c = f3_dot(dir, gv.ray_center);
+        // ============================================================
+        // BpProcessor
+        //
+        //   ÁîüÂëΩÂë®ÊúüÔºö
+        //     setInitContext(&BpInitContext{...})
+        //     init()
+        //     loop:
+        //       setContext(&BpChunkContext{ d_texObjs, K, [d_geo, d_gv] })
+        //       process(d_texObjs, d_vol, stream)
+        //     release()
+        //
+        //   ‰∏§ÁßçÊ®°ÂºèÁî± BpInitContext::use_precomputed ÈÄâÊã©Ôºö
+        //     true  ‚Äî gC_coeffs constant memory Â∑≤Âú®Â§ñÈÉ®ÂÜôÂÖ•
+        //     false ‚Äî kernel ÂÜÖÁõ¥Êé•ËÆ°ÁÆóÔºåÈúÄË¶Å d_geo / d_gv
+        // ============================================================
+        class BpProcessor : public IProcessor {
+        public:
+            BpProcessor() = default;
+            ~BpProcessor() override { release(); }
 
-        const float denom_n = f3_dot(dir, gv.det_n);
-        if (fabsf(denom_n) < 1e-8f) return false;
+            BpProcessor(const BpProcessor&) = delete;
+            BpProcessor& operator=(const BpProcessor&) = delete;
 
-        const float t = __fdividef(gv.SDD_mm, denom_n);
-        if (t <= 0.f) return false;
+            // ----------------------------------------------------------------
+            // IProcessor::setInitContext
+            // ----------------------------------------------------------------
+            void setInitContext(const void* ctx) override
+            {
+                if (!ctx) {
+                    std::fprintf(stderr, "[YK][Bp][E] setInitContext: null.\n"); return;
+                }
+                const auto* ic = static_cast<const BpInitContext*>(ctx);
+                vol_geom_ = ic->vol_geom;
+                use_precomputed_ = ic->use_precomputed;
+                cfg_ready_ = true;
+            }
 
-        const float DU = t * f3_dot(dir, g.detU) - gv.detS_sub_src_dot_dU;
-        const float DV = t * f3_dot(dir, g.detV) - gv.detS_sub_src_dot_dV;
+            // ----------------------------------------------------------------
+            // IProcessor::init
+            // ----------------------------------------------------------------
+            bool init() override
+            {
+                if (!cfg_ready_) {
+                    std::fprintf(stderr, "[YK][Bp][E] init: setInitContext() not called.\n");
+                    return false;
+                }
+                if (vol_geom_.Nx <= 0 || vol_geom_.Ny <= 0 || vol_geom_.Nz <= 0
+                    || vol_geom_.vox_x <= 0.f
+                    || vol_geom_.vox_y <= 0.f
+                    || vol_geom_.vox_z <= 0.f) {
+                    std::fprintf(stderr, "[YK][Bp][E] init: invalid vol_geom.\n");
+                    return false;
+                }
+                is_initialized_ = true;
+                return true;
+            }
 
-        u_pix = (DU * gv.VV - DV * gv.UV) * gv.invDetUV * gv.inv_du_mm;
-        v_pix = (-DU * gv.UV + DV * gv.UU) * gv.invDetUV * gv.inv_dv_mm;
-        return true;
+            // ----------------------------------------------------------------
+            // IProcessor::setContext
+            // ----------------------------------------------------------------
+            void setContext(const void* ctx) override
+            {
+                if (!is_initialized_) {
+                    std::fprintf(stderr, "[YK][Bp][E] setContext: not initialized.\n"); return;
+                }
+                if (!ctx) {
+                    std::fprintf(stderr, "[YK][Bp][E] setContext: null.\n"); return;
+                }
+                const auto* cc = static_cast<const BpChunkContext*>(ctx);
+                if (cc->K <= 0) {
+                    std::fprintf(stderr, "[YK][Bp][E] setContext: invalid K=%d.\n", cc->K); return;
+                }
+                if (!use_precomputed_ && (!cc->d_geo || !cc->d_gv)) {
+                    std::fprintf(stderr,
+                        "[YK][Bp][E] setContext: non-precomputed mode requires d_geo and d_gv.\n");
+                    return;
+                }
+                chunk_ = *cc;
+            }
+
+            // ----------------------------------------------------------------
+            // IProcessor::process
+            //   d_input  : const cudaTextureObject_t*  ‚Äî device Á∫πÁêÜÂØπË±°Êï∞ÁªÑ
+            //   d_output : float*                      ‚Äî [Nz*Ny*Nx] ‰ΩìÁ¥†Á¥ØÂä†ÁºìÂÜ≤
+            // ----------------------------------------------------------------
+            void process(const void* d_input, void* d_output,
+                cudaStream_t stream = 0) override
+            {
+                if (!is_initialized_) {
+                    std::fprintf(stderr, "[YK][Bp][E] process: not initialized.\n"); return;
+                }
+                if (!d_input || !d_output || chunk_.K <= 0) {
+                    std::fprintf(stderr, "[YK][Bp][E] process: setContext() not called.\n"); return;
+                }
+
+                const cudaTextureObject_t* d_texObjs =
+                    static_cast<const cudaTextureObject_t*>(d_input);
+                float* d_vol = static_cast<float*>(d_output);
+
+                if (use_precomputed_) {
+                    detail::bp_launchBpPrecomputed(
+                        d_texObjs, d_vol, vol_geom_,
+                        chunk_.K, stream);
+                }
+                else {
+                    detail::bp_launchBpDirect(
+                        d_texObjs, chunk_.d_geo, chunk_.d_gv,
+                        d_vol, vol_geom_,
+                        chunk_.K, stream);
+                }
+            }
+
+            // ----------------------------------------------------------------
+            // IProcessor::release
+            // ----------------------------------------------------------------
+            void release() override
+            {
+                chunk_ = {};
+                vol_geom_ = {};
+                use_precomputed_ = true;
+                is_initialized_ = false;
+                cfg_ready_ = false;
+            }
+
+            bool        isInitialized() const override { return is_initialized_; }
+            const char* name()          const override { return "BpProcessor"; }
+
+        private:
+            SVolGeom        vol_geom_ = {};
+            bool            use_precomputed_ = true;
+            BpChunkContext  chunk_ = {};
+            bool            is_initialized_ = false;
+            bool            cfg_ready_ = false;
+        };
+
     }
-
-    // ============================================================
-    // BP kernel °™ ‘§º∆À„∞Ê±æ£® π”√ gC_coeffs constant ƒ⁄¥Ê£©
-    // ============================================================
-    template<int ZSIZE>
-    __global__ void fdk_bp_kernel(
-        const cudaTextureObject_t* __restrict__ tex_views,
-        float* __restrict__ vol,
-        SVolGeom vg,
-        int K)
-    {
-        const int x = blockIdx.x * blockDim.x + threadIdx.x;
-        const int y = blockIdx.y * blockDim.y + threadIdx.y;
-        if (x >= vg.Nx || y >= vg.Ny) return;
-
-        const int startZ = blockIdx.z * ZSIZE;
-        if (startZ >= vg.Nz) return;
-
-        const float fX = vg.origin().x + y * vg.vox_x;
-        const float fY = vg.origin().y + x * vg.vox_y;
-        const float fZ = vg.origin().z + startZ * vg.vox_z;
-
-        float Z[ZSIZE];
-#pragma unroll
-        for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
-
-        for (int i = 0; i < K; ++i) {
-            const FdkAffineCoeff& c = gC_coeffs[i];
-
-            float uNum = c.Cu.w + fX * c.Cu.x + fY * c.Cu.y + fZ * c.Cu.z;
-            float vNum = c.Cv.w + fX * c.Cv.x + fY * c.Cv.y + fZ * c.Cv.z;
-            float den = c.Cd.w + fX * c.Cd.x + fY * c.Cd.y + fZ * c.Cd.z;
-
-            const float uStep = c.Cu.z * vg.vox_z;
-            const float vStep = c.Cv.z * vg.vox_z;
-            const float dStep = c.Cd.z * vg.vox_z;
-
-            const float w_base = c.SID2 * c.dtheta * c.fScaleDTheta;
-
-#pragma unroll
-            for (int iz = 0; iz < ZSIZE; ++iz) {
-                float fr = __fdividef(1.f, den);
-                float u = uNum * fr;
-                float v = vNum * fr;
-                float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
-                Z[iz] += p * (w_base * fr * fr);
-
-                uNum += uStep;
-                vNum += vStep;
-                den += dStep;
-            }
-        }
-
-        const int endZ = min(startZ + ZSIZE, vg.Nz);
-#pragma unroll
-        for (int iz = 0; iz < ZSIZE; ++iz) {
-            if (startZ + iz < endZ) {
-                size_t idx = (size_t)(startZ + iz) * vg.Ny * vg.Nx
-                    + (size_t)y * vg.Nx + x;
-                vol[idx] += Z[iz];
-            }
-        }
-    }
-
-    // ============================================================
-    // BP kernel °™ ∑«‘§º∆À„∞Ê±æ£®÷±Ω”º∆À„Õ∂”∞◊¯±Í£©
-    // ============================================================
-    template<int ZSIZE>
-    __global__ void fdk_bp_kernel(
-        const cudaTextureObject_t* __restrict__ tex_views,
-        const SConeProjGeomVec* __restrict__ d_geo,
-        const SFDKGeoParamPerView* __restrict__ d_gv,
-        float* __restrict__ vol,
-        SVolGeom vg,
-        int K)
-    {
-        const int x = blockIdx.x * blockDim.x + threadIdx.x;
-        const int y = blockIdx.y * blockDim.y + threadIdx.y;
-        if (x >= vg.Nx || y >= vg.Ny) return;
-
-        const int startZ = blockIdx.z * ZSIZE;
-        if (startZ >= vg.Nz) return;
-
-        float Z[ZSIZE];
-#pragma unroll
-        for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
-
-        for (int i = 0; i < K; ++i) {
-            const SConeProjGeomVec& g = d_geo[i];
-            const SFDKGeoParamPerView& gv = d_gv[i];
-
-            const float fX = vg.origin().x + y * vg.vox_x;
-            const float fY = vg.origin().y + x * vg.vox_y;
-
-#pragma unroll
-            for (int iz = 0; iz < ZSIZE; ++iz) {
-                const int zIdx = startZ + iz;
-                if (zIdx >= vg.Nz) continue;
-
-                float3 P = make_float3(fX, fY, vg.origin().z + zIdx * vg.vox_z);
-
-                float u, v, denom_c;
-                if (!project_uv_and_terms_derived(g, gv, P, u, v, denom_c))
-                    continue;
-
-                float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
-                float w = (gv.SOD_mm * gv.SOD_mm) / (denom_c * denom_c);
-                Z[iz] += p * w * gv.dtheta * gv.fScaleDTheta;
-            }
-        }
-
-        const int endZ = min(startZ + ZSIZE, vg.Nz);
-#pragma unroll
-        for (int iz = 0; iz < ZSIZE; ++iz) {
-            if (startZ + iz < endZ) {
-                size_t idx = (size_t)(startZ + iz) * vg.Ny * vg.Nx
-                    + (size_t)y * vg.Nx + x;
-                vol[idx] += Z[iz];
-            }
-        }
-    }
-
-    // ============================================================
-    // launchBpKernel °™ ‘§º∆À„∞Ê±æ
-    // ============================================================
-    inline void launchBpKernel(
-        const cudaTextureObject_t* d_texObjs,
-        float* d_vol,
-        const SVolGeom& vol_geom,
-        int K, cudaStream_t stream)
-    {
-
-        constexpr int ZSIZE = 4;
-        dim3 block(16, 16, 1);
-        dim3 grid(
-            (vol_geom.Nx + block.x - 1) / block.x,
-            (vol_geom.Ny + block.y - 1) / block.y,
-            (vol_geom.Nz + ZSIZE - 1) / ZSIZE);
-
-        fdk_bp_kernel<ZSIZE> << <grid, block, 0, stream >> > (
-            d_texObjs, d_vol, vol_geom, K);
-        YK_CUDA_KERNEL_CHECK();
-    }
-
-    // ============================================================
-    // launchBpKernel °™ ∑«‘§º∆À„∞Ê±æ
-    // ============================================================
-    inline void launchBpKernel(
-        const cudaTextureObject_t* d_texObjs,
-        const SConeProjGeomVec* d_geo,
-        const SFDKGeoParamPerView* d_gv,
-        float* d_vol,
-        const SVolGeom& vol_geom,
-        int K, cudaStream_t stream)
-    {
-
-
-        constexpr int ZSIZE = 4;
-        dim3 block(16, 16, 1);
-        dim3 grid(
-            (vol_geom.Nx + block.x - 1) / block.x,
-            (vol_geom.Ny + block.y - 1) / block.y,
-            (vol_geom.Nz + ZSIZE - 1) / ZSIZE);
-
-        fdk_bp_kernel<ZSIZE> << <grid, block, 0, stream >> > (
-            d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
-        YK_CUDA_KERNEL_CHECK();
-    }
-
-} // namespace YK
-
-
-
-namespace YK {
-
-    // ----------------------------------------------------------------
-    // BpProcessor : IProcessor
-    // ----------------------------------------------------------------
-    class BpProcessor : public IProcessor {
-    public:
-        BpProcessor() = default;
-        ~BpProcessor() override { release(); }
-
-        BpProcessor(const BpProcessor&) = delete;
-        BpProcessor& operator=(const BpProcessor&) = delete;
-
-        void setInitContext(const void* ctx) override
-        {
-            if (!ctx) {
-                std::fprintf(stderr, "[YK][Bp][E] setInitContext: null.\n");
-                return;
-            }
-            const auto* ic = static_cast<const BpInitContext*>(ctx);
-            vol_geom_ = ic->vol_geom;
-            use_precomputed_ = ic->use_precomputed;
-            cfg_ready_ = true;
-        }
-
-        bool init() override
-        {
-            if (!cfg_ready_) {
-                std::fprintf(stderr, "[YK][Bp][E] init: setInitContext() not called.\n");
-                return false;
-            }
-            if (vol_geom_.Nx <= 0 || vol_geom_.Ny <= 0 || vol_geom_.Nz <= 0
-                || vol_geom_.vox_x <= 0.f
-                || vol_geom_.vox_y <= 0.f
-                || vol_geom_.vox_z <= 0.f) {
-                std::fprintf(stderr, "[YK][Bp][E] init: invalid vol_geom.\n");
-                return false;
-            }
-            is_initialized_ = true;
-            return true;
-        }
-
-        void setContext(const void* ctx) override
-        {
-            if (!is_initialized_) {
-                std::fprintf(stderr, "[YK][Bp][E] setContext: not initialized.\n");
-                return;
-            }
-            if (!ctx) {
-                std::fprintf(stderr, "[YK][Bp][E] setContext: null.\n");
-                return;
-            }
-            const auto* cc = static_cast<const BpChunkContext*>(ctx);
-
-            if (cc->K <= 0) {
-                std::fprintf(stderr, "[YK][Bp][E] setContext: invalid base fields.\n");
-                return;
-            }
-
-            // ∑«‘§º∆À„∞Ê±æ∂ÓÕ‚–£—È d_geo / d_gv
-            if (!use_precomputed_ && (!cc->d_geo || !cc->d_gv)) {
-                std::fprintf(stderr,
-                    "[YK][Bp][E] setContext: non-precomputed mode requires d_geo and d_gv.\n");
-                return;
-            }
-
-            chunk_ = *cc;
-        }
-
-        void process(const void* d_input/*d_input*/,
-            void* d_output      /*d_output*/,
-            cudaStream_t stream = 0) override
-        {
-            if (!is_initialized_) {
-                std::fprintf(stderr, "[YK][Bp][E] process: not initialized.\n");
-                return;
-            }
-            if (!d_input || !d_output || chunk_.K <= 0) {
-                std::fprintf(stderr, "[YK][Bp][E] process: setContext() not called.\n");
-                return;
-            }
-
-            const cudaTextureObject_t* d_texObjs = static_cast<const cudaTextureObject_t*>(d_input);
-            float* d_vol = static_cast<float*>(d_output);
-
-            if (use_precomputed_) {
-                // ‘§º∆À„∞Ê±æ£∫gC_coeffs “—Õ®π˝ cudaMemcpyToSymbol …œ¥´
-                launchBpKernel(
-                    d_texObjs,
-                    d_vol,
-                    vol_geom_,
-                    chunk_.K, stream);
-            }
-            else {
-                // ∑«‘§º∆À„∞Ê±æ£∫÷±Ω”‘⁄ kernel ƒ⁄º∆À„Õ∂”∞◊¯±Í
-                launchBpKernel(
-                    d_texObjs,
-                    chunk_.d_geo,
-                    chunk_.d_gv,
-                    d_vol,
-                    vol_geom_,
-                    chunk_.K, stream);
-            }
-        }
-
-        void release() override
-        {
-            chunk_ = {};
-            vol_geom_ = {};
-            use_precomputed_ = true;
-            is_initialized_ = false;
-            cfg_ready_ = false;
-        }
-
-        bool        isInitialized() const override { return is_initialized_; }
-        const char* name()          const override { return "BpProcessor"; }
-
-    private:
-        SVolGeom vol_geom_ = {};
-        bool            use_precomputed_ = true;
-        BpChunkContext  chunk_ = {};
-        bool            is_initialized_ = false;
-        bool            cfg_ready_ = false;
-    };
-
-} // namespace YK
+} // namespace YK::Fdk

@@ -12,7 +12,8 @@
 #include "FDK/YkBackProjectProcessor.hpp"
 #include "FDK/YkFDKFilterProcessor.hpp"
 #include "FDK/YkFDKGpuContext.hpp"
-#include "FDK/YkFDKPreWeightProcessor.hpp"
+#include "FDK/YkFDKPreWeight.cuh"
+#include "FDK/YkFDKParkerWeight.cuh"
 #include "FDK/YkFDKPrecompute.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
 
@@ -205,10 +206,10 @@ namespace YK {
         std::vector<float> angle_accum_;
 
         // processor 持久化，init() 后常驻
-        PreweightProcessor    pw_;
-        ParkerWeightProcessor pkw_;
+        Fdk::PreweightProcessor    pw_;
+        Fdk::ParkerWeightProcessor pkw_;
         Fdk::FilterProcessor       flt_;
-        BpProcessor           bp_;
+        Fdk::BpProcessor           bp_;
 
         // ----------------------------------------------------------------
         // feed_impl

@@ -44,6 +44,18 @@
     <Filter Include="FDK\flt\detail">
       <UniqueIdentifier>{ba52cd74-297d-4e20-b104-8b59623da93b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="FDK\pw\detail">
+      <UniqueIdentifier>{c1620dde-29a0-40eb-9894-c32cad056fdf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FDK\pk">
+      <UniqueIdentifier>{94eab4a3-14f5-4b82-90c4-c7ced42f5740}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FDK\pk\detail">
+      <UniqueIdentifier>{f294f2e1-32f3-4f1d-8f42-cb617ba280e6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FDK\bp\detail">
+      <UniqueIdentifier>{199f1638-b892-4f92-ae38-ef27790aa4e4}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="testmain.cu" />
@@ -90,9 +102,6 @@
     </ClInclude>
     <ClInclude Include="CVP\cvp_geometry.cuh">
       <Filter>CVP</Filter>
-    </ClInclude>
-    <ClInclude Include="YkVecFDK.hpp">
-      <Filter>FDK</Filter>
     </ClInclude>
     <ClInclude Include="YkSampling2D.hpp">
       <Filter>util</Filter>
@@ -142,15 +151,6 @@
     <ClInclude Include="YkVecGeo.hpp">
       <Filter>FDK\ctx</Filter>
     </ClInclude>
-    <ClInclude Include="FDK\YkBackProjectProcessor.hpp">
-      <Filter>FDK\bp</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKPreWeightProcessor.hpp">
-      <Filter>FDK\pw</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKPrecompute.hpp">
-      <Filter>FDK\bp</Filter>
-    </ClInclude>
     <ClInclude Include="FDK\YkFDKFilter.cuh">
       <Filter>FDK\flt</Filter>
     </ClInclude>
@@ -165,6 +165,57 @@
     </ClInclude>
     <ClInclude Include="FDK\cuh\YkFDKFilterLaunch.cuh">
       <Filter>FDK\flt\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKPreWeightHelpers.cuh">
+      <Filter>FDK\pw\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKPreWeightKernels.cuh">
+      <Filter>FDK\pw\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKPreWeightLaunch.cuh">
+      <Filter>FDK\pw\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKParkerHelpers.cuh">
+      <Filter>FDK\pk\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKParkerKernels.cuh">
+      <Filter>FDK\pk\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKParkerLaunch.cuh">
+      <Filter>FDK\pk\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKPreWeight.cuh">
+      <Filter>FDK\pw</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKPreWeightProcessor.hpp">
+      <Filter>FDK\pw</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKParkerWeight.cuh">
+      <Filter>FDK\pk</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKParkerWeightProcessor.hpp">
+      <Filter>FDK\pk</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKBpHelpers.cuh">
+      <Filter>FDK\bp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKBpKernels.cuh">
+      <Filter>FDK\bp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKBpLaunch.cuh">
+      <Filter>FDK\bp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKBpPrecompute.cuh">
+      <Filter>FDK\bp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkBackProjectProcessor.hpp">
+      <Filter>FDK\bp</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKBackProject.cuh">
+      <Filter>FDK\bp</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkVecFDK.hpp">
+      <Filter>FDK</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
