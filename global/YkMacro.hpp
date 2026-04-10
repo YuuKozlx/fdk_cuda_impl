@@ -1,5 +1,22 @@
 #pragma once
+#include <crt/host_defines.h>
 #include <cuda_runtime.h>
+
+#define YK_INLINE inline
+
+
+
+
+#ifdef __CUDACC__
+#define YK_HD __host__ __device__
+#define YK_DEVICE __device__
+#define YK_FORCE_INLINE __forceinline__
+#else
+#define YK_HD
+#define YK_DEVICE
+#define YK_FORCE_INLINE inline
+#endif
+
 
 #ifndef YK_CUDA_CHECK
 #define YK_CUDA_CHECK(x) do { \
@@ -22,11 +39,21 @@
 #endif
 
 #ifndef YK_CUDA_KERNEL_CHECK
+#ifdef YK_DEBUG
 #define YK_CUDA_KERNEL_CHECK()                                                  \
-    do {                                                                     \
-        YK_CUDA_CHECK(cudaPeekAtLastError());                                   \
+    do {                                                                        \
+        auto err = cudaPeekAtLastError();                                       \
+        if (err != cudaSuccess) {                                               \
+            YK_CUDA_CHECK(err);                                                 \
+        }                                                                       \
         YK_CUDA_CHECK(cudaDeviceSynchronize());                                 \
     } while (0)
+#else
+#define YK_CUDA_KERNEL_CHECK()                                                  \
+    do {                                                                        \
+        YK_CUDA_CHECK(cudaPeekAtLastError());                                   \
+    } while (0)
+#endif
 #endif
 
 #ifndef YK_ASSERT
@@ -170,7 +197,7 @@
 // 7. Device index helper
 // ============================================================
 
-inline void cuda_set_device(int device_id) {
+YK_INLINE void cuda_set_device(int device_id) {
     int count = 0;
     YK_CUDA_CHECK(cudaGetDeviceCount(&count));
     if (device_id < 0 || device_id >= count) {

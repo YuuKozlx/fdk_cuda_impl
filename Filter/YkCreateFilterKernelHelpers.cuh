@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "../global/YkGlobals.h"
+#include "../global/YkMacro.hpp"
 
 namespace YK {
     namespace Filter {

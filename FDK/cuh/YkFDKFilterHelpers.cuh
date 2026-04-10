@@ -4,7 +4,7 @@
 
 #include <cuda_runtime.h>
 
-#include "YkFdkPipelineContext.hpp"   // SKernelLaunchPolicy
+#include "../YkFdkPipelineContext.hpp"   // SKernelLaunchPolicy
 
 
 namespace YK {
@@ -14,7 +14,7 @@ namespace YK {
             // ----------------------------------------------------------------
             // Launch-policy normalization
             // ----------------------------------------------------------------
-            inline SKernelLaunchPolicy normalizeFilterPolicy(SKernelLaunchPolicy p)
+            YK_INLINE SKernelLaunchPolicy normalizeFilterPolicy(SKernelLaunchPolicy p)
             {
                 if (p.block_threads < 32) p.block_threads = 32;
                 p.block_threads = (p.block_threads + 31) & ~31;

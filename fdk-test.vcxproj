@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -131,64 +131,71 @@
     <ClInclude Include="CVP\cvp_forward.cuh" />
     <ClInclude Include="CVP\cvp_geometry.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpHelpers.cuh" />
-    <ClInclude Include="FDK\cuh\YkFDKBpKernels.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpLaunch.cuh" />
+    <CudaCompile Include="FDK\cuh\YkFDKBpPrecompute.cu">
+      <FileType>Document</FileType>
+    </CudaCompile>
     <ClInclude Include="FDK\cuh\YkFDKBpPrecompute.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKFilterHelpers.cuh" />
-    <ClInclude Include="FDK\cuh\YkFDKFilterKernels.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKFilterLaunch.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKParkerHelpers.cuh" />
-    <ClInclude Include="FDK\cuh\YkFDKParkerKernels.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKParkerLaunch.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKPreWeightHelpers.cuh" />
-    <ClInclude Include="FDK\cuh\YkFDKPreWeightKernels.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKPreWeightLaunch.cuh" />
+    <ClInclude Include="FDK\YkFdkReconstructorHandle.hpp" />
     <ClInclude Include="FDK\YkBackProjectProcessor.hpp" />
     <ClInclude Include="FDK\YkFDKBackProject.cuh" />
     <ClInclude Include="FDK\YkFDKFilter.cuh" />
     <ClInclude Include="FDK\YkFDKFilterProcessor.hpp" />
+    <ClInclude Include="FDK\YkFDKGpuContext.hpp" />
     <ClInclude Include="FDK\YkFDKParkerWeight.cuh" />
     <ClInclude Include="FDK\YkFDKParkerWeightProcessor.hpp" />
+    <ClInclude Include="FDK\YkFdkPipelineContext.hpp" />
     <ClInclude Include="FDK\YkFDKPreWeight.cuh" />
     <ClInclude Include="FDK\YkFDKPreWeightProcessor.hpp" />
-    <ClInclude Include="FDK\YkVecFDK.hpp" />
-    <ClInclude Include="Filter\YkFilterKernel.cuh" />
-    <ClInclude Include="Filter\YkFilterKernelFFT.cuh" />
-    <ClInclude Include="Filter\YkFilterKernelHelpers.cuh" />
-    <ClInclude Include="Filter\YkFilterKernelKernels.cuh" />
-    <ClInclude Include="IProcessor.hpp" />
-    <ClInclude Include="YkCudaTimer.hpp" />
-    <ClInclude Include="YkMiniMHA.h" />
-    <ClInclude Include="YkDataObj.hpp" />
-    <ClInclude Include="YkFDKGpuContext.hpp" />
-    <ClInclude Include="YkFDKVecGeoDerived.hpp" />
-    <ClInclude Include="YkIoDump.hpp" />
-    <ClInclude Include="YkMacro.hpp" />
-    <ClInclude Include="YkMem3d.hpp" />
-    <ClInclude Include="YkSampling2D.hpp" />
+    <ClInclude Include="FDK\YkFDKVecGeoDerived.hpp" />
+    <ClInclude Include="FDK\YkFdkReconstructor.hpp" />
+    <ClInclude Include="FDK\YkVecGeo.hpp" />
+    <ClInclude Include="Filter\YkConv.hpp" />
+    <ClInclude Include="Filter\YkCreateFilterKernelLaunch.cuh" />
+    <ClInclude Include="Filter\YkFFT.hpp" />
+    <ClInclude Include="Filter\YkCreateFilterKernel.cuh" />
+    <ClInclude Include="Filter\YkCreateFilterKernelFFT.hpp" />
+    <ClInclude Include="Filter\YkCreateFilterKernelHelpers.cuh" />
+    <CudaCompile Include="Filter\YkCreateFilterKernelKernels.cu">
+      <FileType>Document</FileType>
+    </CudaCompile>
+    <ClInclude Include="global\IProcessor.hpp" />
+    <ClInclude Include="global\YkCBCTParams.h" />
+    <ClInclude Include="global\YkDataObj.hpp" />
+    <ClInclude Include="global\YkGlobals.h" />
+    <ClInclude Include="global\YkMacro.hpp" />
+    <ClInclude Include="global\YkMem3d.hpp" />
+    <ClInclude Include="interface\IFdkReconstructor.hpp" />
+    <ClInclude Include="interface\IReconstructor.hpp" />
+    <ClInclude Include="interface\YkFdkTypes.hpp" />
+    <ClInclude Include="util\YkCudaTimer.hpp" />
+    <ClInclude Include="util\YkIoDump.hpp" />
+    <ClInclude Include="util\YkMiniMHA.h" />
+    <ClInclude Include="util\YkSampling2D.hpp" />
+    <ClInclude Include="util\YKUtil.hpp" />
+    <ClInclude Include="util\YkVecOperation.hpp" />
     <ClInclude Include="Yktest_dataobject.hpp" />
     <ClInclude Include="Yktest_fdkflter.hpp" />
     <ClInclude Include="Yktest_fft.hpp" />
     <ClInclude Include="Yktest_mem3d.hpp" />
-    <ClInclude Include="YkVecGeo.hpp" />
-    <ClInclude Include="YkFdkPipelineContext.hpp" />
-    <ClInclude Include="YkCBCTParams.h" />
+    <CudaCompile Include="FDK\cuh\YkFDKBpKernels.cu" />
+    <CudaCompile Include="FDK\cuh\YkFDKFilterKernels.cu" />
+    <CudaCompile Include="FDK\cuh\YkFDKParkerKernels.cu" />
+    <CudaCompile Include="FDK\cuh\YkFDKPreWeightKernels.cu" />
+    <CudaCompile Include="Filter\YkConvKernels.cu" />
     <CudaCompile Include="testmain.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="YkConv.hpp" />
-    <ClInclude Include="YkFFT.hpp" />
-    <ClInclude Include="YkGlobals.h" />
     <ClInclude Include="YKtestconv.hpp" />
-    <ClInclude Include="YkUtil.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="YkVecOperation.hpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="YkIoDump.cpp">
-      <FileType>Document</FileType>
-    </ClCompile>
+    <ClCompile Include="util\YkIoDump.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

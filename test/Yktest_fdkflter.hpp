@@ -1,14 +1,14 @@
 #pragma once
-#include <vector>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <algorithm>
+#include <vector>
 
 #include <cuda_runtime.h>
 
+#include "../Filter/YkCreateFilterKernel.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
-#include "../Filter/YkFilterKernelFFT.cuh"
 
 
 namespace YKTest {
@@ -108,7 +108,7 @@ namespace YKTest {
         // -----------------------------
         // Create builder
         // -----------------------------
-        Filter::FilterKernelFFT kernel;
+        Filter::CreateFilterKernelFromFFT kernel;
         kernel.prepare(paddedN, stream);
 
         // device weights

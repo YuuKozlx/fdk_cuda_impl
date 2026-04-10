@@ -17,6 +17,5 @@
 //   float* d_w = fk.alloc_weights();
 //   fk.build_weights(d_w, desc);
 
-#include "YkFilterKernelHelpers.cuh"
-#include "YkFilterKernelKernels.cuh"
-#include "YkFilterKernelFFT.cuh"
+#include "YkCreateFilterKernelHelpers.cuh"
+#include "YkCreateFilterKernelFFT.hpp"

@@ -6,9 +6,9 @@
 #include <stdexcept>
 #include <vector_functions.hpp>
 #include <vector_types.h>
-#include "global/YkGlobals.h"
-#include "global/YkMacro.hpp"
-#include "util/YkVecOperation.hpp"
+#include "../global/YkGlobals.h"
+#include "../global/YkMacro.hpp"
+#include "../util/YkVecOperation.hpp"
 
 namespace YK {
 
@@ -129,7 +129,7 @@ namespace YK {
      */
 
 
-    inline void build_circular_vec_geometry_from_theta(
+    YK_INLINE void build_circular_vec_geometry_from_theta(
         std::vector<SConeProjGeomVec>& geo,
         const std::vector<float>& theta,
         int Ang, int Nu, int Nv,
@@ -222,7 +222,7 @@ namespace YK {
         }
     }
 
-    inline void build_circular_vec_geometry(
+    YK_INLINE void build_circular_vec_geometry(
         std::vector<SConeProjGeomVec>& geo,
         int Ang, int Nu, int Nv,
         float du, float dv,
@@ -262,7 +262,7 @@ namespace YK {
 
 
 
-    SConeProjGeomVec build_from_rtk_single(
+    YK_INLINE SConeProjGeomVec build_from_rtk_single(
         float gantryAngle,      // RTK: GantryAngle [rad]
         float outOfPlaneAngle,  // RTK: OutOfPlaneAngle [rad]
         float inPlaneAngle,     // RTK: InPlaneAngle [rad]
@@ -326,7 +326,7 @@ namespace YK {
     }
 
     // 批量版本：从 RTK XML 读出的 per-projection 参数数组转换
-    void build_from_rtk_geometry(
+    YK_INLINE  void build_from_rtk_geometry(
         std::vector<SConeProjGeomVec>& geo,
         const std::vector<float>& gantryAngles,
         float SAD, float SID,                    // 若全局相同

@@ -1,14 +1,16 @@
 // YkFDKDataBus.hpp
 #pragma once
+#include <channel_descriptor.h>
 #include <cuda_runtime.h>
 #include <vector>
-#include <channel_descriptor.h>
-#include "FDK/YkFDKPrecompute.hpp"
-#include "FDK/YkFDKVecGeoDerived.hpp"
-#include "global/YkGlobals.h"
-#include "global/YkMacro.hpp"
-#include "global/YkMem3d.hpp"
-#include "FDK/YkVecGeo.hpp"
+#include "../global/YkGlobals.h"
+#include "../global/YkMacro.hpp"
+#include "../global/YkMem3d.hpp"
+#include "YkFDKBackProject.cuh"
+#include "YkFDKVecGeoDerived.hpp"
+#include "YkVecGeo.hpp"
+#include "YkFDKBackProject.cuh"
+
 
 namespace YK {
     // 在 namespace YK { 内部顶部加：
@@ -102,19 +104,6 @@ namespace YK {
 
 
 
-    __global__ void printGCoeff(int K) {
-        int idx = threadIdx.x;
-        if (idx >= K) return;
-
-        const FdkAffineCoeff& c = gC_coeffs[idx];
-        printf("gC_coeffs[%d] = { Cu=(%f,%f,%f,%f) Cv=(%f,%f,%f,%f) Cd=(%f,%f,%f,%f) dtheta=%f SID2=%f }\n",
-            idx,
-            c.Cu.x, c.Cu.y, c.Cu.z, c.Cu.w,
-            c.Cv.x, c.Cv.y, c.Cv.z, c.Cv.w,
-            c.Cd.x, c.Cd.y, c.Cd.z, c.Cd.w,
-            c.dtheta, c.SID2);
-    }
-
     // ================================================================
     // FdkGeoData
     // 几何参数：自定义结构体用 PodDataController + DeviceLinearBuffer
@@ -135,7 +124,7 @@ namespace YK {
             gv = dc.allocateAndUpload(h_gv, deviceId);
             coeffs = dc.allocate<FdkAffineCoeff>(iPA, deviceId);
 
-            launchPrecomputeCoeffs(
+            Fdk::detail::bp_launchPrecomputeCoeffs(
                 geo.data(), gv.data(),
                 coeffs.data(), iPA, stream);
 
@@ -151,7 +140,6 @@ namespace YK {
                 0, cudaMemcpyDeviceToDevice, stream));
 
             int threads = kMaxChunkAng;
-            //printGCoeff << <1, threads, 0, stream >> > (32); // 打印第一个系数作为示例
         }
 
         SConeProjGeomVec* d_geo()    const { return geo.data(); }

@@ -56,14 +56,35 @@
     <Filter Include="FDK\bp\detail">
       <UniqueIdentifier>{199f1638-b892-4f92-ae38-ef27790aa4e4}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Filter\fft">
+      <UniqueIdentifier>{74ef26c2-25d8-451b-bee0-9f75f354904f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="testmain.cu" />
+    <CudaCompile Include="FDK\cuh\YkFDKBpKernels.cu">
+      <Filter>FDK\bp\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="FDK\cuh\YkFDKBpPrecompute.cu">
+      <Filter>FDK\bp\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="FDK\cuh\YkFDKFilterKernels.cu">
+      <Filter>FDK\flt\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="FDK\cuh\YkFDKParkerKernels.cu">
+      <Filter>FDK\pk\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="FDK\cuh\YkFDKPreWeightKernels.cu">
+      <Filter>FDK\pw\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="Filter\YkCreateFilterKernelKernels.cu">
+      <Filter>Filter\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="Filter\YkConvKernels.cu">
+      <Filter>Filter\fft</Filter>
+    </CudaCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="YkGlobals.h">
-      <Filter>global</Filter>
-    </ClInclude>
     <ClInclude Include="Yktest_fft.hpp">
       <Filter>tests</Filter>
     </ClInclude>
@@ -73,26 +94,11 @@
     <ClInclude Include="YKtestconv.hpp">
       <Filter>tests</Filter>
     </ClInclude>
-    <ClInclude Include="YkUtil.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="YkIoDump.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
     <ClInclude Include="Yktest_mem3d.hpp">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="Yktest_dataobject.hpp">
       <Filter>tests</Filter>
-    </ClInclude>
-    <ClInclude Include="YkMiniMHA.h">
-      <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="IProcessor.hpp">
-      <Filter>global</Filter>
-    </ClInclude>
-    <ClInclude Include="YkMacro.hpp">
-      <Filter>global</Filter>
     </ClInclude>
     <ClInclude Include="CVP\cvp_back.cuh">
       <Filter>CVP</Filter>
@@ -103,53 +109,14 @@
     <ClInclude Include="CVP\cvp_geometry.cuh">
       <Filter>CVP</Filter>
     </ClInclude>
-    <ClInclude Include="YkSampling2D.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="YkVecOperation.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="YkCudaTimer.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="YkDataObj.hpp">
-      <Filter>global</Filter>
-    </ClInclude>
-    <ClInclude Include="YkCBCTParams.h">
-      <Filter>interface</Filter>
-    </ClInclude>
-    <ClInclude Include="YkConv.hpp">
+    <ClInclude Include="Filter\YkCreateFilterKernel.cuh">
       <Filter>Filter</Filter>
     </ClInclude>
-    <ClInclude Include="YkFFT.hpp">
+    <ClInclude Include="Filter\YkCreateFilterKernelFFT.hpp">
       <Filter>Filter</Filter>
     </ClInclude>
-    <ClInclude Include="Filter\YkFilterKernel.cuh">
-      <Filter>Filter</Filter>
-    </ClInclude>
-    <ClInclude Include="Filter\YkFilterKernelFFT.cuh">
-      <Filter>Filter</Filter>
-    </ClInclude>
-    <ClInclude Include="Filter\YkFilterKernelHelpers.cuh">
+    <ClInclude Include="Filter\YkCreateFilterKernelHelpers.cuh">
       <Filter>Filter\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="Filter\YkFilterKernelKernels.cuh">
-      <Filter>Filter\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="YkMem3d.hpp">
-      <Filter>global</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKVecGeoDerived.hpp">
-      <Filter>FDK\ctx</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFdkPipelineContext.hpp">
-      <Filter>FDK\ctx</Filter>
-    </ClInclude>
-    <ClInclude Include="YkFDKGpuContext.hpp">
-      <Filter>FDK\ctx</Filter>
-    </ClInclude>
-    <ClInclude Include="YkVecGeo.hpp">
-      <Filter>FDK\ctx</Filter>
     </ClInclude>
     <ClInclude Include="FDK\YkFDKFilter.cuh">
       <Filter>FDK\flt</Filter>
@@ -160,25 +127,16 @@
     <ClInclude Include="FDK\cuh\YkFDKFilterHelpers.cuh">
       <Filter>FDK\flt\detail</Filter>
     </ClInclude>
-    <ClInclude Include="FDK\cuh\YkFDKFilterKernels.cuh">
-      <Filter>FDK\flt\detail</Filter>
-    </ClInclude>
     <ClInclude Include="FDK\cuh\YkFDKFilterLaunch.cuh">
       <Filter>FDK\flt\detail</Filter>
     </ClInclude>
     <ClInclude Include="FDK\cuh\YkFDKPreWeightHelpers.cuh">
       <Filter>FDK\pw\detail</Filter>
     </ClInclude>
-    <ClInclude Include="FDK\cuh\YkFDKPreWeightKernels.cuh">
-      <Filter>FDK\pw\detail</Filter>
-    </ClInclude>
     <ClInclude Include="FDK\cuh\YkFDKPreWeightLaunch.cuh">
       <Filter>FDK\pw\detail</Filter>
     </ClInclude>
     <ClInclude Include="FDK\cuh\YkFDKParkerHelpers.cuh">
-      <Filter>FDK\pk\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="FDK\cuh\YkFDKParkerKernels.cuh">
       <Filter>FDK\pk\detail</Filter>
     </ClInclude>
     <ClInclude Include="FDK\cuh\YkFDKParkerLaunch.cuh">
@@ -199,13 +157,7 @@
     <ClInclude Include="FDK\cuh\YkFDKBpHelpers.cuh">
       <Filter>FDK\bp\detail</Filter>
     </ClInclude>
-    <ClInclude Include="FDK\cuh\YkFDKBpKernels.cuh">
-      <Filter>FDK\bp\detail</Filter>
-    </ClInclude>
     <ClInclude Include="FDK\cuh\YkFDKBpLaunch.cuh">
-      <Filter>FDK\bp\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="FDK\cuh\YkFDKBpPrecompute.cuh">
       <Filter>FDK\bp\detail</Filter>
     </ClInclude>
     <ClInclude Include="FDK\YkBackProjectProcessor.hpp">
@@ -214,12 +166,84 @@
     <ClInclude Include="FDK\YkFDKBackProject.cuh">
       <Filter>FDK\bp</Filter>
     </ClInclude>
-    <ClInclude Include="FDK\YkVecFDK.hpp">
+    <ClInclude Include="FDK\YkFdkReconstructor.hpp">
       <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="Filter\YkConv.hpp">
+      <Filter>Filter\fft</Filter>
+    </ClInclude>
+    <ClInclude Include="Filter\YkFFT.hpp">
+      <Filter>Filter\fft</Filter>
+    </ClInclude>
+    <ClInclude Include="global\IProcessor.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="global\YkCBCTParams.h">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="global\YkDataObj.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="global\YkGlobals.h">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="global\YkMacro.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="global\YkMem3d.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKGpuContext.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFdkPipelineContext.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFDKVecGeoDerived.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkVecGeo.hpp">
+      <Filter>FDK\ctx</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\IReconstructor.hpp">
+      <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\YkFdkTypes.hpp">
+      <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\YkFdkReconstructorHandle.hpp">
+      <Filter>FDK</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\IFdkReconstructor.hpp">
+      <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="util\YkCudaTimer.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="util\YkIoDump.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="util\YkMiniMHA.h">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="util\YkSampling2D.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="util\YKUtil.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="util\YkVecOperation.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="FDK\cuh\YkFDKBpPrecompute.cuh">
+      <Filter>FDK\bp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="Filter\YkCreateFilterKernelLaunch.cuh">
+      <Filter>Filter\detail</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="YkIoDump.cpp">
+    <ClCompile Include="util\YkIoDump.cpp">
       <Filter>util</Filter>
     </ClCompile>
   </ItemGroup>

@@ -5,9 +5,9 @@
 
 #include <vector_functions.hpp>
 
-#include "global/YkGlobals.h"
-#include "FDK/YkVecGeo.hpp"
-#include "util/YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
+#include "../global/YkGlobals.h"
+#include "../FDK/YkVecGeo.hpp"
+#include "../util/YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
 
 namespace YK {
 
@@ -141,7 +141,7 @@ namespace YK {
         // -----------------------------
         // theta unwrap
         // -----------------------------
-        static inline void unwrap_theta_inplace(std::vector<float>& theta)
+        static void unwrap_theta_inplace(std::vector<float>& theta)
         {
             for (size_t i = 1; i < theta.size(); ++i) {
                 float t = theta[i];
@@ -155,7 +155,7 @@ namespace YK {
         // -----------------------------
         // dtheta
         // -----------------------------
-        static inline float compute_dtheta(const std::vector<float>& theta, int index, float eps)
+        static float compute_dtheta(const std::vector<float>& theta, int index, float eps)
         {
             const int n = (int)theta.size();
             float dt = 0.f;
@@ -177,7 +177,7 @@ namespace YK {
         // SID by your definition: SID = | d ¡¤ src |
         // (plane through Z-axis with normal || d, and |d|=1)
         // -----------------------------
-        static inline float sid_mm_from_source_to_zaxis(const float3& src)
+        static float sid_mm_from_source_to_zaxis(const float3& src)
         {
             return f3_len(f3(src.x, src.y, 0.f));
         }
@@ -189,7 +189,7 @@ namespace YK {
         // detector basis cache for device-side solve
         //   Cache UU,VV,UV,invDet for solving D = u*U + v*V
         // -----------------------------
-        static inline void compute_detector_basis_cache(
+        static void compute_detector_basis_cache(
             const SConeProjGeomVec& geo,
             float& UU, float& VV, float& UV, float& invDetUV)
         {
@@ -220,7 +220,7 @@ namespace YK {
         // outputs (write into gv fields via refs):
         //   offset_valid, offsetU_pix, offsetV_pix, SDD_mm
         // -----------------------------
-        static inline bool compute_SDD_offsets(
+        static bool compute_SDD_offsets(
             const SConeProjGeomVec& geo,
             int detector_pixels_u,
             int detector_pixels_v,

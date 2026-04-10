@@ -1,5 +1,6 @@
 #pragma once
 #include "cvp_geometry.cuh"
+#include "../global/YkMacro.hpp"
 
 namespace cvp
 {
@@ -179,7 +180,7 @@ namespace cvp
     // ============================================================
     //  Launch wrapper  (3-step pipeline per view)
     // ============================================================
-    inline void launch_cvp_forward(
+    YK_INLINE void launch_cvp_forward(
         const float* d_volume,     // device [Nz][Ny][Nx]
         float* d_sino,       // device [N][M], must be zeroed before call
         float* d_cos_theta,  // device [N][M], preallocated scratch

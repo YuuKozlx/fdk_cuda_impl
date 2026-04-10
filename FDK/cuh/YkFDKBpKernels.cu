@@ -1,10 +1,4 @@
-#pragma once
-#include <cuda_runtime.h>
-
-#include "YkVecGeo.hpp"
-#include "YkFDKVecGeoDerived.hpp"
-#include "YkFdkPipelineContext.hpp"
-
+﻿#include "YkFDKBpLaunch.cuh"
 #include "YkFDKBpHelpers.cuh"
 
 namespace YK {
@@ -130,6 +124,107 @@ namespace YK {
                     }
                 }
             }
+
+
+
+            void bp_launchBpPrecomputed(
+                const cudaTextureObject_t* d_texObjs,
+                float* d_vol,
+                const SVolGeom& vol_geom,
+                int K,
+                cudaStream_t stream)
+            {
+                const dim3 block(16, 16, 1);
+
+                constexpr int zsize = 4;  // ⚠️ 如果你未来要外部控制，可以改成参数
+
+                const dim3 grid(
+                    (vol_geom.Nx + block.x - 1) / block.x,
+                    (vol_geom.Ny + block.y - 1) / block.y,
+                    (vol_geom.Nz + zsize - 1) / zsize);
+
+                switch (zsize)
+                {
+                case 1:
+                    fdk_bp_kernel<1> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_vol, vol_geom, K);
+                    break;
+
+                case 2:
+                    fdk_bp_kernel<2> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_vol, vol_geom, K);
+                    break;
+
+                case 4:
+                    fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_vol, vol_geom, K);
+                    break;
+
+                case 8:
+                    fdk_bp_kernel<8> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_vol, vol_geom, K);
+                    break;
+                default:
+                    std::printf("Unsupported zsize %d, fallback to 4\n", zsize);
+                    fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_vol, vol_geom, K);
+
+                }
+
+                YK_CUDA_KERNEL_CHECK();
+            }
+
+            // ----------------------------------------------------------------
+            // bp_launchBpDirect
+            //   反投影（非预计算版本）：kernel 内实时计算投影坐标。
+            // ----------------------------------------------------------------
+            void bp_launchBpDirect(
+                const cudaTextureObject_t* d_texObjs,
+                const SConeProjGeomVec* d_geo,
+                const SFDKGeoParamPerView* d_gv,
+                float* d_vol,
+                const SVolGeom& vol_geom,
+                int K,
+                cudaStream_t stream)
+            {
+                const dim3 block(16, 16, 1);
+
+                constexpr int zsize = 4;
+
+                const dim3 grid(
+                    (vol_geom.Nx + block.x - 1) / block.x,
+                    (vol_geom.Ny + block.y - 1) / block.y,
+                    (vol_geom.Nz + zsize - 1) / zsize);
+
+                switch (zsize)
+                {
+                case 1:
+                    fdk_bp_kernel<1> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                    break;
+
+                case 2:
+                    fdk_bp_kernel<2> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                    break;
+
+                case 4:
+                    fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                    break;
+
+                case 8:
+                    fdk_bp_kernel<8> << <grid, block, 0, stream >> > (
+                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                    break;
+
+                default:
+                    throw std::runtime_error("unsupported ZSIZE");
+                }
+
+                YK_CUDA_KERNEL_CHECK();
+            }
+
 
         };
     };

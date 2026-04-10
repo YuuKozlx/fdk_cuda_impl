@@ -1,12 +1,12 @@
-#include "YkIoDump.hpp"
 
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <vector>
 
-#include "YkGlobals.h" // YK_CUDA_CHECK
-#include "YkMacro.hpp"
+#include "../global/YkGlobals.h" // YK_CUDA_CHECK
+#include "../global/YkMacro.hpp"
+#include "YkIoDump.hpp"
 
 namespace YK {
     namespace IO {

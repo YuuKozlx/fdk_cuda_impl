@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "global/YkGlobals.h"
-#include "FDK/YkVecFDK.hpp"
+#include "FDK/YkFdkReconstructor.hpp"
 #include "FDK/YkVecGeo.hpp"
 
 
@@ -270,8 +270,8 @@ int main_fdk2() {
     ctrl.download3D(h_vol, d_vol_buf);
 
 
-    uint64_t total_elements = (uint64_t)Nx * Ny * Nz;
-    if (!write_raw_float("fdk_vec_vol_offline2.raw", h_vol.cdata(), total_elements)) {
+
+    if (!write_raw_float("fdk_vec_vol_offline2.raw", h_vol.cdata(), vol_elems)) {
         std::printf("Error: cannot write fdk_vec_vol_new.raw\n");
         return -2;
     }
@@ -319,7 +319,7 @@ int main_fdk2() {
     ctrl.download3D(h_vol_online, d_vol_buf);
 
     if (!write_raw_float("fdk_vec_vol_online2.raw",
-        h_vol_online.cdata(), total_elements)) {  // ← 修正变量名
+        h_vol_online.cdata(), vol_elems)) {  // ← 修正变量名
         std::printf("Error: cannot write fdk_vec_vol_online.raw\n");
         return -2;
     }

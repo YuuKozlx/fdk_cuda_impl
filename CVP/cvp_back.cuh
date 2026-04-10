@@ -1,5 +1,6 @@
 #pragma once
 #include "cvp_geometry.cuh"
+#include "../global/YkMacro.hpp"
 namespace cvp
 {
     // ============================================================
@@ -205,7 +206,7 @@ namespace cvp
     // ============================================================
     //  Launch wrapper
     // ============================================================
-    inline void launch_cvp_back(
+    YK_INLINE void launch_cvp_back(
         const float* d_sino,    // device [N][M] (filtered/weighted sinogram)
         float* d_volume,  // device [Nz][Ny][Nx], must be zeroed before call
         const SCVPViewCache& cache,

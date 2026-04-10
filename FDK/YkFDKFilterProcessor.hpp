@@ -13,7 +13,7 @@
 
 #include "cuh/YkFDKFilterLaunch.cuh"   // fp_launchPad / fp_launchFilter / fp_launchCrop
 #include "cuh/YkFDKFilterHelpers.cuh"  // normalizeFilterPolicy / fp_computePaddedN / fp_computeStartU
-#include "../Filter/YkFilterKernelFFT.cuh"
+#include "../Filter/YkCreateFilterKernel.cuh"
 
 namespace YK {
     namespace Fdk {
@@ -245,8 +245,7 @@ namespace YK {
             cufftComplex* d_complex_buf_ = nullptr;  // [K_*Nv_*n_cmplx_]
 
             CudaFFT         fft_batch_;
-            YK::Filter::FilterKernelFFT kernel_fft_;
-
+            YK::Filter::CreateFilterKernelFromFFT kernel_fft_;
             std::vector<int> host_startu_;
 
             bool is_initialized_ = false;

@@ -41,6 +41,6 @@ struct SCBCTParams {
     float vol_offset_x_mm = 0.0f; // volume center offset in X direction in mm (relative to isocenter)
     float vol_offset_y_mm = 0.0f; // volume center offset in Y direction in mm (relative to isocenter)
     float vol_offset_z_mm = 0.0f; // volume center offset in Z direction in mm (relative to isocenter)
-    SFilterKernelDesc desc = SFilterKernelDesc(EFilterKernel::RamLak); // filter kernel description
+    YK::SFilterKernelDesc desc = YK::SFilterKernelDesc(YK::EFilterKernel::RamLak); // filter kernel description
 };
 

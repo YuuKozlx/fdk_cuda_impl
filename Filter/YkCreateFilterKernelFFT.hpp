@@ -7,22 +7,22 @@
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
 #include "../Filter/YkFFT.hpp"
-#include "YkFilterKernelKernels.cuh"
+#include "YkCreateFilterKernelLaunch.cuh"
 
 namespace YK {
     namespace Filter {
 
-        class FilterKernelFFT {
+        class CreateFilterKernelFromFFT {
         public:
 
-            FilterKernelFFT() = default;
-            ~FilterKernelFFT() { release(); }
+            CreateFilterKernelFromFFT() = default;
+            ~CreateFilterKernelFromFFT() { release(); }
 
-            FilterKernelFFT(const FilterKernelFFT&) = delete;
-            FilterKernelFFT& operator=(const FilterKernelFFT&) = delete;
+            CreateFilterKernelFromFFT(const CreateFilterKernelFromFFT&) = delete;
+            CreateFilterKernelFromFFT& operator=(const CreateFilterKernelFromFFT&) = delete;
 
-            FilterKernelFFT(FilterKernelFFT&& o) noexcept { move_from(o); }
-            FilterKernelFFT& operator=(FilterKernelFFT&& o) noexcept {
+            CreateFilterKernelFromFFT(CreateFilterKernelFromFFT&& o) noexcept { move_from(o); }
+            CreateFilterKernelFromFFT& operator=(CreateFilterKernelFromFFT&& o) noexcept {
                 if (this != &o) { release(); move_from(o); }
                 return *this;
             }
@@ -119,15 +119,15 @@ namespace YK {
                 dim3 gridC((n_complex_ + block.x - 1) / block.x, 1);
 
                 if (desc.kind == EFilterKernel::None) {
-                    kernel_fill_identity_weights << <gridC, block, 0, stream_ >> > (
-                        d_weights_fft, n_complex_, paddedN_, desc.gain, bake_invN);
-                    YK_CUDA_KERNEL_CHECK();
+                    flt_launch_kernel_fill_identity_weights(
+                        d_weights_fft, n_complex_, paddedN_, desc.gain, bake_invN, stream_);
                     return;
                 }
 
                 if (desc.source == EWeightsBuildSource::AnalyticFreq) {
-                    kernel_build_weights_analytic_freq << <gridC, block, 0, stream_ >> > (
-                        d_weights_fft, n_complex_, paddedN_, desc, bake_invN);
+                    flt_launch_kernel_build_weights_analytic_freq(
+                        d_weights_fft, n_complex_, paddedN_, desc, bake_invN, stream_);
+
                     YK_CUDA_KERNEL_CHECK();
                     return;
                 }
@@ -137,26 +137,26 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_spatial, (size_t)paddedN_ * sizeof(float)));
 
                 dim3 gridN((paddedN_ + block.x - 1) / block.x, 1);
-                kernel_gen_spatial_rl_kernel_du1 << <gridN, block, 0, stream_ >> > (
-                    d_spatial, paddedN_, bake_invN);
+                flt_launch_kernel_gen_spatial_rl_kernel_du1(
+                    d_spatial, paddedN_, bake_invN, stream_);
                 YK_CUDA_KERNEL_CHECK();
 
                 fft_r2c_.fft(d_spatial, d_tmp_fft_);
 
-                kernel_extract_weights_from_fft << <gridC, block, 0, stream_ >> > (
+                flt_launch_kernel_extract_weights_from_fft(
                     d_tmp_fft_, d_weights_fft, n_complex_,
-                    (int)desc.extract_mode, desc.force_dc_zero);
+                    desc.extract_mode, desc.force_dc_zero, stream_);
                 YK_CUDA_KERNEL_CHECK();
 
                 YK_CUDA_CHECK(cudaFree(d_spatial));
 
-                kernel_apply_window_to_weights_inplace << <gridC, block, 0, stream_ >> > (
-                    d_weights_fft, n_complex_, paddedN_, desc);
+                flt_launch_kernel_apply_window_to_weights_inplace(
+                    d_weights_fft, n_complex_, paddedN_, desc, stream_);
                 YK_CUDA_KERNEL_CHECK();
             }
 
         private:
-            void move_from(FilterKernelFFT& o) noexcept
+            void move_from(CreateFilterKernelFromFFT& o) noexcept
             {
                 paddedN_ = o.paddedN_;    o.paddedN_ = 0;
                 n_complex_ = o.n_complex_;  o.n_complex_ = 0;

@@ -2,7 +2,8 @@
 
 // YkFDKBackProject.cuh — BackProject 模块 umbrella header
 
-#include "detail/YkFDKBpHelpers.cuh"
-#include "detail/YkFDKBpKernels.cuh"
-#include "detail/YkFDKBpLaunch.cuh"
+#include "cuh/YkFDKBpHelpers.cuh"
+
+#include "cuh/YkFDKBpLaunch.cuh"
+#include "cuh/YkFDKBpPrecompute.cuh"
 #include "YkBackProjectProcessor.hpp"

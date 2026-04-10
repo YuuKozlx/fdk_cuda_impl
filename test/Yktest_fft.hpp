@@ -58,7 +58,7 @@ namespace YKTest {
 
 
 
-    bool testFFT() {
+    YK_INLINE   bool testFFT() {
         const int N = 1024;
         const int batch = 4;
 

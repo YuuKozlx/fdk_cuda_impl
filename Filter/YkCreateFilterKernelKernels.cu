@@ -1,10 +1,15 @@
-#pragma once
+
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <device_launch_parameters.h>
 
+#include <cuda_runtime_api.h>
+#include <driver_types.h>
+#include <vector_types.h>
 #include "../global/YkGlobals.h"
-#include "YkFilterKernelHelpers.cuh"
+#include "../global/YkMacro.hpp"
+#include "YkCreateFilterKernelHelpers.cuh"
+#include "YkCreateFilterKernelLaunch.cuh"
 
 namespace YK {
     namespace Filter {
@@ -130,6 +135,85 @@ namespace YK {
                 w[k] = w[k] * (desc.gain * shape);
             }
 
-        } // namespace detail
+        }; // namespace detail
+
+        bool flt_launch_kernel_fill_identity_weights(
+            float* d_w,
+            int n_complex,
+            int N,
+            float gain,
+            bool bake_invN,
+            cudaStream_t stream)
+        {
+            dim3 block(256, 1);
+            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+            detail::kernel_fill_identity_weights << <grid, block, 0, stream >> > (
+                d_w, n_complex, N, gain, bake_invN);
+            YK_CUDA_KERNEL_CHECK();
+            return (cudaGetLastError() == cudaSuccess);
+        }
+
+        bool flt_launch_kernel_build_weights_analytic_freq(
+            float* d_w,
+            int n_complex,
+            int N,
+            SFilterKernelDesc desc,
+            bool bake_invN,
+            cudaStream_t stream)
+        {
+            dim3 block(256, 1);
+            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+            detail::kernel_build_weights_analytic_freq << <grid, block, 0, stream >> > (
+                d_w, n_complex, N, desc, bake_invN);
+            YK_CUDA_KERNEL_CHECK();
+            return (cudaGetLastError() == cudaSuccess);
+        }
+
+        bool flt_launch_kernel_gen_spatial_rl_kernel_du1(
+            float* d_h,
+            int N,
+            bool bake_invN,
+            cudaStream_t stream)
+        {
+            dim3 block(256, 1);
+            dim3 grid((N + block.x - 1) / block.x, 1);
+            detail::kernel_gen_spatial_rl_kernel_du1 << <grid, block, 0, stream >> > (
+                d_h, N, bake_invN);
+            YK_CUDA_KERNEL_CHECK();
+            return (cudaGetLastError() == cudaSuccess);
+        }
+
+        bool flt_launch_kernel_extract_weights_from_fft(
+            const cufftComplex* d_src,
+            float* d_dst,
+            int n_complex,
+            ERampExtractMode mode,
+            bool force_dc_zero,
+            cudaStream_t stream)
+        {
+            dim3 block(256, 1);
+            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+            detail::kernel_extract_weights_from_fft << <grid, block, 0, stream >> > (
+                d_src, d_dst, n_complex, (int)mode, force_dc_zero);
+            YK_CUDA_KERNEL_CHECK();
+            return (cudaGetLastError() == cudaSuccess);
+        }
+
+
+        bool flt_launch_kernel_apply_window_to_weights_inplace(
+            float* d_w,
+            int n_complex,
+            int N,
+            SFilterKernelDesc desc,
+            cudaStream_t stream)
+        {
+            dim3 block(256, 1);
+            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+            detail::kernel_apply_window_to_weights_inplace << <grid, block, 0, stream >> > (
+                d_w, n_complex, N, desc);
+            YK_CUDA_KERNEL_CHECK();
+            return (cudaGetLastError() == cudaSuccess);
+        }
+
     } // namespace Filter
 } // namespace YK

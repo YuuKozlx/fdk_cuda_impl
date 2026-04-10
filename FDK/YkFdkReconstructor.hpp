@@ -1,28 +1,30 @@
 ﻿#pragma once
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
 #include <algorithm>
 #include <cmath>
-#include <vector>
 #include <cstdio>
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
 #include <functional>
+#include <vector>
 #include <vector_functions.hpp>
 #include <vector_types.h>
-#include "global/IProcessor.hpp"
-#include "FDK/YkBackProjectProcessor.hpp"
-#include "FDK/YkFDKFilterProcessor.hpp"
-#include "FDK/YkFDKGpuContext.hpp"
-#include "FDK/YkFDKPreWeight.cuh"
-#include "FDK/YkFDKParkerWeight.cuh"
-#include "FDK/YkFDKPrecompute.hpp"
-#include "FDK/YkFDKVecGeoDerived.hpp"
+#include "YkBackProjectProcessor.hpp"
+#include "YkFDKFilterProcessor.hpp"
+#include "YkFDKGpuContext.hpp"
+#include "YkFDKParkerWeight.cuh"
+#include "YkFDKPreWeight.cuh"
+#include "YkFDKVecGeoDerived.hpp"
+#include "../global/IProcessor.hpp"
 
-#include "global/YkGlobals.h"
-#include "util/YkIoDump.hpp"
-#include "util/YkUtil.hpp"
-#include "FDK/YkVecGeo.hpp"
-#include "util/YkVecOperation.hpp"
-#include "global/YkCBCTParams.h"
+#include "../global/YkMacro.hpp"
+#include "YkVecGeo.hpp"
+#include "YkFDKParkerWeightProcessor.hpp"
+#include "YkFdkPipelineContext.hpp"
+#include "../global/YkCBCTParams.h"
+#include "../global/YkGlobals.h"
+#include "../util/YkIoDump.hpp"
+#include "../util/YkUtil.hpp"
+#include "../util/YkVecOperation.hpp"
 
 namespace YK {
 
@@ -41,6 +43,17 @@ namespace YK {
 
         int  totalReceived()  const { return total_received_; }
         bool isInitialized()  const { return is_initialized_; }
+        void release()
+        {
+            pw_.release();
+            pkw_.release();
+            flt_.release();
+            bp_.release();
+            reset();              // 清 angle_accum_ 和 total_received_
+            Kchunk_ = 0;
+            bParker_ = false;
+            is_initialized_ = false;
+        }
 
         // ----------------------------------------------------------------
         // init：固定参数确定后调一次，processor 和 GPU 资源在此分配
@@ -361,7 +374,7 @@ namespace YK {
     // ================================================================
     // 全局便捷函数（单次全量重建）
     // ================================================================
-    inline bool fdk_recon(
+    YK_INLINE bool fdk_recon(
         const float* h_proj,
         float* d_vol_out,
         const SCBCTParams& params,

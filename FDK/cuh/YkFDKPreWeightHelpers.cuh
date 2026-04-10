@@ -16,7 +16,7 @@ namespace YK {
             // ----------------------------------------------------------------
             // Launch-policy normalization
             // ----------------------------------------------------------------
-            inline SKernelLaunchPolicy normalizePreweightPolicy(SKernelLaunchPolicy p)
+            YK_INLINE SKernelLaunchPolicy normalizePreweightPolicy(SKernelLaunchPolicy p)
             {
                 if (p.block_threads < 32) p.block_threads = 32;
                 p.block_threads = (p.block_threads + 31) & ~31;

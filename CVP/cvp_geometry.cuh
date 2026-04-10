@@ -65,7 +65,7 @@ namespace cvp
     // ============================================================
     //  Host: build SCVPViewCache from user geometry + volume desc
     // ============================================================
-    inline SCVPViewCache make_view_cache(
+    YK_INLINE SCVPViewCache make_view_cache(
         const SConeProjGeomVec& g,
         int M, int N,
         const SVolumeDesc& vol)
