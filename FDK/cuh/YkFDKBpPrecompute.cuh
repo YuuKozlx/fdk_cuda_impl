@@ -9,18 +9,15 @@
 
 namespace YK {
     namespace Fdk {
-        namespace detail {
 
-            // ----------------------------------------------------------------
-            // bp_launchPrecomputeCoeffs
-            // ----------------------------------------------------------------
-            void bp_launchPrecomputeCoeffs(
-                const SConeProjGeomVec* d_geo,
-                const SFDKGeoParamPerView* d_gv,
-                FdkAffineCoeff* d_coeffs,
-                int Ang, cudaStream_t stream);
+        // ----------------------------------------------------------------
+        // bp_launchPrecomputeCoeffs
+        // ----------------------------------------------------------------
+        void bp_launchPrecomputeCoeffs(
+            const SConeProjGeomVec* d_geo,
+            const SFDKGeoParamPerView* d_gv,
+            FdkAffineCoeff* d_coeffs,
+            int Ang, cudaStream_t stream);
 
-
-        }
     }
 } // namespace YK::Fdk::detail

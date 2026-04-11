@@ -195,7 +195,7 @@ int main_fdk2() {
     SCBCTParams params;
 
     params.iPU = 768; params.iPV = 768; params.iPAng = 360; params.iPAngTotal = 360;
-    params.tiltn_angle_rad = 3 * CUDA_PI / 180;
+    params.tiltn_angle_rad = 0 * CUDA_PI / 180;
     params.iVX = 768; params.iVY = 768; params.iVZ = 600;
     params.bShortScan = false;
     params.scan_range_rad = (float)M_PI * 6.0f / 3.0f; // 270 degree short scan
@@ -254,27 +254,27 @@ int main_fdk2() {
     auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
     // 离线重建（一次性全量）
 
-    {
-        YK::Util::CudaTimer timer("offline", s);
-        YK::fdk_recon(
-            h_proj.data(), d_vol_buf.data(),
-            params,
-            /*Kchunk=*/32, s,
-            /*clear_vol=*/true, dump);
-    }
+    //{
+    //    YK::Util::CudaTimer timer("offline", s);
+    //    YK::fdk_recon(
+    //        h_proj.data(), d_vol_buf.data(),
+    //        params,
+    //        /*Kchunk=*/32, s,
+    //        /*clear_vol=*/true, dump);
+    //}
 
 
 
-    auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+    //auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
 
-    ctrl.download3D(h_vol, d_vol_buf);
+    //ctrl.download3D(h_vol, d_vol_buf);
 
 
 
-    if (!write_raw_float("fdk_vec_vol_offline2.raw", h_vol.cdata(), vol_elems)) {
-        std::printf("Error: cannot write fdk_vec_vol_new.raw\n");
-        return -2;
-    }
+    //if (!write_raw_float("fdk_vec_vol_offline2.raw", h_vol.cdata(), vol_elems)) {
+    //    std::printf("Error: cannot write fdk_vec_vol_new.raw\n");
+    //    return -2;
+    //}
 
     // 模拟在线重建，每次传输iPBatch个角度，进行重建。保持KChunk=30不变，测试在线重建的正确性和性能。
     // 待更改参数 
@@ -284,7 +284,7 @@ int main_fdk2() {
 
     // batch_size = 60; batch_num = Ang + batch_size - 1) / batch_size;;
 // 在线重建
-    int batch_size = 32 * 3;
+    int batch_size = 32;
     int batch_num = (Ang + batch_size - 1) / batch_size;
 
     FdkReconstructor recon;
@@ -307,7 +307,7 @@ int main_fdk2() {
                 h_proj.data() + base * view_elems,
                 batch_params, s,
                 d_vol_buf.data(),
-                /*clear_vol=*/(i == 0));
+                /*clear_vol=*/(i == 0), dump);
         }
     }
 

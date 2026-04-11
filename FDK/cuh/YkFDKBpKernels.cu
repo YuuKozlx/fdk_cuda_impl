@@ -1,5 +1,10 @@
-﻿#include "YkFDKBpLaunch.cuh"
+﻿#include <cuda_runtime_api.h>
+#include "../../global/YkGlobals.h"
+#include "../../global/YkMacro.hpp"
 #include "YkFDKBpHelpers.cuh"
+#include "YkFDKBpLaunch.cuh"
+
+__constant__ YK::FdkAffineCoeff gC_coeffs[YK::kMaxChunkAng];
 
 namespace YK {
     namespace Fdk {
@@ -26,6 +31,14 @@ namespace YK {
                 const float fY = vg.origin().y + x * vg.vox_y;
                 const float fZ = vg.origin().z + startZ * vg.vox_z;
 
+#ifdef YK_DEBUG
+                const bool is_debug_thread = (x == 0 && y == 0 && startZ == 0);
+                // ── 层1：体素世界坐标和 K ────────────────────────────────────
+                if (is_debug_thread)
+                    printf("[bp_pre][voxel0] world=(%.3f,%.3f,%.3f) K=%d\n",
+                        fX, fY, fZ, K);
+#endif
+
                 float Z[ZSIZE];
 #pragma unroll
                 for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
@@ -33,15 +46,23 @@ namespace YK {
                 for (int i = 0; i < K; ++i) {
                     const FdkAffineCoeff& c = gC_coeffs[i];
 
-                    float uNum = c.Cu.w + fX * c.Cu.x + fY * c.Cu.y + fZ * c.Cu.z;
-                    float vNum = c.Cv.w + fX * c.Cv.x + fY * c.Cv.y + fZ * c.Cv.z;
-                    float den = c.Cd.w + fX * c.Cd.x + fY * c.Cd.y + fZ * c.Cd.z;
+                    float uNum = c.Cu_w + fX * c.Cu_x + fY * c.Cu_y + fZ * c.Cu_z;
+                    float vNum = c.Cv_w + fX * c.Cv_x + fY * c.Cv_y + fZ * c.Cv_z;
+                    float den = c.Cd_w + fX * c.Cd_x + fY * c.Cd_y + fZ * c.Cd_z;
 
-                    const float uStep = c.Cu.z * vg.vox_z;
-                    const float vStep = c.Cv.z * vg.vox_z;
-                    const float dStep = c.Cd.z * vg.vox_z;
-
+                    const float uStep = c.Cu_z * vg.vox_z;
+                    const float vStep = c.Cv_z * vg.vox_z;
+                    const float dStep = c.Cd_z * vg.vox_z;
                     const float w_base = c.SID2 * c.dtheta * c.fScaleDTheta;
+
+#ifdef YK_DEBUG
+                    // ── 层2：几何参数和权重基础值 ────────────────────────────
+                    if (is_debug_thread && i < 2)
+                        printf("[bp_pre][view%d] den=%.6f u0=%.3f v0=%.3f "
+                            "w_base=%.8f SID2=%.3f dtheta=%.6f\n",
+                            i, den, uNum / den, vNum / den,
+                            w_base, c.SID2, c.dtheta);
+#endif
 
 #pragma unroll
                     for (int iz = 0; iz < ZSIZE; ++iz) {
@@ -49,7 +70,22 @@ namespace YK {
                         const float u = uNum * fr;
                         const float v = vNum * fr;
                         const float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
-                        Z[iz] += p * (w_base * fr * fr);
+                        const float contrib = p * (w_base * fr * fr);
+
+#ifdef YK_DEBUG
+                        // ── 层3：fetch 值和贡献量（iz=0）────────────────────
+                        if (is_debug_thread && i < 2 && iz == 0) {
+                            const float worldZ = fZ + iz * vg.vox_z;
+                            printf("[bp_pre][view%d][iz0] world=(%.3f,%.3f,%.3f) "
+                                "u=%.3f v=%.3f p=%.6f den=%.6f contrib=%.8f\n",
+                                i, fX, fY, worldZ, u, v, p, den, contrib);
+                            if (isnan(contrib) || isinf(contrib))
+                                printf("[bp_pre][NaN!][view%d] den=%.8f w_base=%.8f p=%.6f\n",
+                                    i, den, w_base, p);
+                        }
+#endif
+
+                        Z[iz] += contrib;
                         uNum += uStep;
                         vNum += vStep;
                         den += dStep;
@@ -60,6 +96,11 @@ namespace YK {
 #pragma unroll
                 for (int iz = 0; iz < ZSIZE; ++iz) {
                     if (startZ + iz < endZ) {
+#ifdef YK_DEBUG
+                        if (is_debug_thread && iz == 0)
+                            printf("[bp_pre][final] world=(%.3f,%.3f,%.3f) Z[0]=%.8f\n",
+                                fX, fY, fZ, Z[0]);
+#endif
                         const size_t idx = (size_t)(startZ + iz) * vg.Ny * vg.Nx
                             + (size_t)y * vg.Nx + x;
                         vol[idx] += Z[iz];
@@ -86,6 +127,18 @@ namespace YK {
                 const int startZ = blockIdx.z * ZSIZE;
                 if (startZ >= vg.Nz) return;
 
+                const float fX = vg.origin().x + y * vg.vox_x;
+                const float fY = vg.origin().y + x * vg.vox_y;
+                const float fZ = vg.origin().z + startZ * vg.vox_z;
+
+#ifdef YK_DEBUG
+                const bool is_debug_thread = (x == 0 && y == 0 && startZ == 0);
+                // ── 层1：体素世界坐标和 K ────────────────────────────────────
+                if (is_debug_thread)
+                    printf("[bp_dir][voxel0] world=(%.3f,%.3f,%.3f) K=%d\n",
+                        fX, fY, fZ, K);
+#endif
+
                 float Z[ZSIZE];
 #pragma unroll
                 for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
@@ -94,23 +147,45 @@ namespace YK {
                     const SConeProjGeomVec& g = d_geo[i];
                     const SFDKGeoParamPerView& gv = d_gv[i];
 
-                    const float fX = vg.origin().x + y * vg.vox_x;
-                    const float fY = vg.origin().y + x * vg.vox_y;
+                    const float w_base = gv.SOD_mm * gv.SOD_mm * gv.dtheta * gv.fScaleDTheta;
 
 #pragma unroll
                     for (int iz = 0; iz < ZSIZE; ++iz) {
-                        const int zIdx = startZ + iz;
+                        const int    zIdx = startZ + iz;
                         if (zIdx >= vg.Nz) continue;
 
-                        const float3 P = make_float3(fX, fY, vg.origin().z + zIdx * vg.vox_z);
+                        const float  worldZ = vg.origin().z + zIdx * vg.vox_z;
+                        const float3 P = make_float3(fX, fY, worldZ);
 
                         float u, v, denom_c;
-                        if (!project_uv_and_terms_derived(g, gv, P, u, v, denom_c))
+                        if (!project_uv_and_terms_derived(g, gv, P, u, v, denom_c)) {
+#ifdef YK_DEBUG
+                            if (is_debug_thread && i < 2 && iz == 0)
+                                printf("[bp_dir][view%d][iz0] project FAILED "
+                                    "world=(%.3f,%.3f,%.3f)\n", i, fX, fY, worldZ);
+#endif
                             continue;
+                        }
 
                         const float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
-                        const float w = (gv.SOD_mm * gv.SOD_mm) / (denom_c * denom_c);
-                        Z[iz] += p * w * gv.dtheta * gv.fScaleDTheta;
+                        const float inv_denom_c = __fdividef(1.f, denom_c);
+                        const float contrib = p * w_base * inv_denom_c * inv_denom_c;
+                        Z[iz] += contrib;
+
+#ifdef YK_DEBUG
+                        // ── 层2/3：几何参数、fetch 值和贡献量（iz=0）────────
+                        if (is_debug_thread && i < 2 && iz == 0) {
+                            printf("[bp_dir][view%d][iz0] world=(%.3f,%.3f,%.3f) "
+                                "u=%.3f v=%.3f p=%.6f den=%.6f contrib=%.8f "
+                                "w_base=%.8f SOD=%.3f dtheta=%.6f\n",
+                                i, fX, fY, worldZ,
+                                u, v, p, denom_c, contrib,
+                                w_base, gv.SOD_mm, gv.dtheta);
+                            if (isnan(contrib) || isinf(contrib))
+                                printf("[bp_dir][NaN!][view%d] SOD=%.3f denom_c=%.8f p=%.6f\n",
+                                    i, gv.SOD_mm, denom_c, p);
+                        }
+#endif
                     }
                 }
 
@@ -118,114 +193,143 @@ namespace YK {
 #pragma unroll
                 for (int iz = 0; iz < ZSIZE; ++iz) {
                     if (startZ + iz < endZ) {
+#ifdef YK_DEBUG
+                        if (is_debug_thread && iz == 0)
+                            printf("[bp_dir][final] world=(%.3f,%.3f,%.3f) Z[0]=%.8f\n",
+                                fX, fY, fZ, Z[0]);
+#endif
                         const size_t idx = (size_t)(startZ + iz) * vg.Ny * vg.Nx
                             + (size_t)y * vg.Nx + x;
                         vol[idx] += Z[iz];
                     }
                 }
             }
-
-
-
-            void bp_launchBpPrecomputed(
-                const cudaTextureObject_t* d_texObjs,
-                float* d_vol,
-                const SVolGeom& vol_geom,
-                int K,
-                cudaStream_t stream)
-            {
-                const dim3 block(16, 16, 1);
-
-                constexpr int zsize = 4;  // ⚠️ 如果你未来要外部控制，可以改成参数
-
-                const dim3 grid(
-                    (vol_geom.Nx + block.x - 1) / block.x,
-                    (vol_geom.Ny + block.y - 1) / block.y,
-                    (vol_geom.Nz + zsize - 1) / zsize);
-
-                switch (zsize)
-                {
-                case 1:
-                    fdk_bp_kernel<1> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_vol, vol_geom, K);
-                    break;
-
-                case 2:
-                    fdk_bp_kernel<2> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_vol, vol_geom, K);
-                    break;
-
-                case 4:
-                    fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_vol, vol_geom, K);
-                    break;
-
-                case 8:
-                    fdk_bp_kernel<8> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_vol, vol_geom, K);
-                    break;
-                default:
-                    std::printf("Unsupported zsize %d, fallback to 4\n", zsize);
-                    fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_vol, vol_geom, K);
-
-                }
-
-                YK_CUDA_KERNEL_CHECK();
-            }
-
-            // ----------------------------------------------------------------
-            // bp_launchBpDirect
-            //   反投影（非预计算版本）：kernel 内实时计算投影坐标。
-            // ----------------------------------------------------------------
-            void bp_launchBpDirect(
-                const cudaTextureObject_t* d_texObjs,
-                const SConeProjGeomVec* d_geo,
-                const SFDKGeoParamPerView* d_gv,
-                float* d_vol,
-                const SVolGeom& vol_geom,
-                int K,
-                cudaStream_t stream)
-            {
-                const dim3 block(16, 16, 1);
-
-                constexpr int zsize = 4;
-
-                const dim3 grid(
-                    (vol_geom.Nx + block.x - 1) / block.x,
-                    (vol_geom.Ny + block.y - 1) / block.y,
-                    (vol_geom.Nz + zsize - 1) / zsize);
-
-                switch (zsize)
-                {
-                case 1:
-                    fdk_bp_kernel<1> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
-                    break;
-
-                case 2:
-                    fdk_bp_kernel<2> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
-                    break;
-
-                case 4:
-                    fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
-                    break;
-
-                case 8:
-                    fdk_bp_kernel<8> << <grid, block, 0, stream >> > (
-                        d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
-                    break;
-
-                default:
-                    throw std::runtime_error("unsupported ZSIZE");
-                }
-
-                YK_CUDA_KERNEL_CHECK();
-            }
-
-
         };
+    };
+};
+
+
+
+namespace YK {
+    namespace Fdk {
+
+        void bp_uploadCoeffsChunk(
+            const FdkAffineCoeff* d_src, int K, cudaStream_t stream)
+        {
+            YK_CUDA_CHECK(cudaMemcpyToSymbolAsync(
+                gC_coeffs,
+                d_src,
+                K * sizeof(FdkAffineCoeff),
+                0, cudaMemcpyDeviceToDevice, stream));
+        }
+
+        void bp_readbackCoeffs(FdkAffineCoeff* h_dst, int K)
+        {
+            YK_CUDA_CHECK(cudaMemcpyFromSymbol(
+                h_dst, gC_coeffs,
+                K * sizeof(FdkAffineCoeff)));
+        }
+
+
+
+        void bp_launchBpPrecomputed(
+            const cudaTextureObject_t* d_texObjs,
+            float* d_vol,
+            const SVolGeom& vol_geom,
+            int K,
+            cudaStream_t stream)
+        {
+            const dim3 block(16, 16, 1);
+
+            constexpr int zsize = 4;  // ⚠️ 如果你未来要外部控制，可以改成参数
+
+            const dim3 grid(
+                (vol_geom.Nx + block.x - 1) / block.x,
+                (vol_geom.Ny + block.y - 1) / block.y,
+                (vol_geom.Nz + zsize - 1) / zsize);
+
+            switch (zsize)
+            {
+            case 1:
+                detail::fdk_bp_kernel<1> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_vol, vol_geom, K);
+                break;
+
+            case 2:
+                detail::fdk_bp_kernel<2> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_vol, vol_geom, K);
+                break;
+
+            case 4:
+                detail::fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_vol, vol_geom, K);
+                break;
+
+            case 8:
+                detail::fdk_bp_kernel<8> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_vol, vol_geom, K);
+                break;
+            default:
+                std::printf("Unsupported zsize %d, fallback to 4\n", zsize);
+                detail::fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_vol, vol_geom, K);
+
+            }
+
+            YK_CUDA_KERNEL_CHECK();
+        }
+
+        // ----------------------------------------------------------------
+        // bp_launchBpDirect
+        //   反投影（非预计算版本）：kernel 内实时计算投影坐标。
+        // ----------------------------------------------------------------
+        void bp_launchBpDirect(
+            const cudaTextureObject_t* d_texObjs,
+            const SConeProjGeomVec* d_geo,
+            const SFDKGeoParamPerView* d_gv,
+            float* d_vol,
+            const SVolGeom& vol_geom,
+            int K,
+            cudaStream_t stream)
+        {
+            const dim3 block(16, 16, 1);
+
+            constexpr int zsize = 4;
+
+            const dim3 grid(
+                (vol_geom.Nx + block.x - 1) / block.x,
+                (vol_geom.Ny + block.y - 1) / block.y,
+                (vol_geom.Nz + zsize - 1) / zsize);
+
+            switch (zsize)
+            {
+            case 1:
+                detail::fdk_bp_kernel<1> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                break;
+
+            case 2:
+                detail::fdk_bp_kernel<2> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                break;
+
+            case 4:
+                detail::fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                break;
+
+            case 8:
+                detail::fdk_bp_kernel<8> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+                break;
+
+            default:
+                std::printf("Unsupported zsize %d, fallback to 4\n", zsize);
+                detail::fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
+                    d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
+            }
+
+            YK_CUDA_KERNEL_CHECK();
+        }
     };
 }; // namespace YK::Fdk::detail

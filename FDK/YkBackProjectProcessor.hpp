@@ -115,12 +115,12 @@ namespace YK {
                 float* d_vol = static_cast<float*>(d_output);
 
                 if (use_precomputed_) {
-                    detail::bp_launchBpPrecomputed(
+                    Fdk::bp_launchBpPrecomputed(
                         d_texObjs, d_vol, vol_geom_,
                         chunk_.K, stream);
                 }
                 else {
-                    detail::bp_launchBpDirect(
+                    Fdk::bp_launchBpDirect(
                         d_texObjs, chunk_.d_geo, chunk_.d_gv,
                         d_vol, vol_geom_,
                         chunk_.K, stream);

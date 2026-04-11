@@ -142,18 +142,19 @@ namespace YK {
 
 
     struct FdkAffineCoeff {
-        float4 Cu;  // u 分子系数 (cx, cy, cz, cw)
-        float4 Cv;  // v 分子系数
-        float4 Cd;  // 分母系数
-        float  dtheta;
-        float  SID2; // SOD^2，权重用
-        float fScaleDTheta; // 权重用，等于 2Pi / scan_range_rad，扫描角度为2Pi时为1.0f
+        float Cu_x, Cu_y, Cu_z, Cu_w;
+        float Cv_x, Cv_y, Cv_z, Cv_w;
+        float Cd_x, Cd_y, Cd_z, Cd_w;
+        float dtheta;
+        float SID2;
+        float fScaleDTheta;
     };
 
     // constant 内存，按 chunk 上传
     // 1024 角度 × 64 bytes = 64KB，刚好在限制内
     static constexpr int kMaxChunkAng = 32;
-    __constant__ FdkAffineCoeff gC_coeffs[kMaxChunkAng];
+    // YkFDKBackProject.cuh —— 只放 extern 声明
+
 
 
     // ============================================================

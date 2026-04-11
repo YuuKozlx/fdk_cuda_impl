@@ -107,7 +107,11 @@ namespace YK {
                     while (f >= 2.f * CUDA_PI)  f -= 2.f * CUDA_PI;
                     rel[i] = f;
                 }
+
+                printf("\n[pk_upload] K=%d base=%.6f angles[0]=%.6f angles[K-1]=%.6f\n\n",
+                    K, fAngleBase, h_angles[0], h_angles[K - 1]);
                 YK_CUDA_CHECK(cudaMemcpyToSymbol(
+
                     gC_parker_angle,
                     rel.data(),
                     static_cast<size_t>(K) * sizeof(float),

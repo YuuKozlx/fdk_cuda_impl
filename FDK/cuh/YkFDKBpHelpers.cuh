@@ -38,11 +38,30 @@ namespace YK {
                 const float DU = t * f3_dot(dir, g.detU) - gv.detS_sub_src_dot_dU;
                 const float DV = t * f3_dot(dir, g.detV) - gv.detS_sub_src_dot_dV;
 
-                u_pix = (DU * gv.VV - DV * gv.UV) * gv.invDetUV * gv.inv_du_mm;
-                v_pix = (-DU * gv.UV + DV * gv.UU) * gv.invDetUV * gv.inv_dv_mm;
+                // 临时验证，只打第一次调用
+//#ifdef YK_DEBUG
+//// 用 atomicAdd 防止多线程刷屏，只打一次
+//                static __device__ int printed = 0;
+//                if (atomicAdd(&printed, 1) == 0) {
+//                    printf("[proj] t=%.6f DU=%.6f DV=%.6f inv_du=%.6f inv_dv=%.6f\n",
+//                        t, DU, DV, gv.inv_du_mm, gv.inv_dv_mm);
+//                    printf("[proj] detS_sub_src_dot_dU=%.6f\n", gv.detS_sub_src_dot_dU);
+//                    printf("[proj] dir=(%.3f,%.3f,%.3f)\n", dir.x, dir.y, dir.z);
+//                }
+//#endif
+
+                u_pix = (DU * gv.VV - DV * gv.UV) * gv.invDetUV;
+                v_pix = (-DU * gv.UV + DV * gv.UU) * gv.invDetUV;
                 return true;
             }
 
         }
+
+
+        void bp_uploadCoeffsChunk(
+            const FdkAffineCoeff* d_src, int K, cudaStream_t stream);
+
+        void bp_readbackCoeffs(           // ← 新增
+            FdkAffineCoeff* h_dst, int K);
     }
 } // namespace YK::Fdk::detail

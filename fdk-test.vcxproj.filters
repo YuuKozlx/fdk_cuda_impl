@@ -83,23 +83,11 @@
     <CudaCompile Include="Filter\YkConvKernels.cu">
       <Filter>Filter\fft</Filter>
     </CudaCompile>
+    <CudaCompile Include="interface\YkFdkFactory.cu">
+      <Filter>interface</Filter>
+    </CudaCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Yktest_fft.hpp">
-      <Filter>tests</Filter>
-    </ClInclude>
-    <ClInclude Include="Yktest_fdkflter.hpp">
-      <Filter>tests</Filter>
-    </ClInclude>
-    <ClInclude Include="YKtestconv.hpp">
-      <Filter>tests</Filter>
-    </ClInclude>
-    <ClInclude Include="Yktest_mem3d.hpp">
-      <Filter>tests</Filter>
-    </ClInclude>
-    <ClInclude Include="Yktest_dataobject.hpp">
-      <Filter>tests</Filter>
-    </ClInclude>
     <ClInclude Include="CVP\cvp_back.cuh">
       <Filter>CVP</Filter>
     </ClInclude>
@@ -240,6 +228,24 @@
     </ClInclude>
     <ClInclude Include="Filter\YkCreateFilterKernelLaunch.cuh">
       <Filter>Filter\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="test\Yktest_dataobject.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="test\Yktest_fdkflter.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="test\Yktest_fft.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="test\Yktest_mem3d.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="test\YKtestconv.hpp">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\YkFdkFactory.hpp">
+      <Filter>interface</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -173,26 +173,26 @@
     <ClInclude Include="global\YkMem3d.hpp" />
     <ClInclude Include="interface\IFdkReconstructor.hpp" />
     <ClInclude Include="interface\IReconstructor.hpp" />
+    <ClInclude Include="interface\YkFdkFactory.hpp" />
     <ClInclude Include="interface\YkFdkTypes.hpp" />
+    <ClInclude Include="test\YKtestconv.hpp" />
+    <ClInclude Include="test\Yktest_dataobject.hpp" />
+    <ClInclude Include="test\Yktest_fdkflter.hpp" />
+    <ClInclude Include="test\Yktest_fft.hpp" />
+    <ClInclude Include="test\Yktest_mem3d.hpp" />
     <ClInclude Include="util\YkCudaTimer.hpp" />
     <ClInclude Include="util\YkIoDump.hpp" />
     <ClInclude Include="util\YkMiniMHA.h" />
     <ClInclude Include="util\YkSampling2D.hpp" />
     <ClInclude Include="util\YKUtil.hpp" />
     <ClInclude Include="util\YkVecOperation.hpp" />
-    <ClInclude Include="Yktest_dataobject.hpp" />
-    <ClInclude Include="Yktest_fdkflter.hpp" />
-    <ClInclude Include="Yktest_fft.hpp" />
-    <ClInclude Include="Yktest_mem3d.hpp" />
     <CudaCompile Include="FDK\cuh\YkFDKBpKernels.cu" />
     <CudaCompile Include="FDK\cuh\YkFDKFilterKernels.cu" />
     <CudaCompile Include="FDK\cuh\YkFDKParkerKernels.cu" />
     <CudaCompile Include="FDK\cuh\YkFDKPreWeightKernels.cu" />
     <CudaCompile Include="Filter\YkConvKernels.cu" />
+    <CudaCompile Include="interface\YkFdkFactory.cu" />
     <CudaCompile Include="testmain.cu" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="YKtestconv.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="util\YkIoDump.cpp" />

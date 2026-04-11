@@ -1,5 +1,6 @@
 // YkFDKDataBus.hpp
 #pragma once
+#include <cfloat>
 #include <channel_descriptor.h>
 #include <cuda_runtime.h>
 #include <vector>
@@ -7,9 +8,9 @@
 #include "../global/YkMacro.hpp"
 #include "../global/YkMem3d.hpp"
 #include "YkFDKBackProject.cuh"
+#include "YkFDKBackProject.cuh"
 #include "YkFDKVecGeoDerived.hpp"
 #include "YkVecGeo.hpp"
-#include "YkFDKBackProject.cuh"
 
 
 namespace YK {
@@ -102,6 +103,18 @@ namespace YK {
         }
     };
 
+    //__global__ void printGCoeff(int K) {
+    //    int idx = threadIdx.x;
+    //    if (idx >= K) return;
+
+    //    const FdkAffineCoeff& c = gC_coeffs[idx];
+    //    printf("gC_coeffs[%d] = { Cu=(%f,%f,%f,%f) Cv=(%f,%f,%f,%f) Cd=(%f,%f,%f,%f) dtheta=%f SID2=%f }\n",
+    //        idx,
+    //        c.Cu.x, c.Cu.y, c.Cu.z, c.Cu.w,
+    //        c.Cv.x, c.Cv.y, c.Cv.z, c.Cv.w,
+    //        c.Cd.x, c.Cd.y, c.Cd.z, c.Cd.w,
+    //        c.dtheta, c.SID2);
+    //}
 
 
     // ================================================================
@@ -124,22 +137,58 @@ namespace YK {
             gv = dc.allocateAndUpload(h_gv, deviceId);
             coeffs = dc.allocate<FdkAffineCoeff>(iPA, deviceId);
 
-            Fdk::detail::bp_launchPrecomputeCoeffs(
+            Fdk::bp_launchPrecomputeCoeffs(
                 geo.data(), gv.data(),
                 coeffs.data(), iPA, stream);
 
-
+            //cudaStreamSynchronize(stream);
+            //FdkAffineCoeff h_c;
+            //cudaMemcpy(&h_c, coeffs.data(), sizeof(FdkAffineCoeff), cudaMemcpyDeviceToHost);
+            //printf("[coeffs_raw][0] Cu=(%f,%f,%f,%f) den=(%f,%f,%f,%f) dtheta=%f\n",
+            //    h_c.Cu_x, h_c.Cu_y, h_c.Cu_z, h_c.Cu_w,
+            //    h_c.Cd_x, h_c.Cd_y, h_c.Cd_z, h_c.Cd_w,
+            //    h_c.dtheta);
         }
 
         void uploadCoeffsChunk(const FdkAffineCoeff* d_src, int K, cudaStream_t stream) const
         {
-            YK_CUDA_CHECK(cudaMemcpyToSymbolAsync(
-                gC_coeffs,
-                d_src,
-                K * sizeof(FdkAffineCoeff),
-                0, cudaMemcpyDeviceToDevice, stream));
+            Fdk::bp_uploadCoeffsChunk(d_src, K, stream);
+            //verifyGCCoeffs(K);
+        }
 
-            int threads = kMaxChunkAng;
+        void verifyGCCoeffs(int K) const
+        {
+            std::vector<FdkAffineCoeff> h(K);
+            Fdk::bp_readbackCoeffs(h.data(), K);
+
+            constexpr float kEps = FLT_EPSILON;
+            bool all_zero = true;
+            for (int i = 0; i < K; ++i) {
+                const auto& c = h[i];
+                if (fabsf(c.Cu_x) > kEps || fabsf(c.Cu_y) > kEps ||
+                    fabsf(c.Cu_z) > kEps || fabsf(c.Cu_w) > kEps ||
+                    fabsf(c.Cd_x) > kEps || fabsf(c.Cd_y) > kEps || fabsf(c.Cd_z) > kEps || fabsf(c.Cd_w) > kEps ||
+                    fabsf(c.dtheta) > kEps || fabsf(c.SID2) > kEps || fabsf(c.fScaleDTheta - 1.f) > kEps) {
+                    all_zero = false;
+                    break;
+                }
+            }
+
+            if (all_zero) {
+                fprintf(stderr,
+                    "[FdkGeoData][E] verifyGCCoeffs: gC_coeffs[0..%d] all near-zero "
+                    "after upload ¡ª d_src may be uninitialized.\n", K - 1);
+            }
+            else {
+                printf("[FdkGeoData][verify] gC_coeffs[0]  Cu=(%f,%f,%f,%f) dtheta=%f SID2=%f\n",
+                    h[0].Cu_x, h[0].Cu_y, h[0].Cu_z, h[0].Cu_w,
+                    h[0].dtheta, h[0].SID2);
+                if (K > 1)
+                    printf("[FdkGeoData][verify] gC_coeffs[%d] Cu=(%f,%f,%f,%f) dtheta=%f SID2=%f\n",
+                        K - 1,
+                        h[K - 1].Cu_x, h[K - 1].Cu_y, h[K - 1].Cu_z, h[K - 1].Cu_w,
+                        h[K - 1].dtheta, h[K - 1].SID2);
+            }
         }
 
         SConeProjGeomVec* d_geo()    const { return geo.data(); }

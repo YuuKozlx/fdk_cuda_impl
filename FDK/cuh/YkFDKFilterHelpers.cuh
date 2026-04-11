@@ -23,10 +23,10 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // Padding / offset helpers  （__host__ __device__ 双用）
-            // ----------------------------------------------------------------
+             // Padding / offset helpers  （__host__ __device__ 双用）
+             // ----------------------------------------------------------------
 
-            /// 返回满足 paddedN >= 2*Nu 的最小 2 的幂
+             /// 返回满足 paddedN >= 2*Nu 的最小 2 的幂
             __host__ __device__ __forceinline__
                 int fp_computePaddedN(int Nu)
             {
