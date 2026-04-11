@@ -123,7 +123,7 @@ namespace YK {
 
                 BpInitContext ictx{};
                 ictx.vol_geom = vol_geom;
-                ictx.use_precomputed = false;
+                ictx.use_precomputed = true;
                 bp_.setInitContext(&ictx);
                 if (!bp_.init()) {
                     fprintf(stderr, "[FdkReconstructor] BpProcessor init failed\n");

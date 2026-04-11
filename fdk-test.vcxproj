@@ -132,6 +132,7 @@
     <ClInclude Include="CVP\cvp_geometry.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpHelpers.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpLaunch.cuh" />
+    <ClInclude Include="YkWarpStrideCtx.cuh" />
     <CudaCompile Include="FDK\cuh\YkFDKBpPrecompute.cu">
       <FileType>Document</FileType>
     </CudaCompile>

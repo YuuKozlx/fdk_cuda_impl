@@ -166,7 +166,7 @@ namespace YK {
             //   - 参数较多时需要逐个 shfl，代码稍显繁琐
             //   - 仅适用于 warp 内广播，无法跨 warp
             // =============================================================================
-            __global__ void preweight_vec_chunk_rowwarp_shfl_kernel(
+            __global__ void preweight_vec_chunk_rowwarp_shfl_kernel_v1(
                 const float* __restrict__               src,
                 float* __restrict__                     dst,
                 const SConeProjGeomVec* __restrict__    geo,
@@ -260,48 +260,200 @@ namespace YK {
             }
 
 
-
-
             // =============================================================================
-            // pw_launchPreweight
+            // preweight_vec_chunk_rowwarp_shfl_kernel
             //
-            // 功能：配置并启动 preweight_vec_chunk_rowwarp_kernel
+            // 线程分配策略（全局 warp stride 版）：
+            //   warp_global = blockIdx.x * warps_per_blk + warp_in_blk
+            //   n_warps     = gridDim.x  * warps_per_blk
             //
-            // Grid / Block 计算：
-            //   总任务数  = K * Nv（每帧每行一个 warp）
-            //   每 block  = blockThreads / 32 个 warp
-            //   block 数  = ceil(K*Nv / warps_per_blk)
+            //   外层 stride loop：row = warp_global, warp_global + n_warps, ...
+            //     → 每个 warp 处理多行，grid 固定不随 K*Nv 增长
+            //     → geo[i] 每行读取一次，Nu 够大时摊销合理
+            //     → geo 数组较小（K帧），反复访问大概率命中 L1 cache
             //
-            // Shared memory：
-            //   每 block 分配 warps_per_blk * kPreweightSlot * sizeof(float) 字节
-            //   各 warp 各用一段，互不干扰
+            //   内层 lane loop：u = lane, lane+32, lane+64, ...
+            //     → 固定步进 32，warp 内 32 个 lane 访问连续地址
+            //     → 保证 coalesced access
+            //
+            // __shfl_sync 广播：
+            //   lane0 读取 geo[i] 到寄存器，__shfl_sync 广播给 warp 内所有 lane
+            //   不占用 shared memory，延迟约 4 cycle/次，远低于 smem 的 20~30 cycle
+            //
+            // launch 侧：
+            //   block 数上限 = sm_count * 2，避免过度启动
+            //   超出上限的行由 stride loop 自动分摊，kernel 侧无感知
+            //   smem_bytes = 0（shfl 版不需要 shared memory）
             // =============================================================================
-            void pw_launchPreweight(
-                const float* d_src,     // 输入投影 device 指针 [K, Nv, Nu]
-                float* d_dst,     // 输出投影 device 指针 [K, Nv, Nu]
-                const SConeProjGeomVec* d_geo,     // 每帧锥束几何 device 指针 [K]
-                const SFDKGeoParamPerView* d_gv,      // 每帧 FDK 参数 device 指针 [K]
+            __global__ void preweight_vec_chunk_rowwarp_shfl_kernel_v2(
+                const float* __restrict__               src,
+                float* __restrict__                     dst,
+                const SConeProjGeomVec* __restrict__    geo,
+                const SFDKGeoParamPerView* __restrict__ gv,
                 int Nu, int Nv, int K,
-                const SKernelLaunchPolicy& policy,    // 包含 block_threads / bounds_check 等策略
+                int bounds_check)
+            {
+                // ------------------------------------------------------------------
+                // 全局 warp 身份（使用 WARP_STRIDE_INIT 范式）
+                // warp_global → 当前处理的行编号 row = i * Nv + v
+                // n_warps     → stride，每轮跳过所有 warp 已覆盖的行数
+                // ------------------------------------------------------------------
+                const int lane = static_cast<int>(threadIdx.x) & 31;
+                const int warp_in_blk = static_cast<int>(threadIdx.x) >> 5;
+                const int warps_per_blk = static_cast<int>(blockDim.x) >> 5;
+                const int warp_global = static_cast<int>(blockIdx.x) * warps_per_blk + warp_in_blk;
+                const int n_warps = static_cast<int>(gridDim.x) * warps_per_blk;
+
+                constexpr unsigned FULL_MASK = 0xFFFFFFFF;
+
+                // ------------------------------------------------------------------
+                // 外层：全局 warp stride loop，覆盖所有 K*Nv 行
+                // 每个 warp 处理多行，grid 固定不随数据量增长
+                // ------------------------------------------------------------------
+                for (int row = warp_global; row < K * Nv; row += n_warps)
+                {
+                    const int i = row / Nv;
+                    const int v = row - i * Nv;
+
+                    if (bounds_check && i >= K) continue;
+
+                    // --------------------------------------------------------------
+                    // 每轮重新广播 geo[i]
+                    // Nu 够大（512~2048），geo 读取开销可以摊销到整行
+                    // geo 数组较小（K帧），反复访问大概率命中 L1 cache
+                    // --------------------------------------------------------------
+                    float g_src_x, g_src_y, g_src_z;
+                    float g_dS_x, g_dS_y, g_dS_z;
+                    float g_dU_x, g_dU_y, g_dU_z;
+                    float g_dV_x, g_dV_y, g_dV_z;
+                    float g_DSD;
+
+                    if (lane == 0)
+                    {
+                        const SConeProjGeomVec& g = geo[i];
+                        const SFDKGeoParamPerView& gp = gv[i];
+                        g_src_x = g.src.x;   g_src_y = g.src.y;   g_src_z = g.src.z;
+                        g_dS_x = g.detS.x;  g_dS_y = g.detS.y;  g_dS_z = g.detS.z;
+                        g_dU_x = g.detU.x;  g_dU_y = g.detU.y;  g_dU_z = g.detU.z;
+                        g_dV_x = g.detV.x;  g_dV_y = g.detV.y;  g_dV_z = g.detV.z;
+                        g_DSD = gp.SDD_mm;
+                    }
+
+                    const float src_x = __shfl_sync(FULL_MASK, g_src_x, 0);
+                    const float src_y = __shfl_sync(FULL_MASK, g_src_y, 0);
+                    const float src_z = __shfl_sync(FULL_MASK, g_src_z, 0);
+                    const float dS_x = __shfl_sync(FULL_MASK, g_dS_x, 0);
+                    const float dS_y = __shfl_sync(FULL_MASK, g_dS_y, 0);
+                    const float dS_z = __shfl_sync(FULL_MASK, g_dS_z, 0);
+                    const float dU_x = __shfl_sync(FULL_MASK, g_dU_x, 0);
+                    const float dU_y = __shfl_sync(FULL_MASK, g_dU_y, 0);
+                    const float dU_z = __shfl_sync(FULL_MASK, g_dU_z, 0);
+                    const float dV_x = __shfl_sync(FULL_MASK, g_dV_x, 0);
+                    const float dV_y = __shfl_sync(FULL_MASK, g_dV_y, 0);
+                    const float dV_z = __shfl_sync(FULL_MASK, g_dV_z, 0);
+                    const float DSD = __shfl_sync(FULL_MASK, g_DSD, 0);
+
+                    // --------------------------------------------------------------
+                    // 预计算 v 行基础向量 qs0 = detS + detV*v - src
+                    // --------------------------------------------------------------
+                    const float fv = static_cast<float>(v);
+                    const float qs0_x = (dS_x + dV_x * fv) - src_x;
+                    const float qs0_y = (dS_y + dV_y * fv) - src_y;
+                    const float qs0_z = (dS_z + dV_z * fv) - src_z;
+
+                    // --------------------------------------------------------------
+                    // 内层：行内 lane stride loop，覆盖 Nu 个像素
+                    // lane 固定步进 32，保证 coalesced access
+                    // --------------------------------------------------------------
+                    const size_t base = (static_cast<size_t>(i) * Nv
+                        + static_cast<size_t>(v)) * Nu;
+                    const float* src_row = src + base;
+                    float* dst_row = dst + base;
+
+                    for (int u = lane; u < Nu; u += 32)
+                    {
+                        const float fu = static_cast<float>(u);
+                        const float qsx = qs0_x + dU_x * fu;
+                        const float qsy = qs0_y + dU_y * fu;
+                        const float qsz = qs0_z + dU_z * fu;
+                        const float r2 = qsx * qsx + qsy * qsy + qsz * qsz;
+                        const float w = DSD * rsqrtf(fmaxf(r2, 1e-20f));
+                        dst_row[u] = src_row[u] * w;
+                    }
+                }
+            }
+
+
+            void pw_launchPreweight(
+                const float* d_src,
+                float* d_dst,
+                const SConeProjGeomVec* d_geo,
+                const SFDKGeoParamPerView* d_gv,
+                int Nu, int Nv, int K,
+                const SKernelLaunchPolicy& policy,
                 cudaStream_t               stream)
             {
                 const int warps_per_blk = policy.block_threads / 32;
-                const int total_warps = K * Nv;                                   // 总 warp 任务数
+                const int total_warps = K * Nv;
 
-                // 向上取整：确保所有 warp 任务都有对应的 block
-                const int blocks = (total_warps + warps_per_blk - 1) / warps_per_blk;
+                // 按需计算 block 数，但加上限避免过度启动
+                // sm_count 查一次缓存，避免重复调用
+                static int sm_count = 0;
+                if (sm_count == 0)
+                    YK_CUDA_CHECK(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0));
 
-                // 动态 shared memory 大小：每个 warp 需要 kPreweightSlot 个 float
-                const size_t smem_bytes = static_cast<size_t>(warps_per_blk)
-                    * kPreweightSlot * sizeof(float);
+                const int blocks_needed = (total_warps + warps_per_blk - 1) / warps_per_blk;
+                const int blocks = std::min(blocks_needed, sm_count * 2);
 
-                preweight_vec_chunk_rowwarp_shfl_kernel << <blocks, policy.block_threads, smem_bytes, stream >> > (
+                // shfl 版不需要 smem
+                preweight_vec_chunk_rowwarp_shfl_kernel_v2 << <blocks, policy.block_threads, 0, stream >> > (
                     d_src, d_dst, d_geo, d_gv,
                     Nu, Nv, K,
                     policy.bounds_check ? 1 : 0);
 
                 YK_CUDA_KERNEL_CHECK();
             }
+
+
+            //// =============================================================================
+            //// pw_launchPreweight 调用v1_kernel
+            ////
+            //// 功能：配置并启动 preweight_vec_chunk_rowwarp_kernel
+            ////
+            //// Grid / Block 计算：
+            ////   总任务数  = K * Nv（每帧每行一个 warp）
+            ////   每 block  = blockThreads / 32 个 warp
+            ////   block 数  = ceil(K*Nv / warps_per_blk)
+            ////
+            //// Shared memory：
+            ////   每 block 分配 warps_per_blk * kPreweightSlot * sizeof(float) 字节
+            ////   各 warp 各用一段，互不干扰
+            //// =============================================================================
+            //void pw_launchPreweight(
+            //    const float* d_src,     // 输入投影 device 指针 [K, Nv, Nu]
+            //    float* d_dst,     // 输出投影 device 指针 [K, Nv, Nu]
+            //    const SConeProjGeomVec* d_geo,     // 每帧锥束几何 device 指针 [K]
+            //    const SFDKGeoParamPerView* d_gv,      // 每帧 FDK 参数 device 指针 [K]
+            //    int Nu, int Nv, int K,
+            //    const SKernelLaunchPolicy& policy,    // 包含 block_threads / bounds_check 等策略
+            //    cudaStream_t               stream)
+            //{
+            //    const int warps_per_blk = policy.block_threads / 32;
+            //    const int total_warps = K * Nv;                                   // 总 warp 任务数
+
+            //    // 向上取整：确保所有 warp 任务都有对应的 block
+            //    const int blocks = (total_warps + warps_per_blk - 1) / warps_per_blk;
+
+            //    // 动态 shared memory 大小：每个 warp 需要 kPreweightSlot 个 float
+
+
+            //    preweight_vec_chunk_rowwarp_shfl_kernel_v1 << <blocks, policy.block_threads, 0, stream >> > (
+            //        d_src, d_dst, d_geo, d_gv,
+            //        Nu, Nv, K,
+            //        policy.bounds_check ? 1 : 0);
+
+            //    YK_CUDA_KERNEL_CHECK();
+            //}
         }
     }
 } // namespace YK::Fdk::detail

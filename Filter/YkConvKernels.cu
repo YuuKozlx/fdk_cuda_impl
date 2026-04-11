@@ -1,6 +1,7 @@
 #include <cuda_runtime_api.h>
 #include "../global/YkGlobals.h"
 #include "YkConv.hpp"
+#include <algorithm>
 
 namespace YK {
     namespace Filter {
@@ -42,6 +43,24 @@ namespace YK {
                 }
             }
 
+
+#define WARP_STRIDE_INIT()                                               \
+    const int lane          = threadIdx.x & 31;                          \
+    const int warp_in_blk   = threadIdx.x >> 5;                          \
+    const int warps_per_blk = blockDim.x  >> 5;                          \
+    const int warp_global   = blockIdx.x * warps_per_blk + warp_in_blk; \
+    const int n_warps       = gridDim.x  * warps_per_blk;
+#undef WARP_STRIDE_INIT
+
+
+
+#define WARP_STRIDE_INIT_BATCH()                                          \
+    const int b             = blockIdx.y;                                 \
+    const int lane          = threadIdx.x & 31;                           \
+    const int warp_in_blk   = threadIdx.x >> 5;                           \
+    const int warps_per_blk = blockDim.x  >> 5;                           \
+    const int warp_global   = blockIdx.x * warps_per_blk + warp_in_blk;  \
+    const int n_warps       = gridDim.x  * warps_per_blk;
             // -----------------------------------------------------------------------------
             // v2: warp stride 版
             // 核心改动：以 warp（32线程）为单位做 stride loop
@@ -59,22 +78,15 @@ namespace YK {
                 int            n_complex,
                 int            batch)
             {
-                int b = blockIdx.y;
-                if (b >= batch) return;
+                WARP_STRIDE_INIT_BATCH()
+                    if (b >= batch) return;
 
-                const int lane = threadIdx.x & 31;           // 等价于 % 32，位运算更快
-                const int warp_id = threadIdx.x >> 5;           // 等价于 / 32
-                const int n_warps = blockDim.x >> 5;           // 本 block 内 warp 总数
-
-                // 每个 warp 负责以 32 为粒度的 stride loop
-                // base  : 本 warp 当前轮次的起始下标
-                // stride: 每轮跳过所有 warp 覆盖的宽度 = n_warps * 32
-                for (int base = warp_id * 32; base < n_complex; base += n_warps * 32)
+                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
                 {
-                    int u = base + lane;                        // 本线程负责的复数下标
-                    if (u < n_complex)                          // 尾部边界保护
+                    int u = base + lane;
+                    if (u < n_complex)
                     {
-                        int idx = b * n_complex + u;
+                        int   idx = b * n_complex + u;
                         float w = weights[u];
                         data[idx].x *= w;
                         data[idx].y *= w;
@@ -97,14 +109,12 @@ namespace YK {
                 int            n_complex,
                 int            batch)
             {
-                int b = blockIdx.y;
-                if (b >= batch) return;
+                WARP_STRIDE_INIT_BATCH()
 
-                const int lane = threadIdx.x & 31;
-                const int warp_id = threadIdx.x >> 5;
-                const int n_warps = blockDim.x >> 5;
+                    if (b >= batch) return;
 
-                for (int base = warp_id * 32; base < n_complex; base += n_warps * 32)
+
+                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
                 {
                     int u = base + lane;
                     if (u < n_complex)
@@ -142,15 +152,13 @@ namespace YK {
                 int            n2,          // = n_complex / 2，float4 元素总数
                 int            batch)
             {
-                int b = blockIdx.y;
-                if (b >= batch) return;
+                WARP_STRIDE_INIT_BATCH()
 
-                const int lane = threadIdx.x & 31;
-                const int warp_id = threadIdx.x >> 5;
-                const int n_warps = blockDim.x >> 5;
+                    if (b >= batch) return;
+
 
                 // stride loop 与 v2/v3 相同，只是元素单位从"1个复数"变为"2个复数"
-                for (int base = warp_id * 32; base < n2; base += n_warps * 32)
+                for (int base = warp_global * 32; base < n2; base += n_warps * 32)
                 {
                     int u = base + lane;                // float4 下标
                     if (u < n2)
@@ -171,15 +179,10 @@ namespace YK {
                 }
             }
 
+#undef WARP_STRIDE_INIT_BATCH()   
+
         } // namespace detail
 
-          // =============================================================================
-            // 统一 launch 入口
-            // 根据 n_complex 自动选择最优 kernel：
-            //   偶数 → v4（float4，128-bit，每线程2复数）
-            //   奇数 → v3（float2，64-bit，每线程1复数）
-            // grid.x 固定为 1，不随 n_complex 增大而扩张
-            // =============================================================================
         void launch_pointwise_mul(
             cufftComplex* data,
             const float* weights,
@@ -187,33 +190,22 @@ namespace YK {
             int            batch,
             cudaStream_t   stream)
         {
-            // 256线程 = 8 warp，对 512点 数据单轮覆盖，对更大数据自动 stride
             SKernelLaunchPolicy policy;
             dim3 block(policy.block_threads, 1);
-            dim3 grid(1, batch);
+
+            // fft点数若为 2 的倍数 则调用f4版，否则调用f2版
+            const int n_elem = (n_complex % 2 == 0) ? n_complex / 2 : n_complex;
+            const int warps_per_blk = policy.block_threads >> 5;
+            const int warps_need = (n_elem + 31) / 32;
+            const int grid_x = std::min((warps_need + warps_per_blk - 1) / warps_per_blk, 8);
+            dim3 grid(grid_x, batch);
 
             if (n_complex % 2 == 0)
-            {
-                // float4 路径：n2 = n_complex/2 个 float4 元素
-                // 注意：偏移运算必须在 reinterpret 之前完成，
-                //       否则 float4* + 1 步进 16 字节而非 8 字节
-                detail::_kernel_pointwise_mul_v4
-                    << <grid, block, 0, stream >> > (
-                        reinterpret_cast<float4*>(data),    // cufftComplex* → float4*
-                        weights,
-                        n_complex / 2,
-                        batch);
-            }
+                detail::_kernel_pointwise_mul_v4 << <grid, block, 0, stream >> > (
+                    reinterpret_cast<float4*>(data), weights, n_complex / 2, batch);
             else
-            {
-                // float2 fallback：n_complex 为奇数时无法对齐到 float4
-                detail::_kernel_pointwise_mul_v3
-                    << <grid, block, 0, stream >> > (
-                        reinterpret_cast<float2*>(data),    // cufftComplex* → float2*
-                        weights,
-                        n_complex,
-                        batch);
-            }
+                detail::_kernel_pointwise_mul_v3 << <grid, block, 0, stream >> > (
+                    reinterpret_cast<float2*>(data), weights, n_complex, batch);
 
             YK_CUDA_CHECK(cudaGetLastError());
         }

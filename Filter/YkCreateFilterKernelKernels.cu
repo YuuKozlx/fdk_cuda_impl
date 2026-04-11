@@ -11,142 +11,279 @@
 #include "YkCreateFilterKernelHelpers.cuh"
 #include "YkCreateFilterKernelLaunch.cuh"
 
+
 namespace YK {
     namespace Filter {
-        namespace detail {
 
-            // (0) Identity weights: w[k] = gain * (bake_invN ? 1/N : 1)
+        namespace detail {
+            // 公共：从 blockDim/gridDim 推导 warp 身份
+            // 调用处直接 inline，无函数调用开销
+            // warp 索引 计算范式
+            //    ┌─────────────────────────────────────────┐
+            //    │  第一层：身份确定（WARP_STRIDE_INIT）   │
+            //    │  确定当前线程在全局中的 warp 编号       │
+            //    │  以及 warp 内的 lane 位置               │
+            //    └─────────────────────────────────────────┘
+            //    ↓
+            //    ┌─────────────────────────────────────────┐
+            //    │  第二层：stride loop                    │
+            //    │  base = warp_global * 32                │
+            //    │  每轮步进 n_warps * 32                  │
+            //    │  保证全局数据无遗漏、无重复             │
+            //    └─────────────────────────────────────────┘
+            //    ↓
+            //    ┌─────────────────────────────────────────┐
+            //    │  第三层：lane 内计算                    │
+            //    │  k = base + lane                        │
+            //    │  warp 内 32 个 lane 访问连续地址        │
+            //    │  保证 coalesced access                  │
+            //    └─────────────────────────────────────────┘
+// =============================================================================
+// WARP STRIDE LOOP 范式说明
+// =============================================================================
+//
+// 一、基本概念
+//
+//   GPU 线程的最小执行单位是 warp，每个 warp 固定包含 32 个线程。
+//   warp 内的线程编号称为 lane，范围 [0, 31]。
+//
+//   threadIdx.x:  0  1  2 ... 31 | 32 33 34 ... 63 | 64 65 ...
+//   lane:         0  1  2 ... 31 |  0  1  2 ... 31 |  0  1  ...
+//                 <─── warp 0 ──> <─── warp 1 ────> <── warp 2 ──>
+//
+// 二、WARP_STRIDE_INIT 宏展开说明
+//
+//   lane          = threadIdx.x & 31 相当于对32取余
+//                   当前线程在 warp 内的位置 [0, 31]
+//                   决定本线程在每轮循环中访问哪个元素
+//
+//   warp_in_blk   = threadIdx.x >> 5
+//                   当前线程所在 warp 在 block 内的编号
+//
+//   warps_per_blk = blockDim.x >> 5
+//                   每个 block 包含的 warp 数量
+//                   blockDim.x = 256 时固定为 8
+//
+//   warp_global   = blockIdx.x * warps_per_blk + warp_in_blk
+//                   当前 warp 的全局唯一编号
+//                   自动将块间偏移纳入计算，无需手动处理指针偏移
+//                   grid=1 时等价于 warp_in_blk
+//                   grid=2 时 block1 的 warp 编号从 8 开始
+//
+//   n_warps       = gridDim.x * warps_per_blk
+//                   全局 warp 总数，作为每轮循环的步进量
+//                   grid=1, block=256 时 = 8
+//                   grid=2, block=256 时 = 16
+//
+// 三、stride loop 结构
+//
+//   for (int base = warp_global * 32; base < n; base += n_warps * 32)
+//   {
+//       int k = base + lane;
+//       if (k < n) { /* 计算 */ }
+//   }
+//
+//   每轮循环：
+//     base        → 当前 warp 负责的起始下标
+//     base + lane → 本线程负责的元素下标
+//     步进量      → n_warps * 32，跳过所有 warp 本轮已覆盖的区间
+//
+//   示意（grid=1, block=256, n_warps=8, n=512）：
+//
+//     第1轮：
+//       warp0 → k=[0,   31]
+//       warp1 → k=[32,  63]
+//       ...
+//       warp7 → k=[224, 255]
+//
+//     第2轮（base += 8*32 = 256）：
+//       warp0 → k=[256, 287]
+//       warp1 → k=[288, 319]
+//       ...
+//       warp7 → k=[480, 511]   → 全部覆盖，循环结束
+//
+// 四、三个核心性质
+//
+//   1. Coalesced Access
+//      warp 内 32 个 lane 每轮访问连续的 32 个地址
+//      硬件将 32 次访问合并为单次内存事务，带宽利用率最优
+//
+//   2. 无数据竞争
+//      warp_global 全局唯一，每个 warp 负责不重叠的区间
+//
+//   3. 自适应 grid 大小
+//      n_warps 由 gridDim.x 动态推导
+//      launch 侧修改 grid 大小时 kernel 代码零修改
+//      grid=1：每个 warp 多跑几轮，适合小数据
+//      grid>1：warp 并行分摊，适合大数据
+//
+// 五、适用场景
+//
+//   适合：1D 连续数组的逐元素操作（填充、缩放、变换）
+//   不适合：需要跨 warp 通信、二维索引、或非连续访存的场景
+//
+// =============================================================================
+#define WARP_STRIDE_INIT()                                              \
+    const int lane        = threadIdx.x & 31;                          \
+    const int warp_in_blk = threadIdx.x >> 5;                          \
+    const int warps_per_blk = blockDim.x >> 5;                         \
+    const int warp_global = blockIdx.x * warps_per_blk + warp_in_blk; \
+    const int n_warps     = gridDim.x  * warps_per_blk;
+
+            // (0) 填充常数权重 — warp stride 版
             static __global__ void kernel_fill_identity_weights(
                 float* __restrict__ w,
-                int n_complex,
-                int N,
-                float gain,
-                bool bake_invN)
+                int n_complex, int N, float gain, bool bake_invN)
             {
-                int k = blockIdx.x * blockDim.x + threadIdx.x;
-                if (k >= n_complex) return;
-                float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
-                w[k] = gain * invN;
+                WARP_STRIDE_INIT()
+
+                    // 值全部相同，host 端预算好，所有线程只做写操作
+                    float val = gain * ((bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f);
+
+                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
+                {
+                    int k = base + lane;
+                    if (k < n_complex) w[k] = val;
+                }
             }
 
-            // (1) Analytic frequency-domain build (direct)
-            // w[k] = gain * ramp(f) * window(x) * (optional 1/N), cutoff applied
+            // (0b) 原地增益缩放
+            // 用途：None 情况下的 apply_window 退化路径
+            static __global__ void kernel_scale_inplace(
+                float* __restrict__ w,
+                int n_complex, float gain)
+            {
+                WARP_STRIDE_INIT()
+
+                    for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
+                    {
+                        int k = base + lane;
+                        if (k < n_complex) w[k] *= gain;
+                    }
+            }
+
+            // (1) 频域直接构建滤波权重 — warp stride 版
             static __global__ void kernel_build_weights_analytic_freq(
                 float* __restrict__ w,
-                int n_complex,
-                int N,
-                SFilterKernelDesc desc,
-                bool bake_invN)
+                int n_complex, int N,
+                SFilterKernelDesc desc, bool bake_invN)
             {
-                int k = blockIdx.x * blockDim.x + threadIdx.x;
-                if (k >= n_complex) return;
-
-                if (desc.kind == EFilterKernel::None) {
-                    float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
-                    w[k] = desc.gain * invN;
-                    return;
-                }
-
-                float f = (N > 0) ? ((float)k / (float)N) : 0.0f; // [0, 0.5]
-
-                if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
-
-                float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
-                if (f > cc) { w[k] = 0.0f; return; }
-
-                float ramp = f;
-                float x = (cc > 0.0f) ? (f / cc) : 0.0f;
-                float shape = window_shape(x, desc.kind);
+                const int lane = threadIdx.x & 31;
+                const int warp_in_blk = threadIdx.x >> 5;
+                const int warp_global = blockIdx.x * (blockDim.x >> 5) + warp_in_blk;
+                const int n_warps = gridDim.x * (blockDim.x >> 5);
 
                 float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
-                w[k] = desc.gain * ramp * shape * invN;
+                float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
+
+                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
+                {
+                    int k = base + lane;
+                    if (k >= n_complex) break;
+
+                    float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
+
+                    if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; continue; }
+                    if (f > cc) { w[k] = 0.0f; continue; }
+
+                    w[k] = desc.gain * f * window_shape(f / cc, desc.kind) * invN;
+                }
             }
 
-            // (2) Spatial discrete Ram-Lak kernel (DU=1 convention)
+            // (2) 空域离散 Ram-Lak 核 — warp stride 版
             static __global__ void kernel_gen_spatial_rl_kernel_du1(
-                float* __restrict__ h,
-                int N,
-                bool bake_invN)
+                float* __restrict__ h, int N, bool bake_invN)
             {
-                int u = blockIdx.x * blockDim.x + threadIdx.x;
-                if (u >= N) return;
+                WARP_STRIDE_INIT()
 
-                int n = (u <= N / 2) ? u : (u - N);
-                int an = (n < 0) ? -n : n;
+                    float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
+                const float pi = 3.14159265358979323846f;
 
-                float val = 0.0f;
-                if (n == 0) {
-                    val = 1.0f / 4.0f;
+                for (int base = warp_global * 32; base < N; base += n_warps * 32)
+                {
+                    int u = base + lane;
+                    if (u >= N) break;
+
+                    int n = (u <= N / 2) ? u : (u - N);
+                    int an = (n < 0) ? -n : n;
+
+                    float val = 0.0f;
+                    if (n == 0) {
+                        val = 0.25f;
+                    }
+                    else if (an & 1) {
+                        float fn = (float)n;
+                        val = -1.0f / (pi * pi * fn * fn);
+                    }
+
+                    h[u] = val * invN;
                 }
-                else if (an & 1) {
-                    const float pi = 3.14159265358979323846f;
-                    float fn = (float)n;
-                    val = -1.0f / (pi * pi * fn * fn);
-                }
-
-                if (bake_invN && N > 0) val *= (1.0f / (float)N);
-                h[u] = val;
             }
 
-            // (3) Extract ramp weights from FFT(RL)
+            // (3) 从 FFT(RL) 提取实数权重 — warp stride 版
             static __global__ void kernel_extract_weights_from_fft(
                 const cufftComplex* __restrict__ src,
                 float* __restrict__ dst,
-                int n_complex,
-                int mode,           // 0 = RealPart, 1 = Magnitude
-                bool force_dc_zero)
+                int n_complex, int mode, bool force_dc_zero)
             {
-                int k = blockIdx.x * blockDim.x + threadIdx.x;
-                if (k >= n_complex) return;
+                WARP_STRIDE_INIT()
 
-                float re = src[k].x;
-                float im = src[k].y;
-                float v = (mode == 1) ? sqrtf(re * re + im * im) : re;
+                    // 用 float2 读保证 64-bit LD，与 cufftComplex 内存布局完全一致
+                    const float2* src2 = reinterpret_cast<const float2*>(src);
 
-                if (force_dc_zero && k == 0) v = 0.0f;
-                dst[k] = v;
+                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
+                {
+                    int k = base + lane;
+                    if (k >= n_complex) break;
+
+                    float2 c = src2[k];                             // 64-bit LD
+                    float  v = (mode == 1) ? hypotf(c.x, c.y) : c.x;
+
+                    if (force_dc_zero && k == 0) v = 0.0f;
+                    dst[k] = v;
+                }
             }
 
-            // (4) Apply window / cutoff / gain / DC on ramp weights (in-place)
+            // (4) 原地施加窗函数 — warp stride 版
             static __global__ void kernel_apply_window_to_weights_inplace(
                 float* __restrict__ w,
-                int n_complex,
-                int N,
-                SFilterKernelDesc desc)
+                int n_complex, int N, SFilterKernelDesc desc)
             {
-                int k = blockIdx.x * blockDim.x + threadIdx.x;
-                if (k >= n_complex) return;
-
-                if (desc.kind == EFilterKernel::None) {
-                    w[k] = w[k] * desc.gain;
-                    return;
-                }
-
-                float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
-
-                if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
+                const int lane = threadIdx.x & 31;
+                const int warp_in_blk = threadIdx.x >> 5;
+                const int warp_global = blockIdx.x * (blockDim.x >> 5) + warp_in_blk;
+                const int n_warps = gridDim.x * (blockDim.x >> 5);
 
                 float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
-                if (f > cc) { w[k] = 0.0f; return; }
 
-                float x = (cc > 0.0f) ? (f / cc) : 0.0f;
-                float shape = window_shape(x, desc.kind);
+                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
+                {
+                    int k = base + lane;
+                    if (k >= n_complex) break;
 
-                w[k] = w[k] * (desc.gain * shape);
+                    float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
+
+                    if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; continue; }
+                    if (f > cc) { w[k] = 0.0f; continue; }
+
+                    w[k] *= desc.gain * window_shape(f / cc, desc.kind);
+                }
             }
 
-        }; // namespace detail
+#undef WARP_STRIDE_INIT
+
+        } // namespace detail
+
 
         bool flt_launch_kernel_fill_identity_weights(
-            float* d_w,
-            int n_complex,
-            int N,
-            float gain,
-            bool bake_invN,
+            float* d_w, int n_complex, int N, float gain, bool bake_invN,
             cudaStream_t stream)
         {
-            dim3 block(256, 1);
-            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+            SKernelLaunchPolicy policy;
+            policy.block_threads = 256;
+            dim3 block(policy.block_threads, 1, 1);
+            dim3 grid(2, 1, 1);
+
             detail::kernel_fill_identity_weights << <grid, block, 0, stream >> > (
                 d_w, n_complex, N, gain, bake_invN);
             YK_CUDA_KERNEL_CHECK();
@@ -154,29 +291,33 @@ namespace YK {
         }
 
         bool flt_launch_kernel_build_weights_analytic_freq(
-            float* d_w,
-            int n_complex,
-            int N,
-            SFilterKernelDesc desc,
-            bool bake_invN,
-            cudaStream_t stream)
+            float* d_w, int n_complex, int N,
+            SFilterKernelDesc desc, bool bake_invN, cudaStream_t stream)
         {
-            dim3 block(256, 1);
-            dim3 grid((n_complex + block.x - 1) / block.x, 1);
-            detail::kernel_build_weights_analytic_freq << <grid, block, 0, stream >> > (
-                d_w, n_complex, N, desc, bake_invN);
+            SKernelLaunchPolicy policy;
+            policy.block_threads = 256;
+            dim3 block(policy.block_threads, 1, 1);
+            dim3 grid(2, 1, 1);
+
+            if (desc.kind == EFilterKernel::None)
+                detail::kernel_fill_identity_weights << <grid, block, 0, stream >> > (
+                    d_w, n_complex, N, desc.gain, bake_invN);
+            else
+                detail::kernel_build_weights_analytic_freq << <grid, block, 0, stream >> > (
+                    d_w, n_complex, N, desc, bake_invN);
+
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);
         }
 
+
         bool flt_launch_kernel_gen_spatial_rl_kernel_du1(
-            float* d_h,
-            int N,
-            bool bake_invN,
-            cudaStream_t stream)
+            float* d_h, int N, bool bake_invN, cudaStream_t stream)
         {
-            dim3 block(256, 1);
-            dim3 grid((N + block.x - 1) / block.x, 1);
+            SKernelLaunchPolicy policy;
+            policy.block_threads = 256;
+            dim3 block(policy.block_threads, 1, 1);
+            dim3 grid(2, 1, 1);
             detail::kernel_gen_spatial_rl_kernel_du1 << <grid, block, 0, stream >> > (
                 d_h, N, bake_invN);
             YK_CUDA_KERNEL_CHECK();
@@ -184,36 +325,251 @@ namespace YK {
         }
 
         bool flt_launch_kernel_extract_weights_from_fft(
-            const cufftComplex* d_src,
-            float* d_dst,
-            int n_complex,
-            ERampExtractMode mode,
-            bool force_dc_zero,
+            const cufftComplex* d_src, float* d_dst,
+            int n_complex, ERampExtractMode mode, bool force_dc_zero,
             cudaStream_t stream)
         {
-            dim3 block(256, 1);
-            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+            SKernelLaunchPolicy policy;
+            policy.block_threads = 256;
+            dim3 block(policy.block_threads, 1, 1);
+            dim3 grid(2, 1, 1);
             detail::kernel_extract_weights_from_fft << <grid, block, 0, stream >> > (
                 d_src, d_dst, n_complex, (int)mode, force_dc_zero);
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);
         }
 
-
         bool flt_launch_kernel_apply_window_to_weights_inplace(
-            float* d_w,
-            int n_complex,
-            int N,
-            SFilterKernelDesc desc,
-            cudaStream_t stream)
+            float* d_w, int n_complex, int N,
+            SFilterKernelDesc desc, cudaStream_t stream)
         {
-            dim3 block(256, 1);
-            dim3 grid((n_complex + block.x - 1) / block.x, 1);
-            detail::kernel_apply_window_to_weights_inplace << <grid, block, 0, stream >> > (
-                d_w, n_complex, N, desc);
+            SKernelLaunchPolicy policy;
+            policy.block_threads = 256;
+            dim3 block(policy.block_threads, 1, 1);
+            dim3 grid(2, 1, 1);
+
+            if (desc.kind == EFilterKernel::None)
+                detail::kernel_scale_inplace << <grid, block, 0, stream >> > (
+                    d_w, n_complex, desc.gain);
+            else
+                detail::kernel_apply_window_to_weights_inplace << <grid, block, 0, stream >> > (
+                    d_w, n_complex, N, desc);
+
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);
         }
 
-    } // namespace Filter
-} // namespace YK
+    }
+}
+
+//namespace YK {
+//    namespace Filter {
+//
+//
+//
+//        namespace detail { //非warp实现
+//
+//            // (0) Identity weights: w[k] = gain * (bake_invN ? 1/N : 1)
+//            static __global__ void kernel_fill_identity_weights(
+//                float* __restrict__ w,
+//                int n_complex,
+//                int N,
+//                float gain,
+//                bool bake_invN)
+//            {
+//                int k = blockIdx.x * blockDim.x + threadIdx.x;
+//                if (k >= n_complex) return;
+//                float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
+//                w[k] = gain * invN;
+//            }
+//
+//            // (1) Analytic frequency-domain build (direct)
+//            // w[k] = gain * ramp(f) * window(x) * (optional 1/N), cutoff applied
+//            static __global__ void kernel_build_weights_analytic_freq(
+//                float* __restrict__ w,
+//                int n_complex,
+//                int N,
+//                SFilterKernelDesc desc,
+//                bool bake_invN)
+//            {
+//                int k = blockIdx.x * blockDim.x + threadIdx.x;
+//                if (k >= n_complex) return;
+//
+//                if (desc.kind == EFilterKernel::None) {
+//                    float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
+//                    w[k] = desc.gain * invN;
+//                    return;
+//                }
+//
+//                float f = (N > 0) ? ((float)k / (float)N) : 0.0f; // [0, 0.5]
+//
+//                if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
+//
+//                float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
+//                if (f > cc) { w[k] = 0.0f; return; }
+//
+//                float ramp = f;
+//                float x = (cc > 0.0f) ? (f / cc) : 0.0f;
+//                float shape = window_shape(x, desc.kind);
+//
+//                float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
+//                w[k] = desc.gain * ramp * shape * invN;
+//            }
+//
+//            // (2) Spatial discrete Ram-Lak kernel (DU=1 convention)
+//            static __global__ void kernel_gen_spatial_rl_kernel_du1(
+//                float* __restrict__ h,
+//                int N,
+//                bool bake_invN)
+//            {
+//                int u = blockIdx.x * blockDim.x + threadIdx.x;
+//                if (u >= N) return;
+//
+//                int n = (u <= N / 2) ? u : (u - N);
+//                int an = (n < 0) ? -n : n;
+//
+//                float val = 0.0f;
+//                if (n == 0) {
+//                    val = 1.0f / 4.0f;
+//                }
+//                else if (an & 1) {
+//                    const float pi = 3.14159265358979323846f;
+//                    float fn = (float)n;
+//                    val = -1.0f / (pi * pi * fn * fn);
+//                }
+//
+//                if (bake_invN && N > 0) val *= (1.0f / (float)N);
+//                h[u] = val;
+//            }
+//
+//            // (3) Extract ramp weights from FFT(RL)
+//            static __global__ void kernel_extract_weights_from_fft(
+//                const cufftComplex* __restrict__ src,
+//                float* __restrict__ dst,
+//                int n_complex,
+//                int mode,           // 0 = RealPart, 1 = Magnitude
+//                bool force_dc_zero)
+//            {
+//                int k = blockIdx.x * blockDim.x + threadIdx.x;
+//                if (k >= n_complex) return;
+//
+//                float re = src[k].x;
+//                float im = src[k].y;
+//                float v = (mode == 1) ? sqrtf(re * re + im * im) : re;
+//
+//                if (force_dc_zero && k == 0) v = 0.0f;
+//                dst[k] = v;
+//            }
+//
+//            // (4) Apply window / cutoff / gain / DC on ramp weights (in-place)
+//            static __global__ void kernel_apply_window_to_weights_inplace(
+//                float* __restrict__ w,
+//                int n_complex,
+//                int N,
+//                SFilterKernelDesc desc)
+//            {
+//                int k = blockIdx.x * blockDim.x + threadIdx.x;
+//                if (k >= n_complex) return;
+//
+//                if (desc.kind == EFilterKernel::None) {
+//                    w[k] = w[k] * desc.gain;
+//                    return;
+//                }
+//
+//                float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
+//
+//                if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
+//
+//                float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
+//                if (f > cc) { w[k] = 0.0f; return; }
+//
+//                float x = (cc > 0.0f) ? (f / cc) : 0.0f;
+//                float shape = window_shape(x, desc.kind);
+//
+//                w[k] = w[k] * (desc.gain * shape);
+//            }
+//
+//        }; // namespace detail
+//
+//
+//        bool flt_launch_kernel_fill_identity_weights(
+//            float* d_w,
+//            int n_complex,
+//            int N,
+//            float gain,
+//            bool bake_invN,
+//            cudaStream_t stream)
+//        {
+//            dim3 block(256, 1);
+//            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+//            detail::kernel_fill_identity_weights << <grid, block, 0, stream >> > (
+//                d_w, n_complex, N, gain, bake_invN);
+//            YK_CUDA_KERNEL_CHECK();
+//            return (cudaGetLastError() == cudaSuccess);
+//        }
+//
+//        bool flt_launch_kernel_build_weights_analytic_freq(
+//            float* d_w,
+//            int n_complex,
+//            int N,
+//            SFilterKernelDesc desc,
+//            bool bake_invN,
+//            cudaStream_t stream)
+//        {
+//            dim3 block(256, 1);
+//            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+//            detail::kernel_build_weights_analytic_freq << <grid, block, 0, stream >> > (
+//                d_w, n_complex, N, desc, bake_invN);
+//            YK_CUDA_KERNEL_CHECK();
+//            return (cudaGetLastError() == cudaSuccess);
+//        }
+//
+//        bool flt_launch_kernel_gen_spatial_rl_kernel_du1(
+//            float* d_h,
+//            int N,
+//            bool bake_invN,
+//            cudaStream_t stream)
+//        {
+//            dim3 block(256, 1);
+//            dim3 grid((N + block.x - 1) / block.x, 1);
+//            detail::kernel_gen_spatial_rl_kernel_du1 << <grid, block, 0, stream >> > (
+//                d_h, N, bake_invN);
+//            YK_CUDA_KERNEL_CHECK();
+//            return (cudaGetLastError() == cudaSuccess);
+//        }
+//
+//        bool flt_launch_kernel_extract_weights_from_fft(
+//            const cufftComplex* d_src,
+//            float* d_dst,
+//            int n_complex,
+//            ERampExtractMode mode,
+//            bool force_dc_zero,
+//            cudaStream_t stream)
+//        {
+//            dim3 block(256, 1);
+//            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+//            detail::kernel_extract_weights_from_fft << <grid, block, 0, stream >> > (
+//                d_src, d_dst, n_complex, (int)mode, force_dc_zero);
+//            YK_CUDA_KERNEL_CHECK();
+//            return (cudaGetLastError() == cudaSuccess);
+//        }
+//
+//
+//        bool flt_launch_kernel_apply_window_to_weights_inplace(
+//            float* d_w,
+//            int n_complex,
+//            int N,
+//            SFilterKernelDesc desc,
+//            cudaStream_t stream)
+//        {
+//            dim3 block(256, 1);
+//            dim3 grid((n_complex + block.x - 1) / block.x, 1);
+//            detail::kernel_apply_window_to_weights_inplace << <grid, block, 0, stream >> > (
+//                d_w, n_complex, N, desc);
+//            YK_CUDA_KERNEL_CHECK();
+//            return (cudaGetLastError() == cudaSuccess);
+//        }
+//
+//    }; // namespace Filter
+//};// namespace YK
+

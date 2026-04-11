@@ -24,7 +24,7 @@ namespace YK {
                 x = fminf(fmaxf(x, 0.0f), 1.0f);
 
                 switch (kind) {
-                case EFilterKernel::None:
+                    // None 在外部被处理
                 case EFilterKernel::RamLak:
                     return 1.0f;
 
