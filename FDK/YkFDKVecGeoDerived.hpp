@@ -115,7 +115,8 @@ namespace YK {
                     detector_pixels_u, detector_pixels_v,
                     gv.offsetU_pix,
                     gv.offsetV_pix,
-                    gv.SDD_mm);
+                    gv.SDD_mm,
+                    gv.SDD_plane_mm);
 
 
 
@@ -209,80 +210,88 @@ namespace YK {
 
 
 
-        // -----------------------------
-        // principal point + SDD + offsets + ray0hat
+        // ----------------------------------------------------------------
+        // compute_SDD_offsets
         //
-        // principal point:
-        //   intersection of central ray X(t)=src+t*d with detector plane
-        // detector plane:
-        //   passes through detS, normal computed as normalize(detU x detV)
+        // 计算主射线与探测器平面的交点（principal point），并由此得出：
+        //   1. SDD_mm       — 源点沿主射线到 principal point 的实际距离
+        //   2. SDD_plane_mm — 源点到探测器平面沿法向量的投影距离，用于求交参数 t
+        //   3. offsetU/V    — principal point 相对探测器物理中心的像素偏移
         //
-        // outputs (write into gv fields via refs):
-        //   offset_valid, offsetU_pix, offsetV_pix, SDD_mm
-        // -----------------------------
+        // 输入：
+        //   geo                — 向量几何参数（src, srcCR, detS, detU, detV）
+        //   detector_pixels_u  — 探测器 U 方向像素数
+        //   detector_pixels_v  — 探测器 V 方向像素数
+        //
+        // 输出：
+        //   out_offsetU_pix — principal point 的 U 像素坐标 - 探测器中心 U 坐标
+        //   out_offsetV_pix — principal point 的 V 像素坐标 - 探测器中心 V 坐标
+        //   out_SDD_mm      — 主射线实际长度 |principal_point - src|
+        //   out_SDD_plane_mm— (detS - src) · det_n，求交分子项
+        //
+        // 返回 false：探测器法向量退化，或主射线平行于探测器平面
+        // ----------------------------------------------------------------
         static bool compute_SDD_offsets(
             const SConeProjGeomVec& geo,
             int detector_pixels_u,
             int detector_pixels_v,
             float& out_offsetU_pix,
             float& out_offsetV_pix,
-            float& out_SDD_mm)
+            float& out_SDD_mm,
+            float& out_SDD_plane_mm)   // ← 新增输出参数
         {
             out_offsetU_pix = 0.f;
             out_offsetV_pix = 0.f;
             out_SDD_mm = 0.f;
+            out_SDD_plane_mm = 0.f;
 
-
-            // Compute the detector plane normal from U x V
+            // ── 探测器法向量 n = detV × detU，归一化 ────────────────────
             float3 n = f3_cross(geo.detV, geo.detU);
             const float n2 = f3_dot(n, n);
-            if (n2 < 1e-24f) {
-                return false;
-            }
+            if (n2 < 1e-24f) return false;
+
             const float invn = rsqrtf(n2);
-            float3 detector_plane_normal_unit = make_float3(n.x * invn, n.y * invn, n.z * invn);
+            const float3 det_n = make_float3(n.x * invn, n.y * invn, n.z * invn);
 
-            // Calculate the parameter t for the intersection with the primary ray
-            float denom = f3_dot(geo.srcCR, detector_plane_normal_unit);
-            if (fabsf(denom) < 1e-24f) {  // ray nearly parallel to detector
-                return false;
-            }
+            // ── 求交参数 t：主射线与探测器平面的交点 ─────────────────────
+            // t = [(detS - src) · n] / (srcCR · n)
+            // 分子 = SDD_plane_mm，同时输出供后续使用
+            const float denom = f3_dot(geo.srcCR, det_n);
+            if (fabsf(denom) < 1e-24f) return false;  // 主射线近乎平行于探测器
 
-            float numer = f3_dot(f3_sub(geo.detS, geo.src), detector_plane_normal_unit);
-            float t = numer / denom;
+            const float numer = f3_dot(f3_sub(geo.detS, geo.src), det_n);
+            out_SDD_plane_mm = numer;                  // ← (detS - src) · n
+            const float t = numer / denom;
 
+            // ── Principal point：主射线与探测器平面的交点 ────────────────
+            const float3 principal_point = f3_add(geo.src, f3_scale(geo.srcCR, t));
 
-            // Principal point on the detector plane
-            const float3 principal_point_world = f3_add(geo.src, f3_scale(geo.srcCR, t));
-
-            // SDD and ray0hat: ray0 = principal - src
-            const float3 ray0 = f3_sub(principal_point_world, geo.src);
-            const float ray0_len2 = f3_dot(ray0, ray0);
+            // ── SDD_mm：源点到 principal point 的实际距离 ────────────────
+            const float3 ray0 = f3_sub(principal_point, geo.src);
+            const float  ray0_len2 = f3_dot(ray0, ray0);
             if (ray0_len2 < 1e-20f) return false;
+            out_SDD_mm = sqrtf(ray0_len2);             // = t（srcCR 为单位向量时）
 
-            const float inv_len = rsqrtf(ray0_len2);
-            out_SDD_mm = sqrtf(ray0_len2);
+            // ── Principal point 的像素坐标（Cramer 法则）────────────────
+            // 求解：D = u * detU + v * detV，D = principal_point - detS
+            const float3 D = f3_sub(principal_point, geo.detS);
+            const float  UU = f3_dot(geo.detU, geo.detU);
+            const float  VV = f3_dot(geo.detV, geo.detV);
+            const float  UV = f3_dot(geo.detU, geo.detV);
+            const float  DU = f3_dot(D, geo.detU);
+            const float  DV = f3_dot(D, geo.detV);
 
-            // Pixel coordinates of the principal point:
-            const float3 D = f3_sub(principal_point_world, geo.detS);
+            const float det_gram = UU * VV - UV * UV;
+            if (fabsf(det_gram) < 1e-20f) return false;
 
-            const float UU = f3_dot(geo.detU, geo.detU);
-            const float VV = f3_dot(geo.detV, geo.detV);
-            const float UV = f3_dot(geo.detU, geo.detV);
-            const float DU = f3_dot(D, geo.detU);
-            const float DV = f3_dot(D, geo.detV);
-
-            const float det = UU * VV - UV * UV;
-            if (fabsf(det) < 1e-20f) return false;
-
-            const float invdet = 1.f / det;
+            const float invdet = 1.f / det_gram;
             const float u_pix = (DU * VV - DV * UV) * invdet;
             const float v_pix = (-DU * UV + DV * UU) * invdet;
 
-            // Offsets relative to the detector center pixel
+            // ── 相对探测器物理中心的像素偏移 ─────────────────────────────
+            // offset > 0 表示 principal point 在探测器中心的正方向侧
             const float center_u = 0.5f * (detector_pixels_u - 1);
             const float center_v = 0.5f * (detector_pixels_v - 1);
-
             out_offsetU_pix = u_pix - center_u;
             out_offsetV_pix = v_pix - center_v;
 

@@ -30,7 +30,7 @@ namespace YK {
                 //const double nx = gv.det_n.x, ny = gv.det_n.y, nz = gv.det_n.z;
                 const double rcx = g.srcCR.x, rcy = g.srcCR.y, rcz = g.srcCR.z;
                 const double dsx = g.detS.x, dsy = g.detS.y, dsz = g.detS.z;
-                const double SDD = gv.SDD_mm;
+                const double SDD = gv.SDD_plane_mm;
 
                 const double src_dot_n = sx * rcx + sy * rcy + sz * rcz;
                 const double src_dot_u = sx * ux + sy * uy + sz * uz;

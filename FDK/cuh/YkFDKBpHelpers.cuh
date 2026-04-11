@@ -12,10 +12,51 @@ namespace YK {
             // ----------------------------------------------------------------
             // project_uv_and_terms_derived
             //
-            //   将体素 P 投影到探测器，输出：
-            //     u_pix / v_pix — 像素坐标（未偏移 0.5）
-            //     denom_c       — dir · ray_center，供 FDK 余弦权重计算
-            //   返回 false 表示投影无效（法向分母过小或像素在源后方）。
+            // 【几何问题】
+            //   给定体素世界坐标 P，求其在探测器上的像素坐标 (u_pix, v_pix)，
+            //   以及 FDK 余弦权重所需的分母项 denom_c。
+            //
+            // 【第一步：透视投影求交参数 t】
+            //
+            //   射线方程：Q(t) = s + t * d，其中 d = P - s
+            //
+            //   探测器平面共面条件（detS 为探测器参考点，n 为法向量）：
+            //     (Q - s) · n = (detS - s) · n
+            //
+            //   求解 t：
+            //     t = [(detS - s) · n] / (d · n) = SDD_plane_mm / (d · n)
+            //
+            //   注意：SDD_plane_mm = (detS - s) · n，是源点到探测器平面沿法向量的投影距离。
+            //         不是主射线实际长度 SDD_mm，探测器有倾斜时二者不同。
+            //
+            // 【第二步：求交点相对探测器参考点的位移】
+            //
+            //   ΔU = t*(d · e_u) - (detS - s) · e_u
+            //   ΔV = t*(d · e_v) - (detS - s) · e_v
+            //
+            // 【第三步：非正交基下求像素坐标（Cramer 法则）】
+            //
+            //   | UU  UV | | u |   | ΔU |
+            //   | UV  VV | | v | = | ΔV |
+            //
+            //   u = (ΔU*VV - ΔV*UV) / det
+            //   v = (ΔV*UU - ΔU*UV) / det
+            //
+            //   e_u 的尺度 du 已隐含在 Gram 矩阵求逆中，u/v 直接是像素坐标。
+            //   像素坐标以探测器参考点 detS（像素(0,0)）为原点。
+            //
+            // 【第四步：FDK 余弦权重分母 denom_c】
+            //
+            //   denom_c = d · r，r 为主射线方向（由转轴决定）
+            //   w = (SOD / denom_c)²
+            //   r 在 Z轴=转轴 的坐标系下无 Z 分量，Z 方向锥角不参与权重计算。
+            //
+            // 【输出】
+            //   u_pix, v_pix — 像素坐标（以 detS 为原点，未偏移 0.5）
+            //   denom_c      — d · r，供 FDK 余弦权重计算
+            //
+            // 【返回值】
+            //   false — 射线近乎平行于探测器平面（denom_n 过小），或交点在源点后方（t≤0）
             // ----------------------------------------------------------------
             __device__ __forceinline__ bool project_uv_and_terms_derived(
                 const SConeProjGeomVec& g,
@@ -32,11 +73,12 @@ namespace YK {
                 const float denom_n = f3_dot(dir, gv.det_n);
                 if (fabsf(denom_n) < 1e-8f) return false;
 
-                const float t = __fdividef(gv.SDD_mm, denom_n);
+                const float t = __fdividef(gv.SDD_plane_mm, denom_n);
                 if (t <= 0.f) return false;
 
                 const float DU = t * f3_dot(dir, g.detU) - gv.detS_sub_src_dot_dU;
                 const float DV = t * f3_dot(dir, g.detV) - gv.detS_sub_src_dot_dV;
+
 
                 // 临时验证，只打第一次调用
 //#ifdef YK_DEBUG

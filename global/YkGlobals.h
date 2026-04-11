@@ -110,9 +110,25 @@ namespace YK {
         float dtheta = 0.0f;
         float fScaleDTheta = 1.0f; // 扫描角度为2Pi是为1.0f，短扫描时为 2Pi / (maxTheta - minTheta)，权重用
 
-        // IMPORTANT: this stores SID by your definition (NOT classic SOD)
-        float SOD_mm = 0.0f;   // == SID_mm
+
+
+        float SOD_mm = 0.0f;   // 由源到旋转轴的距离（mm）计算得出
+        // 以下两个参数在 compute_SDD_offsets() 中计算得出，供仿射系数构造和求交使用：
+        // 理想几何时，SDD_mm == SDD_plane_mm == 标称 SDD；探测器倾斜时，SDD_mm 略大于 SDD_plane_mm（差 1/cos(tilt) 倍），必须区分使用
+        // 源点沿主射线方向到探测器平面交点的距离（mm）
+        // = |principal_point - src|
+        // 其中 principal_point = src + t * srcCR，t = SDD_plane_mm / (srcCR · det_n)
+        // 理想几何下等于标称 SDD；探测器倾斜时略大于 SDD_plane_mm（差 1/cos(tilt) 倍）
+        // 用于：预计算仿射系数 Cu/Cv/Cd 的构造（透视投影的缩放基准）
         float SDD_mm = 0.0f;
+
+        // 源点到探测器平面沿法向量方向的投影距离（mm）
+        // = (detS - src) · det_n
+        // 不是物理意义上的 SDD，是求交参数 t 的分子项
+        // t = SDD_plane_mm / (d · det_n)，保证射线与探测器平面正确求交
+        // 理想几何（探测器垂直于主射线）下等于 SDD_mm
+        // 探测器倾斜时二者不同，必须用此值求交而不能用 SDD_mm
+        float SDD_plane_mm = 0.0f;
 
         int   Nu = 0;
         int   Nv = 0;
