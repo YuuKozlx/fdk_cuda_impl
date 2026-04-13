@@ -127,6 +127,8 @@ namespace YK {
 
                 gv.ray_center = geo.srcCR;
                 gv.det_n = f3_normalize(f3_cross(geo.detV, geo.detU));
+                gv.det_u = f3_normalize(geo.detU);
+                gv.det_v = f3_normalize(geo.detV);
                 float3 detS_src = f3_sub(geo.detS, geo.src);
                 gv.detS_sub_src_dot_dU = f3_dot(detS_src, geo.detU);
                 gv.detS_sub_src_dot_dV = f3_dot(detS_src, geo.detV);
@@ -256,15 +258,20 @@ namespace YK {
             // ── 求交参数 t：主射线与探测器平面的交点 ─────────────────────
             // t = [(detS - src) · n] / (srcCR · n)
             // 分子 = SDD_plane_mm，同时输出供后续使用
-            const float denom = f3_dot(geo.srcCR, det_n);
+            const float denom = f3_dot(det_n, det_n);
             if (fabsf(denom) < 1e-24f) return false;  // 主射线近乎平行于探测器
 
             const float numer = f3_dot(f3_sub(geo.detS, geo.src), det_n);
             out_SDD_plane_mm = numer;                  // ← (detS - src) · n
-            const float t = numer / denom;
+
+
+
 
             // ── Principal point：主射线与探测器平面的交点 ────────────────
-            const float3 principal_point = f3_add(geo.src, f3_scale(geo.srcCR, t));
+            // 主射线必定经过z轴 (0,0,z_src),
+            point3 P = f3(0, 0, geo.src.z);
+            float t = out_SDD_plane_mm / f3_dot(f3_sub(P, geo.src), det_n);
+            const float3 principal_point = f3_add(geo.src, f3_scale(f3_sub(P, geo.src), t));
 
             // ── SDD_mm：源点到 principal point 的实际距离 ────────────────
             const float3 ray0 = f3_sub(principal_point, geo.src);

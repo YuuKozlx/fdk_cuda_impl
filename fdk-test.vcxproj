@@ -115,7 +115,7 @@
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>Level3</WarningLevel>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Zc:__cplusplus  /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
     </ClCompile>
     <Link>
@@ -125,6 +125,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>cufft.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <CudaCompile />
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="CVP\cvp_back.cuh" />
@@ -132,7 +133,6 @@
     <ClInclude Include="CVP\cvp_geometry.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpHelpers.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpLaunch.cuh" />
-    <ClInclude Include="YkWarpStrideCtx.cuh" />
     <CudaCompile Include="FDK\cuh\YkFDKBpPrecompute.cu">
       <FileType>Document</FileType>
     </CudaCompile>
@@ -170,8 +170,10 @@
     <ClInclude Include="global\YkCBCTParams.h" />
     <ClInclude Include="global\YkDataObj.hpp" />
     <ClInclude Include="global\YkGlobals.h" />
+    <ClInclude Include="global\YkLog.h" />
     <ClInclude Include="global\YkMacro.hpp" />
     <ClInclude Include="global\YkMem3d.hpp" />
+    <ClInclude Include="global\YkWarpStrideCtx.cuh" />
     <ClInclude Include="interface\IFdkReconstructor.hpp" />
     <ClInclude Include="interface\IReconstructor.hpp" />
     <ClInclude Include="interface\YkFdkFactory.hpp" />
@@ -196,6 +198,7 @@
     <CudaCompile Include="testmain.cu" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="global\YkLog.cpp" />
     <ClCompile Include="util\YkIoDump.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

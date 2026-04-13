@@ -247,13 +247,19 @@
     <ClInclude Include="interface\YkFdkFactory.hpp">
       <Filter>interface</Filter>
     </ClInclude>
-    <ClInclude Include="YkWarpStrideCtx.cuh">
+    <ClInclude Include="global\YkWarpStrideCtx.cuh">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="global\YkLog.h">
       <Filter>global</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="util\YkIoDump.cpp">
       <Filter>util</Filter>
+    </ClCompile>
+    <ClCompile Include="global\YkLog.cpp">
+      <Filter>global</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

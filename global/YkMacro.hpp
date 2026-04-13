@@ -1,5 +1,4 @@
 #pragma once
-#include <crt/host_defines.h>
 #include <cuda_runtime.h>
 
 #define YK_INLINE inline
@@ -79,15 +78,16 @@
 
 
 
-#ifndef YK_LOGE
-#define YK_LOGE(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][E] " fmt "\n", ##__VA_ARGS__)
-#endif
-#ifndef YK_LOGW
-#define YK_LOGW(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][W] " fmt "\n", ##__VA_ARGS__)
-#endif
-#ifndef YK_LOGI
-#define YK_LOGI(fmt, ...) std::fprintf(stdout, "[YK][FilterProcessor][I] " fmt "\n", ##__VA_ARGS__)
-#endif
+//#ifndef YK_LOGE
+//#define YK_LOGE(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][E] " fmt "\n", ##__VA_ARGS__)
+//#endif
+//#ifndef YK_LOGW
+//#define YK_LOGW(fmt, ...) std::fprintf(stderr, "[YK][FilterProcessor][W] " fmt "\n", ##__VA_ARGS__)
+//#endif
+//#ifndef YK_LOGI
+//#define YK_LOGI(fmt, ...) std::fprintf(stdout, "[YK][FilterProcessor][I] " fmt "\n", ##__VA_ARGS__)
+//#endif
+
 // ============================================================
 // 2. CUDA math helpers
 // ============================================================

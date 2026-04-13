@@ -179,7 +179,7 @@ namespace YK {
                 }
             }
 
-#undef WARP_STRIDE_INIT_BATCH()   
+#undef WARP_STRIDE_INIT_BATCH
 
         } // namespace detail
 

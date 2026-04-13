@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "global/YkGlobals.h"
+#include "global/YkLog.h"
 #include "FDK/YkFdkReconstructor.hpp"
 #include "FDK/YkVecGeo.hpp"
 
@@ -53,8 +54,9 @@ int main_fdk() {
     SCBCTParams params;
 
     params.iPU = 1024; params.iPV = 1024; params.iPAng = 480; params.iPAngTotal = 480;
-    params.tiltn_angle_rad = 1 * CUDA_PI / 180;
-    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.tiltn_angle_rad = 0 * CUDA_PI / 180;
+
+    params.iVX = 512; params.iVY = 600; params.iVZ = 400;
     params.bShortScan = true;
     params.scan_range_rad = (float)M_PI * 4.0f / 3.0f; // 270 degree short scan
 
@@ -67,9 +69,11 @@ int main_fdk() {
 
 
     params.SID = 500.0f, params.SDD = 1000.0f;
-    params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_xy_mm = 0.25f;
-    params.vox_z_mm = 0.25f;
+    params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_xy_mm = 0.1f;
+    params.vox_z_mm = 0.1f;
 
+
+    params.offsetU_mm = 0 * params.du_mm;
     const int Ang = params.iPAng;
     const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
 
@@ -79,8 +83,8 @@ int main_fdk() {
 
     // 读投影
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float("proj_256x256.raw", h_proj)) {
-        std::printf("Error: cannot read proj_1024x1024.raw (expect %zu floats)\n", proj_elems);
+    if (!read_raw_float("proj_1024x1024x360.raw", h_proj)) {
+        std::printf("Error: cannot read proj_1024x1024x360 (expect %zu floats)\n", proj_elems);
         return -1;
     }
 
@@ -134,53 +138,53 @@ int main_fdk() {
         return -2;
     }
 
-    // 模拟在线重建，每次传输iPBatch个角度，进行重建。保持KChunk=30不变，测试在线重建的正确性和性能。
-    // 待更改参数 
-    // 1. params.iPAng = iPBatch，角度list也相应缩减为当前批次的角度
-    // 2. 每次循环传入的数据指针起点偏置
-    // 3. 仅在第一批时 clear_vol=true，后续批次 clear_vol=false
-
-    // batch_size = 60; batch_num = Ang + batch_size - 1) / batch_size;;
-// 在线重建
-    int batch_size = 32 * 3;
-    int batch_num = (Ang + batch_size - 1) / batch_size;
-
-    FdkReconstructor recon;
-    recon.init(params, /*Kchunk=*/32, s);
-
-    {
-        YK::Util::CudaTimer timer("online", s);
-
-        for (int i = 0; i < batch_num; ++i) {
-            const int base = i * batch_size;
-            const int count = std::min(batch_size, Ang - base);
-
-            SCBCTParams batch_params = params;
-            batch_params.iPAng = count;
-            batch_params.angle_list = std::vector<float>(
-                angle_list.begin() + base,
-                angle_list.begin() + base + count);
-
-            recon.feed(
-                h_proj.data() + base * view_elems,
-                batch_params, s,
-                d_vol_buf.data(),
-                /*clear_vol=*/(i == 0));
-        }
-    }
-
-
-    // 新一轮扫描时
-    recon.reset();
-
-    auto h_vol_online = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
-    ctrl.download3D(h_vol_online, d_vol_buf);
-
-    if (!write_raw_float("fdk_vec_vol_online.raw",
-        h_vol_online.cdata(), total_elements)) {  // ← 修正变量名
-        std::printf("Error: cannot write fdk_vec_vol_online.raw\n");
-        return -2;
-    }
+    //    // 模拟在线重建，每次传输iPBatch个角度，进行重建。保持KChunk=30不变，测试在线重建的正确性和性能。
+    //    // 待更改参数 
+    //    // 1. params.iPAng = iPBatch，角度list也相应缩减为当前批次的角度
+    //    // 2. 每次循环传入的数据指针起点偏置
+    //    // 3. 仅在第一批时 clear_vol=true，后续批次 clear_vol=false
+    //
+    //    // batch_size = 60; batch_num = Ang + batch_size - 1) / batch_size;;
+    //// 在线重建
+    //    int batch_size = 32 * 3;
+    //    int batch_num = (Ang + batch_size - 1) / batch_size;
+    //
+    //    FdkReconstructor recon;
+    //    recon.init(params, /*Kchunk=*/32, s);
+    //
+    //    {
+    //        YK::Util::CudaTimer timer("online", s);
+    //
+    //        for (int i = 0; i < batch_num; ++i) {
+    //            const int base = i * batch_size;
+    //            const int count = std::min(batch_size, Ang - base);
+    //
+    //            SCBCTParams batch_params = params;
+    //            batch_params.iPAng = count;
+    //            batch_params.angle_list = std::vector<float>(
+    //                angle_list.begin() + base,
+    //                angle_list.begin() + base + count);
+    //
+    //            recon.feed(
+    //                h_proj.data() + base * view_elems,
+    //                batch_params, s,
+    //                d_vol_buf.data(),
+    //                /*clear_vol=*/(i == 0));
+    //        }
+    //    }
+    //
+    //
+    //    // 新一轮扫描时
+    //    recon.reset();
+    //
+    //    auto h_vol_online = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+    //    ctrl.download3D(h_vol_online, d_vol_buf);
+    //
+    //    if (!write_raw_float("fdk_vec_vol_online.raw",
+    //        h_vol_online.cdata(), total_elements)) {  // ← 修正变量名
+    //        std::printf("Error: cannot write fdk_vec_vol_online.raw\n");
+    //        return -2;
+    //    }
 
 
 
@@ -470,8 +474,9 @@ void forward_project_example()
 
 
 int main() {
+    Logger::instance().set_level(LogLevel::Debug);
     //YKTest::testFFT();
-    main_fdk2();
+    main_fdk();
     //forward_project_example();
     //YKTest::testFilterWeightsSpectra_RamLak();
     //YKTest::test_gpumem3d();
