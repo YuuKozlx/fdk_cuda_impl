@@ -27,8 +27,8 @@ namespace YK {
                 const int startZ = blockIdx.z * ZSIZE;
                 if (startZ >= vg.Nz) return;
 
-                const float fX = vg.origin().x + y * vg.vox_x;
-                const float fY = vg.origin().y + x * vg.vox_y;
+                const float fX = vg.origin().x + x * vg.vox_x;
+                const float fY = vg.origin().y + y * vg.vox_y;
                 const float fZ = vg.origin().z + startZ * vg.vox_z;
 
 #ifdef YK_DEBUG
@@ -70,6 +70,7 @@ namespace YK {
                         const float u = uNum * fr;
                         const float v = vNum * fr;
                         const float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
+                        //std::printf("u=%.6f, v=%.6f p =%.6f\n", u, v, p);
                         const float contrib = p * (w_base * fr * fr);
 
 #ifdef YK_DEBUG
@@ -127,8 +128,8 @@ namespace YK {
                 const int startZ = blockIdx.z * ZSIZE;
                 if (startZ >= vg.Nz) return;
 
-                const float fX = vg.origin().x + y * vg.vox_x;
-                const float fY = vg.origin().y + x * vg.vox_y;
+                const float fX = vg.origin().x + x * vg.vox_x;
+                const float fY = vg.origin().y + y * vg.vox_y;
                 const float fZ = vg.origin().z + startZ * vg.vox_z;
 
 #ifdef YK_DEBUG

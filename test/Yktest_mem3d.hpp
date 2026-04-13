@@ -28,7 +28,7 @@ namespace YKTest {
         // 1. 分配 3D DeviceBuffer
         auto buf = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, true);
         assert(buf);
-        std::cout << "Allocated DeviceBuffer3D: "
+        std::cout << "Allocated DeviceLinearBuffer3D: "
             << buf.shape().nx << "x" << buf.shape().ny << "x" << buf.shape().nz
             << " (pitchBytes=" << buf.pitch() << ")" << std::endl;
 
@@ -59,7 +59,7 @@ namespace YKTest {
         std::cout << "Upload/download test passed." << std::endl;
 
         // 5. 移动构造
-        DeviceBuffer3D<float> buf2(std::move(buf));
+        DeviceLinearBuffer3D<float> buf2(std::move(buf));
         assert(buf2);
         assert(!buf);
         std::cout << "Move constructor test passed." << std::endl;

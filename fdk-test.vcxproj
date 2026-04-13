@@ -114,7 +114,7 @@
     <ClCompile>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>Level3</WarningLevel>
-      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard>stdcpp14</LanguageStandard>
       <AdditionalOptions>/Zc:__cplusplus  /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
     </ClCompile>
@@ -168,6 +168,7 @@
     </CudaCompile>
     <ClInclude Include="global\IProcessor.hpp" />
     <ClInclude Include="global\YkCBCTParams.h" />
+    <ClInclude Include="global\YkCudaTextureController.hpp" />
     <ClInclude Include="global\YkDataObj.hpp" />
     <ClInclude Include="global\YkGlobals.h" />
     <ClInclude Include="global\YkLog.h" />

@@ -11,13 +11,14 @@
 #include "YkFDKBackProject.cuh"
 #include "YkFDKVecGeoDerived.hpp"
 #include "YkVecGeo.hpp"
+#include "../global/YkCudaTextureController.hpp"
 
 
 namespace YK {
     // 在 namespace YK { 内部顶部加：
     using Mem::DeviceLinearBuffer;
     using Mem::PodDataController;
-    using Mem::DeviceBuffer3D;
+    using Mem::DeviceLinearBuffer3D;
 
 
 
@@ -27,9 +28,9 @@ namespace YK {
     // texture object 数组用 DeviceLinearBuffer（POD 类型）
     // ================================================================
     struct FdkProjVolData {
-        Mem::DeviceBuffer3D<float>                   chunk_in;
-        Mem::DeviceBuffer3D<float>                   chunk_pw;
-        Mem::DeviceBuffer3D<float>                   chunk_flt;
+        Mem::DeviceLinearBuffer3D<float>                   chunk_in;
+        Mem::DeviceLinearBuffer3D<float>                   chunk_pw;
+        Mem::DeviceLinearBuffer3D<float>                   chunk_flt;
         Mem::DeviceLinearBuffer<cudaTextureObject_t> tex_objs;
         std::vector<cudaTextureObject_t>             h_tex_objs;
 
@@ -81,25 +82,12 @@ namespace YK {
 
     private:
         void buildTexObjs_(int Nu, int Nv, int K) {
-            for (int i = 0; i < K; ++i) {
-                cudaResourceDesc res{};
-                res.resType = cudaResourceTypePitch2D;
-                res.res.pitch2D.devPtr = chunk_flt.data() + (size_t)i * Nu * Nv;
-                res.res.pitch2D.desc = cudaCreateChannelDesc<float>();
-                res.res.pitch2D.width = Nu;
-                res.res.pitch2D.height = Nv;
-                res.res.pitch2D.pitchInBytes = Nu * sizeof(float);
+            Mem::TextureController texCtrl;
 
-                cudaTextureDesc tex{};
-                tex.addressMode[0] = cudaAddressModeClamp;
-                tex.addressMode[1] = cudaAddressModeClamp;
-                tex.filterMode = cudaFilterModeLinear;
-                tex.readMode = cudaReadModeElementType;
-                tex.normalizedCoords = 0;
+            // float投影数据，类型自动推导
+            h_tex_objs = texCtrl.createTex2DLinearBatch(chunk_flt.data(), Nu, Nv, K);
 
-                YK_CUDA_CHECK(cudaCreateTextureObject(
-                    &h_tex_objs[i], &res, &tex, nullptr));
-            }
+
         }
     };
 
@@ -153,7 +141,7 @@ namespace YK {
         void uploadCoeffsChunk(const FdkAffineCoeff* d_src, int K, cudaStream_t stream) const
         {
             Fdk::bp_uploadCoeffsChunk(d_src, K, stream);
-            //verifyGCCoeffs(K);
+            verifyGCCoeffs(K);
         }
 
         void verifyGCCoeffs(int K) const

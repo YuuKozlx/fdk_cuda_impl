@@ -8,10 +8,11 @@
 
 namespace YK {
     namespace DataObj {
+
         using YK::Mem::Shape3D;
 
         ////////////////////////////////////////////////////////////
-        /// DataKind
+        // DataKind
         ////////////////////////////////////////////////////////////
 
         enum class DataKind
@@ -23,298 +24,153 @@ namespace YK {
         };
 
         ////////////////////////////////////////////////////////////
-        /// Base Data Object
+        // Base Data Object
         ////////////////////////////////////////////////////////////
 
         class DataObjectBase
         {
         public:
-
             virtual ~DataObjectBase() = default;
 
-            virtual DataKind kind() const noexcept = 0;
-
-            virtual Shape3D shape() const noexcept = 0;
-
-            virtual std::string name() const
-            {
-                return "DataObject";
-            }
+            virtual DataKind    kind()  const noexcept = 0;
+            virtual Shape3D     shape() const noexcept = 0;
+            virtual std::string name()  const { return "DataObject"; }
         };
 
         ////////////////////////////////////////////////////////////
-        /// Volume Data
-        ///
-        /// shape:
-        /// nx × ny × nz
+        // VolumeData
+        // shape: nx × ny × nz
         ////////////////////////////////////////////////////////////
 
         template<typename T, typename Buffer>
         class VolumeData : public DataObjectBase
         {
         public:
-
             using ValueType = T;
             using BufferType = Buffer;
 
-            // 接受右值引用，直接移动
             explicit VolumeData(Buffer&& buf)
-                : buffer_(std::move(buf))
-            {
+                : buffer_(std::move(buf)) {
             }
 
-            DataKind kind() const noexcept override
-            {
-                return DataKind::Volume;
-            }
+            DataKind kind()  const noexcept override { return DataKind::Volume; }
+            Shape3D  shape() const noexcept override { return buffer_.shape(); }
 
-            Shape3D shape() const noexcept override
-            {
-                return buffer_.shape();
-            }
+            auto       view() { return buffer_.view(); }
+            auto       cview() const { return buffer_.cview(); }
+            T* data() { return buffer_.data(); }
+            const T* data()  const { return buffer_.data(); }
+            Buffer& buffer()       noexcept { return buffer_; }
+            const Buffer& buffer() const noexcept { return buffer_; }
 
-            auto view()
-            {
-                return buffer_.view();
-            }
-
-            auto cview() const
-            {
-                return buffer_.cview();
-            }
-
-            T* data()
-            {
-                return buffer_.data();
-            }
-
-            const T* data() const
-            {
-                return buffer_.data();
-            }
-
-            Buffer& buffer() noexcept
-            {
-                return buffer_;
-            }
-
-            const Buffer& buffer() const noexcept
-            {
-                return buffer_;
-            }
-
-            std::string name() const override
-            {
-                return "VolumeData";
-            }
+            std::string name() const override { return "VolumeData"; }
 
         private:
-
             Buffer buffer_;
         };
 
         ////////////////////////////////////////////////////////////
-        /// Projection Data
-        ///
-        /// shape:
-        /// detector_u × detector_v × views
+        // ProjectionData
+        // shape: detector_u × detector_v × views
         ////////////////////////////////////////////////////////////
 
         template<typename T, typename Buffer>
         class ProjectionData : public DataObjectBase
         {
         public:
-
             using ValueType = T;
             using BufferType = Buffer;
 
             explicit ProjectionData(Buffer&& buf, int views)
-                : buffer_(std::move(buf)),
-                views_(views)
-            {
+                : buffer_(std::move(buf)), views_(views) {
             }
 
+            DataKind kind()  const noexcept override { return DataKind::Projection; }
+            Shape3D  shape() const noexcept override { return buffer_.shape(); }
+            int      views() const noexcept { return views_; }
 
-            DataKind kind() const noexcept override
-            {
-                return DataKind::Projection;
-            }
+            auto       view() { return buffer_.view(); }
+            auto       cview() const { return buffer_.cview(); }
+            Buffer& buffer()       noexcept { return buffer_; }
+            const Buffer& buffer() const noexcept { return buffer_; }
 
-            Shape3D shape() const noexcept override
-            {
-                return buffer_.shape();
-            }
-
-            int views() const noexcept
-            {
-                return views_;
-            }
-
-            auto view()
-            {
-                return buffer_.view();
-            }
-
-            auto cview() const
-            {
-                return buffer_.cview();
-            }
-
-            Buffer& buffer() noexcept
-            {
-                return buffer_;
-            }
-
-            const Buffer& buffer() const noexcept
-            {
-                return buffer_;
-            }
-
-            std::string name() const override
-            {
-                return "ProjectionData";
-            }
+            std::string name() const override { return "ProjectionData"; }
 
         private:
-
             Buffer buffer_;
-
-            int views_ = 0;
+            int    views_ = 0;
         };
 
         ////////////////////////////////////////////////////////////
-        /// Sinogram Data
-        ///
-        /// shape:
-        /// detector_u × views × detector_v
+        // SinogramData
+        // shape: detector_u × views × detector_v
         ////////////////////////////////////////////////////////////
 
         template<typename T, typename Buffer>
         class SinogramData : public DataObjectBase
         {
         public:
-
             using ValueType = T;
             using BufferType = Buffer;
 
             explicit SinogramData(Buffer&& buf)
-                : buffer_(std::move(buf))
-            {
+                : buffer_(std::move(buf)) {
             }
 
+            DataKind kind()  const noexcept override { return DataKind::Sinogram; }
+            Shape3D  shape() const noexcept override { return buffer_.shape(); }
 
-            DataKind kind() const noexcept override
-            {
-                return DataKind::Sinogram;
-            }
+            auto       view() { return buffer_.view(); }
+            auto       cview() const { return buffer_.cview(); }
+            Buffer& buffer()       noexcept { return buffer_; }
+            const Buffer& buffer() const noexcept { return buffer_; }
 
-            Shape3D shape() const noexcept override
-            {
-                return buffer_.shape();
-            }
-
-            auto view()
-            {
-                return buffer_.view();
-            }
-
-            auto cview() const
-            {
-                return buffer_.cview();
-            }
-
-            Buffer& buffer() noexcept
-            {
-                return buffer_;
-            }
-
-            const Buffer& buffer() const noexcept
-            {
-                return buffer_;
-            }
-
-            std::string name() const override
-            {
-                return "SinogramData";
-            }
+            std::string name() const override { return "SinogramData"; }
 
         private:
-
             Buffer buffer_;
         };
 
-
         ////////////////////////////////////////////////////////////
-        /// Convenient Type Aliases
+        // Type Aliases
         ////////////////////////////////////////////////////////////
 
-        template<typename T>
-        using CpuVolume =
-            VolumeData<T, Mem::CpuBuffer3D<T>>;
+        // CPU
+        template<typename T> using CpuVolume = VolumeData<T, Mem::CpuBuffer3D<T>>;
+        template<typename T> using CpuProjection = ProjectionData<T, Mem::CpuBuffer3D<T>>;
+        template<typename T> using CpuSinogram = SinogramData<T, Mem::CpuBuffer3D<T>>;
 
-        template<typename T>
-        using GpuVolume =
-            VolumeData<T, Mem::DeviceBuffer3D<T>>;
-
-        template<typename T>
-        using CpuProjection =
-            ProjectionData<T, Mem::CpuBuffer3D<T>>;
-
-        template<typename T>
-        using GpuProjection =
-            ProjectionData<T, Mem::DeviceBuffer3D<T>>;
-
-        template<typename T>
-        using CpuSinogram =
-            SinogramData<T, Mem::CpuBuffer3D<T>>;
-
-        template<typename T>
-        using GpuSinogram =
-            SinogramData<T, Mem::DeviceBuffer3D<T>>;
-
-        template<typename T>
-        using CpuVolumeBorrowed = VolumeData<T, Mem::CpuBuffer3DBorrowed<T>>;
-
-        template<typename T>
-        using CpuProjectionBorrowed = ProjectionData<T, Mem::CpuBuffer3DBorrowed<T>>;
-
-        template<typename T>
-        using CpuSinogramBorrowed = SinogramData<T, Mem::CpuBuffer3DBorrowed<T>>;
+        // CPU Borrowed
+        template<typename T> using CpuVolumeBorrowed = VolumeData<T, Mem::CpuBuffer3DBorrowed<T>>;
+        template<typename T> using CpuProjectionBorrowed = ProjectionData<T, Mem::CpuBuffer3DBorrowed<T>>;
+        template<typename T> using CpuSinogramBorrowed = SinogramData<T, Mem::CpuBuffer3DBorrowed<T>>;
 
         // Pinned
-        template<typename T>
-        using PinnedVolume = VolumeData<T, Mem::HostPinnedBuffer3D<T>>;
+        template<typename T> using PinnedVolume = VolumeData<T, Mem::HostPinnedBuffer3D<T>>;
+        template<typename T> using PinnedProjection = ProjectionData<T, Mem::HostPinnedBuffer3D<T>>;
+        template<typename T> using PinnedSinogram = SinogramData<T, Mem::HostPinnedBuffer3D<T>>;
 
-        template<typename T>
-        using PinnedProjection = ProjectionData<T, Mem::HostPinnedBuffer3D<T>>;
+        // GPU Linear（vol、投影、sinogram 均用线性分配）
+        template<typename T> using GpuVolume = VolumeData<T, Mem::DeviceLinearBuffer3D<T>>;
+        template<typename T> using GpuProjection = ProjectionData<T, Mem::DeviceLinearBuffer3D<T>>;
+        template<typename T> using GpuSinogram = SinogramData<T, Mem::DeviceLinearBuffer3D<T>>;
 
-        template<typename T>
-        using PinnedSinogram = SinogramData<T, Mem::HostPinnedBuffer3D<T>>;
+        // GPU Linear Borrowed
+        template<typename T> using GpuVolumeBorrowed = VolumeData<T, Mem::DeviceLinearBuffer3DBorrowed<T>>;
+        template<typename T> using GpuProjectionBorrowed = ProjectionData<T, Mem::DeviceLinearBuffer3DBorrowed<T>>;
+        template<typename T> using GpuSinogramBorrowed = SinogramData<T, Mem::DeviceLinearBuffer3DBorrowed<T>>;
 
-        // GPU Borrowed
-        template<typename T>
-        using GpuVolumeBorrowed = VolumeData<T, Mem::DeviceBuffer3DBorrowed<T>>;
-
-        template<typename T>
-        using GpuProjectionBorrowed = ProjectionData<T, Mem::DeviceBuffer3DBorrowed<T>>;
-
-        template<typename T>
-        using GpuSinogramBorrowed = SinogramData<T, Mem::DeviceBuffer3DBorrowed<T>>;
-
-    } // namespace DataObj
-} // namespace YK
-
-
-namespace YK {
-    namespace DataObj {
+        ////////////////////////////////////////////////////////////
+        // DataController
+        ////////////////////////////////////////////////////////////
 
         class DataController {
         public:
             explicit DataController(Mem::MemoryController& mem) : mem_(mem) {}
 
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             // CPU Volume
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             template<typename T>
             CpuVolume<T> createCpuVolume(int nx, int ny, int nz)
             {
@@ -333,12 +189,11 @@ namespace YK {
                 return PinnedVolume<T>(mem_.allocatePinnedCpu3D<T>(nx, ny, nz));
             }
 
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             // GPU Volume
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             template<typename T>
-            GpuVolume<T> createGpuVolume(int nx, int ny, int nz,
-                int device, cudaStream_t stream)
+            GpuVolume<T> createGpuVolume(int nx, int ny, int nz, int device)
             {
                 return GpuVolume<T>(mem_.allocateDevice3D<T>(nx, ny, nz, device));
             }
@@ -351,17 +206,9 @@ namespace YK {
                     mem_.borrowDevice3D<T>(ptr, nx, ny, nz, pitchBytes, device));
             }
 
-            template<typename T>
-            GpuVolumeBorrowed<T> wrapGpuVolumeLinear(T* ptr, int nx, int ny, int nz,
-                int device)
-            {
-                return GpuVolumeBorrowed<T>(
-                    mem_.borrowDevice3DLinear<T>(ptr, nx, ny, nz, device));
-            }
-
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             // CPU Projection
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             template<typename T>
             CpuProjection<T> createCpuProjection(int nu, int nv, int views)
             {
@@ -380,12 +227,11 @@ namespace YK {
                 return PinnedProjection<T>(mem_.allocatePinnedCpu3D<T>(nu, nv, views), views);
             }
 
-            ////////////////////////////////////////////////////////////
-            // GPU Projection
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
+            // GPU Projection（线性分配，chunk纹理临时绑定，不需要pitched）
+            // ----------------------------------------------------------------
             template<typename T>
-            GpuProjection<T> createGpuProjection(int nu, int nv, int views,
-                int device, cudaStream_t stream)
+            GpuProjection<T> createGpuProjection(int nu, int nv, int views, int device)
             {
                 return GpuProjection<T>(
                     mem_.allocateDevice3D<T>(nu, nv, views, device), views);
@@ -399,17 +245,9 @@ namespace YK {
                     mem_.borrowDevice3D<T>(ptr, nu, nv, views, pitchBytes, device), views);
             }
 
-            template<typename T>
-            GpuProjectionBorrowed<T> wrapGpuProjectionLinear(T* ptr, int nu, int nv,
-                int views, int device)
-            {
-                return GpuProjectionBorrowed<T>(
-                    mem_.borrowDevice3DLinear<T>(ptr, nu, nv, views, device), views);
-            }
-
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             // CPU Sinogram
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             template<typename T>
             CpuSinogram<T> createCpuSinogram(int nu, int views, int nv)
             {
@@ -428,12 +266,11 @@ namespace YK {
                 return PinnedSinogram<T>(mem_.allocatePinnedCpu3D<T>(nu, views, nv));
             }
 
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             // GPU Sinogram
-            ////////////////////////////////////////////////////////////
+            // ----------------------------------------------------------------
             template<typename T>
-            GpuSinogram<T> createGpuSinogram(int nu, int views, int nv,
-                int device, cudaStream_t stream)
+            GpuSinogram<T> createGpuSinogram(int nu, int views, int nv, int device)
             {
                 return GpuSinogram<T>(
                     mem_.allocateDevice3D<T>(nu, views, nv, device));
@@ -445,14 +282,6 @@ namespace YK {
             {
                 return GpuSinogramBorrowed<T>(
                     mem_.borrowDevice3D<T>(ptr, nu, views, nv, pitchBytes, device));
-            }
-
-            template<typename T>
-            GpuSinogramBorrowed<T> wrapGpuSinogramLinear(T* ptr, int nu, int views,
-                int nv, int device)
-            {
-                return GpuSinogramBorrowed<T>(
-                    mem_.borrowDevice3DLinear<T>(ptr, nu, views, nv, device));
             }
 
         private:

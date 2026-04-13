@@ -74,9 +74,8 @@ namespace YKTest {
         ////////////////////////////////////////////////////////////
         int device = 0;
         cudaStream_t stream;
-        YK_CUDA_CHECK(cudaStreamCreate(&stream));
 
-        auto gpuVol = data.createGpuVolume<float>(NX, NY, NZ, device, stream);
+        auto gpuVol = data.createGpuVolume<float>(NX, NY, NZ, device);
 
         mem.upload3D(
             gpuVol.buffer(),
