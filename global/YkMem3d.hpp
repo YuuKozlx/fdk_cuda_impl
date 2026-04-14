@@ -7,6 +7,7 @@
 #include <vector>
 #include <cuda_runtime.h>
 #include "YkGlobals.h"  // YK_CUDA_CHECK
+#include "YkMacro.hpp"
 
 // ============================================================
 // ЬѕМўБрвы C++14 / C++20

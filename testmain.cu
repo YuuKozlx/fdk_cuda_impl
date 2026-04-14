@@ -56,7 +56,7 @@ int main_fdk() {
     params.iPU = 1024; params.iPV = 1024; params.iPAng = 480; params.iPAngTotal = 480;
     params.tiltn_angle_rad = 0 * CUDA_PI / 180;
 
-    params.iVX = 500; params.iVY = 600; params.iVZ = 400;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
     params.scan_range_rad = (float)M_PI * 4.0f / 3.0f; // 270 degree short scan
 
@@ -70,7 +70,7 @@ int main_fdk() {
 
     params.SID = 500.0f, params.SDD = 1000.0f;
     params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_xy_mm = 0.25f;
-    params.vox_z_mm = 0.1f;
+    params.vox_z_mm = 0.25f;
 
 
     params.offsetU_mm = 0 * params.du_mm;
@@ -473,7 +473,7 @@ void forward_project_example()
 }
 
 
-int main() {
+int main000() {
     Logger::instance().set_level(LogLevel::Debug);
     //YKTest::testFFT();
     main_fdk();
