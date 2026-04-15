@@ -115,30 +115,32 @@ namespace YK {
                 else            d_sino[idx] = fVal;
             }
 
-            void siddon_launchGroup(
-                const float* d_vol,
-                float* d_sino,
-                const SConeProjGeomVec* d_views,
-                const SVolGeom& g,
-                int Nu, int Nv, int K,
-                bool accumulate,
-                cudaStream_t stream)
-            {
-                if (K <= 0) return;
 
-                // blockIdx.z 最大值受 GPU 限制（通常 65535），K=360 完全没问题
-                dim3 block(16, 16, 1);
-                dim3 grid((Nu + 15) / 16, (Nv + 15) / 16, K);
-
-                siddon_fp_kernel << <grid, block, 0, stream >> > (
-                    d_vol, d_sino, d_views,
-                    g.origin(),
-                    g.vox_x, g.vox_y, g.vox_z,
-                    g.Nx, g.Ny, g.Nz,
-                    Nu, Nv, K,
-                    accumulate);
-            }
 
         } // namespace detail
+
+        void siddon_launchGroup(
+            const float* d_vol,
+            float* d_sino,
+            const SConeProjGeomVec* d_views,
+            const SVolGeom& g,
+            int Nu, int Nv, int K,
+            bool accumulate,
+            cudaStream_t stream)
+        {
+            if (K <= 0) return;
+
+            // blockIdx.z 最大值受 GPU 限制（通常 65535），K=360 完全没问题
+            dim3 block(16, 16, 1);
+            dim3 grid((Nu + 15) / 16, (Nv + 15) / 16, K);
+
+            detail::siddon_fp_kernel << <grid, block, 0, stream >> > (
+                d_vol, d_sino, d_views,
+                g.origin(),
+                g.vox_x, g.vox_y, g.vox_z,
+                g.Nx, g.Ny, g.Nz,
+                Nu, Nv, K,
+                accumulate);
+        }
     } // namespace Fp
 } // namespace YK

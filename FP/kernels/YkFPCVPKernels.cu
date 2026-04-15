@@ -64,8 +64,8 @@ namespace YK
                 const float3 dh = d_sub(hit, c.detS);    // offset from pixel (0,0) origin
 
                 // Continuous pixel coordinates (origin = pixel (0,0) corner)
-                const float pu = d_dot(dh, c.detU_n) * c.inv_du;  // [pixels]
-                const float pv = d_dot(dh, c.detV_n) * c.inv_dv;
+                const float pu = d_dot(dh, c.detU_n) * c.inv_du + 0.5f;
+                const float pv = d_dot(dh, c.detV_n) * c.inv_dv + 0.5f;
 
                 // ----------------------------------------------------------
                 // 3. Voxel footprint AABB on detector
@@ -201,6 +201,10 @@ namespace YK
             for (int a = 0; a < Na; ++a)
             {
                 const auto cache = make_view_cache(h_views[a], Nu, Nv, g);
+                //printf("vol_origin=(%.3f, %.3f, %.3f)\n",
+                //    cache.vol_origin.x, cache.vol_origin.y, cache.vol_origin.z);
+                //printf("src=(%.3f, %.3f, %.3f)\n",
+                //    cache.src.x, cache.src.y, cache.src.z);
                 float* d_s = d_sino + (size_t)a * Nv * Nu;
 
                 // Step 1: cos_theta

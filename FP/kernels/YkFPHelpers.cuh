@@ -115,7 +115,7 @@ namespace YK {
             // launch ≈‰÷√≥£¡ø
             // ============================================================
             constexpr int kAnglesPerBlock = 4;
-            constexpr int kBlockSlices = 4;
+            constexpr int kBlockSlices = 256;
             constexpr int kDetBlockU = 32;
             constexpr int kDetBlockV = 32;
 

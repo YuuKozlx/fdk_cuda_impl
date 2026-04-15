@@ -472,6 +472,7 @@
 #include <numeric>
 #include "FDK/YkVecGeo.hpp"
 #include "FP/kernels/YkFPCVPLaunch.cuh"
+#include "util/YkCudatimer.hpp"
 
 namespace YK {
     namespace Fp {
@@ -558,7 +559,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                detail::siddon_launchGroup(d_vol, d_sino, d_views,
+                siddon_launchGroup(d_vol, d_sino, d_views,
                     g, Nu, Nv, 1, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -629,7 +630,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                detail::siddon_launchGroup(d_vol, d_sino, d_views,
+                siddon_launchGroup(d_vol, d_sino, d_views,
                     g, Nu, Nv, 1, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -711,7 +712,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                detail::siddon_launchGroup(d_vol, d_sino, d_views,
+                siddon_launchGroup(d_vol, d_sino, d_views,
                     g, Nu, Nv, Na, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -796,7 +797,7 @@ namespace YK {
                     YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                     YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                    detail::siddon_launchGroup(d_vol, d_sino, d_views,
+                    siddon_launchGroup(d_vol, d_sino, d_views,
                         g, Nu, Nv, 1, false, stream);
                     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -886,8 +887,11 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
                 printf("  launching Siddon FP: Na=%d Nu=%d Nv=%d...\n", Na, Nu, Nv);
-                detail::siddon_launchGroup(d_vol, d_sino, d_views,
-                    g, Nu, Nv, Na, false, stream);
+                {
+                    YK::Util::CudaTimer t{ "siddon",stream };
+                    siddon_launchGroup(d_vol, d_sino, d_views,
+                        g, Nu, Nv, Na, false, stream);
+                }
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 printf("  done\n");
 
@@ -912,8 +916,8 @@ namespace YK {
                 cudaStream_t stream;
                 YK_CUDA_CHECK(cudaStreamCreate(&stream));
 
-                //test1_uniform_single(stream);
-                //test2_single_voxel(stream);
+                test1_uniform_single(stream);
+                test2_single_voxel(stream);
                 //test3_multi_view(stream);
                 //test4_offset(stream);
                 test5_real_volume(stream);
@@ -1258,8 +1262,12 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
                 printf("  launching... Na=%d Nu=%d Nv=%d\n", Na, Nu, Nv);
-                fp_launch(volTex.tex, h_views, d_views, d_sino, g,
-                    Na, Nu, Nv, false, stream);
+                {
+                    YK::Util::CudaTimer t{ "joseph",stream };
+                    fp_launch(volTex.tex, h_views, d_views, d_sino, g,
+                        Na, Nu, Nv, false, stream);
+                }
+
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 printf("  done\n");
 
@@ -1271,8 +1279,10 @@ namespace YK {
                     float maxv = 0.f;
                     for (size_t k = 0; k < (size_t)Nv * Nu; ++k)
                         maxv = fmaxf(maxv, h_sino[a * (size_t)Nv * Nu + k]);
-                    if (maxv > 1e-6f || a < 5 || a >= Na - 5)
-                        printf("  angle %3d: max=%.4f\n", a, maxv);
+                    if (maxv > 1e-6f || a < 5 || a >= Na - 5) {
+                        //printf("  angle %3d: max=%.4f\n", a, maxv);
+                    }
+
                 }
 
                 float maxv = *std::max_element(h_sino.begin(), h_sino.end());
@@ -1333,6 +1343,156 @@ namespace YK {
                 f.read(reinterpret_cast<char*>(buf.data()), count * sizeof(float));
                 return (size_t)f.gcount() == count * sizeof(float);
             }
+            // ----------------------------------------------------------------
+// CVP测试1：均匀体，单角度，验证中心像素路径长度
+// ----------------------------------------------------------------
+            static void test_cvp_uniform_single_view(cudaStream_t stream)
+            {
+                printf("\n[CVPTest1] uniform volume, single view\n");
+
+                constexpr int   Nx = 64, Ny = 64, Nz = 64;
+                constexpr float vox = 0.1f;
+                constexpr int   Nu = 64, Nv = 64;
+                constexpr float du = 1.f, dv = 1.f;
+                constexpr float SID = 500.f, SDD = 1000.f;
+
+                SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox);
+
+                std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
+                float* d_vol = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_vol, h_vol.size() * sizeof(float)));
+                YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
+                    h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
+
+                // 单个 view，gantry=0，src 在 -y，与 RawTest1 完全相同的几何
+                SConeProjGeomVec view;
+                view.src = make_float3(0.f, -SID, 0.f);
+                view.srcCR = make_float3(0.f, 1.f, 0.f);
+                view.detU = make_float3(du, 0.f, 0.f);
+                view.detV = make_float3(0.f, 0.f, dv);
+                view.detS = make_float3(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv);
+                view.angle = make_float3(0.f, 0.f, 0.f);
+
+                // CVP 用物理坐标，不归一化
+                std::vector<SConeProjGeomVec> h_views = { view };
+
+                const size_t sino_elems = (size_t)1 * Nv * Nu;
+                float* d_sino = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
+                YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
+
+                fp_cvp_launch(d_vol, d_sino, h_views, g, 1, Nu, Nv, stream);
+                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+
+                std::vector<float> h_sino(sino_elems);
+                YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
+                    sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
+
+                // 中心像素应 ≈ Ny * vox = 6.4mm（与 Joseph/Siddon 对齐）
+                const float center = h_sino[(Nv / 2) * Nu + Nu / 2];
+                const float expect = (float)Ny * vox;
+                printf("  center pixel: got=%.4f  expected=%.4f  diff=%.4f  rel=%.4f%%\n",
+                    center, expect, fabsf(center - expect),
+                    fabsf(center - expect) / expect * 100.f);
+
+                // 打印中心行，方便观察 footprint 宽度
+                printf("  center row (v=%d):", Nv / 2);
+                for (int u = Nu / 2 - 4; u <= Nu / 2 + 4; ++u)
+                    printf(" %.3f", h_sino[(Nv / 2) * Nu + u]);
+                printf("\n");
+
+                saveRaw("cvptest1_single_view.raw", h_sino.data(), sino_elems);
+                printf("  saved: cvptest1_single_view.raw [%d x %d]\n", Nv, Nu);
+
+                cudaFree(d_vol);
+                cudaFree(d_sino);
+            }
+
+            // ----------------------------------------------------------------
+            // CVP测试2：均匀体，多角度，验证各角度中心像素一致性
+            // ----------------------------------------------------------------
+            static void test_cvp_uniform_multi_view(cudaStream_t stream)
+            {
+                printf("\n[CVPTest2] uniform volume, multi view (360 angles)\n");
+
+                constexpr int   Nx = 64, Ny = 64, Nz = 64;
+                constexpr float vox = 0.1f;
+                constexpr int   Na = 360;
+                constexpr int   Nu = 64, Nv = 64;
+                constexpr float du = 1.f, dv = 1.f;
+                constexpr float SID = 500.f, SDD = 1000.f;
+
+                SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox);
+                std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
+
+                float* d_vol = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_vol, h_vol.size() * sizeof(float)));
+                YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
+                    h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
+
+                std::vector<float> angles(Na);
+                for (int i = 0; i < Na; ++i)
+                    angles[i] = 2.f * CUDA_PI * i / Na;
+
+                // CVP 用物理坐标，不归一化
+                std::vector<SConeProjGeomVec> h_views(Na);
+                std::vector<SFDKGeoParamPerView> h_gv(Na);
+                build_circular_vec_geometry_from_theta(
+                    h_views, angles, Na, Nu, Nv, du, dv,
+                    SID, SDD - SID,
+                    f3(0.f, 0.f, 0.f),
+                    f3(0.f, 0.f, 0.f));
+
+                const size_t sino_elems = (size_t)Na * Nv * Nu;
+                float* d_sino = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
+                YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
+
+                fp_cvp_launch(d_vol, d_sino, h_views, g, Na, Nu, Nv, stream);
+                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+
+                std::vector<float> h_sino(sino_elems);
+                YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
+                    sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
+
+                // 验证各角度中心像素一致性
+                float minVal = 1e9f, maxVal = -1e9f, sumVal = 0.f;
+                for (int a = 0; a < Na; ++a) {
+                    float v = h_sino[((size_t)a * Nv + Nv / 2) * Nu + Nu / 2];
+                    minVal = fminf(minVal, v);
+                    maxVal = fmaxf(maxVal, v);
+                    sumVal += v;
+                }
+                const float mean = sumVal / Na;
+                printf("  center pixel across %d angles:\n", Na);
+                printf("    min=%.4f  max=%.4f  mean=%.4f  range=%.4f  range/mean=%.4f%%\n",
+                    minVal, maxVal, mean, maxVal - minVal,
+                    (maxVal - minVal) / mean * 100.f);
+                printf("  expected mean ≈ %.4f (Ny * vox)\n", (float)Ny * vox);
+
+                // 与 Joseph 单视角结果对比（如果存在）
+                {
+                    std::vector<float> h_ref;
+                    if (loadRaw("rawtest2_multi_view.raw", h_ref, sino_elems)) {
+                        double diff2 = 0.0, ref2 = 0.0;
+                        for (size_t k = 0; k < sino_elems; ++k) {
+                            double d = h_sino[k] - h_ref[k];
+                            diff2 += d * d;
+                            ref2 += (double)h_ref[k] * h_ref[k];
+                        }
+                        printf("  vs Joseph: rel_rms=%.3e\n", sqrt(diff2 / (ref2 + 1e-30)));
+                    }
+                }
+
+                saveRaw("cvptest2_multi_view.raw", h_sino.data(), sino_elems);
+                printf("  saved: cvptest2_multi_view.raw [%d x %d x %d]\n", Na, Nv, Nu);
+
+                cudaFree(d_vol);
+                cudaFree(d_sino);
+            }
+
+
+
 
             static void test_cvp_real_volume(cudaStream_t stream)
             {
@@ -1361,7 +1521,7 @@ namespace YK {
                 // ---------- 构建投影几何（物理坐标，不归一化）----------
                 std::vector<float> angles(Na);
                 for (int i = 0; i < Na; ++i)
-                    angles[i] = CUDA_PI * 3.f / 2.f + 2.f * CUDA_PI * i / Na;
+                    angles[i] = 2.f * CUDA_PI * i / Na;
 
                 std::vector<SConeProjGeomVec> h_views(Na);
                 build_circular_vec_geometry_from_theta(
@@ -1384,7 +1544,11 @@ namespace YK {
 
                 // ---------- 启动 CVP ----------
                 printf("  launching CVP FP: Na=%d Nu=%d Nv=%d...\n", Na, Nu, Nv);
-                fp_cvp_launch(d_vol, d_sino, h_views, g, Na, Nu, Nv, stream);
+                {
+                    YK::Util::CudaTimer t{ "cvp",stream };
+                    fp_cvp_launch(d_vol, d_sino, h_views, g, Na, Nu, Nv, stream);
+                }
+
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 printf("  done\n");
 
@@ -1397,8 +1561,10 @@ namespace YK {
                     float maxv = 0.f;
                     for (size_t k = 0; k < (size_t)Nv * Nu; ++k)
                         maxv = fmaxf(maxv, h_sino[a * (size_t)Nv * Nu + k]);
-                    if (maxv > 1e-6f || a < 5 || a >= Na - 5)
-                        printf("  angle %3d: max=%.4f\n", a, maxv);
+                    if (maxv > 1e-6f || a < 5 || a >= Na - 5) {
+                        //printf("  angle %3d: max=%.4f\n", a, maxv);
+                    }
+
                 }
 
                 float maxv = *std::max_element(h_sino.begin(), h_sino.end());
@@ -1434,7 +1600,8 @@ namespace YK {
             {
                 cudaStream_t stream;
                 YK_CUDA_CHECK(cudaStreamCreate(&stream));
-
+                test_cvp_uniform_single_view(stream);
+                test_cvp_uniform_multi_view(stream);
                 test_cvp_real_volume(stream);
 
                 YK_CUDA_CHECK(cudaStreamDestroy(stream));

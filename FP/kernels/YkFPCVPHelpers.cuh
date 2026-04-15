@@ -94,6 +94,7 @@ namespace YK
             c.inv_a3 = 1.f / vol.vox_z;
             c.Nx = vol.Nx; c.Ny = vol.Ny; c.Nz = vol.Nz;
 
+
             // Voxel bounding-box projection depth along srcCR.
             // srcCR is a unit vector, so dot(world_axis_alpha, srcCR) = srcCR component alpha.
             c.vox_depth = fabsf(vol.vox_x * g.srcCR.x)

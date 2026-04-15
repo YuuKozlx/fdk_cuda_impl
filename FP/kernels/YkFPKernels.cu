@@ -240,6 +240,23 @@ namespace YK {
             bool accumulate,
             cudaStream_t stream)
         {
+            //for (int a = 0; a < Na; ++a)
+            //{
+            //    const MainAxis ax = getMainAxis(h_src_dirs[a]);
+            //    float* d_s = d_sino + (size_t)a * Nv * Nu;
+
+            //    switch (ax) {
+            //    case MainAxis::X:
+            //        fp_launchGroupX(volTex, d_views, d_s, g, Nu, Nv, a, a + 1, accumulate, stream);
+            //        break;
+            //    case MainAxis::Y:
+            //        fp_launchGroupY(volTex, d_views, d_s, g, Nu, Nv, a, a + 1, accumulate, stream);
+            //        break;
+            //    case MainAxis::Z:
+            //        fp_launchGroupZ(volTex, d_views, d_s, g, Nu, Nv, a, a + 1, accumulate, stream);
+            //        break;
+            //    }
+            //}
             int i = 0;
             while (i < Na)
             {
