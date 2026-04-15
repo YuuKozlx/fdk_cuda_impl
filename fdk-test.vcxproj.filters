@@ -59,6 +59,9 @@
     <Filter Include="Filter\fft">
       <UniqueIdentifier>{74ef26c2-25d8-451b-bee0-9f75f354904f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="FP\detail">
+      <UniqueIdentifier>{3d2f1779-d877-4df9-a74c-73d42551d79b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="testmain.cu" />
@@ -85,6 +88,14 @@
     </CudaCompile>
     <CudaCompile Include="interface\YkFdkFactory.cu">
       <Filter>interface</Filter>
+    </CudaCompile>
+    <CudaCompile Include="test_fp.cu" />
+    <CudaCompile Include="test_fp1.cu" />
+    <CudaCompile Include="FP\kernels\YkFPKernels.cu">
+      <Filter>FP\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="FP\kernels\YkFPSiddonKernel.cu">
+      <Filter>FP\detail</Filter>
     </CudaCompile>
   </ItemGroup>
   <ItemGroup>
@@ -252,6 +263,27 @@
     </ClInclude>
     <ClInclude Include="global\YkLog.h">
       <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="global\YkCudaTextureController.hpp">
+      <Filter>global</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\kernels\YkFPHelpers.cuh">
+      <Filter>FP\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\kernels\YkFPLaunch.cuh">
+      <Filter>FP\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\kernels\YkFPSiddonLaunch.cuh">
+      <Filter>FP\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\YkFPGpuContext.hpp">
+      <Filter>FP</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\YkFPPipelineContext.hpp">
+      <Filter>FP</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\YkFPRunner.hpp">
+      <Filter>FP</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

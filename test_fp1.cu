@@ -471,6 +471,7 @@
 #include <algorithm>
 #include <numeric>
 #include "FDK/YkVecGeo.hpp"
+#include "FP/kernels/YkFPCVPLaunch.cuh"
 
 namespace YK {
     namespace Fp {
@@ -911,10 +912,10 @@ namespace YK {
                 cudaStream_t stream;
                 YK_CUDA_CHECK(cudaStreamCreate(&stream));
 
-                test1_uniform_single(stream);
-                test2_single_voxel(stream);
-                test3_multi_view(stream);
-                test4_offset(stream);
+                //test1_uniform_single(stream);
+                //test2_single_voxel(stream);
+                //test3_multi_view(stream);
+                //test4_offset(stream);
                 test5_real_volume(stream);
 
                 YK_CUDA_CHECK(cudaStreamDestroy(stream));
@@ -951,51 +952,6 @@ namespace YK {
                 return (size_t)f.gcount() == count * sizeof(float);
             }
 
-            // ----------------------------------------------------------------
-            // 核心 dispatch：按主轴分组调用 launchGroupX/Y/Z
-            // 直接操作 launchGroup 接口，不经过任何封装层
-            // ----------------------------------------------------------------
-            static void rawDispatch(
-                cudaTextureObject_t              volTex,
-                const std::vector<SConeProjGeomVec>& h_views,   // host，用于主轴判断
-                const SConeProjGeomVec* d_views,        // device，全部角度
-                float* d_sino,         // device，[Na][Nv][Nu]
-                const SVolGeom& g,
-                int Na, int Nu, int Nv,
-                bool accumulate,
-                cudaStream_t stream)
-            {
-                // 按主轴分组，找连续同主轴的 run
-                int i = 0;
-                while (i < Na)
-                {
-                    const MainAxis ax = Fp::detail::getMainAxis(h_views[i]);
-                    int j = i + 1;
-                    while (j < Na && Fp::detail::getMainAxis(h_views[j]) == ax) ++j;
-
-                    printf("  group [%d,%d) axis=%c\n", i, j,
-                        ax == detail::MainAxis::X ? 'X' :
-                        ax == detail::MainAxis::Y ? 'Y' : 'Z');
-
-                    // [i, j) 是同一主轴的连续 run
-                    // d_sino 的 angleOffset = i（写入全局 sinogram 的起始角度）
-                    switch (ax) {
-                    case MainAxis::X:
-                        Fp::fp_launchGroupX(volTex, d_views, d_sino, g,
-                            Nu, Nv, i, j, accumulate, stream);
-                        break;
-                    case Fp::detail::MainAxis::Y:
-                        Fp::fp_launchGroupY(volTex, d_views, d_sino, g,
-                            Nu, Nv, i, j, accumulate, stream);
-                        break;
-                    case Fp::detail::MainAxis::Z:
-                        Fp::fp_launchGroupZ(volTex, d_views, d_sino, g,
-                            Nu, Nv, i, j, accumulate, stream);
-                        break;
-                    }
-                    i = j;
-                }
-            }
 
             // ----------------------------------------------------------------
             // 测试1：均匀体，单角度，验证中心像素路径长度
@@ -1025,7 +981,7 @@ namespace YK {
 
                 std::vector<SConeProjGeomVec> h_views = { view };
 
-                h_views = detail::normalizeToVoxelBatch(h_views, g);
+                h_views = Fp::normalizeToVoxelBatch(h_views, g);
 
                 // 上传 views
                 SConeProjGeomVec* d_views = nullptr;
@@ -1034,8 +990,8 @@ namespace YK {
                     sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice));
 
                 // 上传体积 texture
-                Mem::TextureController tc;
-                auto volTex = tc.createTex3DFromHost(h_vol.data(), g);
+
+                auto volTex = Mem::TextureController::createTex3DFromHost(h_vol.data(), g);
 
                 // 分配 sinogram [1][Nv][Nu]
                 const size_t sino_elems = (size_t)1 * Nv * Nu;
@@ -1043,7 +999,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                rawDispatch(volTex.tex, h_views, d_views, d_sino, g,
+                fp_launch(volTex.tex, h_views, d_views, d_sino, g,
                     1, Nu, Nv, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -1097,7 +1053,7 @@ namespace YK {
                     f3(0.f, 0.f, 0.f));
 
 
-                h_views = detail::normalizeToVoxelBatch(h_views, g);
+                h_views = Fp::normalizeToVoxelBatch(h_views, g);
 
                 // 上传 views
                 SConeProjGeomVec* d_views = nullptr;
@@ -1105,15 +1061,15 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(d_views, h_views.data(),
                     Na * sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice));
 
-                Mem::TextureController tc;
-                auto volTex = tc.createTex3DFromHost(h_vol.data(), g);
+
+                auto volTex = Mem::TextureController::createTex3DFromHost(h_vol.data(), g);
 
                 const size_t sino_elems = (size_t)Na * Nv * Nu;
                 float* d_sino = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                rawDispatch(volTex.tex, h_views, d_views, d_sino, g,
+                fp_launch(volTex.tex, h_views, d_views, d_sino, g,
                     Na, Nu, Nv, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -1192,16 +1148,16 @@ namespace YK {
                     SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox);
                     g.center = make_float3(c.ox, c.oy, c.oz);
 
-                    Mem::TextureController tc;
-                    auto volTex = tc.createTex3DFromHost(h_vol.data(), g);
+
+                    auto volTex = Mem::TextureController::createTex3DFromHost(h_vol.data(), g);
 
                     float* d_sino = nullptr;
                     YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                     YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                    h_views = detail::normalizeToVoxelBatch(h_views, g);
+                    h_views = Fp::normalizeToVoxelBatch(h_views, g);
 
-                    rawDispatch(volTex.tex, h_views, d_views, d_sino, g,
+                    fp_launch(volTex.tex, h_views, d_views, d_sino, g,
                         1, Nu, Nv, false, stream);
                     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -1249,7 +1205,7 @@ namespace YK {
 
                 constexpr int   Nx = 512, Ny = 512, Nz = 400;
                 constexpr float vox_xy = 0.25f, vox_z = 0.25f;
-                constexpr int   Na = 45, Nu = 1024, Nv = 1024;
+                constexpr int   Na = 360, Nu = 1024, Nv = 1024;
                 constexpr float du = 0.25f, dv = 0.25f;
                 constexpr float SID = 500.f, SDD = 1000.f;
 
@@ -1262,7 +1218,7 @@ namespace YK {
 
                 std::vector<float> angles(Na);
                 for (int i = 0; i < Na; ++i)
-                    angles[i] = CUDA_PI * 3 / 2 + 2.f * CUDA_PI * i / 360;
+                    angles[i] = 2.f * CUDA_PI * i / 360;
 
                 std::vector<SConeProjGeomVec>    h_views(Na);
                 std::vector<SFDKGeoParamPerView> h_gv(Na);
@@ -1279,7 +1235,7 @@ namespace YK {
                         a, h_views[a].srcCR.x, h_views[a].srcCR.y, h_views[a].srcCR.z);
                 }
                 // 归一化后再打印
-                h_views = detail::normalizeToVoxelBatch(h_views, g);
+                h_views = Fp::normalizeToVoxelBatch(h_views, g);
                 for (int a : {0}) {
                     if (a < Na) continue;
                     printf("  view_vox[%d] src=(%.2f,%.2f,%.2f)\n",
@@ -1291,8 +1247,8 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(d_views, h_views.data(),
                     Na * sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice));
 
-                Mem::TextureController tc;
-                auto volTex = tc.createTex3DFromHost(h_vol.data(), g);
+
+                auto volTex = Mem::TextureController::createTex3DFromHost(h_vol.data(), g);
                 h_vol.clear();
                 printf("  texture bound\n");
 
@@ -1302,7 +1258,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
                 printf("  launching... Na=%d Nu=%d Nv=%d\n", Na, Nu, Nv);
-                rawDispatch(volTex.tex, h_views, d_views, d_sino, g,
+                fp_launch(volTex.tex, h_views, d_views, d_sino, g,
                     Na, Nu, Nv, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 printf("  done\n");
@@ -1352,10 +1308,148 @@ namespace YK {
     } // namespace Fp
 } // namespace YK
 
+
+namespace YK {
+    namespace Fp {
+        namespace CVPTest {
+            using namespace YK::Fp::detail;
+
+            // ----------------------------------------------------------------
+            // 工具函数
+            // ----------------------------------------------------------------
+            static bool saveRaw(const char* path, const float* data, size_t count)
+            {
+                std::ofstream f(path, std::ios::binary);
+                if (!f) { fprintf(stderr, "[saveRaw] cannot open %s\n", path); return false; }
+                f.write(reinterpret_cast<const char*>(data), count * sizeof(float));
+                return true;
+            }
+
+            static bool loadRaw(const char* path, std::vector<float>& buf, size_t count)
+            {
+                buf.resize(count);
+                std::ifstream f(path, std::ios::binary);
+                if (!f) { fprintf(stderr, "[loadRaw] cannot open %s\n", path); return false; }
+                f.read(reinterpret_cast<char*>(buf.data()), count * sizeof(float));
+                return (size_t)f.gcount() == count * sizeof(float);
+            }
+
+            static void test_cvp_real_volume(cudaStream_t stream)
+            {
+                printf("\n[CVPTest] real volume: fdk_vec_vol_offline.raw\n");
+
+                constexpr int   Nx = 512, Ny = 512, Nz = 400;
+                constexpr float vox_xy = 0.25f, vox_z = 0.25f;
+                constexpr int   Na = 360, Nu = 1024, Nv = 1024;
+                constexpr float du = 0.25f, dv = 0.25f;
+                constexpr float SID = 500.f, SDD = 1000.f;
+
+                SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox_xy, vox_z);
+                g.center = make_float3(0.f, 0.f, 0.f);
+
+                // ---------- 加载体积 ----------
+                std::vector<float> h_vol;
+                if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
+                printf("  volume loaded\n");
+
+                float* d_vol = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_vol, h_vol.size() * sizeof(float)));
+                YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
+                    h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
+                h_vol.clear();
+
+                // ---------- 构建投影几何（物理坐标，不归一化）----------
+                std::vector<float> angles(Na);
+                for (int i = 0; i < Na; ++i)
+                    angles[i] = CUDA_PI * 3.f / 2.f + 2.f * CUDA_PI * i / Na;
+
+                std::vector<SConeProjGeomVec> h_views(Na);
+                build_circular_vec_geometry_from_theta(
+                    h_views, angles, Na, Nu, Nv, du, dv,
+                    SID, SDD - SID,
+                    f3(0.f, 0.f, 0.f),
+                    f3(0.f, 0.f, 0.f));
+
+                // 打印第0帧确认几何正确
+                printf("  view[0] src=(%.2f, %.2f, %.2f)\n",
+                    h_views[0].src.x, h_views[0].src.y, h_views[0].src.z);
+                printf("  view[0] srcCR=(%.4f, %.4f, %.4f)\n",
+                    h_views[0].srcCR.x, h_views[0].srcCR.y, h_views[0].srcCR.z);
+
+                // ---------- 分配正弦图 ----------
+                const size_t sino_elems = (size_t)Na * Nv * Nu;
+                float* d_sino = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
+                YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
+
+                // ---------- 启动 CVP ----------
+                printf("  launching CVP FP: Na=%d Nu=%d Nv=%d...\n", Na, Nu, Nv);
+                fp_cvp_launch(d_vol, d_sino, h_views, g, Na, Nu, Nv, stream);
+                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+                printf("  done\n");
+
+                // ---------- 回读 + 统计 ----------
+                std::vector<float> h_sino(sino_elems);
+                YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
+                    sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
+
+                for (int a = 0; a < Na; ++a) {
+                    float maxv = 0.f;
+                    for (size_t k = 0; k < (size_t)Nv * Nu; ++k)
+                        maxv = fmaxf(maxv, h_sino[a * (size_t)Nv * Nu + k]);
+                    if (maxv > 1e-6f || a < 5 || a >= Na - 5)
+                        printf("  angle %3d: max=%.4f\n", a, maxv);
+                }
+
+                float maxv = *std::max_element(h_sino.begin(), h_sino.end());
+                float sumv = 0.f;
+                for (auto x : h_sino) sumv += x;
+                printf("  sino: max=%.4f  sum=%.3e\n", maxv, sumv);
+
+                // ---------- 与 Joseph 结果对比（如果存在）----------
+                {
+                    std::vector<float> h_ref;
+                    if (loadRaw("rawtest4_real_sino.raw", h_ref, sino_elems)) {
+                        double diff2 = 0.0, ref2 = 0.0;
+                        for (size_t k = 0; k < sino_elems; ++k) {
+                            double d = h_sino[k] - h_ref[k];
+                            diff2 += d * d;
+                            ref2 += (double)h_ref[k] * h_ref[k];
+                        }
+                        printf("  vs Joseph: rel_rms=%.3e\n", sqrt(diff2 / (ref2 + 1e-30)));
+                    }
+                    else {
+                        printf("  (Joseph reference not found, skip diff)\n");
+                    }
+                }
+
+                saveRaw("cvp_test_real_sino.raw", h_sino.data(), sino_elems);
+                printf("  saved: cvp_test_real_sino.raw [%d x %d x %d]\n", Na, Nv, Nu);
+
+                cudaFree(d_vol);
+                cudaFree(d_sino);
+            }
+
+            inline void runCVPTests()
+            {
+                cudaStream_t stream;
+                YK_CUDA_CHECK(cudaStreamCreate(&stream));
+
+                test_cvp_real_volume(stream);
+
+                YK_CUDA_CHECK(cudaStreamDestroy(stream));
+                printf("\n[CVPTest] all done\n");
+            }
+        };
+    };
+};
+
+
 //
 int main() {
-    //YK::Fp::SiddonTest::runSiddonTests();
+    YK::Fp::SiddonTest::runSiddonTests();
     YK::Fp::RawTest::runRawTests();
+    YK::Fp::CVPTest::runCVPTests();
 
     return 0;
 }

@@ -82,10 +82,10 @@ namespace YK {
 
     private:
         void buildTexObjs_(int Nu, int Nv, int K) {
-            Mem::TextureController texCtrl;
+
 
             // float投影数据，类型自动推导
-            h_tex_objs = texCtrl.createTex2DLinearBatch(chunk_flt.data(), Nu, Nv, K);
+            h_tex_objs = Mem::TextureController::createTex2DLinearBatch(chunk_flt.data(), Nu, Nv, K);
 
 
         }

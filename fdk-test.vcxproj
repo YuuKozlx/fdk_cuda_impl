@@ -133,6 +133,9 @@
     <ClInclude Include="CVP\cvp_geometry.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpHelpers.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKBpLaunch.cuh" />
+    <ClInclude Include="FP\kernels\YkFPCVPHelpers.cuh" />
+    <ClInclude Include="FP\kernels\YkFPCVPLaunch.cuh" />
+    <ClInclude Include="FP\kernels\YkFPHelpers.cuh" />
     <CudaCompile Include="FDK\cuh\YkFDKBpPrecompute.cu">
       <FileType>Document</FileType>
     </CudaCompile>
@@ -166,12 +169,11 @@
     <CudaCompile Include="Filter\YkCreateFilterKernelKernels.cu">
       <FileType>Document</FileType>
     </CudaCompile>
-    <ClInclude Include="FP\kernels\YkFPHelpers.cuh" />
     <ClInclude Include="FP\kernels\YkFPLaunch.cuh" />
     <ClInclude Include="FP\kernels\YkFPSiddonLaunch.cuh" />
+    <ClInclude Include="FP\YkFp.cuh" />
     <ClInclude Include="FP\YkFPGpuContext.hpp" />
     <ClInclude Include="FP\YkFPPipelineContext.hpp" />
-    <ClInclude Include="FP\YkFPProcessor.hpp" />
     <ClInclude Include="FP\YkFPRunner.hpp" />
     <ClInclude Include="global\IProcessor.hpp" />
     <ClInclude Include="global\YkCBCTParams.h" />
@@ -202,6 +204,7 @@
     <CudaCompile Include="FDK\cuh\YkFDKParkerKernels.cu" />
     <CudaCompile Include="FDK\cuh\YkFDKPreWeightKernels.cu" />
     <CudaCompile Include="Filter\YkConvKernels.cu" />
+    <CudaCompile Include="FP\kernels\YkFPCVPKernels.cu" />
     <CudaCompile Include="FP\kernels\YkFPKernels.cu" />
     <CudaCompile Include="FP\kernels\YkFPSiddonKernel.cu" />
     <CudaCompile Include="interface\YkFdkFactory.cu" />

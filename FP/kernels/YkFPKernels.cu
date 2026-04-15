@@ -184,5 +184,84 @@ namespace YK {
                 Nu, Nv, startAngle, endAngle, accumulate, stream);
         }
 
+
+        // ----------------------------------------------------------------
+           // 核心 dispatch：按主轴分组调用 launchGroupX/Y/Z
+           // 直接操作 launchGroup 接口，不经过任何封装层
+           // ----------------------------------------------------------------
+        void fp_launch(
+            cudaTextureObject_t              volTex,
+            const std::vector<SConeProjGeomVec>& h_views,   // host，用于主轴判断
+            const SConeProjGeomVec* d_views,        // device，全部角度
+            float* d_sino,         // device，[Na][Nv][Nu]
+            const SVolGeom& g,
+            int Na, int Nu, int Nv,
+            bool accumulate,
+            cudaStream_t stream)
+        {
+            // 按主轴分组，找连续同主轴的 run
+            int i = 0;
+            while (i < Na)
+            {
+                const MainAxis ax = Fp::getMainAxis(h_views[i].srcCR);
+                int j = i + 1;
+                while (j < Na && Fp::getMainAxis(h_views[i].srcCR) == ax) ++j;
+
+                printf("  group [%d,%d) axis=%c\n", i, j,
+                    ax == Fp::MainAxis::X ? 'X' :
+                    ax == Fp::MainAxis::Y ? 'Y' : 'Z');
+
+                // [i, j) 是同一主轴的连续 run
+                // d_sino 的 angleOffset = i（写入全局 sinogram 的起始角度）
+                float* d_s = d_sino + (size_t)i * Nv * Nu;
+                switch (ax) {
+                case MainAxis::X:
+                    Fp::fp_launchGroupX(volTex, d_views, d_s, g, Nu, Nv, i, j, accumulate, stream);
+                    break;
+                case Fp::MainAxis::Y:
+                    Fp::fp_launchGroupY(volTex, d_views, d_s, g, Nu, Nv, i, j, accumulate, stream);
+                    break;
+                case Fp::MainAxis::Z:
+                    Fp::fp_launchGroupZ(volTex, d_views, d_s, g, Nu, Nv, i, j, accumulate, stream);
+                    break;
+                }
+                i = j;
+            }
+        }
+
+
+        void fp_launch(
+            cudaTextureObject_t              volTex,
+            const std::vector<float3>& h_src_dirs,  // 每个角度的源点，仅用于主轴判断
+            const SConeProjGeomVec* d_views,
+            float* d_sino,
+            const SVolGeom& g,
+            int Na, int Nu, int Nv,
+            bool accumulate,
+            cudaStream_t stream)
+        {
+            int i = 0;
+            while (i < Na)
+            {
+                const MainAxis ax = getMainAxis(h_src_dirs[i]);
+                int j = i + 1;
+                while (j < Na && getMainAxis(h_src_dirs[j]) == ax) ++j;
+
+                float* d_s = d_sino + (size_t)i * Nv * Nu;
+                switch (ax) {
+                case MainAxis::X:
+                    fp_launchGroupX(volTex, d_views, d_s, g, Nu, Nv, i, j, accumulate, stream);
+                    break;
+                case MainAxis::Y:
+                    fp_launchGroupY(volTex, d_views, d_s, g, Nu, Nv, i, j, accumulate, stream);
+                    break;
+                case MainAxis::Z:
+                    fp_launchGroupZ(volTex, d_views, d_s, g, Nu, Nv, i, j, accumulate, stream);
+                    break;
+                }
+                i = j;
+            }
+        }
+
     } // namespace Fp
 } // namespace YK

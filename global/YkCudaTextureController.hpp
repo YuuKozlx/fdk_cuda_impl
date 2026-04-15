@@ -10,6 +10,49 @@ namespace YK {
     namespace Mem {
 
         // ============================================================
+        // Tex3DHandle
+        // cudaArray3D + cudaTextureObject_t 的 RAII 封装
+        // 二者生命周期完全绑定，不允许单独释放
+        // ============================================================
+        struct Tex3DHandle {
+            cudaArray_t         arr = nullptr;
+            cudaTextureObject_t tex = 0;
+
+            Tex3DHandle() = default;
+            Tex3DHandle(const Tex3DHandle&) = delete;
+            Tex3DHandle& operator=(const Tex3DHandle&) = delete;
+
+            Tex3DHandle(Tex3DHandle&& o) noexcept
+                : arr(o.arr), tex(o.tex)
+            {
+                o.arr = nullptr; o.tex = 0;
+            }
+
+            Tex3DHandle& operator=(Tex3DHandle&& o) noexcept
+            {
+                if (this != &o) {
+                    destroy();
+                    arr = o.arr; tex = o.tex;
+                    o.arr = nullptr; o.tex = 0;
+                }
+                return *this;
+            }
+
+            // process() 传入用：取 tex 的地址
+            const cudaTextureObject_t* texPtr() const { return &tex; }
+
+            bool valid() const { return arr != nullptr && tex != 0; }
+
+            void destroy()
+            {
+                if (tex) { cudaDestroyTextureObject(tex); tex = 0; }
+                if (arr) { cudaFreeArray(arr);             arr = nullptr; }
+            }
+
+            ~Tex3DHandle() { destroy(); }
+        };
+
+        // ============================================================
         // TextureController
         // 管理 cudaTextureObject_t 的创建与销毁
         //
@@ -30,50 +73,15 @@ namespace YK {
         //   TextureController 本身无状态，可栈上构造，随用随建
         // ============================================================
         class TextureController {
+
+
         public:
 
-            // ============================================================
-            // Tex3DHandle
-            // cudaArray3D + cudaTextureObject_t 的 RAII 封装
-            // 二者生命周期完全绑定，不允许单独释放
-            // ============================================================
-            struct Tex3DHandle {
-                cudaArray_t         arr = nullptr;
-                cudaTextureObject_t tex = 0;
 
-                Tex3DHandle() = default;
-                Tex3DHandle(const Tex3DHandle&) = delete;
-                Tex3DHandle& operator=(const Tex3DHandle&) = delete;
 
-                Tex3DHandle(Tex3DHandle&& o) noexcept
-                    : arr(o.arr), tex(o.tex)
-                {
-                    o.arr = nullptr; o.tex = 0;
-                }
-
-                Tex3DHandle& operator=(Tex3DHandle&& o) noexcept
-                {
-                    if (this != &o) {
-                        destroy();
-                        arr = o.arr; tex = o.tex;
-                        o.arr = nullptr; o.tex = 0;
-                    }
-                    return *this;
-                }
-
-                // process() 传入用：取 tex 的地址
-                const cudaTextureObject_t* texPtr() const { return &tex; }
-
-                bool valid() const { return arr != nullptr && tex != 0; }
-
-                void destroy()
-                {
-                    if (tex) { cudaDestroyTextureObject(tex); tex = 0; }
-                    if (arr) { cudaFreeArray(arr);             arr = nullptr; }
-                }
-
-                ~Tex3DHandle() { destroy(); }
-            };
+        public:
+            TextureController() = delete;
+            ~TextureController() = delete;
 
             // ============================================================
             // 2D texture — 从线性内存单个 slice 创建
@@ -81,10 +89,10 @@ namespace YK {
             // slice 指针由调用方计算：basePtr + i * Nu * Nv
             // ============================================================
             template<typename T>
-            cudaTextureObject_t createTex2DLinear(
+            static cudaTextureObject_t createTex2DLinear(
                 T* devPtr, int Nu, int Nv,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp) const
+                cudaTextureAddressMode addr = cudaAddressModeClamp)
             {
                 check_filter_type<T>(filter);
 
@@ -103,10 +111,10 @@ namespace YK {
             // 2D texture — 从线性内存批量创建（K 个视角）
             // ============================================================
             template<typename T>
-            std::vector<cudaTextureObject_t> createTex2DLinearBatch(
+            static std::vector<cudaTextureObject_t> createTex2DLinearBatch(
                 T* basePtr, int Nu, int Nv, int K,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp) const
+                cudaTextureAddressMode addr = cudaAddressModeClamp)
             {
                 check_filter_type<T>(filter);
 
@@ -124,10 +132,10 @@ namespace YK {
             // buf.nz = K（视角数），buf.nx = Nu，buf.ny = Nv
             // ============================================================
             template<typename T>
-            cudaTextureObject_t createTex2DFromSlice(
+            static cudaTextureObject_t createTex2DFromSlice(
                 const DevicePitchedBuffer3D<T>& buf, int sliceIdx,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp) const
+                cudaTextureAddressMode addr = cudaAddressModeClamp)
             {
                 check_filter_type<T>(filter);
 
@@ -153,10 +161,10 @@ namespace YK {
             // 2D texture — 从 DevicePitchedBuffer3D 批量创建（K = buf.nz）
             // ============================================================
             template<typename T>
-            std::vector<cudaTextureObject_t> createTex2DBatch(
+            static std::vector<cudaTextureObject_t> createTex2DBatch(
                 const DevicePitchedBuffer3D<T>& buf,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp) const
+                cudaTextureAddressMode addr = cudaAddressModeClamp)
             {
                 check_filter_type<T>(filter);
 
@@ -172,11 +180,11 @@ namespace YK {
             // 内部分配 cudaArray3D，绑定 texture，RAII 管理
             // addressMode 默认 Border（越界返回0），适合体积正投/反投
             // ============================================================
-            Tex3DHandle createTex3DFromDevice(
+            static Tex3DHandle createTex3DFromDevice(
                 const float* d_vol,
                 int Nx, int Ny, int Nz,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeBorder) const
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 return createTex3D_(d_vol, Nx, Ny, Nz,
                     cudaMemcpyDeviceToDevice, filter, addr);
@@ -185,11 +193,11 @@ namespace YK {
             // ============================================================
             // 3D texture — 从 host float* 创建 Tex3DHandle（H2D 拷贝）
             // ============================================================
-            Tex3DHandle createTex3DFromHost(
+            static Tex3DHandle createTex3DFromHost(
                 const float* h_vol,
                 int Nx, int Ny, int Nz,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeBorder) const
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 return createTex3D_(h_vol, Nx, Ny, Nz,
                     cudaMemcpyHostToDevice, filter, addr);
@@ -199,21 +207,21 @@ namespace YK {
             // 3D texture — 从任意带维度结构体 SDim 有Nx Ny Nz 成员 重载
             // ============================================================
             template<typename SDimT>
-            Tex3DHandle createTex3DFromDevice(
+            static Tex3DHandle createTex3DFromDevice(
                 const float* d_vol,
                 const SDimT& dim,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeBorder) const
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 return createTex3DFromDevice(d_vol, dim.Nx, dim.Ny, dim.Nz, filter, addr);
             }
 
             template<typename SDimT>
-            Tex3DHandle createTex3DFromHost(
+            static  Tex3DHandle createTex3DFromHost(
                 const float* h_vol,
                 const SDimT& dim,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeBorder) const
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 return createTex3DFromHost(h_vol, dim.Nx, dim.Ny, dim.Nz, filter, addr);
             }
@@ -221,13 +229,13 @@ namespace YK {
             // ============================================================
             // 2D 销毁
             // ============================================================
-            void destroyTex(cudaTextureObject_t tex) const
+            static void destroyTex(cudaTextureObject_t tex)
             {
                 if (tex != 0)
                     YK_CUDA_CHECK(cudaDestroyTextureObject(tex));
             }
 
-            void destroyTexBatch(std::vector<cudaTextureObject_t>& texs) const
+            static void destroyTexBatch(std::vector<cudaTextureObject_t>& texs)
             {
                 for (auto& t : texs)
                     destroyTex(t);
@@ -239,10 +247,10 @@ namespace YK {
             // ----------------------------------------------------------------
             // 2D 公共创建逻辑
             // ----------------------------------------------------------------
-            cudaTextureObject_t createTexObj_(
+            static cudaTextureObject_t createTexObj_(
                 const cudaResourceDesc& res,
                 cudaTextureFilterMode    filter,
-                cudaTextureAddressMode   addr) const
+                cudaTextureAddressMode   addr)
             {
                 cudaTextureDesc tex{};
                 tex.addressMode[0] = addr;
@@ -259,12 +267,12 @@ namespace YK {
             // ----------------------------------------------------------------
             // 3D 公共创建逻辑（分配 cudaArray3D + 拷贝 + 绑 texture）
             // ----------------------------------------------------------------
-            Tex3DHandle createTex3D_(
+            static Tex3DHandle createTex3D_(
                 const void* src,
                 int Nx, int Ny, int Nz,
                 cudaMemcpyKind         kind,
                 cudaTextureFilterMode  filter,
-                cudaTextureAddressMode addr) const
+                cudaTextureAddressMode addr)
             {
                 Tex3DHandle h;
 
