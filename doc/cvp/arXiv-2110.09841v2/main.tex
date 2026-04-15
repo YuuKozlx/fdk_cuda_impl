@@ -1,0 +1,54 @@
+% SIAM Article Template
+\documentclass[onefignum,onetabnum]{siamart171218}
+
+% Information that is shared between the article and the supplement
+% (title and author information, macros, packages, etc.) goes into
+% ex_shared.tex. If there is no supplement, this file can be included
+% directly.
+
+\input{main_head}
+
+% Optional PDF information
+\ifpdf
+\hypersetup{
+  pdftitle={Cutting Voxel Projector},
+  pdfauthor={V. Kulvait, J. Moosmann and G. Rose}
+}
+\fi
+
+% The next statement enables references to information in the
+% supplement. See the xr-hyperref package for details.
+
+%% Use \myexternaldocument on Overleaf
+%\myexternaldocument{ex_supplement}
+
+% FundRef data to be entered by SIAM
+%<funding-group>
+%<award-group>
+%<funding-source>
+%<named-content content-type="funder-name"> 
+%</named-content> 
+%<named-content content-type="funder-identifier"> 
+%</named-content>
+%</funding-source>
+%<award-id> </award-id>
+%</award-group>
+%</funding-group>
+
+\begin{document}
+
+\maketitle
+
+\input{00Abstract}
+\input{01Introduction}
+\input{02Formulation}
+\input{03Implementation}
+\input{04Results}
+\input{05Discussion}
+
+\section*{Acknowledgments}
+V. Kulvait (VK) designed and implemented the cutting voxel projector for the CBCT operator during his postdoctoral position at OVGU. Later, while serving as a scientist at Hereon, he developed a simplified version for parallel beam geometry tailored for synchrotron $\mu$-CT applications. The OpenCL kernels are now included in the open-source package for tomographic reconstruction, KCT\_cbct. The implementations are publicly available as open-source software under the GNU GPL 3 license at \url{https://github.com/kulvait/KCT_cbct}.
+
+\bibliographystyle{siamplain}
+\bibliography{literature}
+\end{document}
