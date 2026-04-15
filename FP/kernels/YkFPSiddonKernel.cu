@@ -119,7 +119,7 @@ namespace YK {
 
         } // namespace detail
 
-        void siddon_launchGroup(
+        void fp_siddon_launch(
             const float* d_vol,
             float* d_sino,
             const SConeProjGeomVec* d_views,

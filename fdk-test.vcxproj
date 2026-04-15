@@ -172,6 +172,7 @@
     <ClInclude Include="FP\kernels\YkFPLaunch.cuh" />
     <ClInclude Include="FP\kernels\YkFPSiddonLaunch.cuh" />
     <ClInclude Include="FP\YkFp.cuh" />
+    <ClInclude Include="FP\YkFPCommon.cuh" />
     <ClInclude Include="FP\YkFPGpuContext.hpp" />
     <ClInclude Include="FP\YkFPPipelineContext.hpp" />
     <ClInclude Include="FP\YkFPRunner.hpp" />

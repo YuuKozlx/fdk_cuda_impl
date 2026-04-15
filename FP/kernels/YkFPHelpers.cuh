@@ -74,6 +74,7 @@ namespace YK {
                 __host__ __device__ static float vox0(float vx, float vy, float vz) { return vx; }
                 __host__ __device__ static float vox1(float vx, float vy, float vz) { return vy; }
                 __host__ __device__ static float vox2(float vx, float vy, float vz) { return vz; }
+                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_x; }
                 __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
                 {
                     return tex3D<float>(tex, f0, f1, f2);
@@ -90,6 +91,7 @@ namespace YK {
                 __host__ __device__ static float vox0(float vx, float vy, float vz) { return vy; }
                 __host__ __device__ static float vox1(float vx, float vy, float vz) { return vx; }
                 __host__ __device__ static float vox2(float vx, float vy, float vz) { return vz; }
+                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_y; }
                 __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
                 {
                     return tex3D<float>(tex, f1, f0, f2);
@@ -106,6 +108,7 @@ namespace YK {
                 __host__ __device__ static float vox0(float vx, float vy, float vz) { return vz; }
                 __host__ __device__ static float vox1(float vx, float vy, float vz) { return vx; }
                 __host__ __device__ static float vox2(float vx, float vy, float vz) { return vy; }
+                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_z; }
                 __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
                 {
                     return tex3D<float>(tex, f1, f2, f0);

@@ -559,7 +559,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                siddon_launchGroup(d_vol, d_sino, d_views,
+                fp_siddon_launch(d_vol, d_sino, d_views,
                     g, Nu, Nv, 1, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -630,7 +630,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                siddon_launchGroup(d_vol, d_sino, d_views,
+                fp_siddon_launch(d_vol, d_sino, d_views,
                     g, Nu, Nv, 1, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -712,7 +712,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                siddon_launchGroup(d_vol, d_sino, d_views,
+                fp_siddon_launch(d_vol, d_sino, d_views,
                     g, Nu, Nv, Na, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -797,7 +797,7 @@ namespace YK {
                     YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                     YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                    siddon_launchGroup(d_vol, d_sino, d_views,
+                    fp_siddon_launch(d_vol, d_sino, d_views,
                         g, Nu, Nv, 1, false, stream);
                     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -889,7 +889,7 @@ namespace YK {
                 printf("  launching Siddon FP: Na=%d Nu=%d Nv=%d...\n", Na, Nu, Nv);
                 {
                     YK::Util::CudaTimer t{ "siddon",stream };
-                    siddon_launchGroup(d_vol, d_sino, d_views,
+                    fp_siddon_launch(d_vol, d_sino, d_views,
                         g, Nu, Nv, Na, false, stream);
                 }
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -916,8 +916,8 @@ namespace YK {
                 cudaStream_t stream;
                 YK_CUDA_CHECK(cudaStreamCreate(&stream));
 
-                test1_uniform_single(stream);
-                test2_single_voxel(stream);
+                //test1_uniform_single(stream);
+                //test2_single_voxel(stream);
                 //test3_multi_view(stream);
                 //test4_offset(stream);
                 test5_real_volume(stream);
@@ -1003,7 +1003,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                fp_launch(volTex.tex, h_views, d_views, d_sino, g,
+                fp_joseph_launch(volTex.tex, h_views, d_views, d_sino, g,
                     1, Nu, Nv, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -1073,7 +1073,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                fp_launch(volTex.tex, h_views, d_views, d_sino, g,
+                fp_joseph_launch(volTex.tex, h_views, d_views, d_sino, g,
                     Na, Nu, Nv, false, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -1161,7 +1161,7 @@ namespace YK {
 
                     h_views = Fp::normalizeToVoxelBatch(h_views, g);
 
-                    fp_launch(volTex.tex, h_views, d_views, d_sino, g,
+                    fp_joseph_launch(volTex.tex, h_views, d_views, d_sino, g,
                         1, Nu, Nv, false, stream);
                     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -1264,8 +1264,8 @@ namespace YK {
                 printf("  launching... Na=%d Nu=%d Nv=%d\n", Na, Nu, Nv);
                 {
                     YK::Util::CudaTimer t{ "joseph",stream };
-                    fp_launch(volTex.tex, h_views, d_views, d_sino, g,
-                        Na, Nu, Nv, false, stream);
+                    fp_joseph_launch(volTex.tex, h_views, d_views, d_sino, g,
+                        Na, Nu, Nv, false, stream, FpStepSuperSample::x1);
                 }
 
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -1297,6 +1297,102 @@ namespace YK {
                 cudaFree(d_sino);
             }
 
+            // 测试4：真实体积，全角度
+           // ----------------------------------------------------------------
+            static void test_real_volume_ss(cudaStream_t stream)
+            {
+                printf("\n[RawTest5] real volume: fdk_vec_vol_online.raw\n");
+
+                constexpr int   Nx = 512, Ny = 512, Nz = 400;
+                constexpr float vox_xy = 0.25f, vox_z = 0.25f;
+                constexpr int   Na = 360, Nu = 1024, Nv = 1024;
+                constexpr float du = 0.25f, dv = 0.25f;
+                constexpr float SID = 500.f, SDD = 1000.f;
+
+                SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox_xy, vox_z);
+                g.center = make_float3(0.f, 0.f, 0.f);  // 实际偏置填这里
+
+                std::vector<float> h_vol;
+                if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
+                printf("  volume loaded\n");
+
+                std::vector<float> angles(Na);
+                for (int i = 0; i < Na; ++i)
+                    angles[i] = 2.f * CUDA_PI * i / 360;
+
+                std::vector<SConeProjGeomVec>    h_views(Na);
+                std::vector<SFDKGeoParamPerView> h_gv(Na);
+                build_circular_vec_geometry_from_theta(
+                    h_views, angles, Na, Nu, Nv, du, dv,
+                    SID, SDD - SID,
+                    f3(0.f, 0.f, 0.f),
+                    f3(0.f, 0.f, 0.f));
+
+                // build_circular_vec_geometry_from_theta 之后，归一化之前打印几个
+                for (int a : {0}) {
+                    if (a < Na) continue;
+                    printf("  view[%d] srcCR=(%.3f,%.3f,%.3f)\n",
+                        a, h_views[a].srcCR.x, h_views[a].srcCR.y, h_views[a].srcCR.z);
+                }
+                // 归一化后再打印
+                h_views = Fp::normalizeToVoxelBatch(h_views, g);
+                for (int a : {0}) {
+                    if (a < Na) continue;
+                    printf("  view_vox[%d] src=(%.2f,%.2f,%.2f)\n",
+                        a, h_views[a].src.x, h_views[a].src.y, h_views[a].src.z);
+                }
+
+                SConeProjGeomVec* d_views = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_views, Na * sizeof(SConeProjGeomVec)));
+                YK_CUDA_CHECK(cudaMemcpy(d_views, h_views.data(),
+                    Na * sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice));
+
+
+                auto volTex = Mem::TextureController::createTex3DFromHost(h_vol.data(), g);
+                h_vol.clear();
+                printf("  texture bound\n");
+
+                const size_t sino_elems = (size_t)Na * Nv * Nu;
+                float* d_sino = nullptr;
+                YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
+                YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
+
+                printf("  launching... Na=%d Nu=%d Nv=%d\n", Na, Nu, Nv);
+                {
+                    YK::Util::CudaTimer t{ "joseph",stream };
+                    fp_joseph_ss_launch(volTex.tex, h_views, d_views, d_sino, g,
+                        Na, Nu, Nv, false, stream, FpStepSuperSample::x4, FpDetSuperSample::x2);
+                }
+
+                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+                printf("  done\n");
+
+                std::vector<float> h_sino(sino_elems);
+                YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
+                    sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
+
+                for (int a = 0; a < Na; ++a) {
+                    float maxv = 0.f;
+                    for (size_t k = 0; k < (size_t)Nv * Nu; ++k)
+                        maxv = fmaxf(maxv, h_sino[a * (size_t)Nv * Nu + k]);
+                    if (maxv > 1e-6f || a < 5 || a >= Na - 5) {
+                        //printf("  angle %3d: max=%.4f\n", a, maxv);
+                    }
+
+                }
+
+                float maxv = *std::max_element(h_sino.begin(), h_sino.end());
+                float sumv = 0.f;
+                for (auto x : h_sino) sumv += x;
+                printf("  sino: max=%.4f  sum=%.3e\n", maxv, sumv);
+
+                saveRaw("rawtest5_real_sino_x4_x2.raw", h_sino.data(), sino_elems);
+                printf("  saved: rawtest4_real_sino.raw [%d x %d x %d]\n", Na, Nv, Nu);
+
+                cudaFree(d_views);
+                cudaFree(d_sino);
+            }
+
             // ----------------------------------------------------------------
             // 主入口
             // ----------------------------------------------------------------
@@ -1309,6 +1405,7 @@ namespace YK {
                 //test_uniform_multi_view(stream);
                 //test_offset(stream);
                 test_real_volume(stream);
+                test_real_volume_ss(stream);
 
                 YK_CUDA_CHECK(cudaStreamDestroy(stream));
                 printf("\n[RawTest] all done\n");
@@ -1600,8 +1697,8 @@ namespace YK {
             {
                 cudaStream_t stream;
                 YK_CUDA_CHECK(cudaStreamCreate(&stream));
-                test_cvp_uniform_single_view(stream);
-                test_cvp_uniform_multi_view(stream);
+                //test_cvp_uniform_single_view(stream);
+                //test_cvp_uniform_multi_view(stream);
                 test_cvp_real_volume(stream);
 
                 YK_CUDA_CHECK(cudaStreamDestroy(stream));

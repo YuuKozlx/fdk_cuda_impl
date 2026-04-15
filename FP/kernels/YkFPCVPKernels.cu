@@ -129,63 +129,33 @@ namespace YK
                 }
             }
 
+
             // ============================================================
-            //  Normalization pass  (paper eq. cvp: factor f^2 / (a^{mn} * cos^3(theta)))
-            //  One thread per pixel.
-            //
-            //  cos_theta[n*M+m] : cosine of the cone angle for each pixel center,
-            //                     precomputed by cvp_precompute_costheta.
-            //  pixel_area       : detector pixel area = du * dv [mm^2]
-            // ============================================================
+            // normalize kernel 内部直接算 cos_theta
             __global__ void cvp_normalize_kernel(
-                float* sinogram,    // [N][M] in-place
-                const float* cos_theta,   // [N][M] per-pixel cos(theta)
-                float        SDD,
-                float        pixel_area,  // du * dv [mm^2]
-                int          M, int N)
+                float* d_sino,
+                float            SDD,
+                float            du, float dv,
+                int              Nu, int Nv)
             {
                 const int m = blockIdx.x * blockDim.x + threadIdx.x;
                 const int n = blockIdx.y * blockDim.y + threadIdx.y;
-                if (m >= M || n >= N) return;
+                if (m >= Nu || n >= Nv) return;
 
-                const int   idx = n * M + m;
-                const float cos_t = cos_theta[idx];
-                // factor = f^2 / (pixel_area * cos^3(theta))
-                const float norm = (SDD * SDD) / (pixel_area * cos_t * cos_t * cos_t);
-                sinogram[idx] *= norm;
+                const float off_u = ((float)m + 0.5f - (float)Nu * 0.5f) * du;
+                const float off_v = ((float)n + 0.5f - (float)Nv * 0.5f) * dv;
+                const float r = sqrtf(SDD * SDD + off_u * off_u + off_v * off_v);
+                const float cos_t = SDD / r;
+                const float norm = (SDD * SDD) / (du * dv * cos_t * cos_t * cos_t);
+
+                d_sino[n * Nu + m] *= norm;
             }
 
-            // ============================================================
-            //  Precompute cos_theta map (call once per view before the main kernel)
-            //
-            //  cos_theta(m,n) = dot(ray_direction(m,n), srcCR)
-            //                 = SDD / sqrt(SDD^2 + off_u^2 + off_v^2)
-            //  where off_u, off_v are the physical offsets of pixel center
-            //  from the detector geometric center [mm].
-            // ============================================================
-            __global__ void cvp_precompute_costheta(
-                float* cos_theta,  // [N][M] output
-                SCVPViewCache c)
-            {
-                const int m = blockIdx.x * blockDim.x + threadIdx.x;
-                const int n = blockIdx.y * blockDim.y + threadIdx.y;
-                if (m >= c.M || n >= c.N) return;
-
-                // Physical offset of pixel (m,n) center from detector geometric center
-                const float off_u = ((float)m + 0.5f - (float)c.M * 0.5f) * c.du;
-                const float off_v = ((float)n + 0.5f - (float)c.N * 0.5f) * c.dv;
-
-                // Distance from source to pixel center:
-                //   r = sqrt(SDD^2 + off_u^2 + off_v^2)
-                //   cos(theta) = SDD / r
-                const float r = sqrtf(c.SDD * c.SDD + off_u * off_u + off_v * off_v);
-                cos_theta[n * c.M + m] = c.SDD / r;
-            }
 
 
         }; // namespace detail
         // ============================================================
-        //  Launch wrapper  (3-step pipeline per view)
+        //  Launch wrapper  (2-step pipeline per view)
         // ============================================================
         void fp_cvp_launch(
             const float* d_vol,
@@ -195,41 +165,30 @@ namespace YK
             int Na, int Nu, int Nv,
             cudaStream_t stream)
         {
-            float* d_cos_theta = nullptr;
-            YK_CUDA_CHECK(cudaMalloc(&d_cos_theta, (size_t)Nv * Nu * sizeof(float)));
-
+            // d_cos_theta 完全不需要了
             for (int a = 0; a < Na; ++a)
             {
                 const auto cache = make_view_cache(h_views[a], Nu, Nv, g);
-                //printf("vol_origin=(%.3f, %.3f, %.3f)\n",
-                //    cache.vol_origin.x, cache.vol_origin.y, cache.vol_origin.z);
-                //printf("src=(%.3f, %.3f, %.3f)\n",
-                //    cache.src.x, cache.src.y, cache.src.z);
                 float* d_s = d_sino + (size_t)a * Nv * Nu;
 
-                // Step 1: cos_theta
-                {
-                    dim3 block(16, 16);
-                    dim3 grid((Nu + 15) / 16, (Nv + 15) / 16);
-                    detail::cvp_precompute_costheta << <grid, block, 0, stream >> > (d_cos_theta, cache);
-                }
-                // Step 2: scatter
+                // Step 1: scatter
                 {
                     dim3 block(8, 8, 8);
-                    dim3 grid((cache.Nx + 7) / 8, (cache.Ny + 7) / 8, (cache.Nz + 7) / 8);
-                    detail::cvp_forward_kernel << <grid, block, 0, stream >> > (d_vol, d_s, cache);
+                    dim3 grid(
+                        (cache.Nx + 7) / 8,
+                        (cache.Ny + 7) / 8,
+                        (cache.Nz + 7) / 8);
+                    detail::cvp_forward_kernel << <grid, block, 0, stream >> > (
+                        d_vol, d_s, cache);
                 }
-                // Step 3: normalize
+                // Step 2: normalize（内部算 cos_theta）
                 {
                     dim3 block(16, 16);
                     dim3 grid((Nu + 15) / 16, (Nv + 15) / 16);
-                    float pixel_area = cache.du * cache.dv;
                     detail::cvp_normalize_kernel << <grid, block, 0, stream >> > (
-                        d_s, d_cos_theta, cache.SDD, pixel_area, Nu, Nv);
+                        d_s, cache.SDD, cache.du, cache.dv, Nu, Nv);
                 }
             }
-
-            YK_CUDA_CHECK(cudaFree(d_cos_theta));
         }
     };
 
