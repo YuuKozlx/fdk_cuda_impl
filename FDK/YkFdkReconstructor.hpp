@@ -1,9 +1,6 @@
 ﻿#pragma once
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
 #include <functional>
 #include <vector>
 #include <vector_functions.hpp>
@@ -11,20 +8,19 @@
 #include "YkBackProjectProcessor.hpp"
 #include "YkFDKFilterProcessor.hpp"
 #include "YkFDKGpuContext.hpp"
-#include "YkFDKParkerWeight.cuh"
-#include "YkFDKPreWeight.cuh"
 #include "YkFDKVecGeoDerived.hpp"
-#include "../global/IProcessor.hpp"
 
-#include "../global/YkMacro.hpp"
-#include "YkVecGeo.hpp"
-#include "YkFDKParkerWeightProcessor.hpp"
-#include "YkFdkPipelineContext.hpp"
+#include <cuda_runtime_api.h>
+#include <driver_types.h>
 #include "../global/YkCBCTParams.h"
 #include "../global/YkGlobals.h"
-#include "../util/YkIoDump.hpp"
-#include "../util/YkUtil.hpp"
+#include "../global/YkLog.h"
+#include "../global/YkMacro.hpp"
 #include "../util/YkVecOperation.hpp"
+#include "YkFDKParkerWeightProcessor.hpp"
+#include "YkFDKPreWeightProcessor.hpp"
+#include "YkFdkPipelineContext.hpp"
+#include "YkVecGeo.hpp"
 
 namespace YK {
 
@@ -237,20 +233,19 @@ namespace YK {
             std::function<void(int, const char*, float*, size_t)> onDump)
         {
             if (!is_initialized_) {
-                fprintf(stderr, "[FdkReconstructor] not initialized, call init() first\n");
+                YK_LOGE("[FdkReconstructor] not initialized, call init() first");
                 return false;
             }
             if (Kchunk > kMaxChunkAng) {
-                fprintf(stderr, "[FdkReconstructor] Kchunk=%d exceeds kMaxChunkAng=%d\n",
-                    Kchunk, kMaxChunkAng);
+                YK_LOGE("[FdkReconstructor] Kchunk={} exceeds kMaxChunkAng={}", Kchunk, kMaxChunkAng);
                 return false;
             }
             if (!h_proj_batch || params.iPAng <= 0) {
-                fprintf(stderr, "[FdkReconstructor] invalid input\n");
+                YK_LOGE("[FdkReconstructor] invalid input");
                 return false;
             }
             if ((int)params.angle_list.size() != params.iPAng) {
-                fprintf(stderr, "[FdkReconstructor] angle_list size mismatch\n");
+                YK_LOGE("[FdkReconstructor] angle_list size mismatch");
                 return false;
             }
 

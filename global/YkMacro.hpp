@@ -210,11 +210,52 @@ YK_INLINE void cuda_set_device(int device_id) {
 }
 
 // ============================================================
-// 8. Debug helpers
+// 9. 日志宏（.cu 编译单元专用，fprintf/printf，无外部依赖）
+//    .cpp 编译单元请使用 yk_log.h 中的 YK_LOGI 等宏
 // ============================================================
 
-#ifndef YK_CUDA_DEBUG_PRINT
-#define YK_CUDA_DEBUG_PRINT(fmt, ...)                                           \
-    printf("[CUDA DEBUG] " fmt "\n", ##__VA_ARGS__)
+
+
+#ifdef __CUDACC__
+
+#ifndef YK_LOG_TAG
+#  define YK_LOG_TAG "YK"
 #endif
+
+// ---- 内部实现 -----------------------------------------------
+
+#define _YK_CU_LOG(level_str_, stream_, fmt_, ...)                              \
+    do {                                                                        \
+        std::fprintf((stream_), "[" level_str_ "][" YK_LOG_TAG "] "            \
+                     fmt_ "\n", ##__VA_ARGS__);                                 \
+    } while(0)
+
+#define _YK_CU_LOG_LOC(level_str_, stream_, fmt_, ...)                          \
+    _YK_CU_LOG(level_str_, stream_, "[%s:%d] " fmt_,                            \
+               __FILE__, __LINE__, ##__VA_ARGS__)
+
+// ---- host side of .cu ---------------------------------------
+
+#define YK_LOGT(fmt, ...) _YK_CU_LOG("T", stdout, fmt, ##__VA_ARGS__)
+#define YK_LOGD(fmt, ...) _YK_CU_LOG("D", stdout, fmt, ##__VA_ARGS__)
+#define YK_LOGI(fmt, ...) _YK_CU_LOG("I", stdout, fmt, ##__VA_ARGS__)
+#define YK_LOGW(fmt, ...) _YK_CU_LOG("W", stderr, fmt, ##__VA_ARGS__)
+#define YK_LOGE(fmt, ...) _YK_CU_LOG("E", stderr, fmt, ##__VA_ARGS__)
+#define YK_LOGC(fmt, ...) _YK_CU_LOG("C", stderr, fmt, ##__VA_ARGS__)
+
+#define YK_LOGE_LOC(fmt, ...) _YK_CU_LOG_LOC("E", stderr, fmt, ##__VA_ARGS__)
+#define YK_LOGC_LOC(fmt, ...) _YK_CU_LOG_LOC("C", stderr, fmt, ##__VA_ARGS__)
+
+// ---- device kernel 内部 -------------------------------------
+
+#define YK_DEV_LOGD(fmt, ...) printf("[D][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define YK_DEV_LOGI(fmt, ...) printf("[I][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define YK_DEV_LOGW(fmt, ...) printf("[W][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define YK_DEV_LOGE(fmt, ...) printf("[E][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+
+#endif // __CUDACC__
+
+
+
+
 

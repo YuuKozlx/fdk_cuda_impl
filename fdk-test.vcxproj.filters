@@ -64,7 +64,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="testmain.cu" />
     <CudaCompile Include="FDK\cuh\YkFDKBpKernels.cu">
       <Filter>FDK\bp\detail</Filter>
     </CudaCompile>
@@ -308,5 +307,6 @@
     <ClCompile Include="interface\YkTaskFactory.cpp">
       <Filter>interface</Filter>
     </ClCompile>
+    <ClCompile Include="testmain.cpp" />
   </ItemGroup>
 </Project>

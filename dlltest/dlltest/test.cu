@@ -13,7 +13,7 @@
 #include <cuda_runtime_api.h>
 
 
-#pragma comment(lib, "fdk-test.lib")
+#pragma comment(lib, "YKCBCT.lib")
 
 // ----------------------------------------------------------------
 // ¹¤¾ßº¯Êý

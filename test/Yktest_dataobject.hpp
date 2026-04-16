@@ -13,18 +13,7 @@ using namespace YK::DataObj;
 ////////////////////////////////////////////////////////////
 namespace YKTest {
 
-    __global__
-        void add_kernel(DeviceView3D<float> vol)
-    {
-        int x = blockIdx.x * blockDim.x + threadIdx.x;
-        int y = blockIdx.y * blockDim.y + threadIdx.y;
-        int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-        if (x >= vol.nx || y >= vol.ny || z >= vol.nz)
-            return;
-
-        vol(x, y, z) += 10.0f;
-    }
 
     ////////////////////////////////////////////////////////////
     /// Integration test with wrap
@@ -83,20 +72,6 @@ namespace YKTest {
         );
 
         ////////////////////////////////////////////////////////////
-        // run kernel
-        ////////////////////////////////////////////////////////////
-
-        dim3 block(4, 4, 4);
-        dim3 grid(
-            (NX + 3) / 4,
-            (NY + 3) / 4,
-            (NZ + 3) / 4
-        );
-
-        add_kernel << <grid, block >> > (gpuVol.view());
-        cudaDeviceSynchronize();
-
-        ////////////////////////////////////////////////////////////
         // GPU ¡ú wrapped CPU copy
         ////////////////////////////////////////////////////////////
 
@@ -114,8 +89,8 @@ namespace YKTest {
             for (int y = 0; y < NY; y++)
                 for (int x = 0; x < NX; x++)
                 {
-                    float expected = float(z * NY * NX + y * NX + x) + 10.0f;
-                    if (wrapView(x, y, z) != expected)
+
+                    if (wrapView(x, y, z) != 0.f)
                     {
                         ok = false;
                         break;

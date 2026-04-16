@@ -3,10 +3,13 @@
 #include <cuda_runtime.h>
 #include <vector>
 
+#include <fmt/format.h>
 #include <stdexcept>
+#include <string>
 #include <vector_functions.hpp>
 #include <vector_types.h>
 #include "../global/YkGlobals.h"
+#include "../global/YkLog.h"
 #include "../global/YkMacro.hpp"
 #include "../util/YkVecOperation.hpp"
 
@@ -357,6 +360,36 @@ namespace YK {
                 px, py,
                 Nu, Nv, du, dv
             );
+        }
+    }
+
+
+
+    inline std::string fmt_f3(const float3& v) {
+        return fmt::format("[{:.4f}, {:.4f}, {:.4f}]", v.x, v.y, v.z);
+    }
+
+    YK_INLINE void print_proj_geom(const SConeProjGeomVec& pg) {
+        YK_LOGI(
+            "ProjGeom:\n"
+            "  src   = {}\n"
+            "  srcCR = {}\n"
+            "  detS  = {}\n"
+            "  detU  = {}\n"
+            "  detV  = {}\n"
+            "  angle = {:.4f}",
+            fmt_f3(pg.src),
+            fmt_f3(pg.srcCR),
+            fmt_f3(pg.detS),
+            fmt_f3(pg.detU),
+            fmt_f3(pg.detV),
+            pg.angle.x
+        );
+    }
+
+    YK_INLINE void print_proj_geom(const std::vector<SConeProjGeomVec>& pgv) {
+        for (int i = 0; i < pgv.size(); ++i) {
+            print_proj_geom(pgv[i]);
         }
     }
 

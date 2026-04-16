@@ -87,16 +87,16 @@ namespace YK {
                 u_pix = DU * gv.inv_du_mm;
                 v_pix = DV * gv.inv_dv_mm;
                 // 临时验证，只打第一次调用
-                //#ifdef YK_DEBUG
-//// 用 atomicAdd 防止多线程刷屏，只打一次
-//                static __device__ int printed = 0;
-//                if (atomicAdd(&printed, 1) == 0) {
-//                    printf("[proj] t=%.6f DU=%.6f DV=%.6f inv_du=%.6f inv_dv=%.6f\n",
-//                        t, DU, DV, gv.inv_du_mm, gv.inv_dv_mm);
-//                    printf("[proj] detS_sub_src_dot_dU=%.6f\n", gv.detS_sub_src_dot_dU);
-//                    printf("[proj] dir=(%.3f,%.3f,%.3f)\n", dir.x, dir.y, dir.z);
-//                }
-                //#endif
+#ifdef YK_DEBUG
+                // 用 atomicAdd 防止多线程刷屏，只打一次
+                static __device__ int printed = 0;
+                if (atomicAdd(&printed, 1) == 0) {
+                    YK_DEV_LOGD("[proj] t=%.6f DU=%.6f DV=%.6f inv_du=%.6f inv_dv=%.6f\n",
+                        t, DU, DV, gv.inv_du_mm, gv.inv_dv_mm);
+                    YK_DEV_LOGD("[proj] detS_sub_src_dot_dU=%.6f\n", gv.detS_sub_src_dot_dU);
+                    YK_DEV_LOGD("[proj] dir=(%.3f,%.3f,%.3f)\n", dir.x, dir.y, dir.z);
+                }
+#endif
 
                 return true;
             }
@@ -129,7 +129,7 @@ namespace YK {
                 const bool is_debug_thread = (x == 0 && y == 0 && startZ == 0);
                 // ── 层1：体素世界坐标和 K ────────────────────────────────────
                 if (is_debug_thread)
-                    printf("[bp_pre][voxel0] world=(%.3f,%.3f,%.3f) K=%d\n",
+                    YK_DEV_LOGD("[bp_pre][voxel0] world=(%.3f,%.3f,%.3f) K=%d\n",
                         fX, fY, fZ, K);
 #endif
 
@@ -152,7 +152,7 @@ namespace YK {
 #ifdef YK_DEBUG
                     // ── 层2：几何参数和权重基础值 ────────────────────────────
                     if (is_debug_thread && i < 2)
-                        printf("[bp_pre][view%d] den=%.6f u0=%.3f v0=%.3f "
+                        YK_DEV_LOGD("[bp_pre][view%d] den=%.6f u0=%.3f v0=%.3f "
                             "w_base=%.8f SID2=%.3f dtheta=%.6f\n",
                             i, den, uNum / den, vNum / den,
                             w_base, c.SID2, c.dtheta);
@@ -164,18 +164,17 @@ namespace YK {
                         const float u = uNum * fr;
                         const float v = vNum * fr;
                         const float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
-                        //std::printf("u=%.6f, v=%.6f p =%.6f\n", u, v, p);
                         const float contrib = p * (w_base * fr * fr);
 
 #ifdef YK_DEBUG
                         // ── 层3：fetch 值和贡献量（iz=0）────────────────────
                         if (is_debug_thread && i < 2 && iz == 0) {
                             const float worldZ = fZ + iz * vg.vox_z;
-                            printf("[bp_pre][view%d][iz0] world=(%.3f,%.3f,%.3f) "
+                            YK_DEV_LOGD("[bp_pre][view%d][iz0] world=(%.3f,%.3f,%.3f) "
                                 "u=%.3f v=%.3f p=%.6f den=%.6f contrib=%.8f\n",
                                 i, fX, fY, worldZ, u, v, p, den, contrib);
                             if (isnan(contrib) || isinf(contrib))
-                                printf("[bp_pre][NaN!][view%d] den=%.8f w_base=%.8f p=%.6f\n",
+                                YK_DEV_LOGD("[bp_pre][NaN!][view%d] den=%.8f w_base=%.8f p=%.6f\n",
                                     i, den, w_base, p);
                         }
 #endif
@@ -193,7 +192,7 @@ namespace YK {
                     if (startZ + iz < endZ) {
 #ifdef YK_DEBUG
                         if (is_debug_thread && iz == 0)
-                            printf("[bp_pre][final] world=(%.3f,%.3f,%.3f) Z[0]=%.8f\n",
+                            YK_DEV_LOGD("[bp_pre][final] world=(%.3f,%.3f,%.3f) Z[0]=%.8f\n",
                                 fX, fY, fZ, Z[0]);
 #endif
                         const size_t idx = (size_t)(startZ + iz) * vg.Ny * vg.Nx
@@ -230,7 +229,7 @@ namespace YK {
                 const bool is_debug_thread = (x == 0 && y == 0 && startZ == 0);
                 // ── 层1：体素世界坐标和 K ────────────────────────────────────
                 if (is_debug_thread)
-                    printf("[bp_dir][voxel0] world=(%.3f,%.3f,%.3f) K=%d\n",
+                    YK_DEV_LOGD("[bp_dir][voxel0] world=(%.3f,%.3f,%.3f) K=%d\n",
                         fX, fY, fZ, K);
 #endif
 
@@ -256,7 +255,7 @@ namespace YK {
                         if (!project_uv_and_terms_derived(g, gv, P, u, v, denom_c)) {
 #ifdef YK_DEBUG
                             if (is_debug_thread && i < 2 && iz == 0)
-                                printf("[bp_dir][view%d][iz0] project FAILED "
+                                YK_DEV_LOGD("[bp_dir][view%d][iz0] project FAILED "
                                     "world=(%.3f,%.3f,%.3f)\n", i, fX, fY, worldZ);
 #endif
                             continue;
@@ -270,14 +269,14 @@ namespace YK {
 #ifdef YK_DEBUG
                         // ── 层2/3：几何参数、fetch 值和贡献量（iz=0）────────
                         if (is_debug_thread && i < 2 && iz == 0) {
-                            printf("[bp_dir][view%d][iz0] world=(%.3f,%.3f,%.3f) "
+                            YK_DEV_LOGD("[bp_dir][view%d][iz0] world=(%.3f,%.3f,%.3f) "
                                 "u=%.3f v=%.3f p=%.6f den=%.6f contrib=%.8f "
                                 "w_base=%.8f SOD=%.3f dtheta=%.6f\n",
                                 i, fX, fY, worldZ,
                                 u, v, p, denom_c, contrib,
                                 w_base, gv.SOD_mm, gv.dtheta);
                             if (isnan(contrib) || isinf(contrib))
-                                printf("[bp_dir][NaN!][view%d] SOD=%.3f denom_c=%.8f p=%.6f\n",
+                                YK_DEV_LOGD("[bp_dir][NaN!][view%d] SOD=%.3f denom_c=%.8f p=%.6f\n",
                                     i, gv.SOD_mm, denom_c, p);
                         }
 #endif
@@ -290,7 +289,7 @@ namespace YK {
                     if (startZ + iz < endZ) {
 #ifdef YK_DEBUG
                         if (is_debug_thread && iz == 0)
-                            printf("[bp_dir][final] world=(%.3f,%.3f,%.3f) Z[0]=%.8f\n",
+                            YK_DEV_LOGD("[bp_dir][final] world=(%.3f,%.3f,%.3f) Z[0]=%.8f\n",
                                 fX, fY, fZ, Z[0]);
 #endif
                         const size_t idx = (size_t)(startZ + iz) * vg.Ny * vg.Nx
@@ -365,7 +364,7 @@ namespace YK {
                     d_texObjs, d_vol, vol_geom, K);
                 break;
             default:
-                std::printf("Unsupported zsize %d, fallback to 4\n", zsize);
+                YK_LOGW("Unsupported zsize %d, fallback to 4\n", zsize);
                 detail::fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
                     d_texObjs, d_vol, vol_geom, K);
 
@@ -419,7 +418,7 @@ namespace YK {
                 break;
 
             default:
-                std::printf("Unsupported zsize %d, fallback to 4\n", zsize);
+                YK_LOGW("Unsupported zsize %d, fallback to 4\n", zsize);
                 detail::fdk_bp_kernel<4> << <grid, block, 0, stream >> > (
                     d_texObjs, d_geo, d_gv, d_vol, vol_geom, K);
             }
