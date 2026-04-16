@@ -3,7 +3,7 @@
 #include <cuda_runtime.h>
 #include <vector>
 
-#include <fmt/format.h>
+
 #include <stdexcept>
 #include <string>
 #include <vector_functions.hpp>
@@ -139,20 +139,20 @@ namespace YK {
         float du, float dv,
         float SID, float IDD,
         float3 det_offset = make_float3(0.f, 0.f, 0.f),
-        float3 detTilt_deg = make_float3(0.f, 0.f, 0.f),  // outOfPlane(x), lateral(y), inPlane(z)
+        float3 detTilt_deg = make_float3(0.f, 0.f, 0.f),   // outOfPlane(x), lateral(y), inPlane(z)
         float3 src_offset = make_float3(0.f, 0.f, 0.f),
-        float3 srcCRTilt_deg = make_float3(0.f, 0.f, 0.f)   // pitch(x), yaw(y), roll(z) 单位:度
+        float3 srcCRTilt_deg = make_float3(0.f, 0.f, 0.f)    // pitch(x), yaw(y), roll(z)
     )
     {
         geo.resize(Ang);
 
         auto deg2rad = [](float deg) { return deg * CUDA_PI / 180.f; };
 
-        float tiltu_deg = detTilt_deg.x;
-        float tiltv_deg = detTilt_deg.z;
-        float tiltn_deg = detTilt_deg.y;
+        const float tiltu_deg = detTilt_deg.x;
+        const float tiltv_deg = detTilt_deg.z;
+        const float tiltn_deg = detTilt_deg.y;
 
-        // ---- 探测器 U/V 方向向量（局部系） ----
+        // ---- 探测器 U/V 方向向量（局部系）----
         float3 detU_dir = make_float3(1.f, 0.f, 0.f);
         float3 detV_dir = make_float3(0.f, 0.f, 1.f);
         {
@@ -164,63 +164,54 @@ namespace YK {
             detU_dir = f3_rot_axis(detU_dir, axisV, deg2rad(tiltv_deg));
             detV_dir = f3_rot_axis(detV_dir, axisV, deg2rad(tiltv_deg));
 
-            const float3 normal = f3_normalize(f3_cross(detU_dir, detV_dir));
+            const float3 normal = f3_normalize(cross(detU_dir, detV_dir));
             detU_dir = f3_rot_axis(detU_dir, normal, deg2rad(tiltn_deg));
             detV_dir = f3_rot_axis(detV_dir, normal, deg2rad(tiltn_deg));
         }
 
-        // ---- 主射线方向（局部系） ----
-        // 初始主射线沿 +Y，局部系轴：X=右, Y=前, Z=上
+        // ---- 主射线方向（局部系）----
         float3 srcCR_dir = make_float3(0.f, 1.f, 0.f);
         {
-            // pitch：绕局部 X 轴（上下俯仰）
-            srcCR_dir = f3_rot_axis(srcCR_dir,
-                make_float3(1.f, 0.f, 0.f), deg2rad(srcCRTilt_deg.x));
-
-            // yaw：绕局部 Z 轴（左右偏转）
-            srcCR_dir = f3_rot_axis(srcCR_dir,
-                make_float3(0.f, 0.f, 1.f), deg2rad(srcCRTilt_deg.y));
-
-            // roll：绕射线自身方向（面内旋转，通常为0）
-            srcCR_dir = f3_rot_axis(srcCR_dir,
-                f3_normalize(srcCR_dir), deg2rad(srcCRTilt_deg.z));
-
+            srcCR_dir = f3_rot_axis(srcCR_dir, make_float3(1.f, 0.f, 0.f), deg2rad(srcCRTilt_deg.x));
+            srcCR_dir = f3_rot_axis(srcCR_dir, make_float3(0.f, 0.f, 1.f), deg2rad(srcCRTilt_deg.y));
+            srcCR_dir = f3_rot_axis(srcCR_dir, f3_normalize(srcCR_dir), deg2rad(srcCRTilt_deg.z));
             srcCR_dir = f3_normalize(srcCR_dir);
         }
 
         const float3 src0 = make_float3(0.f, -SID, 0.f);
         const float3 detC0 = make_float3(0.f, IDD, 0.f);
 
+        const float cu = 0.5f * (Nu - 1);
+        const float cv = 0.5f * (Nv - 1);
+
         for (int a = 0; a < Ang; ++a)
         {
             const float t = theta[a];
 
             // 1) 源位置
-            float3 src = f3_rotz_p(f3_translate_point(src0, src_offset), t);
+            float3 src = f3_rotz(src0 + src_offset, t);
 
             // 2) 探测器中心
-            float3 detC = f3_rotz_p(f3_translate_point(detC0, det_offset), t);
+            float3 detC = f3_rotz(detC0 + det_offset, t);
 
-            // 3) 中心射线：局部系方向随机架旋转
+            // 3) 中心射线
             float3 srcCR = f3_rotz(srcCR_dir, t);
 
-            // 4) 探测器 U/V：局部系方向随机架旋转，再乘间距
-            float3 U = f3_scale(f3_rotz(detU_dir, t), du);
-            float3 V = f3_scale(f3_rotz(detV_dir, t), dv);
+            // 4) 探测器 U/V，乘间距
+            float3 U = f3_rotz(detU_dir, t) * du;
+            float3 V = f3_rotz(detV_dir, t) * dv;
 
-            // 5) detS：像素 (0,0) 的世界坐标
-            const float cu = 0.5f * (Nu - 1);
-            const float cv = 0.5f * (Nv - 1);
-            float3 detS = f3_sub(detC, f3_add(f3_scale(U, cu), f3_scale(V, cv)));
+            // 5) detS：像素 (0,0) 世界坐标
+            float3 detS = detC - U * cu - V * cv;
 
-            // 6) 保存
+            // 6) 保存，float3 -> float4，w=0
             geo[a] = SConeProjGeomVec{
-                src,
-                srcCR,
-                detS,
-                U,
-                V,
-                make_float3(t, 0.f, 0.f)
+                f3_to_f4(src),
+                f3_to_f4(srcCR),
+                f3_to_f4(detS),
+                f3_to_f4(U),
+                f3_to_f4(V),
+                make_float4(t, 0.f, 0.f, 0.f)
             };
         }
     }
@@ -365,6 +356,13 @@ namespace YK {
 
 
 
+#ifndef __CUDACC__
+#include <fmt/format.h>
+
+    inline std::string fmt_f4(const float4& v) {
+        return fmt::format("[{:.4f}, {:.4f}, {:.4f},{:.4f}]", v.x, v.y, v.z, v.w);
+    }
+
     inline std::string fmt_f3(const float3& v) {
         return fmt::format("[{:.4f}, {:.4f}, {:.4f}]", v.x, v.y, v.z);
     }
@@ -378,19 +376,21 @@ namespace YK {
             "  detU  = {}\n"
             "  detV  = {}\n"
             "  angle = {:.4f}",
-            fmt_f3(pg.src),
-            fmt_f3(pg.srcCR),
-            fmt_f3(pg.detS),
-            fmt_f3(pg.detU),
-            fmt_f3(pg.detV),
+            fmt_f3(f4_to_f3(pg.src)),
+            fmt_f3(f4_to_f3(pg.srcCR)),
+            fmt_f3(f4_to_f3(pg.detS)),
+            fmt_f3(f4_to_f3(pg.detU)),
+            fmt_f3(f4_to_f3(pg.detV)),
             pg.angle.x
         );
     }
 
     YK_INLINE void print_proj_geom(const std::vector<SConeProjGeomVec>& pgv) {
-        for (int i = 0; i < pgv.size(); ++i) {
+        for (size_t i = 0; i < pgv.size(); ++i) {
             print_proj_geom(pgv[i]);
         }
     }
+
+#endif // __CUDACC__
 
 } // namespace YK

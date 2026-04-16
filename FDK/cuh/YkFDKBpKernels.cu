@@ -1,4 +1,5 @@
 ﻿#include <cuda_runtime_api.h>
+#include <vector_functions.hpp>
 #include "../../global/YkGlobals.h"
 #include "../../global/YkMacro.hpp"
 #include "YkFDKBpHelpers.cuh"
@@ -67,34 +68,35 @@ namespace YK {
                 float& v_pix,
                 float& denom_c)
             {
-                const float3 dir = f3_sub(P, g.src);
+                const float3 src = f4_to_f3(g.src);
+                const float3 detS = f4_to_f3(g.detS);
 
-                denom_c = f3_dot(dir, gv.ray_center);
+                const float3 dir = P - src;
 
-                const float denom_n = f3_dot(dir, gv.det_n);
+                denom_c = dot(dir, f4_to_f3(gv.ray_center));
+
+                const float denom_n = dot(dir, f4_to_f3(gv.det_n));
                 if (fabsf(denom_n) < 1e-8f) return false;
 
                 const float t = __fdividef(gv.SDD_plane_mm, denom_n);
                 if (t <= 0.f) return false;
-                // 交点
-                const point3 Pi = f3_add(g.src, f3_scale(f3_sub(P, g.src), t));
-                const float3 D = f3_sub(Pi, g.detS);
 
-                const float  DU = f3_dot(D, gv.det_u);
-                const float  DV = f3_dot(D, gv.det_v);
+                const float3 Pi = src + dir * t;
+                const float3 D = Pi - detS;
 
+                const float DU = dot(D, f4_to_f3(gv.det_u));
+                const float DV = dot(D, f4_to_f3(gv.det_v));
 
                 u_pix = DU * gv.inv_du_mm;
                 v_pix = DV * gv.inv_dv_mm;
-                // 临时验证，只打第一次调用
+
 #ifdef YK_DEBUG
-                // 用 atomicAdd 防止多线程刷屏，只打一次
                 static __device__ int printed = 0;
                 if (atomicAdd(&printed, 1) == 0) {
-                    YK_DEV_LOGD("[proj] t=%.6f DU=%.6f DV=%.6f inv_du=%.6f inv_dv=%.6f\n",
+                    YK_DEV_LOGD("[proj] t=%.6f DU=%.6f DV=%.6f inv_du=%.6f inv_dv=%.6f",
                         t, DU, DV, gv.inv_du_mm, gv.inv_dv_mm);
-                    YK_DEV_LOGD("[proj] detS_sub_src_dot_dU=%.6f\n", gv.detS_sub_src_dot_dU);
-                    YK_DEV_LOGD("[proj] dir=(%.3f,%.3f,%.3f)\n", dir.x, dir.y, dir.z);
+                    YK_DEV_LOGD("[proj] detS_sub_src_dot_dU=%.6f", gv.detS_sub_src_dot_dU);
+                    YK_DEV_LOGD("[proj] dir=(%.3f,%.3f,%.3f)", dir.x, dir.y, dir.z);
                 }
 #endif
 

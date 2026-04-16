@@ -451,7 +451,7 @@ namespace YK {
 
         void fp_joseph_launch(
             cudaTextureObject_t              volTex,
-            const std::vector<float3>& h_src_dirs,
+            const std::vector<float4>& h_src_dirs,
             const SConeProjGeomVec* d_views,
             float* d_sino,
             const SVolGeom& g,
@@ -520,7 +520,7 @@ namespace YK {
          // ============================================================
         void fp_joseph_ss_launch(
             cudaTextureObject_t              volTex,
-            const std::vector<float3>& h_src_dirs,
+            const std::vector<float4>& h_src_dirs,
             const SConeProjGeomVec* d_views,
             float* d_sino,
             const SVolGeom& g,

@@ -5,9 +5,10 @@
 
 #include <vector_functions.hpp>
 
-#include "../global/YkGlobals.h"
 #include "../FDK/YkVecGeo.hpp"
+#include "../global/YkGlobals.h"
 #include "../util/YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
+#include "../util/helper_math.h"
 
 namespace YK {
 
@@ -92,16 +93,16 @@ namespace YK {
                 // =========================================================
                 // 3) du/dv
                 // =========================================================
-                gv.du_mm = f3_len(geo.detU);
-                gv.dv_mm = f3_len(geo.detV);
+                gv.du_mm = f3_len(f4_to_f3(geo.detU));
+                gv.dv_mm = f3_len(f4_to_f3(geo.detV));
                 gv.inv_du_mm = 1.0f / gv.du_mm;
                 gv.inv_dv_mm = 1.0f / gv.dv_mm;
 
                 // =========================================================
                 // 4) (1) central ray dir + SID
                 // =========================================================
-                const float3 central_ray_dir = geo.srcCR;
-                gv.SOD_mm = sid_mm_from_source_to_zaxis(geo.src); // SOD_mm field stores SID by your definition
+                const float3 central_ray_dir = f4_to_f3(geo.srcCR);
+                gv.SOD_mm = sid_mm_from_source_to_zaxis(f4_to_f3(geo.src)); // SOD_mm field stores SID by your definition
 
                 // =========================================================
                 // 4) (2) principal point -> SDD + offsetU/V + ray0hat
@@ -126,12 +127,12 @@ namespace YK {
                     gv.UU, gv.VV, gv.UV, gv.invDetUV);
 
                 gv.ray_center = geo.srcCR;
-                gv.det_n = f3_normalize(f3_cross(geo.detV, geo.detU));
-                gv.det_u = f3_normalize(geo.detU);
-                gv.det_v = f3_normalize(geo.detV);
-                float3 detS_src = f3_sub(geo.detS, geo.src);
-                gv.detS_sub_src_dot_dU = f3_dot(detS_src, geo.detU);
-                gv.detS_sub_src_dot_dV = f3_dot(detS_src, geo.detV);
+                gv.det_n = f4_cross(geo.detV, geo.detU);
+                gv.det_u = f4_normalize(geo.detU);
+                gv.det_v = f4_normalize(geo.detV);
+                float3 detS_src = f4_to_f3(geo.detS) - f4_to_f3(geo.src);
+                gv.detS_sub_src_dot_dU = dot(detS_src, f4_to_f3(geo.detU));
+                gv.detS_sub_src_dot_dV = dot(detS_src, f4_to_f3(geo.detV));
             }
 
             return true;
@@ -196,18 +197,16 @@ namespace YK {
             const SConeProjGeomVec& geo,
             float& UU, float& VV, float& UV, float& invDetUV)
         {
-            UU = f3_dot(geo.detU, geo.detU);
-            VV = f3_dot(geo.detV, geo.detV);
-            UV = f3_dot(geo.detU, geo.detV);
+            float3 detU = f4_to_f3(geo.detU);
+            float3 detV = f4_to_f3(geo.detV);
+
+            UU = dot(detU, detU);
+            VV = dot(detV, detV);
+            UV = dot(detU, detV);
 
             const float det = UU * VV - UV * UV;
-            if (fabsf(det) < 1e-20f) {
-
-                invDetUV = 0.0f;
-                return;
-            }
-
-            invDetUV = 1.0f / det;
+            if (fabsf(det) < 1e-20f) { invDetUV = 0.f; return; }
+            invDetUV = 1.f / det;
         }
 
 
@@ -235,58 +234,48 @@ namespace YK {
         // ----------------------------------------------------------------
         static bool compute_SDD_offsets(
             const SConeProjGeomVec& geo,
-            int detector_pixels_u,
-            int detector_pixels_v,
-            float& out_offsetU_pix,
-            float& out_offsetV_pix,
-            float& out_SDD_mm,
-            float& out_SDD_plane_mm)   // ← 新增输出参数
+            int detector_pixels_u, int detector_pixels_v,
+            float& out_offsetU_pix, float& out_offsetV_pix,
+            float& out_SDD_mm, float& out_SDD_plane_mm)
         {
-            out_offsetU_pix = 0.f;
-            out_offsetV_pix = 0.f;
-            out_SDD_mm = 0.f;
-            out_SDD_plane_mm = 0.f;
+            out_offsetU_pix = out_offsetV_pix = out_SDD_mm = out_SDD_plane_mm = 0.f;
 
-            // ── 探测器法向量 n = detV × detU，归一化 ────────────────────
-            float3 n = f3_cross(geo.detV, geo.detU);
-            const float n2 = f3_dot(n, n);
+            const float3 src = f4_to_f3(geo.src);
+            const float3 detS = f4_to_f3(geo.detS);
+            const float3 detU = f4_to_f3(geo.detU);
+            const float3 detV = f4_to_f3(geo.detV);
+
+            // 探测器法向量
+            float3 n = cross(detV, detU);
+            const float n2 = dot(n, n);
             if (n2 < 1e-24f) return false;
+            const float3 det_n = n * rsqrtf(n2);
 
-            const float invn = 1 / sqrt(n2);
-            const float3 det_n = make_float3(n.x * invn, n.y * invn, n.z * invn);
+            // 求交参数
+            const float denom = dot(det_n, det_n);
+            if (fabsf(denom) < 1e-24f) return false;
 
-            // ── 求交参数 t：主射线与探测器平面的交点 ─────────────────────
-            // t = [(detS - src) · n] / (srcCR · n)
-            // 分子 = SDD_plane_mm，同时输出供后续使用
-            const float denom = f3_dot(det_n, det_n);
-            if (fabsf(denom) < 1e-24f) return false;  // 主射线近乎平行于探测器
+            const float numer = dot(detS - src, det_n);
+            out_SDD_plane_mm = numer;
 
-            const float numer = f3_dot(f3_sub(geo.detS, geo.src), det_n);
-            out_SDD_plane_mm = numer;                  // ← (detS - src) · n
+            // principal point
+            float3 P = make_float3(0.f, 0.f, src.z);
+            float t = out_SDD_plane_mm / dot(P - src, det_n);
+            const float3 principal_point = src + (P - src) * t;
 
-
-
-
-            // ── Principal point：主射线与探测器平面的交点 ────────────────
-            // 主射线必定经过z轴 (0,0,z_src),
-            point3 P = f3(0, 0, geo.src.z);
-            float t = out_SDD_plane_mm / f3_dot(f3_sub(P, geo.src), det_n);
-            const float3 principal_point = f3_add(geo.src, f3_scale(f3_sub(P, geo.src), t));
-
-            // ── SDD_mm：源点到 principal point 的实际距离 ────────────────
-            const float3 ray0 = f3_sub(principal_point, geo.src);
-            const float  ray0_len2 = f3_dot(ray0, ray0);
+            // SDD_mm
+            const float3 ray0 = principal_point - src;
+            const float  ray0_len2 = dot(ray0, ray0);
             if (ray0_len2 < 1e-20f) return false;
-            out_SDD_mm = sqrtf(ray0_len2);             // = t（srcCR 为单位向量时）
+            out_SDD_mm = sqrtf(ray0_len2);
 
-            // ── Principal point 的像素坐标（Cramer 法则）────────────────
-            // 求解：D = u * detU + v * detV，D = principal_point - detS
-            const float3 D = f3_sub(principal_point, geo.detS);
-            const float  UU = f3_dot(geo.detU, geo.detU);
-            const float  VV = f3_dot(geo.detV, geo.detV);
-            const float  UV = f3_dot(geo.detU, geo.detV);
-            const float  DU = f3_dot(D, geo.detU);
-            const float  DV = f3_dot(D, geo.detV);
+            // principal point 像素坐标（Cramer）
+            const float3 D = principal_point - detS;
+            const float  UU = dot(detU, detU);
+            const float  VV = dot(detV, detV);
+            const float  UV = dot(detU, detV);
+            const float  DU = dot(D, detU);
+            const float  DV = dot(D, detV);
 
             const float det_gram = UU * VV - UV * UV;
             if (fabsf(det_gram) < 1e-20f) return false;
@@ -295,12 +284,8 @@ namespace YK {
             const float u_pix = (DU * VV - DV * UV) * invdet;
             const float v_pix = (-DU * UV + DV * UU) * invdet;
 
-            // ── 相对探测器物理中心的像素偏移 ─────────────────────────────
-            // offset > 0 表示 principal point 在探测器中心的正方向侧
-            const float center_u = 0.5f * (detector_pixels_u - 1);
-            const float center_v = 0.5f * (detector_pixels_v - 1);
-            out_offsetU_pix = u_pix - center_u;
-            out_offsetV_pix = v_pix - center_v;
+            out_offsetU_pix = u_pix - 0.5f * (detector_pixels_u - 1);
+            out_offsetV_pix = v_pix - 0.5f * (detector_pixels_v - 1);
 
             return true;
         }

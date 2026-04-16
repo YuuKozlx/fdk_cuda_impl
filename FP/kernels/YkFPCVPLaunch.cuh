@@ -13,5 +13,13 @@ namespace YK {
             const YK::SVolGeom& g,
             int Na, int Nu, int Nv,
             cudaStream_t stream);
+
+        void fp_cvp_launch(
+            cudaTextureObject_t tex_vol,    // ¡û ÎÆÀí°æ±¾
+            float* d_sino,
+            const std::vector<YK::SConeProjGeomVec>& h_views,
+            const YK::SVolGeom& g,
+            int Na, int Nu, int Nv,
+            cudaStream_t stream);
     }
 }

@@ -542,12 +542,12 @@ namespace YK {
 
                 // 单个正前方 view（src 在 -y）
                 SConeProjGeomVec view;
-                view.src = make_float3(0.f, -SID, 0.f);
-                view.srcCR = make_float3(0.f, 1.f, 0.f);
-                view.detU = make_float3(du, 0.f, 0.f);
-                view.detV = make_float3(0.f, 0.f, dv);
-                view.detS = make_float3(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv);
-                view.angle = make_float3(0.f, 0.f, 0.f);
+                view.src = make_float4(0.f, -SID, 0.f, 0.f);
+                view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
+                view.detU = make_float4(du, 0.f, 0.f, 0.f);
+                view.detV = make_float4(0.f, 0.f, dv, 0.f);
+                view.detS = make_float4(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv, 0.f);
+                view.angle = make_float4(0.f, 0.f, 0.f, 0.f);
 
                 SConeProjGeomVec* d_views = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_views, sizeof(SConeProjGeomVec)));
@@ -613,12 +613,12 @@ namespace YK {
                     h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
 
                 SConeProjGeomVec view;
-                view.src = make_float3(0.f, -SID, 0.f);
-                view.srcCR = make_float3(0.f, 1.f, 0.f);
-                view.detU = make_float3(du, 0.f, 0.f);
-                view.detV = make_float3(0.f, 0.f, dv);
-                view.detS = make_float3(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv);
-                view.angle = make_float3(0.f, 0.f, 0.f);
+                view.src = make_float4(0.f, -SID, 0.f, 0.f);
+                view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
+                view.detU = make_float4(du, 0.f, 0.f, 0.f);
+                view.detV = make_float4(0.f, 0.f, dv, 0.f);
+                view.detS = make_float4(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv, 0.f);
+                view.angle = make_float4(0.f, 0.f, 0.f, 0.f);
 
                 SConeProjGeomVec* d_views = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_views, sizeof(SConeProjGeomVec)));
@@ -761,12 +761,12 @@ namespace YK {
                 std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
 
                 SConeProjGeomVec view;
-                view.src = make_float3(0.f, -SID, 0.f);
-                view.srcCR = make_float3(0.f, 1.f, 0.f);
-                view.detU = make_float3(du, 0.f, 0.f);
-                view.detV = make_float3(0.f, 0.f, dv);
-                view.detS = make_float3(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv);
-                view.angle = make_float3(0.f, 0.f, 0.f);
+                view.src = make_float4(0.f, -SID, 0.f, 0.f);
+                view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
+                view.detU = make_float4(du, 0.f, 0.f, 0.f);
+                view.detV = make_float4(0.f, 0.f, dv, 0.f);
+                view.detS = make_float4(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv, 0.f);
+                view.angle = make_float4(0.f, 0.f, 0.f, 0.f);
 
                 SConeProjGeomVec* d_views = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_views, sizeof(SConeProjGeomVec)));
@@ -976,12 +976,12 @@ namespace YK {
 
                 // 单个 view，gantry=0，src 在 -y
                 SConeProjGeomVec view;
-                view.src = make_float3(0.f, -SID, 0.f);
-                view.srcCR = make_float3(0.f, 1.f, 0.f);
-                view.detU = make_float3(du, 0.f, 0.f);
-                view.detV = make_float3(0.f, 0.f, dv);
-                view.detS = make_float3(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv);
-                view.angle = make_float3(0.f, 0.f, 0.f);
+                view.src = make_float4(0.f, -SID, 0.f, 0.f);
+                view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
+                view.detU = make_float4(du, 0.f, 0.f, 0.f);
+                view.detV = make_float4(0.f, 0.f, dv, 0.f);
+                view.detS = make_float4(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv, 0.f);
+                view.angle = make_float4(0.f, 0.f, 0.f, 0.f);
 
                 std::vector<SConeProjGeomVec> h_views = { view };
 
@@ -1121,12 +1121,12 @@ namespace YK {
 
                 // 单个正前方 view
                 SConeProjGeomVec view;
-                view.src = make_float3(0.f, -SID, 0.f);
-                view.srcCR = make_float3(0.f, 1.f, 0.f);
-                view.detU = make_float3(du, 0.f, 0.f);
-                view.detV = make_float3(0.f, 0.f, dv);
-                view.detS = make_float3(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv);
-                view.angle = make_float3(0.f, 0.f, 0.f);
+                view.src = make_float4(0.f, -SID, 0.f, 0.f);
+                view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
+                view.detU = make_float4(du, 0.f, 0.f, 0.f);
+                view.detV = make_float4(0.f, 0.f, dv, 0.f);
+                view.detS = make_float4(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv, 0.f);
+                view.angle = make_float4(0.f, 0.f, 0.f, 0.f);
 
                 std::vector<SConeProjGeomVec> h_views = { view };
 
@@ -1463,12 +1463,12 @@ namespace YK {
 
                 // 单个 view，gantry=0，src 在 -y，与 RawTest1 完全相同的几何
                 SConeProjGeomVec view;
-                view.src = make_float3(0.f, -SID, 0.f);
-                view.srcCR = make_float3(0.f, 1.f, 0.f);
-                view.detU = make_float3(du, 0.f, 0.f);
-                view.detV = make_float3(0.f, 0.f, dv);
-                view.detS = make_float3(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv);
-                view.angle = make_float3(0.f, 0.f, 0.f);
+                view.src = make_float4(0.f, -SID, 0.f, 0.f);
+                view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
+                view.detU = make_float4(du, 0.f, 0.f, 0.f);
+                view.detV = make_float4(0.f, 0.f, dv, 0.f);
+                view.detS = make_float4(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv, 0.f);
+                view.angle = make_float4(0.f, 0.f, 0.f, 0.f);
 
                 // CVP 用物理坐标，不归一化
                 std::vector<SConeProjGeomVec> h_views = { view };

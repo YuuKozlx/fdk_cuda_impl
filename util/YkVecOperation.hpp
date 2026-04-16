@@ -1,109 +1,41 @@
 #pragma once
 /**
- * vector 向量基本运算（纯向量库，不包含解析几何）
+ * YkVec.h — YK 向量数学库
+ * 基础运算依赖 helper_math.h（CUDA SDK）
+ * 本文件只提供 helper_math.h 未覆盖的扩展
  */
 #include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-
-#include <algorithm>
+#include "helper_math.h"
 #include <cmath>
 
-#include <vector_types.h>
-
-
 namespace YK {
-    using vector3 = float3; // alias for clarity
-    using point3 = float3;  // alias for clarity
+
+    using vector3 = float3;
+    using point3 = float3;
 
     // ============================================================
-    // small scalar helpers
+    // scalar helpers
     // ============================================================
-    __host__ __device__ __forceinline__ float yk_abs(float x) { return x < 0.f ? -x : x; }
-    __host__ __device__ __forceinline__ float yk_min(float a, float b) { return a < b ? a : b; }
-    __host__ __device__ __forceinline__ float yk_max(float a, float b) { return a > b ? a : b; }
-    __host__ __device__ __forceinline__ float yk_clamp(float x, float lo, float hi) { return yk_min(yk_max(x, lo), hi); }
-    __host__ __device__ __forceinline__ float yk_lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+    YK_HD YK_FORCE_INLINE float yk_abs(float x) { return x < 0.f ? -x : x; }
+    YK_HD YK_FORCE_INLINE float yk_clamp(float x, float lo, float hi) { return fminf(fmaxf(x, lo), hi); }
+    YK_HD YK_FORCE_INLINE float yk_lerp(float a, float b, float t) { return a + (b - a) * t; }
 
     // ============================================================
-    // make helpers
+    // float3 扩展
     // ============================================================
-    __host__ __device__ __forceinline__ vector3 f3(float x, float y, float z) { return make_float3(x, y, z); }
 
-    // ============================================================
-    // basic arithmetic
-    // ============================================================
-    __host__ __device__ __forceinline__ vector3 f3_add(vector3 a, vector3 b) { return f3(a.x + b.x, a.y + b.y, a.z + b.z); }
-    __host__ __device__ __forceinline__ vector3 f3_sub(vector3 a, vector3 b) { return f3(a.x - b.x, a.y - b.y, a.z - b.z); }
-    __host__ __device__ __forceinline__ vector3 f3_scale(vector3 a, float t) { return f3(a.x * t, a.y * t, a.z * t); }
-    __host__ __device__ __forceinline__ vector3 f3_mul(float t, vector3 a) { return f3(a.x * t, a.y * t, a.z * t); }
-    __host__ __device__ __forceinline__ vector3 f3_div(vector3 a, float t) { float inv = 1.f / t; return f3(a.x * inv, a.y * inv, a.z * inv); }
-
-    __host__ __device__ __forceinline__ vector3 f3_mul_comp(vector3 a, vector3 b) { return f3(a.x * b.x, a.y * b.y, a.z * b.z); }
-    __host__ __device__ __forceinline__ vector3 f3_div_comp(vector3 a, vector3 b) { return f3(a.x / b.x, a.y / b.y, a.z / b.z); }
-
-    __host__ __device__ __forceinline__ vector3 f3_neg(vector3 a) { return f3(-a.x, -a.y, -a.z); }
-
-    // fused: a*t + b  (常用于累加、线性组合)
-    __host__ __device__ __forceinline__ vector3 f3_mad(vector3 a, float t, vector3 b) {
-        return f3(a.x * t + b.x, a.y * t + b.y, a.z * t + b.z);
-    }
-
-    // ============================================================
-    // dot / cross
-    // ============================================================
-    __host__ __device__ __forceinline__ float f3_dot(vector3 a, vector3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-
-    __host__ __device__ __forceinline__ vector3 f3_cross(vector3 a, vector3 b) {
-        return f3(
-            a.y * b.z - a.z * b.y,
-            a.z * b.x - a.x * b.z,
-            a.x * b.y - a.y * b.x
-        );
-    }
-
-    // ============================================================
-    // length / normalize
-    // ============================================================
-    __host__ __device__ __forceinline__ float f3_len2(vector3 a) { return f3_dot(a, a); }
-
-    // host/device 分别走最合适的实现（device 用 sqrtf/rsqrtf）
-    __host__ __device__ __forceinline__ float f3_len(vector3 a) {
+    YK_HD YK_FORCE_INLINE float3 f3_normalize(float3 a, float eps = 1e-20f) {
+        float l2 = dot(a, a);
+        if (l2 < eps) return make_float3(0.f, 0.f, 0.f);
 #if defined(__CUDA_ARCH__)
-        return sqrtf(f3_len2(a));
+        return a * rsqrtf(l2);
 #else
-        return std::sqrt(f3_len2(a));
+        return a * (1.f / std::sqrt(l2));
 #endif
     }
 
-    __host__ __device__ __forceinline__ vector3 f3_normalize(vector3 a, float eps = 1e-20f) {
-        float l2 = f3_len2(a);
-        if (l2 < eps) return f3(0.f, 0.f, 0.f);
-#if defined(__CUDA_ARCH__)
-        float inv = rsqrtf(l2);
-#else
-        float inv = 1.f / std::sqrt(l2);
-#endif
-        return f3(a.x * inv, a.y * inv, a.z * inv);
-    }
-
-    // ============================================================
-    // component ops
-    // ============================================================
-    __host__ __device__ __forceinline__ vector3 f3_min(vector3 a, vector3 b) { return f3(yk_min(a.x, b.x), yk_min(a.y, b.y), yk_min(a.z, b.z)); }
-    __host__ __device__ __forceinline__ vector3 f3_max(vector3 a, vector3 b) { return f3(yk_max(a.x, b.x), yk_max(a.y, b.y), yk_max(a.z, b.z)); }
-    __host__ __device__ __forceinline__ vector3 f3_abs(vector3 a) { return f3(yk_abs(a.x), yk_abs(a.y), yk_abs(a.z)); }
-    __host__ __device__ __forceinline__ vector3 f3_clamp(vector3 a, float lo, float hi) {
-        return f3(yk_clamp(a.x, lo, hi), yk_clamp(a.y, lo, hi), yk_clamp(a.z, lo, hi));
-    }
-
-    __host__ __device__ __forceinline__ vector3 f3_lerp(vector3 a, vector3 b, float t) {
-        return f3(yk_lerp(a.x, b.x, t), yk_lerp(a.y, b.y, t), yk_lerp(a.z, b.z, t));
-    }
-
-    // ============================================================
-    // comparisons (tolerance)
-    // ============================================================
-    __host__ __device__ __forceinline__ bool f3_all_finite(vector3 a) {
+    YK_HD YK_FORCE_INLINE bool f3_all_finite(float3 a) {
 #if defined(__CUDA_ARCH__)
         return isfinite(a.x) && isfinite(a.y) && isfinite(a.z);
 #else
@@ -111,363 +43,268 @@ namespace YK {
 #endif
     }
 
-    __host__ __device__ __forceinline__ bool f3_near(vector3 a, vector3 b, float eps = 1e-6f) {
-        return yk_abs(a.x - b.x) <= eps && yk_abs(a.y - b.y) <= eps && yk_abs(a.z - b.z) <= eps;
+    YK_HD YK_FORCE_INLINE bool f3_near(float3 a, float3 b, float eps = 1e-6f) {
+        float3 d = fabs(a - b);
+        return d.x <= eps && d.y <= eps && d.z <= eps;
     }
-
-
-
 
     // ============================================================
-    // Geometry transforms (points / vectors)
-    // ------------------------------------------------------------
-    // 设计原则：
-    //   - point（点）：表示空间中的“位置”，平移对其有意义
-    //   - vector（向量）：表示“方向 / 位移”，平移对其无意义
-    //
-    // 坐标系约定：
-    //   - 右手坐标系
-    //   - X 向右，Y 向前，Z 向上
-    //   - 旋转角度为弧度，正方向遵循右手法则
-    //
-    // 本文件只提供“几何原语”，不引入高层语义（CT/FDK）
+    // float3 旋转
     // ============================================================
 
-
-    // ============================================================
-    // Translation
-    // ------------------------------------------------------------
-    // 点的平移：p' = p + t
-    // 向量不参与平移（no-op）
-    // ============================================================
-
-    __host__ __device__ __forceinline__
-        point3 f3_translate_point(point3 p, vector3 t)
-    {
-        // Translate a point by vector t
-        return f3_add(p, t);
-    }
-
-    __host__ __device__ __forceinline__
-        vector3 f3_translate_vec(vector3 v, vector3 /*t*/)
-    {
-        // Vectors are invariant under translation
-        return v;
-    }
-
-
-    // ============================================================
-    // Reflections (Mirrors)
-    // ------------------------------------------------------------
-    // 用于对称、翻转、坐标系变换等
-    // ============================================================
-
-    // ---------- mirror about coordinate planes (through origin) ----------
-    // mirror about YZ plane (flip X)
-    __host__ __device__ __forceinline__
-        point3 f3_mirror_x(point3 p)
-    {
-        return f3(-p.x, p.y, p.z);
-    }
-
-    // mirror about XZ plane (flip Y)
-    __host__ __device__ __forceinline__
-        point3 f3_mirror_y(point3 p)
-    {
-        return f3(p.x, -p.y, p.z);
-    }
-
-    // mirror about XY plane (flip Z)
-    __host__ __device__ __forceinline__
-        point3 f3_mirror_z(point3 p)
-    {
-        return f3(p.x, p.y, -p.z);
-    }
-
-
-    // ---------- mirror across an arbitrary plane ----------
-    // Plane passes through origin, with unit normal n_unit
-    // 数学公式： p' = p - 2*(p·n)*n
-    __host__ __device__ __forceinline__
-        point3 f3_reflect_plane_origin(point3 p, vector3 n_unit)
-    {
-        float k = 2.0f * f3_dot(p, n_unit);
-        return f3_sub(p, f3_scale(n_unit, k));
-    }
-
-    // Plane passes through point p0, with unit normal n_unit
-    // p' = p0 + reflect( p - p0 )
-    __host__ __device__ __forceinline__
-        point3 f3_reflect_plane(point3 p, point3 p0, vector3 n_unit)
-    {
-        vector3 q = f3_sub(p, p0);
-        q = f3_reflect_plane_origin(q, n_unit);
-        return f3_add(p0, q);
-    }
-
-
-    // ---------- reflection across an axis (line) ----------
-    // 这是绕轴的 180° 旋转
-    // 轴通过原点，方向为单位向量 u_unit
-    // 数学公式： p' = 2*(p·u)*u - p
-    __host__ __device__ __forceinline__
-        point3 f3_reflect_axis_origin(point3 p, vector3 u_unit)
-    {
-        float k = 2.0f * f3_dot(p, u_unit);
-        return f3_sub(f3_scale(u_unit, k), p);
-    }
-
-    // 轴通过点 p0，方向为 u_unit
-    __host__ __device__ __forceinline__
-        point3 f3_reflect_axis(point3 p, point3 p0, vector3 u_unit)
-    {
-        vector3 q = f3_sub(p, p0);
-        q = f3_reflect_axis_origin(q, u_unit);
-        return f3_add(p0, q);
-    }
-
-
-    // ============================================================
-    // Rotations: fixed axes (fast path)
-    // ------------------------------------------------------------
-    // 高性能路径：绕 X / Y / Z 轴的右手旋转
-    // 用于机架旋转、理想几何、主路径计算
-    // ============================================================
-
-    // ---------- rotate vector about X axis (origin) ----------
-    __host__ __device__ __forceinline__
-        vector3 f3_rotx(vector3 v, float a)
-    {
-        // Rx(a) * v
+    YK_HD YK_FORCE_INLINE float3 f3_rotx(float3 v, float a) {
         float c = cosf(a), s = sinf(a);
-        return f3(
-            v.x,
-            c * v.y - s * v.z,
-            s * v.y + c * v.z
+        return make_float3(v.x, c * v.y - s * v.z, s * v.y + c * v.z);
+    }
+
+    YK_HD YK_FORCE_INLINE float3 f3_roty(float3 v, float a) {
+        float c = cosf(a), s = sinf(a);
+        return make_float3(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
+    }
+
+    YK_HD YK_FORCE_INLINE float3 f3_rotz(float3 v, float a) {
+        float c = cosf(a), s = sinf(a);
+        return make_float3(c * v.x - s * v.y, s * v.x + c * v.y, v.z);
+    }
+
+    YK_HD YK_FORCE_INLINE float3 f3_rot_axis(float3 v, float3 k, float a) {
+        float c = cosf(a), s = sinf(a);
+        return v * c + cross(k, v) * s + k * dot(k, v) * (1.f - c);
+    }
+
+    YK_HD YK_FORCE_INLINE float3 f3_rotx_about(float3 p, float3 p0, float a) { return p0 + f3_rotx(p - p0, a); }
+    YK_HD YK_FORCE_INLINE float3 f3_roty_about(float3 p, float3 p0, float a) { return p0 + f3_roty(p - p0, a); }
+    YK_HD YK_FORCE_INLINE float3 f3_rotz_about(float3 p, float3 p0, float a) { return p0 + f3_rotz(p - p0, a); }
+    YK_HD YK_FORCE_INLINE float3 f3_rot_axis_about(float3 p, float3 p0, float3 k, float a) { return p0 + f3_rot_axis(p - p0, k, a); }
+
+    // ============================================================
+    // float3 反射
+    // ============================================================
+
+    YK_HD YK_FORCE_INLINE float3 f3_reflect_plane_origin(float3 p, float3 n) { return p - 2.f * dot(p, n) * n; }
+    YK_HD YK_FORCE_INLINE float3 f3_reflect_plane(float3 p, float3 p0, float3 n) { return p0 + f3_reflect_plane_origin(p - p0, n); }
+    YK_HD YK_FORCE_INLINE float3 f3_reflect_axis_origin(float3 p, float3 u) { return 2.f * dot(p, u) * u - p; }
+    YK_HD YK_FORCE_INLINE float3 f3_reflect_axis(float3 p, float3 p0, float3 u) { return p0 + f3_reflect_axis_origin(p - p0, u); }
+
+    // ============================================================
+    // float4 扩展（w 永远为 0，几何运算直接用 helper_math）
+    // ============================================================
+
+    // 互转，w 固定为 0
+    YK_HD YK_FORCE_INLINE float4 f3_to_f4(float3 v) { return make_float4(v.x, v.y, v.z, 0.f); }
+    YK_HD YK_FORCE_INLINE float3 f4_to_f3(float4 v) { return make_float3(v.x, v.y, v.z); }
+
+    // cross（helper_math 没有 float4 版本）
+    YK_HD YK_FORCE_INLINE float4 f4_cross(float4 a, float4 b) {
+        return make_float4(
+            a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x,
+            0.f
         );
     }
 
-    // ---------- rotate vector about Y axis (origin) ----------
-    __host__ __device__ __forceinline__
-        vector3 f3_roty(vector3 v, float a)
-    {
-        // Ry(a) * v
-        float c = cosf(a), s = sinf(a);
-        return f3(
-            c * v.x + s * v.z,
-            v.y,
-            -s * v.x + c * v.z
-        );
+    // normalize 带 eps 保护（helper_math 无保护）
+    YK_HD YK_FORCE_INLINE float4 f4_normalize(float4 a, float eps = 1e-20f) {
+        float l2 = dot(a, a);  // w=0，等价于 xyz dot
+        if (l2 < eps) return make_float4(0.f, 0.f, 0.f, 0.f);
+#if defined(__CUDA_ARCH__)
+        return a * rsqrtf(l2);
+#else
+        return a * (1.f / std::sqrt(l2));
+#endif
     }
 
-    // ---------- rotate vector about Z axis (origin) ----------
-    __host__ __device__ __forceinline__
-        vector3 f3_rotz(vector3 v, float a)
-    {
-        // Rz(a) * v
-        float c = cosf(a), s = sinf(a);
-        return f3(
-            c * v.x - s * v.y,
-            s * v.x + c * v.y,
-            v.z
-        );
+    YK_HD YK_FORCE_INLINE bool f4_all_finite(float4 a) {
+#if defined(__CUDA_ARCH__)
+        return isfinite(a.x) && isfinite(a.y) && isfinite(a.z);
+#else
+        return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
+#endif
     }
 
-
-    // ---------- rotate point about coordinate axis through origin ----------
-    // 数值上等同于 vector 旋转
-    // 语义上用于强调“这是点而不是方向”
-    __host__ __device__ __forceinline__
-        point3 f3_rotx_p(point3 p, float a) { return f3_rotx(p, a); }
-
-    __host__ __device__ __forceinline__
-        point3 f3_roty_p(point3 p, float a) { return f3_roty(p, a); }
-
-    __host__ __device__ __forceinline__
-        point3 f3_rotz_p(point3 p, float a) { return f3_rotz(p, a); }
-
-
-    // Rotate point about an axis passing through p0 and parallel to coordinate axis
-    // (X / Y / Z). i.e. rotation around line: p(t) = p0 + t * axis_dir
-    // 数学公式：p' = p0 + R * (p - p0)
-    // 含义：绕“经过 p0 且方向与坐标轴一致”的直线旋转
-    __host__ __device__ __forceinline__
-        point3 f3_rotx_about(point3 p, point3 p0, float a)
-    {
-        return f3_add(p0, f3_rotx(f3_sub(p, p0), a));
+    YK_HD YK_FORCE_INLINE bool f4_near(float4 a, float4 b, float eps = 1e-6f) {
+        float4 d = fabs(a - b);
+        return d.x <= eps && d.y <= eps && d.z <= eps;
     }
 
-    __host__ __device__ __forceinline__
-        point3 f3_roty_about(point3 p, point3 p0, float a)
-    {
-        return f3_add(p0, f3_roty(f3_sub(p, p0), a));
-    }
-
-    __host__ __device__ __forceinline__
-        point3 f3_rotz_about(point3 p, point3 p0, float a)
-    {
-        return f3_add(p0, f3_rotz(f3_sub(p, p0), a));
-    }
-
+    // 旋转，w 输出 0
+    YK_HD YK_FORCE_INLINE float4 f4_rotx(float4 v, float a) { return f3_to_f4(f3_rotx(f4_to_f3(v), a)); }
+    YK_HD YK_FORCE_INLINE float4 f4_roty(float4 v, float a) { return f3_to_f4(f3_roty(f4_to_f3(v), a)); }
+    YK_HD YK_FORCE_INLINE float4 f4_rotz(float4 v, float a) { return f3_to_f4(f3_rotz(f4_to_f3(v), a)); }
+    YK_HD YK_FORCE_INLINE float4 f4_rot_axis(float4 v, float4 k, float a) { return f3_to_f4(f3_rot_axis(f4_to_f3(v), f4_to_f3(k), a)); }
 
     // ============================================================
-    // Rotations: arbitrary axis (Rodrigues)
-    // ------------------------------------------------------------
-    // 最通用的三维旋转表达：绕任意单位轴 k_unit
-    // 用于平板倾角、标定修正、非理想几何
+    // SRigidTf
     // ============================================================
 
-    // Rotate vector v around unit axis k_unit by angle a
-    // Rodrigues' rotation formula:
-    //   v' = v*cos(a) + (k×v)*sin(a) + k*(k·v)*(1-cos(a))
-    __host__ __device__ __forceinline__
-        vector3 f3_rot_axis(vector3 v, vector3 k_unit, float a)
-    {
-        float c = cosf(a), s = sinf(a);
-        vector3 kv = f3_cross(k_unit, v);
-        float  d = f3_dot(k_unit, v);
+    struct SRigidTf {
+        float3 ex, ey, ez;
+        float3 t;
 
-        return f3_add(
-            f3_add(f3_scale(v, c), f3_scale(kv, s)),
-            f3_scale(k_unit, d * (1.0f - c))
-        );
-    }
-
-    // Rotate point p about axis defined by (p0 + t*k_unit)
-    __host__ __device__ __forceinline__
-        point3 f3_rot_axis_about(point3 p, point3 p0, vector3 k_unit, float a)
-    {
-        return f3_add(p0, f3_rot_axis(f3_sub(p, p0), k_unit, a));
-    }
-
-
-    // ============================================================
-    // Optional: small rigid transform (no heavy matrices)
-    // ------------------------------------------------------------
-    // 表示刚体变换： p' = R*p + t
-    // R 用 3 个基向量表示（列向量形式）
-    // ============================================================
-
-    struct SRigidTf
-    {
-        // Rotation matrix columns in world coordinates
-        vector3 ex;   // local +X maps to
-        vector3 ey;   // local +Y maps to
-        vector3 ez;   // local +Z maps to
-        vector3 t;    // translation
-
-        // Apply rotation only (vector)
-        __host__ __device__ __forceinline__
-            vector3 apply_vec(vector3 v) const
-        {
-            return f3_add(
-                f3_add(f3_scale(ex, v.x), f3_scale(ey, v.y)),
-                f3_scale(ez, v.z)
-            );
-        }
-
-        // Apply full rigid transform (point)
-        __host__ __device__ __forceinline__
-            point3 apply_point(point3 p) const
-        {
-            return f3_add(apply_vec(p), t);
-        }
+        YK_HD YK_FORCE_INLINE float3 apply_vec(float3 v) const { return ex * v.x + ey * v.y + ez * v.z; }
+        YK_HD YK_FORCE_INLINE float3 apply_point(float3 p) const { return apply_vec(p) + t; }
     };
 
-
-    // Build a rigid transform from axis-angle representation
-    // k_unit must be normalized
-    __host__ __device__ __forceinline__
-        SRigidTf f3_rigid_from_axis_angle(vector3 k_unit, float a, vector3 t = f3(0, 0, 0))
-    {
+    YK_HD YK_FORCE_INLINE SRigidTf f3_rigid_from_axis_angle(float3 k, float a, float3 t = make_float3(0, 0, 0)) {
         SRigidTf tf;
-        tf.ex = f3_rot_axis(f3(1, 0, 0), k_unit, a);
-        tf.ey = f3_rot_axis(f3(0, 1, 0), k_unit, a);
-        tf.ez = f3_rot_axis(f3(0, 0, 1), k_unit, a);
+        tf.ex = f3_rot_axis(make_float3(1, 0, 0), k, a);
+        tf.ey = f3_rot_axis(make_float3(0, 1, 0), k, a);
+        tf.ez = f3_rot_axis(make_float3(0, 0, 1), k, a);
         tf.t = t;
         return tf;
     }
 
+    // ============================================================
+    // SMat4f
+    // ============================================================
 
-
-    /////////////////////////////////////////////////////////////
-    /// 4x4 homogeneous matrix: SMat4f
-    /////////////////////////////////////////////////////////////
     struct SMat4f {
-        float m[4][4]; // row-major
+        float m[4][4];
 
-        __host__ __device__ SMat4f() { for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) m[i][j] = (i == j ? 1.f : 0.f); }
-
-        // Apply to point (with translation)
-        __host__ __device__ point3 apply_point(point3 p) const {
-            float x = m[0][0] * p.x + m[0][1] * p.y + m[0][2] * p.z + m[0][3];
-            float y = m[1][0] * p.x + m[1][1] * p.y + m[1][2] * p.z + m[1][3];
-            float z = m[2][0] * p.x + m[2][1] * p.y + m[2][2] * p.z + m[2][3];
-            return f3(x, y, z);
+        YK_HD SMat4f() {
+            for (int i = 0; i < 4; i++)
+                for (int j = 0; j < 4; j++)
+                    m[i][j] = (i == j ? 1.f : 0.f);
         }
 
-        // Apply to vector (no translation)
-        __host__ __device__ vector3 apply_vec(vector3 v) const {
-            float x = m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z;
-            float y = m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z;
-            float z = m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z;
-            return f3(x, y, z);
+        YK_HD YK_FORCE_INLINE float3 apply_point(float3 p) const {
+            return make_float3(
+                m[0][0] * p.x + m[0][1] * p.y + m[0][2] * p.z + m[0][3],
+                m[1][0] * p.x + m[1][1] * p.y + m[1][2] * p.z + m[1][3],
+                m[2][0] * p.x + m[2][1] * p.y + m[2][2] * p.z + m[2][3]
+            );
         }
 
-        // Multiply two matrices
-        __host__ __device__ SMat4f operator*(const SMat4f& B) const {
+        YK_HD YK_FORCE_INLINE float3 apply_vec(float3 v) const {
+            return make_float3(
+                m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
+                m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z,
+                m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z
+            );
+        }
+
+        YK_HD YK_FORCE_INLINE float4 operator*(float4 v) const {
+            return make_float4(
+                m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z + m[0][3] * v.w,
+                m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z + m[1][3] * v.w,
+                m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z + m[2][3] * v.w,
+                m[3][0] * v.x + m[3][1] * v.y + m[3][2] * v.z + m[3][3] * v.w
+            );
+        }
+
+        YK_HD SMat4f operator*(const SMat4f& B) const {
             SMat4f R;
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < 4; i++)
                 for (int j = 0; j < 4; j++) {
                     R.m[i][j] = 0.f;
-                    for (int k = 0; k < 4; k++) R.m[i][j] += m[i][k] * B.m[k][j];
+                    for (int k = 0; k < 4; k++)
+                        R.m[i][j] += m[i][k] * B.m[k][j];
                 }
-            }
             return R;
         }
 
-        // Build translation matrix
-        __host__ __device__ static SMat4f translate(vector3 t) {
+        YK_HD SMat4f inverse_rigid() const {
+            SMat4f inv;
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                    inv.m[i][j] = m[j][i];
+            inv.m[0][3] = -(inv.m[0][0] * m[0][3] + inv.m[0][1] * m[1][3] + inv.m[0][2] * m[2][3]);
+            inv.m[1][3] = -(inv.m[1][0] * m[0][3] + inv.m[1][1] * m[1][3] + inv.m[1][2] * m[2][3]);
+            inv.m[2][3] = -(inv.m[2][0] * m[0][3] + inv.m[2][1] * m[1][3] + inv.m[2][2] * m[2][3]);
+            inv.m[3][0] = inv.m[3][1] = inv.m[3][2] = 0.f;
+            inv.m[3][3] = 1.f;
+            return inv;
+        }
+
+        YK_HD static SMat4f translate(float3 t) {
             SMat4f tf;
             tf.m[0][3] = t.x; tf.m[1][3] = t.y; tf.m[2][3] = t.z;
             return tf;
         }
 
-        // Build rotation about X/Y/Z
-        __host__ __device__ static SMat4f rot_x(float a) {
-            SMat4f tf;
-            float c = cosf(a), s = sinf(a);
+        YK_HD static SMat4f rot_x(float a) {
+            SMat4f tf; float c = cosf(a), s = sinf(a);
             tf.m[1][1] = c; tf.m[1][2] = -s;
             tf.m[2][1] = s; tf.m[2][2] = c;
             return tf;
         }
-        __host__ __device__ static SMat4f rot_y(float a) {
-            SMat4f tf;
-            float c = cosf(a), s = sinf(a);
+
+        YK_HD static SMat4f rot_y(float a) {
+            SMat4f tf; float c = cosf(a), s = sinf(a);
             tf.m[0][0] = c; tf.m[0][2] = s;
             tf.m[2][0] = -s; tf.m[2][2] = c;
             return tf;
         }
-        __host__ __device__ static SMat4f rot_z(float a) {
-            SMat4f tf;
-            float c = cosf(a), s = sinf(a);
+
+        YK_HD static SMat4f rot_z(float a) {
+            SMat4f tf; float c = cosf(a), s = sinf(a);
             tf.m[0][0] = c; tf.m[0][1] = -s;
             tf.m[1][0] = s; tf.m[1][1] = c;
             return tf;
         }
 
-        // Build rigid matrix from axis-angle + translation
-        __host__ __device__ static SMat4f from_axis_angle(vector3 k_unit, float angle, vector3 t = f3(0, 0, 0)) {
+        YK_HD static SMat4f from_axis_angle(float3 k, float a, float3 t = make_float3(0, 0, 0)) {
             SMat4f R;
-            float c = cosf(angle), s = sinf(angle), d = 1.f - c;
-            float x = k_unit.x, y = k_unit.y, z = k_unit.z;
-
-            R.m[0][0] = c + x * x * d;   R.m[0][1] = x * y * d - z * s; R.m[0][2] = x * z * d + y * s; R.m[0][3] = t.x;
-            R.m[1][0] = y * x * d + z * s; R.m[1][1] = c + y * y * d;   R.m[1][2] = y * z * d - x * s; R.m[1][3] = t.y;
-            R.m[2][0] = z * x * d - y * s; R.m[2][1] = z * y * d + x * s; R.m[2][2] = c + z * z * d;   R.m[2][3] = t.z;
-            R.m[3][0] = 0.f;        R.m[3][1] = 0.f;      R.m[3][2] = 0.f;       R.m[3][3] = 1.f;
+            float c = cosf(a), s = sinf(a), d = 1.f - c;
+            float x = k.x, y = k.y, z = k.z;
+            R.m[0][0] = c + x * x * d;    R.m[0][1] = x * y * d - z * s;  R.m[0][2] = x * z * d + y * s;  R.m[0][3] = t.x;
+            R.m[1][0] = y * x * d + z * s;  R.m[1][1] = c + y * y * d;    R.m[1][2] = y * z * d - x * s;  R.m[1][3] = t.y;
+            R.m[2][0] = z * x * d - y * s;  R.m[2][1] = z * y * d + x * s;  R.m[2][2] = c + z * z * d;    R.m[2][3] = t.z;
+            R.m[3][0] = 0.f;        R.m[3][1] = 0.f;         R.m[3][2] = 0.f;         R.m[3][3] = 1.f;
             return R;
         }
+
+        YK_HD static SMat4f from_rigid(const SRigidTf& tf) {
+            SMat4f m;
+            m.m[0][0] = tf.ex.x; m.m[0][1] = tf.ey.x; m.m[0][2] = tf.ez.x; m.m[0][3] = tf.t.x;
+            m.m[1][0] = tf.ex.y; m.m[1][1] = tf.ey.y; m.m[1][2] = tf.ez.y; m.m[1][3] = tf.t.y;
+            m.m[2][0] = tf.ex.z; m.m[2][1] = tf.ey.z; m.m[2][2] = tf.ez.z; m.m[2][3] = tf.t.z;
+            m.m[3][0] = 0.f;     m.m[3][1] = 0.f;     m.m[3][2] = 0.f;     m.m[3][3] = 1.f;
+            return m;
+        }
     };
+
+    // ============================================================
+    // 兼容层
+    // ============================================================
+
+    // float3
+    YK_HD YK_FORCE_INLINE float3 f3(float x, float y, float z) { return make_float3(x, y, z); }
+    YK_HD YK_FORCE_INLINE float3 f3_add(float3 a, float3 b) { return a + b; }
+    YK_HD YK_FORCE_INLINE float3 f3_sub(float3 a, float3 b) { return a - b; }
+    YK_HD YK_FORCE_INLINE float3 f3_scale(float3 a, float t) { return a * t; }
+    YK_HD YK_FORCE_INLINE float3 f3_mul(float t, float3 a) { return t * a; }
+    YK_HD YK_FORCE_INLINE float3 f3_div(float3 a, float t) { return a / t; }
+    YK_HD YK_FORCE_INLINE float3 f3_neg(float3 a) { return -a; }
+    YK_HD YK_FORCE_INLINE float3 f3_mul_comp(float3 a, float3 b) { return a * b; }
+    YK_HD YK_FORCE_INLINE float3 f3_div_comp(float3 a, float3 b) { return a / b; }
+    YK_HD YK_FORCE_INLINE float3 f3_mad(float3 a, float t, float3 b) { return a * t + b; }
+    YK_HD YK_FORCE_INLINE float  f3_dot(float3 a, float3 b) { return dot(a, b); }
+    YK_HD YK_FORCE_INLINE float3 f3_cross(float3 a, float3 b) { return cross(a, b); }
+    YK_HD YK_FORCE_INLINE float  f3_len2(float3 a) { return dot(a, a); }
+    YK_HD YK_FORCE_INLINE float  f3_len(float3 a) { return length(a); }
+    YK_HD YK_FORCE_INLINE float3 f3_min(float3 a, float3 b) { return fminf(a, b); }
+    YK_HD YK_FORCE_INLINE float3 f3_max(float3 a, float3 b) { return fmaxf(a, b); }
+    YK_HD YK_FORCE_INLINE float3 f3_abs(float3 a) { return fabs(a); }
+    YK_HD YK_FORCE_INLINE float3 f3_clamp(float3 a, float lo, float hi) { return clamp(a, lo, hi); }
+    YK_HD YK_FORCE_INLINE float3 f3_lerp(float3 a, float3 b, float t) { return lerp(a, b, t); }
+
+    // float4
+    YK_HD YK_FORCE_INLINE float4 f4(float x, float y, float z, float w = 0.f) { return make_float4(x, y, z, w); }
+    YK_HD YK_FORCE_INLINE float4 f4_add(float4 a, float4 b) { return a + b; }
+    YK_HD YK_FORCE_INLINE float4 f4_sub(float4 a, float4 b) { return a - b; }
+    YK_HD YK_FORCE_INLINE float4 f4_scale(float4 a, float t) { return a * t; }
+    YK_HD YK_FORCE_INLINE float4 f4_mul(float t, float4 a) { return t * a; }
+    YK_HD YK_FORCE_INLINE float4 f4_div(float4 a, float t) { return a / t; }
+    YK_HD YK_FORCE_INLINE float4 f4_neg(float4 a) { return -a; }
+    YK_HD YK_FORCE_INLINE float4 f4_mul_comp(float4 a, float4 b) { return a * b; }
+    YK_HD YK_FORCE_INLINE float4 f4_div_comp(float4 a, float4 b) { return a / b; }
+    YK_HD YK_FORCE_INLINE float4 f4_mad(float4 a, float t, float4 b) { return a * t + b; }
+    YK_HD YK_FORCE_INLINE float4 f4_min(float4 a, float4 b) { return fminf(a, b); }
+    YK_HD YK_FORCE_INLINE float4 f4_max(float4 a, float4 b) { return fmaxf(a, b); }
+    YK_HD YK_FORCE_INLINE float4 f4_abs(float4 a) { return fabs(a); }
+    YK_HD YK_FORCE_INLINE float4 f4_clamp(float4 a, float lo, float hi) { return clamp(a, lo, hi); }
+    YK_HD YK_FORCE_INLINE float4 f4_lerp(float4 a, float4 b, float t) { return lerp(a, b, t); }
 
 } // namespace YK

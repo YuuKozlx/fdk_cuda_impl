@@ -3,6 +3,7 @@
 #include <cuda_runtime_api.h>
 #include "../../global/YkMacro.hpp"
 #include "YkFPCVPHelpers.cuh"
+#include "../../util/YkVecOperation.hpp"
 
 
 namespace YK
@@ -53,15 +54,15 @@ namespace YK
                 //    Parameter t such that src + t*d lies on the detector plane:
                 //      dot(t*d, srcCR) = SDD  =>  t = SDD / dot(d, srcCR)
                 // ----------------------------------------------------------
-                const float3 d = d_sub(vc, c.src);
-                const float  d_dot_n = d_dot(d, c.srcCR);
+                const float3 d = d_sub(vc, f4_to_f3(c.src));
+                const float  d_dot_n = d_dot(d, f4_to_f3(c.srcCR));
 
                 // Skip voxels behind the source or parallel to the detector normal
                 if (d_dot_n <= 0.f) return;
 
                 const float  t = c.SDD / d_dot_n;       // magnification factor
-                const float3 hit = d_fma(t, d, c.src);    // hit point on detector plane
-                const float3 dh = d_sub(hit, c.detS);    // offset from pixel (0,0) origin
+                const float3 hit = d_fma(t, d, f4_to_f3(c.src));    // hit point on detector plane
+                const float3 dh = d_sub(hit, f4_to_f3(c.detS));    // offset from pixel (0,0) origin
 
                 // Continuous pixel coordinates (origin = pixel (0,0) corner)
                 const float pu = d_dot(dh, c.detU_n) * c.inv_du + 0.5f;
@@ -130,6 +131,73 @@ namespace YK
             }
 
 
+
+            __global__ void cvp_forward_kernel_tex(
+                cudaTextureObject_t tex_vol,    // ← 替换 const float* volume
+                float* sinogram,
+                SCVPViewCache c)
+            {
+                const int ix = blockIdx.x * blockDim.x + threadIdx.x;
+                const int iy = blockIdx.y * blockDim.y + threadIdx.y;
+                const int iz = blockIdx.z * blockDim.z + threadIdx.z;
+
+                if (ix >= c.Nx || iy >= c.Ny || iz >= c.Nz) return;
+
+                // 读取改成 tex3D，加 0.5f 对齐到体素中心
+                const float mu = tex3D<float>(tex_vol,
+                    ix + 0.5f, iy + 0.5f, iz + 0.5f);
+                if (mu == 0.f) return;
+
+                // 以下完全不变
+                const float3 vc = make_float3(
+                    c.vol_origin.x + ix * c.a1,
+                    c.vol_origin.y + iy * c.a2,
+                    c.vol_origin.z + iz * c.a3);
+
+                const float3 d = d_sub(vc, f4_to_f3(c.src));
+                const float  d_dot_n = d_dot(d, f4_to_f3(c.srcCR));
+                if (d_dot_n <= 0.f) return;
+
+                const float  t = c.SDD / d_dot_n;
+                const float3 hit = d_fma(t, d, f4_to_f3(c.src));
+                const float3 dh = d_sub(hit, f4_to_f3(c.detS));
+
+                const float pu = d_dot(dh, c.detU_n) * c.inv_du + 0.5f;
+                const float pv = d_dot(dh, c.detV_n) * c.inv_dv + 0.5f;
+
+                const float half_u = 0.5f * c.a1 * t * c.inv_du;
+                const float half_v = 0.5f * c.a2 * t * c.inv_dv;
+
+                const int m_lo = max(0, (int)floorf(pu - half_u));
+                const int m_hi = min(c.M - 1, (int)floorf(pu + half_u));
+                const int n_lo = max(0, (int)floorf(pv - half_v));
+                const int n_hi = min(c.N - 1, (int)floorf(pv + half_v));
+
+                if (m_lo > m_hi || n_lo > n_hi) return;
+
+                const float r2 = d_dot(d, d);
+                const float w_mu_r2 = mu / r2;
+                const float vox_vol = c.a1 * c.a2 * c.a3;
+                const float footprint_area = (2.f * half_u) * (2.f * half_v);
+                const float scale = vox_vol / fmaxf(footprint_area, 1e-10f);
+
+                for (int n = n_lo; n <= n_hi; ++n) {
+                    const float ov_pix = fminf((float)(n + 1), pv + half_v)
+                        - fmaxf((float)n, pv - half_v);
+                    if (ov_pix <= 0.f) continue;
+
+                    for (int m = m_lo; m <= m_hi; ++m) {
+                        const float ou_pix = fminf((float)(m + 1), pu + half_u)
+                            - fmaxf((float)m, pu - half_u);
+                        if (ou_pix <= 0.f) continue;
+
+                        atomicAdd(&sinogram[n * c.M + m],
+                            w_mu_r2 * scale * ou_pix * ov_pix);
+                    }
+                }
+            }
+
+
             // ============================================================
             // normalize kernel 内部直接算 cos_theta
             __global__ void cvp_normalize_kernel(
@@ -185,6 +253,43 @@ namespace YK
                 {
                     dim3 block(16, 16);
                     dim3 grid((Nu + 15) / 16, (Nv + 15) / 16);
+                    detail::cvp_normalize_kernel << <grid, block, 0, stream >> > (
+                        d_s, cache.SDD, cache.du, cache.dv, Nu, Nv);
+                }
+            }
+        }
+
+
+        void fp_cvp_launch(
+            cudaTextureObject_t tex_vol,    // ← 纹理版本
+            float* d_sino,
+            const std::vector<YK::SConeProjGeomVec>& h_views,
+            const YK::SVolGeom& g,
+            int Na, int Nu, int Nv,
+            cudaStream_t stream)
+        {
+            for (int a = 0; a < Na; ++a)
+            {
+                const auto cache = make_view_cache(h_views[a], Nu, Nv, g);
+                float* d_s = d_sino + (size_t)a * Nv * Nu;
+
+                // Step 1: scatter（纹理版本）
+                {
+                    dim3 block(8, 8, 8);
+                    dim3 grid(
+                        YK_CUDA_DIV_UP(cache.Nx, 8),
+                        YK_CUDA_DIV_UP(cache.Ny, 8),
+                        YK_CUDA_DIV_UP(cache.Nz, 8));
+                    detail::cvp_forward_kernel_tex << <grid, block, 0, stream >> > (
+                        tex_vol, d_s, cache);
+                }
+
+                // Step 2: normalize（不变）
+                {
+                    dim3 block(16, 16);
+                    dim3 grid(
+                        YK_CUDA_DIV_UP(Nu, 16),
+                        YK_CUDA_DIV_UP(Nv, 16));
                     detail::cvp_normalize_kernel << <grid, block, 0, stream >> > (
                         d_s, cache.SDD, cache.du, cache.dv, Nu, Nv);
                 }

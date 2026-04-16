@@ -175,7 +175,6 @@
     <ClInclude Include="FP\YkFp.cuh" />
     <ClInclude Include="FP\YkFPCommon.cuh" />
     <ClInclude Include="FP\YkFPGpuContext.hpp" />
-    <ClInclude Include="FP\YkFPPipelineContext.hpp" />
     <ClInclude Include="FP\YkFpTaskHandle.hpp" />
     <ClInclude Include="FP\YkFPRunner.hpp" />
     <ClInclude Include="global\IProcessor.hpp" />
@@ -195,6 +194,7 @@
     <ClInclude Include="test\Yktest_fdkflter.hpp" />
     <ClInclude Include="test\Yktest_fft.hpp" />
     <ClInclude Include="test\Yktest_mem3d.hpp" />
+    <ClInclude Include="util\helper_math.h" />
     <ClInclude Include="util\YkCudaTimer.hpp" />
     <ClInclude Include="util\YkIoDump.hpp" />
     <ClInclude Include="util\YkMiniMHA.h" />

@@ -13,11 +13,11 @@ namespace YK
         // ============================================================
         struct SCVPViewCache {
             // Copied directly from SConeProjGeomVec
-            float3 src;
-            float3 srcCR;    // detector normal (unit vector, src -> detector)
-            float3 detS;     // world position of pixel (0,0) origin (not pixel center)
-            float3 detU;     // per-pixel U vector (carries physical spacing)
-            float3 detV;     // per-pixel V vector (carries physical spacing)
+            float4 src;
+            float4 srcCR;    // detector normal (unit vector, src -> detector)
+            float4 detS;     // world position of pixel (0,0) origin (not pixel center)
+            float4 detU;     // per-pixel U vector (carries physical spacing)
+            float4 detV;     // per-pixel V vector (carries physical spacing)
 
             // Precomputed quantities
             float  du, dv;           // pixel physical spacing [mm] = |detU|, |detV|
@@ -128,6 +128,52 @@ namespace YK
             float3 d_fma(float t, float3 a, float3 b) {
             return make_float3(fmaf(t, a.x, b.x), fmaf(t, a.y, b.y), fmaf(t, a.z, b.z));
         }
+
+
+
+        struct CVPVolTexture {
+            cudaArray_t          array = nullptr;
+            cudaTextureObject_t  tex = 0;
+
+            // 从 device 线性内存创建纹理
+            // d_vol 布局：[Nz][Ny][Nx]，z-major
+            void create(const float* d_vol, int Nx, int Ny, int Nz) {
+                // 1. 分配 cudaArray
+                cudaChannelFormatDesc desc = cudaCreateChannelDesc<float>();
+                cudaExtent extent = make_cudaExtent(Nx, Ny, Nz);
+                YK_CUDA_CHECK(cudaMalloc3DArray(&array, &desc, extent));
+
+                // 2. 拷贝数据
+                cudaMemcpy3DParms p = {};
+                p.srcPtr = make_cudaPitchedPtr(
+                    const_cast<float*>(d_vol),
+                    Nx * sizeof(float), Nx, Ny);
+                p.dstArray = array;
+                p.extent = extent;
+                p.kind = cudaMemcpyDeviceToDevice;
+                YK_CUDA_CHECK(cudaMemcpy3D(&p));
+
+                // 3. 创建纹理对象
+                cudaResourceDesc resDesc = {};
+                resDesc.resType = cudaResourceTypeArray;
+                resDesc.res.array.array = array;
+
+                cudaTextureDesc texDesc = {};
+                texDesc.addressMode[0] = cudaAddressModeBorder;  // 边界外返回 0
+                texDesc.addressMode[1] = cudaAddressModeBorder;
+                texDesc.addressMode[2] = cudaAddressModeBorder;
+                texDesc.filterMode = cudaFilterModePoint;    // 不插值
+                texDesc.readMode = cudaReadModeElementType;
+                texDesc.normalizedCoords = 0;                     // 像素坐标
+
+                YK_CUDA_CHECK(cudaCreateTextureObject(&tex, &resDesc, &texDesc, nullptr));
+            }
+
+            void destroy() {
+                if (tex) { cudaDestroyTextureObject(tex);  tex = 0; }
+                if (array) { cudaFreeArray(array);            array = nullptr; }
+            }
+        };
     };
 
 

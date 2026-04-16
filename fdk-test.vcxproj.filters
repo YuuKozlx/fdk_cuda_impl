@@ -266,9 +266,6 @@
     <ClInclude Include="FP\YkFPGpuContext.hpp">
       <Filter>FP</Filter>
     </ClInclude>
-    <ClInclude Include="FP\YkFPPipelineContext.hpp">
-      <Filter>FP</Filter>
-    </ClInclude>
     <ClInclude Include="FP\YkFPRunner.hpp">
       <Filter>FP</Filter>
     </ClInclude>
@@ -276,9 +273,6 @@
       <Filter>FP\detail</Filter>
     </ClInclude>
     <ClInclude Include="FP\kernels\YkFPCVPLaunch.cuh">
-      <Filter>FP\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="FP\YkFp.cuh">
       <Filter>FP\detail</Filter>
     </ClInclude>
     <ClInclude Include="FP\YkFPCommon.cuh">
@@ -295,6 +289,12 @@
     </ClInclude>
     <ClInclude Include="interface\YkTaskTypes.hpp">
       <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="util\helper_math.h">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\YkFp.cuh">
+      <Filter>FP</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
