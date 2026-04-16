@@ -19,8 +19,7 @@
 #include "util/YkCudaTimer.hpp"
 
 
-#include "CVP/cvp_forward.cuh"
-#include "CVP/cvp_geometry.cuh"
+#include "FP/YkFPRunner.hpp"
 
 
 
@@ -31,6 +30,14 @@ static bool read_raw_float(const char* path, std::vector<float>& data) {
     size_t n = std::fread(data.data(), sizeof(float), data.size(), fp);
     std::fclose(fp);
     return n == data.size();
+}
+
+static bool read_raw_float(const char* path, float* data, uint64_t element_count) {
+    FILE* fp = std::fopen(path, "rb");
+    if (!fp) return false;
+    size_t n = std::fread(data, sizeof(float), element_count, fp);
+    std::fclose(fp);
+    return n == element_count;
 }
 
 static bool write_raw_float(const char* path, const std::vector<float>& data) {
@@ -69,7 +76,8 @@ int main_fdk() {
 
 
     params.SID = 500.0f, params.SDD = 1000.0f;
-    params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_xy_mm = 0.25f;
+    params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_x_mm = 0.25f;
+    params.vox_y_mm = 0.25f;
     params.vox_z_mm = 0.25f;
 
 
@@ -213,7 +221,7 @@ int main_fdk2() {
 
 
     params.SID = 430.0f, params.SDD = 760.0f;
-    params.du_mm = 0.556f, params.dv_mm = 0.556f, params.vox_xy_mm = 0.3f;
+    params.du_mm = 0.556f, params.dv_mm = 0.556f, params.vox_x_mm = 0.3f;
     params.vox_z_mm = 0.3f;
 
     const int Ang = params.iPAng;
@@ -338,145 +346,96 @@ int main_fdk2() {
 }
 
 
-void forward_project_example()
+static void test_fp_runner(cudaStream_t stream)
 {
-    using namespace cvp;
+    printf("\n[FpReconstructor] test\n");
 
-    // ----------------------------------------
-    // 1. 体积描述
-    // ----------------------------------------
-    SVolumeDesc vol;
-    vol.Nx = 768; vol.Ny = 768; vol.Nz = 600;
-    vol.a1 = 0.3f; vol.a2 = 0.3f; vol.a3 = 0.3f;
+    constexpr int   Nx = 512, Ny = 512, Nz = 400;
+    constexpr float vox_xy = 0.25f, vox_z = 0.25f;
+    constexpr int   Na = 360, Nu = 1024, Nv = 1024;
+    constexpr float du = 0.25f, dv = 0.25f;
+    constexpr float SID = 500.f, SDD = 1000.f;
 
-    vol.origin = make_float3(
-        -(vol.Nx - 1) * 0.5f * vol.a1,
-        -(vol.Ny - 1) * 0.5f * vol.a2,
-        -(vol.Nz - 1) * 0.5f * vol.a3);
+    // 构建 SCBCTParams
+    SCBCTParams params;
+    params.iVX = Nx; params.iVY = Ny; params.iVZ = Nz;
+    params.vox_x_mm = vox_xy; params.vox_z_mm = vox_z;
+    params.vol_offset_x_mm = 0.f;
+    params.vol_offset_y_mm = 0.f;
+    params.vol_offset_z_mm = 0.f;
+    params.iPAng = Na;
+    params.iPU = Nu; params.iPV = Nv;
+    params.du_mm = du; params.dv_mm = dv;
+    params.SID = SID; params.SDD = SDD;
+    params.offsetU_mm = 0.f; params.offsetV_mm = 0.f;
+    params.tiltu_angle_rad = 0.f;
+    params.tiltn_angle_rad = 0.f;
+    params.tiltv_angle_rad = 0.f;
 
-    // ----------------------------------------
-    // 2. 基础几何（0°）
-    // ----------------------------------------
-    cvp::SConeProjGeomVec geom0;
+    params.angle_list.resize(Na);
+    for (int i = 0; i < Na; ++i)
+        params.angle_list[i] = CUDA_PI * 3.f / 2.f + 2.f * CUDA_PI * i / Na;
 
-    geom0.src = make_float3(0.f, -430.f, 0.f);
-    geom0.srcCR = make_float3(0.f, 1.f, 0.f);
+    // 加载体积
+    std::vector<float> h_vol((size_t)Nx * Ny * Nz);
+    if (!read_raw_float("fdk_vec_vol_offline.raw", h_vol)) return;
+    printf("  volume loaded\n");
 
-    const int   M = 768, N = 768;
-    const float du = 0.556f, dv = 0.556f;
+    float* d_vol = nullptr;
+    YK_CUDA_CHECK(cudaMalloc(&d_vol, h_vol.size() * sizeof(float)));
+    YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
+        h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
+    h_vol.clear();
 
-    geom0.detU = make_float3(du, 0.f, 0.f);
-    geom0.detV = make_float3(0.f, 0.f, dv);
+    // 分配输出
+    const size_t sino_elems = (size_t)Na * Nv * Nu;
+    float* d_sino = nullptr;
+    YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
 
-    geom0.detS = make_float3(
-        -M * 0.5f * du,
-        330.f,
-        -N * 0.5f * dv);
+    YK::FpReconstructor fpr;
 
-    // ----------------------------------------
-    // 3. GPU 内存
-    // ----------------------------------------
-    const size_t vol_size = (size_t)vol.Nx * vol.Ny * vol.Nz * sizeof(float);
-    const size_t sino_size = (size_t)M * N * sizeof(float);
-
-    float* d_volume = nullptr, * d_sino = nullptr, * d_cos_theta = nullptr;
-
-    cudaMalloc(&d_volume, vol_size);
-    cudaMalloc(&d_sino, sino_size);
-    cudaMalloc(&d_cos_theta, sino_size);
-
-    // ----------------------------------------
-    // 4. 读入体数据
-    // ----------------------------------------
-    size_t vol_elems = (size_t)vol.Nx * vol.Ny * vol.Nz;
-    std::vector<float> h_volume(vol_elems);
-
-    if (!read_raw_float("fdk_vec_vol_offline2.raw", h_volume)) {
-        printf("Error: cannot read volume\n");
-        return;
-    }
-
-    cudaMemcpy(d_volume, h_volume.data(), vol_size, cudaMemcpyHostToDevice);
-
-    // ----------------------------------------
-    // 5. 旋转函数（绕 Z）
-    // ----------------------------------------
-    auto rotate_z = [](float3 p, float angle)
-        {
-            float c = cosf(angle);
-            float s = sinf(angle);
-            return make_float3(
-                c * p.x - s * p.y,
-                s * p.x + c * p.y,
-                p.z);
-        };
-
-    // ----------------------------------------
-    // 6. 多角度 forward
-    // ----------------------------------------
-    const int num_views = 360;
-
-    std::vector<float> h_sino_all((size_t)num_views * M * N);
-
-    for (int iv = 0; iv < num_views; ++iv)
+    if (!fpr.init(params, 0))
     {
-        float angle = iv * 2.0f * M_PI / num_views;
-
-        cvp::SConeProjGeomVec geom;
-
-        // 旋转几何
-        geom.src = rotate_z(geom0.src, angle);
-        geom.srcCR = rotate_z(geom0.srcCR, angle);
-        geom.detS = rotate_z(geom0.detS, angle);
-        geom.detU = rotate_z(geom0.detU, angle);
-        geom.detV = rotate_z(geom0.detV, angle);
-        geom.angle = make_float3(angle, 0.f, 0.f);
-
-        // 清零
-        cudaMemset(d_sino, 0, sino_size);
-
-        // cache
-        SCVPViewCache cache = make_view_cache(geom, M, N, vol);
-
-        // forward
-        launch_cvp_forward(d_volume, d_sino, d_cos_theta, cache);
-
-        cudaDeviceSynchronize();
-
-        // 拷贝
-        cudaMemcpy(
-            h_sino_all.data() + (size_t)iv * M * N,
-            d_sino,
-            sino_size,
-            cudaMemcpyDeviceToHost);
-
-        if (iv % 30 == 0)
-            printf("View %d / %d done\n", iv, num_views);
+        YK_LOGE("FpReconstructor init failed");
     }
 
-    // ----------------------------------------
-    // 7. 写出 3D sinogram
-    // ----------------------------------------
-    if (!write_raw_float("proj_360.raw", h_sino_all)) {
-        printf("Error: cannot write proj_360.raw\n");
-        return;
+    // 运行
+    YK_LOGI("  running fp_project...\n");
+    bool ok = fpr.run(d_vol, params, d_sino, stream);
+    //bool ok = YK::fp_project(d_vol, d_sino, params, stream);
+    YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+    YK_LOGI("  fp_project: %s\n", ok ? "OK" : "FAILED");
+
+    // 回读统计
+    std::vector<float> h_sino(sino_elems);
+    YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
+        sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
+
+    float maxv = *std::max_element(h_sino.begin(), h_sino.end());
+    float sumv = 0.f;
+    for (auto x : h_sino) sumv += x;
+    printf("  sino: max=%.4f  sum=%.3e\n", maxv, sumv);
+
+    for (int a = 0; a < Na; ++a) {
+        float mv = 0.f;
+        for (size_t k = 0; k < (size_t)Nv * Nu; ++k)
+            mv = fmaxf(mv, h_sino[a * (size_t)Nv * Nu + k]);
+        if (mv > 1e-6f || a < 3 || a >= Na - 3)
+            printf("  angle %3d: max=%.4f\n", a, mv);
     }
 
-    // ----------------------------------------
-    // 8. 释放
-    // ----------------------------------------
-    cudaFree(d_volume);
+    write_raw_float("fp_reconstructor_sino.raw", h_sino.data(), sino_elems);
+    printf("  saved: fp_reconstructor_sino.raw\n");
+
+    cudaFree(d_vol);
     cudaFree(d_sino);
-    cudaFree(d_cos_theta);
-
-    printf("Forward projection finished.\n");
 }
 
-
-int main000() {
+int main() {
     Logger::instance().set_level(LogLevel::Debug);
     //YKTest::testFFT();
     main_fdk();
+    test_fp_runner(0);
     //forward_project_example();
     //YKTest::testFilterWeightsSpectra_RamLak();
     //YKTest::test_gpumem3d();

@@ -86,15 +86,15 @@
     <CudaCompile Include="Filter\YkConvKernels.cu">
       <Filter>Filter\fft</Filter>
     </CudaCompile>
-    <CudaCompile Include="interface\YkFdkFactory.cu">
-      <Filter>interface</Filter>
-    </CudaCompile>
     <CudaCompile Include="test_fp.cu" />
     <CudaCompile Include="test_fp1.cu" />
     <CudaCompile Include="FP\kernels\YkFPKernels.cu">
       <Filter>FP\detail</Filter>
     </CudaCompile>
     <CudaCompile Include="FP\kernels\YkFPSiddonKernel.cu">
+      <Filter>FP\detail</Filter>
+    </CudaCompile>
+    <CudaCompile Include="FP\kernels\YkFPCVPKernels.cu">
       <Filter>FP\detail</Filter>
     </CudaCompile>
   </ItemGroup>
@@ -204,17 +204,8 @@
     <ClInclude Include="FDK\YkVecGeo.hpp">
       <Filter>FDK\ctx</Filter>
     </ClInclude>
-    <ClInclude Include="interface\IReconstructor.hpp">
-      <Filter>interface</Filter>
-    </ClInclude>
-    <ClInclude Include="interface\YkFdkTypes.hpp">
-      <Filter>interface</Filter>
-    </ClInclude>
-    <ClInclude Include="FDK\YkFdkReconstructorHandle.hpp">
+    <ClInclude Include="FDK\YkFdkTaskHandle.hpp">
       <Filter>FDK</Filter>
-    </ClInclude>
-    <ClInclude Include="interface\IFdkReconstructor.hpp">
-      <Filter>interface</Filter>
     </ClInclude>
     <ClInclude Include="util\YkCudaTimer.hpp">
       <Filter>util</Filter>
@@ -255,9 +246,6 @@
     <ClInclude Include="test\YKtestconv.hpp">
       <Filter>tests</Filter>
     </ClInclude>
-    <ClInclude Include="interface\YkFdkFactory.hpp">
-      <Filter>interface</Filter>
-    </ClInclude>
     <ClInclude Include="global\YkWarpStrideCtx.cuh">
       <Filter>global</Filter>
     </ClInclude>
@@ -285,6 +273,33 @@
     <ClInclude Include="FP\YkFPRunner.hpp">
       <Filter>FP</Filter>
     </ClInclude>
+    <ClInclude Include="FP\kernels\YkFPCVPHelpers.cuh">
+      <Filter>FP\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\kernels\YkFPCVPLaunch.cuh">
+      <Filter>FP\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\YkFp.cuh">
+      <Filter>FP\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\YkFPCommon.cuh">
+      <Filter>FP\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="FP\YkFpTaskHandle.hpp">
+      <Filter>FP</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\IYkFdkReconstructor.hpp">
+      <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\IYkTask.hpp">
+      <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\YkTaskFactory.hpp">
+      <Filter>interface</Filter>
+    </ClInclude>
+    <ClInclude Include="interface\YkTaskTypes.hpp">
+      <Filter>interface</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="util\YkIoDump.cpp">
@@ -292,6 +307,9 @@
     </ClCompile>
     <ClCompile Include="global\YkLog.cpp">
       <Filter>global</Filter>
+    </ClCompile>
+    <ClCompile Include="interface\YkTaskFactory.cpp">
+      <Filter>interface</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

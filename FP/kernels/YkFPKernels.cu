@@ -3,6 +3,62 @@
 
 namespace YK {
     namespace Fp {
+
+        namespace detail {
+
+            struct DirX {
+                __host__ __device__ static float c0(float x, float y, float z) { return x; }
+                __host__ __device__ static float c1(float x, float y, float z) { return y; }
+                __host__ __device__ static float c2(float x, float y, float z) { return z; }
+                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Nx; }
+                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Ny; }
+                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Nz; }
+                __host__ __device__ static float vox0(float vx, float vy, float vz) { return vx; }
+                __host__ __device__ static float vox1(float vx, float vy, float vz) { return vy; }
+                __host__ __device__ static float vox2(float vx, float vy, float vz) { return vz; }
+                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_x; }
+                __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
+                {
+                    return tex3D<float>(tex, f0, f1, f2);
+                }
+            };
+
+            struct DirY {
+                __host__ __device__ static float c0(float x, float y, float z) { return y; }
+                __host__ __device__ static float c1(float x, float y, float z) { return x; }
+                __host__ __device__ static float c2(float x, float y, float z) { return z; }
+                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Ny; }
+                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Nx; }
+                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Nz; }
+                __host__ __device__ static float vox0(float vx, float vy, float vz) { return vy; }
+                __host__ __device__ static float vox1(float vx, float vy, float vz) { return vx; }
+                __host__ __device__ static float vox2(float vx, float vy, float vz) { return vz; }
+                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_y; }
+                __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
+                {
+                    return tex3D<float>(tex, f1, f0, f2);
+                }
+            };
+
+            struct DirZ {
+                __host__ __device__ static float c0(float x, float y, float z) { return z; }
+                __host__ __device__ static float c1(float x, float y, float z) { return x; }
+                __host__ __device__ static float c2(float x, float y, float z) { return y; }
+                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Nz; }
+                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Nx; }
+                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Ny; }
+                __host__ __device__ static float vox0(float vx, float vy, float vz) { return vz; }
+                __host__ __device__ static float vox1(float vx, float vy, float vz) { return vx; }
+                __host__ __device__ static float vox2(float vx, float vy, float vz) { return vy; }
+                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_z; }
+                __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
+                {
+                    return tex3D<float>(tex, f1, f2, f0);
+                }
+            };
+        }; // detail
+
+
         namespace detail {
 
             // ============================================================

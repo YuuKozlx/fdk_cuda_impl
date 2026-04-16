@@ -41,7 +41,7 @@
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
@@ -112,7 +112,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions);YKTASK_EXPORTS</PreprocessorDefinitions>
       <WarningLevel>Level3</WarningLevel>
       <LanguageStandard>stdcpp14</LanguageStandard>
       <AdditionalOptions>/Zc:__cplusplus  /utf-8 %(AdditionalOptions)</AdditionalOptions>
@@ -146,7 +146,7 @@
     <ClInclude Include="FDK\cuh\YkFDKParkerLaunch.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKPreWeightHelpers.cuh" />
     <ClInclude Include="FDK\cuh\YkFDKPreWeightLaunch.cuh" />
-    <ClInclude Include="FDK\YkFdkReconstructorHandle.hpp" />
+    <ClInclude Include="FDK\YkFdkTaskHandle.hpp" />
     <ClInclude Include="FDK\YkBackProjectProcessor.hpp" />
     <ClInclude Include="FDK\YkFDKBackProject.cuh" />
     <ClInclude Include="FDK\YkFDKFilter.cuh" />
@@ -175,6 +175,7 @@
     <ClInclude Include="FP\YkFPCommon.cuh" />
     <ClInclude Include="FP\YkFPGpuContext.hpp" />
     <ClInclude Include="FP\YkFPPipelineContext.hpp" />
+    <ClInclude Include="FP\YkFpTaskHandle.hpp" />
     <ClInclude Include="FP\YkFPRunner.hpp" />
     <ClInclude Include="global\IProcessor.hpp" />
     <ClInclude Include="global\YkCBCTParams.h" />
@@ -185,10 +186,10 @@
     <ClInclude Include="global\YkMacro.hpp" />
     <ClInclude Include="global\YkMem3d.hpp" />
     <ClInclude Include="global\YkWarpStrideCtx.cuh" />
-    <ClInclude Include="interface\IFdkReconstructor.hpp" />
-    <ClInclude Include="interface\IReconstructor.hpp" />
-    <ClInclude Include="interface\YkFdkFactory.hpp" />
-    <ClInclude Include="interface\YkFdkTypes.hpp" />
+    <ClInclude Include="interface\IYkFdkReconstructor.hpp" />
+    <ClInclude Include="interface\IYkTask.hpp" />
+    <ClInclude Include="interface\YkTaskFactory.hpp" />
+    <ClInclude Include="interface\YkTaskTypes.hpp" />
     <ClInclude Include="test\YKtestconv.hpp" />
     <ClInclude Include="test\Yktest_dataobject.hpp" />
     <ClInclude Include="test\Yktest_fdkflter.hpp" />
@@ -208,13 +209,13 @@
     <CudaCompile Include="FP\kernels\YkFPCVPKernels.cu" />
     <CudaCompile Include="FP\kernels\YkFPKernels.cu" />
     <CudaCompile Include="FP\kernels\YkFPSiddonKernel.cu" />
-    <CudaCompile Include="interface\YkFdkFactory.cu" />
     <CudaCompile Include="testmain.cu" />
     <CudaCompile Include="test_fp.cu" />
     <CudaCompile Include="test_fp1.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="global\YkLog.cpp" />
+    <ClCompile Include="interface\YkTaskFactory.cpp" />
     <ClCompile Include="util\YkIoDump.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

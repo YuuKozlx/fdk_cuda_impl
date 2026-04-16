@@ -252,7 +252,7 @@ namespace YK {
             const float n2 = f3_dot(n, n);
             if (n2 < 1e-24f) return false;
 
-            const float invn = rsqrtf(n2);
+            const float invn = 1 / sqrt(n2);
             const float3 det_n = make_float3(n.x * invn, n.y * invn, n.z * invn);
 
             // ── 求交参数 t：主射线与探测器平面的交点 ─────────────────────

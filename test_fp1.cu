@@ -934,7 +934,7 @@ namespace YK {
 namespace YK {
     namespace Fp {
         namespace RawTest {
-            using namespace YK::Fp::detail;
+            using namespace YK::Fp;
 
             // ----------------------------------------------------------------
             // 工具函数
@@ -1419,7 +1419,7 @@ namespace YK {
 namespace YK {
     namespace Fp {
         namespace CVPTest {
-            using namespace YK::Fp::detail;
+
 
             // ----------------------------------------------------------------
             // 工具函数
@@ -1710,7 +1710,7 @@ namespace YK {
 
 
 //
-int main() {
+int main_fp() {
     YK::Fp::SiddonTest::runSiddonTests();
     YK::Fp::RawTest::runRawTests();
     YK::Fp::CVPTest::runCVPTests();
