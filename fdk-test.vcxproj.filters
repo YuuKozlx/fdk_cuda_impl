@@ -288,9 +288,6 @@
     <ClInclude Include="FP\YkFpTaskHandle.hpp">
       <Filter>FP</Filter>
     </ClInclude>
-    <ClInclude Include="interface\IYkFdkReconstructor.hpp">
-      <Filter>interface</Filter>
-    </ClInclude>
     <ClInclude Include="interface\IYkTask.hpp">
       <Filter>interface</Filter>
     </ClInclude>

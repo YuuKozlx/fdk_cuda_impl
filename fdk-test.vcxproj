@@ -41,7 +41,7 @@
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
@@ -186,7 +186,6 @@
     <ClInclude Include="global\YkMacro.hpp" />
     <ClInclude Include="global\YkMem3d.hpp" />
     <ClInclude Include="global\YkWarpStrideCtx.cuh" />
-    <ClInclude Include="interface\IYkFdkReconstructor.hpp" />
     <ClInclude Include="interface\IYkTask.hpp" />
     <ClInclude Include="interface\YkTaskFactory.hpp" />
     <ClInclude Include="interface\YkTaskTypes.hpp" />

@@ -1,4 +1,4 @@
-
+ï»¿
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <device_launch_parameters.h>
@@ -16,111 +16,111 @@ namespace YK {
     namespace Filter {
 
         namespace detail {
-            // ¹«¹²£º´Ó blockDim/gridDim ÍÆµ¼ warp Éí·İ
-            // µ÷ÓÃ´¦Ö±½Ó inline£¬ÎŞº¯Êıµ÷ÓÃ¿ªÏú
-            // warp Ë÷Òı ¼ÆËã·¶Ê½
-            //    ©°©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©´
-            //    ©¦  µÚÒ»²ã£ºÉí·İÈ·¶¨£¨WARP_STRIDE_INIT£©   ©¦
-            //    ©¦  È·¶¨µ±Ç°Ïß³ÌÔÚÈ«¾ÖÖĞµÄ warp ±àºÅ       ©¦
-            //    ©¦  ÒÔ¼° warp ÄÚµÄ lane Î»ÖÃ               ©¦
-            //    ©¸©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼
-            //    ¡ı
-            //    ©°©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©´
-            //    ©¦  µÚ¶ş²ã£ºstride loop                    ©¦
-            //    ©¦  base = warp_global * 32                ©¦
-            //    ©¦  Ã¿ÂÖ²½½ø n_warps * 32                  ©¦
-            //    ©¦  ±£Ö¤È«¾ÖÊı¾İÎŞÒÅÂ©¡¢ÎŞÖØ¸´             ©¦
-            //    ©¸©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼
-            //    ¡ı
-            //    ©°©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©´
-            //    ©¦  µÚÈı²ã£ºlane ÄÚ¼ÆËã                    ©¦
-            //    ©¦  k = base + lane                        ©¦
-            //    ©¦  warp ÄÚ 32 ¸ö lane ·ÃÎÊÁ¬ĞøµØÖ·        ©¦
-            //    ©¦  ±£Ö¤ coalesced access                  ©¦
-            //    ©¸©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼
+            // å…¬å…±ï¼šä» blockDim/gridDim æ¨å¯¼ warp èº«ä»½
+            // è°ƒç”¨å¤„ç›´æ¥ inlineï¼Œæ— å‡½æ•°è°ƒç”¨å¼€é”€
+            // warp ç´¢å¼• è®¡ç®—èŒƒå¼
+            //    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+            //    â”‚  ç¬¬ä¸€å±‚ï¼šèº«ä»½ç¡®å®šï¼ˆWARP_STRIDE_INITï¼‰   â”‚
+            //    â”‚  ç¡®å®šå½“å‰çº¿ç¨‹åœ¨å…¨å±€ä¸­çš„ warp ç¼–å·       â”‚
+            //    â”‚  ä»¥åŠ warp å†…çš„ lane ä½ç½®               â”‚
+            //    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            //    â†“
+            //    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+            //    â”‚  ç¬¬äºŒå±‚ï¼šstride loop                    â”‚
+            //    â”‚  base = warp_global * 32                â”‚
+            //    â”‚  æ¯è½®æ­¥è¿› n_warps * 32                  â”‚
+            //    â”‚  ä¿è¯å…¨å±€æ•°æ®æ— é—æ¼ã€æ— é‡å¤             â”‚
+            //    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            //    â†“
+            //    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+            //    â”‚  ç¬¬ä¸‰å±‚ï¼šlane å†…è®¡ç®—                    â”‚
+            //    â”‚  k = base + lane                        â”‚
+            //    â”‚  warp å†… 32 ä¸ª lane è®¿é—®è¿ç»­åœ°å€        â”‚
+            //    â”‚  ä¿è¯ coalesced access                  â”‚
+            //    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 // =============================================================================
-// WARP STRIDE LOOP ·¶Ê½ËµÃ÷
+// WARP STRIDE LOOP èŒƒå¼è¯´æ˜
 // =============================================================================
 //
-// Ò»¡¢»ù±¾¸ÅÄî
+// ä¸€ã€åŸºæœ¬æ¦‚å¿µ
 //
-//   GPU Ïß³ÌµÄ×îĞ¡Ö´ĞĞµ¥Î»ÊÇ warp£¬Ã¿¸ö warp ¹Ì¶¨°üº¬ 32 ¸öÏß³Ì¡£
-//   warp ÄÚµÄÏß³Ì±àºÅ³ÆÎª lane£¬·¶Î§ [0, 31]¡£
+//   GPU çº¿ç¨‹çš„æœ€å°æ‰§è¡Œå•ä½æ˜¯ warpï¼Œæ¯ä¸ª warp å›ºå®šåŒ…å« 32 ä¸ªçº¿ç¨‹ã€‚
+//   warp å†…çš„çº¿ç¨‹ç¼–å·ç§°ä¸º laneï¼ŒèŒƒå›´ [0, 31]ã€‚
 //
 //   threadIdx.x:  0  1  2 ... 31 | 32 33 34 ... 63 | 64 65 ...
 //   lane:         0  1  2 ... 31 |  0  1  2 ... 31 |  0  1  ...
-//                 <©¤©¤©¤ warp 0 ©¤©¤> <©¤©¤©¤ warp 1 ©¤©¤©¤©¤> <©¤©¤ warp 2 ©¤©¤>
+//                 <â”€â”€â”€ warp 0 â”€â”€> <â”€â”€â”€ warp 1 â”€â”€â”€â”€> <â”€â”€ warp 2 â”€â”€>
 //
-// ¶ş¡¢WARP_STRIDE_INIT ºêÕ¹¿ªËµÃ÷
+// äºŒã€WARP_STRIDE_INIT å®å±•å¼€è¯´æ˜
 //
-//   lane          = threadIdx.x & 31 Ïàµ±ÓÚ¶Ô32È¡Óà
-//                   µ±Ç°Ïß³ÌÔÚ warp ÄÚµÄÎ»ÖÃ [0, 31]
-//                   ¾ö¶¨±¾Ïß³ÌÔÚÃ¿ÂÖÑ­»·ÖĞ·ÃÎÊÄÄ¸öÔªËØ
+//   lane          = threadIdx.x & 31 ç›¸å½“äºå¯¹32å–ä½™
+//                   å½“å‰çº¿ç¨‹åœ¨ warp å†…çš„ä½ç½® [0, 31]
+//                   å†³å®šæœ¬çº¿ç¨‹åœ¨æ¯è½®å¾ªç¯ä¸­è®¿é—®å“ªä¸ªå…ƒç´ 
 //
 //   warp_in_blk   = threadIdx.x >> 5
-//                   µ±Ç°Ïß³ÌËùÔÚ warp ÔÚ block ÄÚµÄ±àºÅ
+//                   å½“å‰çº¿ç¨‹æ‰€åœ¨ warp åœ¨ block å†…çš„ç¼–å·
 //
 //   warps_per_blk = blockDim.x >> 5
-//                   Ã¿¸ö block °üº¬µÄ warp ÊıÁ¿
-//                   blockDim.x = 256 Ê±¹Ì¶¨Îª 8
+//                   æ¯ä¸ª block åŒ…å«çš„ warp æ•°é‡
+//                   blockDim.x = 256 æ—¶å›ºå®šä¸º 8
 //
 //   warp_global   = blockIdx.x * warps_per_blk + warp_in_blk
-//                   µ±Ç° warp µÄÈ«¾ÖÎ¨Ò»±àºÅ
-//                   ×Ô¶¯½«¿é¼äÆ«ÒÆÄÉÈë¼ÆËã£¬ÎŞĞèÊÖ¶¯´¦ÀíÖ¸ÕëÆ«ÒÆ
-//                   grid=1 Ê±µÈ¼ÛÓÚ warp_in_blk
-//                   grid=2 Ê± block1 µÄ warp ±àºÅ´Ó 8 ¿ªÊ¼
+//                   å½“å‰ warp çš„å…¨å±€å”¯ä¸€ç¼–å·
+//                   è‡ªåŠ¨å°†å—é—´åç§»çº³å…¥è®¡ç®—ï¼Œæ— éœ€æ‰‹åŠ¨å¤„ç†æŒ‡é’ˆåç§»
+//                   grid=1 æ—¶ç­‰ä»·äº warp_in_blk
+//                   grid=2 æ—¶ block1 çš„ warp ç¼–å·ä» 8 å¼€å§‹
 //
 //   n_warps       = gridDim.x * warps_per_blk
-//                   È«¾Ö warp ×ÜÊı£¬×÷ÎªÃ¿ÂÖÑ­»·µÄ²½½øÁ¿
-//                   grid=1, block=256 Ê± = 8
-//                   grid=2, block=256 Ê± = 16
+//                   å…¨å±€ warp æ€»æ•°ï¼Œä½œä¸ºæ¯è½®å¾ªç¯çš„æ­¥è¿›é‡
+//                   grid=1, block=256 æ—¶ = 8
+//                   grid=2, block=256 æ—¶ = 16
 //
-// Èı¡¢stride loop ½á¹¹
+// ä¸‰ã€stride loop ç»“æ„
 //
 //   for (int base = warp_global * 32; base < n; base += n_warps * 32)
 //   {
 //       int k = base + lane;
-//       if (k < n) { /* ¼ÆËã */ }
+//       if (k < n) { /* è®¡ç®— */ }
 //   }
 //
-//   Ã¿ÂÖÑ­»·£º
-//     base        ¡ú µ±Ç° warp ¸ºÔğµÄÆğÊ¼ÏÂ±ê
-//     base + lane ¡ú ±¾Ïß³Ì¸ºÔğµÄÔªËØÏÂ±ê
-//     ²½½øÁ¿      ¡ú n_warps * 32£¬Ìø¹ıËùÓĞ warp ±¾ÂÖÒÑ¸²¸ÇµÄÇø¼ä
+//   æ¯è½®å¾ªç¯ï¼š
+//     base        â†’ å½“å‰ warp è´Ÿè´£çš„èµ·å§‹ä¸‹æ ‡
+//     base + lane â†’ æœ¬çº¿ç¨‹è´Ÿè´£çš„å…ƒç´ ä¸‹æ ‡
+//     æ­¥è¿›é‡      â†’ n_warps * 32ï¼Œè·³è¿‡æ‰€æœ‰ warp æœ¬è½®å·²è¦†ç›–çš„åŒºé—´
 //
-//   Ê¾Òâ£¨grid=1, block=256, n_warps=8, n=512£©£º
+//   ç¤ºæ„ï¼ˆgrid=1, block=256, n_warps=8, n=512ï¼‰ï¼š
 //
-//     µÚ1ÂÖ£º
-//       warp0 ¡ú k=[0,   31]
-//       warp1 ¡ú k=[32,  63]
+//     ç¬¬1è½®ï¼š
+//       warp0 â†’ k=[0,   31]
+//       warp1 â†’ k=[32,  63]
 //       ...
-//       warp7 ¡ú k=[224, 255]
+//       warp7 â†’ k=[224, 255]
 //
-//     µÚ2ÂÖ£¨base += 8*32 = 256£©£º
-//       warp0 ¡ú k=[256, 287]
-//       warp1 ¡ú k=[288, 319]
+//     ç¬¬2è½®ï¼ˆbase += 8*32 = 256ï¼‰ï¼š
+//       warp0 â†’ k=[256, 287]
+//       warp1 â†’ k=[288, 319]
 //       ...
-//       warp7 ¡ú k=[480, 511]   ¡ú È«²¿¸²¸Ç£¬Ñ­»·½áÊø
+//       warp7 â†’ k=[480, 511]   â†’ å…¨éƒ¨è¦†ç›–ï¼Œå¾ªç¯ç»“æŸ
 //
-// ËÄ¡¢Èı¸öºËĞÄĞÔÖÊ
+// å››ã€ä¸‰ä¸ªæ ¸å¿ƒæ€§è´¨
 //
 //   1. Coalesced Access
-//      warp ÄÚ 32 ¸ö lane Ã¿ÂÖ·ÃÎÊÁ¬ĞøµÄ 32 ¸öµØÖ·
-//      Ó²¼ş½« 32 ´Î·ÃÎÊºÏ²¢Îªµ¥´ÎÄÚ´æÊÂÎñ£¬´ø¿íÀûÓÃÂÊ×îÓÅ
+//      warp å†… 32 ä¸ª lane æ¯è½®è®¿é—®è¿ç»­çš„ 32 ä¸ªåœ°å€
+//      ç¡¬ä»¶å°† 32 æ¬¡è®¿é—®åˆå¹¶ä¸ºå•æ¬¡å†…å­˜äº‹åŠ¡ï¼Œå¸¦å®½åˆ©ç”¨ç‡æœ€ä¼˜
 //
-//   2. ÎŞÊı¾İ¾ºÕù
-//      warp_global È«¾ÖÎ¨Ò»£¬Ã¿¸ö warp ¸ºÔğ²»ÖØµşµÄÇø¼ä
+//   2. æ— æ•°æ®ç«äº‰
+//      warp_global å…¨å±€å”¯ä¸€ï¼Œæ¯ä¸ª warp è´Ÿè´£ä¸é‡å çš„åŒºé—´
 //
-//   3. ×ÔÊÊÓ¦ grid ´óĞ¡
-//      n_warps ÓÉ gridDim.x ¶¯Ì¬ÍÆµ¼
-//      launch ²àĞŞ¸Ä grid ´óĞ¡Ê± kernel ´úÂëÁãĞŞ¸Ä
-//      grid=1£ºÃ¿¸ö warp ¶àÅÜ¼¸ÂÖ£¬ÊÊºÏĞ¡Êı¾İ
-//      grid>1£ºwarp ²¢ĞĞ·ÖÌ¯£¬ÊÊºÏ´óÊı¾İ
+//   3. è‡ªé€‚åº” grid å¤§å°
+//      n_warps ç”± gridDim.x åŠ¨æ€æ¨å¯¼
+//      launch ä¾§ä¿®æ”¹ grid å¤§å°æ—¶ kernel ä»£ç é›¶ä¿®æ”¹
+//      grid=1ï¼šæ¯ä¸ª warp å¤šè·‘å‡ è½®ï¼Œé€‚åˆå°æ•°æ®
+//      grid>1ï¼šwarp å¹¶è¡Œåˆ†æ‘Šï¼Œé€‚åˆå¤§æ•°æ®
 //
-// Îå¡¢ÊÊÓÃ³¡¾°
+// äº”ã€é€‚ç”¨åœºæ™¯
 //
-//   ÊÊºÏ£º1D Á¬ĞøÊı×éµÄÖğÔªËØ²Ù×÷£¨Ìî³ä¡¢Ëõ·Å¡¢±ä»»£©
-//   ²»ÊÊºÏ£ºĞèÒª¿ç warp Í¨ĞÅ¡¢¶şÎ¬Ë÷Òı¡¢»ò·ÇÁ¬Ğø·Ã´æµÄ³¡¾°
+//   é€‚åˆï¼š1D è¿ç»­æ•°ç»„çš„é€å…ƒç´ æ“ä½œï¼ˆå¡«å……ã€ç¼©æ”¾ã€å˜æ¢ï¼‰
+//   ä¸é€‚åˆï¼šéœ€è¦è·¨ warp é€šä¿¡ã€äºŒç»´ç´¢å¼•ã€æˆ–éè¿ç»­è®¿å­˜çš„åœºæ™¯
 //
 // =============================================================================
 #define WARP_STRIDE_INIT()                                              \
@@ -130,14 +130,14 @@ namespace YK {
     const int warp_global = blockIdx.x * warps_per_blk + warp_in_blk; \
     const int n_warps     = gridDim.x  * warps_per_blk;
 
-            // (0) Ìî³ä³£ÊıÈ¨ÖØ ¡ª warp stride °æ
+            // (0) å¡«å……å¸¸æ•°æƒé‡ â€” warp stride ç‰ˆ
             static __global__ void kernel_fill_identity_weights(
                 float* __restrict__ w,
                 int n_complex, int N, float gain, bool bake_invN)
             {
                 WARP_STRIDE_INIT()
 
-                    // ÖµÈ«²¿ÏàÍ¬£¬host ¶ËÔ¤ËãºÃ£¬ËùÓĞÏß³ÌÖ»×öĞ´²Ù×÷
+                    // å€¼å…¨éƒ¨ç›¸åŒï¼Œhost ç«¯é¢„ç®—å¥½ï¼Œæ‰€æœ‰çº¿ç¨‹åªåšå†™æ“ä½œ
                     float val = gain * ((bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f);
 
                 for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
@@ -147,8 +147,8 @@ namespace YK {
                 }
             }
 
-            // (0b) Ô­µØÔöÒæËõ·Å
-            // ÓÃÍ¾£ºNone Çé¿öÏÂµÄ apply_window ÍË»¯Â·¾¶
+            // (0b) åŸåœ°å¢ç›Šç¼©æ”¾
+            // ç”¨é€”ï¼šNone æƒ…å†µä¸‹çš„ apply_window é€€åŒ–è·¯å¾„
             static __global__ void kernel_scale_inplace(
                 float* __restrict__ w,
                 int n_complex, float gain)
@@ -162,7 +162,7 @@ namespace YK {
                     }
             }
 
-            // (1) ÆµÓòÖ±½Ó¹¹½¨ÂË²¨È¨ÖØ ¡ª warp stride °æ
+            // (1) é¢‘åŸŸç›´æ¥æ„å»ºæ»¤æ³¢æƒé‡ â€” warp stride ç‰ˆ
             static __global__ void kernel_build_weights_analytic_freq(
                 float* __restrict__ w,
                 int n_complex, int N,
@@ -190,45 +190,98 @@ namespace YK {
                 }
             }
 
-            // (2) ¿ÕÓòÀëÉ¢ Ram-Lak ºË ¡ª warp stride °æ
+
+            // ----------------------------------------------------------------
+            // kernel_gen_spatial_rl_kernel_du1
+            //
+            // ç”Ÿæˆç¦»æ•£ Ram-Lak ç©ºåŸŸæ ¸ï¼Œé•¿åº¦ Nï¼ˆpaddedNï¼‰ï¼Œçº¯æ•°å­—ç¦»æ•£ï¼Œä¸å« duã€‚
+            //
+            // æ•°å­¦èƒŒæ™¯ï¼š
+            //   è¿ç»­ Ram-Lak æ ¸é‡‡æ ·å€¼ï¼ˆt = n*duï¼‰ï¼š
+            //     h(0)    = 1 / (4*du^2)
+            //     h(nå¥‡)  = -1 / (pi^2 * n^2 * du^2)
+            //
+            //   æ­£ç¡®ç¦»æ•£åŒ–éœ€ä¹˜ä»¥é»æ›¼æ­¥é•¿ duï¼ˆè¿ç»­ç§¯åˆ† â†’ ç¦»æ•£æ±‚å’Œï¼‰ï¼š
+            //     h[n] = h(n*du) * du
+            //     h[0]    = 1 / (4*du)
+            //     h[nå¥‡]  = -1 / (pi^2 * n^2 * du)
+            //
+            //   æœ¬å‡½æ•°çœç•¥äº† duï¼Œè¾“å‡ºçš„æ˜¯çº¯æ•°å­—æ ¸ï¼š
+            //     hÌƒ[0]    = 0.25          = h[0]  * du
+            //     hÌƒ[nå¥‡]  = -1/(pi^2*n^2) = h[nå¥‡]* du
+            //
+            //   å³ hÌƒ[n] = h[n] * duï¼Œæ¯”æ­£ç¡®ç¦»æ•£æ ¸å°‘ä¸€ä¸ª duã€‚
+            //
+            // ç¼ºå¤±è¡¥å¿ï¼š
+            //   FFT å·ç§¯æœ¬èº«ä¹Ÿç¼ºå°‘é»æ›¼æ­¥é•¿ duï¼ˆç¦»æ•£æ±‚å’Œ vs è¿ç»­ç§¯åˆ†ï¼‰ï¼Œ
+            //   å‡€ç¼ºå› å­ä¸º duï¼ˆä¸¤ä¸ª du æŠµæ¶ˆä¸€ä¸ªï¼‰ã€‚
+            //   ç”±è°ƒç”¨æ–¹åœ¨å·ç§¯åæ–½åŠ  postScale = 1/du è¡¥å¿ã€‚
+            //
+            // bake_invNï¼š
+            //   å°† 1/N çƒ˜ç„™è¿›æ ¸ï¼ŒæŠµæ¶ˆ cuFFT C2R IFFT çš„ N å€æ”¾å¤§ï¼Œ
+            //   é¿å…åœ¨æ»¤æ³¢åå•ç‹¬åšä¸€æ¬¡å…¨å±€ç¼©æ”¾ã€‚
+            // ----------------------------------------------------------------
+            // (2) ç©ºåŸŸç¦»æ•£ Ram-Lak æ ¸ â€” warp stride ç‰ˆ
             static __global__ void kernel_gen_spatial_rl_kernel_du1(
                 float* __restrict__ h, int N, bool bake_invN)
             {
+                // ----------------------------------------------------------------
+                // ç¦»æ•£ Ram-Lak ç©ºåŸŸæ ¸ï¼Œdu=1 ç‰¹åŒ–ç‰ˆæœ¬
+                //
+                // æ¨å¯¼ï¼š
+                //   è¿ç»­æ ¸é‡‡æ ·ï¼šh(n*du) = 1/(4*du^2)        n=0
+                //                        -1/(pi^2*n^2*du^2)  n å¥‡
+                //
+                //   ç¦»æ•£åŒ–ï¼ˆä¹˜é»æ›¼æ­¥é•¿ duï¼‰ï¼š
+                //     h[n] = h(n*du) * du = 1/(4*du)         n=0
+                //                          -1/(pi^2*n^2*du)   n å¥‡
+                //
+                //   ä»¤ du=1ï¼Œå¾—åˆ°çº¯æ•°å­—ç¦»æ•£æ ¸ï¼š
+                //     h[n] = 0.25                             n=0
+                //     h[n] = -1/(pi^2*n^2)                   n å¥‡
+                //     h[n] = 0                                n å¶, nâ‰ 0
+                //
+                // ä½¿ç”¨æ–¹é¡»çŸ¥ï¼š
+                //   å®é™…æ¢æµ‹å™¨é—´è·ä¸º du_real != 1 æ—¶ï¼Œå·ç§¯ç»“æœå°‘ä¸€ä¸ª du_real å› å­ï¼Œ
+                //   è°ƒç”¨æ–¹éœ€åœ¨æ»¤æ³¢åæ–½åŠ  postScale = 1/du_real è¡¥å¿ã€‚
+                // ----------------------------------------------------------------
+                constexpr float du = 1.f;   // æœ¬æ ¸ä»¥ du=1 ä¸ºå•ä½ï¼Œéçœç•¥
+                constexpr float pi = 3.14159265358979323846f;
+
+                float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
+
                 WARP_STRIDE_INIT()
 
-                    float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
-                const float pi = 3.14159265358979323846f;
+                    for (int base = warp_global * 32; base < N; base += n_warps * 32)
+                    {
+                        int u = base + lane;
+                        if (u >= N) break;
 
-                for (int base = warp_global * 32; base < N; base += n_warps * 32)
-                {
-                    int u = base + lane;
-                    if (u >= N) break;
+                        int n = (u <= N / 2) ? u : (u - N);
+                        int an = (n < 0) ? -n : n;
 
-                    int n = (u <= N / 2) ? u : (u - N);
-                    int an = (n < 0) ? -n : n;
+                        float val = 0.0f;
+                        if (n == 0) {
+                            val = 1.0f / (4.0f * du);                      // = 0.25
+                        }
+                        else if (an & 1) {
+                            float fn = (float)n;
+                            val = -1.0f / (pi * pi * fn * fn * du);        // = -1/(pi^2*n^2)
+                        }
 
-                    float val = 0.0f;
-                    if (n == 0) {
-                        val = 0.25f;
+                        h[u] = val * invN;
                     }
-                    else if (an & 1) {
-                        float fn = (float)n;
-                        val = -1.0f / (pi * pi * fn * fn);
-                    }
-
-                    h[u] = val * invN;
-                }
             }
 
-            // (3) ´Ó FFT(RL) ÌáÈ¡ÊµÊıÈ¨ÖØ ¡ª warp stride °æ
+            // (3) ä» FFT(RL) æå–å®æ•°æƒé‡ â€” warp stride ç‰ˆ
             static __global__ void kernel_extract_weights_from_fft(
                 const cufftComplex* __restrict__ src,
                 float* __restrict__ dst,
-                int n_complex, int mode, bool force_dc_zero)
+                int n_complex, ERampExtractMode mode, bool force_dc_zero)
             {
                 WARP_STRIDE_INIT()
 
-                    // ÓÃ float2 ¶Á±£Ö¤ 64-bit LD£¬Óë cufftComplex ÄÚ´æ²¼¾ÖÍêÈ«Ò»ÖÂ
+                    // ç”¨ float2 è¯»ä¿è¯ 64-bit LDï¼Œä¸ cufftComplex å†…å­˜å¸ƒå±€å®Œå…¨ä¸€è‡´
                     const float2* src2 = reinterpret_cast<const float2*>(src);
 
                 for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
@@ -237,14 +290,14 @@ namespace YK {
                     if (k >= n_complex) break;
 
                     float2 c = src2[k];                             // 64-bit LD
-                    float  v = (mode == 1) ? hypotf(c.x, c.y) : c.x;
+                    float  v = (mode == ERampExtractMode::Magnitude) ? hypotf(c.x, c.y) : c.x;
 
                     if (force_dc_zero && k == 0) v = 0.0f;
                     dst[k] = v;
                 }
             }
 
-            // (4) Ô­µØÊ©¼Ó´°º¯Êı ¡ª warp stride °æ
+            // (4) åŸåœ°æ–½åŠ çª—å‡½æ•° â€” warp stride ç‰ˆ
             static __global__ void kernel_apply_window_to_weights_inplace(
                 float* __restrict__ w,
                 int n_complex, int N, SFilterKernelDesc desc)
@@ -334,7 +387,7 @@ namespace YK {
             dim3 block(policy.block_threads, 1, 1);
             dim3 grid(2, 1, 1);
             detail::kernel_extract_weights_from_fft << <grid, block, 0, stream >> > (
-                d_src, d_dst, n_complex, (int)mode, force_dc_zero);
+                d_src, d_dst, n_complex, mode, force_dc_zero);
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);
         }
@@ -359,6 +412,26 @@ namespace YK {
             return (cudaGetLastError() == cudaSuccess);
         }
 
+        void flt_launch_kernel_scale_inplace(
+            float* data, int n, float scale,
+            cudaStream_t stream)
+        {
+            int sm_count = 0;
+            int device = 0;
+            cudaGetDevice(&device);
+            cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device);
+
+            const int warps_per_blk = 256 / 32;
+            const int total_warps = (n + 31) / 32;
+            const int blocks_need = (total_warps + warps_per_blk - 1) / warps_per_blk;
+            const int blocks = std::min(blocks_need, sm_count * 2);
+            dim3 block(256, 1, 1);
+            dim3 grid(blocks, 1, 1);
+            detail::kernel_scale_inplace << <grid, block, 0, stream >> > (data, n, scale);
+        }
+
+
+
     }
 }
 
@@ -367,7 +440,7 @@ namespace YK {
 //
 //
 //
-//        namespace detail { //·ÇwarpÊµÏÖ
+//        namespace detail { //éwarpå®ç°
 //
 //            // (0) Identity weights: w[k] = gain * (bake_invN ? 1/N : 1)
 //            static __global__ void kernel_fill_identity_weights(

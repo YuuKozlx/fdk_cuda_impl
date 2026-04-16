@@ -141,7 +141,9 @@ namespace YK {
         void uploadCoeffsChunk(const FdkAffineCoeff* d_src, int K, cudaStream_t stream) const
         {
             Fdk::bp_uploadCoeffsChunk(d_src, K, stream);
+#ifdef YK_DEBUG
             verifyGCCoeffs(K);
+#endif
         }
 
         void verifyGCCoeffs(int K) const

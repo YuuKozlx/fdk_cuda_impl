@@ -53,6 +53,9 @@ namespace YK {
             cudaStream_t stream);
 
 
+        void flt_launch_kernel_scale_inplace(
+            float* data, int n, float scale,
+            cudaStream_t stream);
 
 
     } // namespace Filter

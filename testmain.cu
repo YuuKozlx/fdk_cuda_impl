@@ -3,22 +3,23 @@
 #include <cuda_runtime.h>
 #include <vector>
 
-#include "global/YkGlobals.h"
-#include "global/YkLog.h"
 #include "FDK/YkFdkReconstructor.hpp"
 #include "FDK/YkVecGeo.hpp"
+#include "global/YkGlobals.h"
+#include "global/YkLog.h"
 
 
 
-#include "test/Yktest_fft.hpp"
-#include "test/Yktest_fdkflter.hpp"
 #include "global/YkMem3d.hpp"
-#include "test/Yktest_mem3d.hpp"
 #include "test/Yktest_dataobject.hpp"
-#include "util/YkVecOperation.hpp"
+#include "test/Yktest_fdkflter.hpp"
+#include "test/Yktest_fft.hpp"
+#include "test/Yktest_mem3d.hpp"
 #include "util/YkCudaTimer.hpp"
+#include "util/YkVecOperation.hpp"
 
 
+#include <fstream>
 #include "FP/YkFPRunner.hpp"
 
 
@@ -76,9 +77,9 @@ int main_fdk() {
 
 
     params.SID = 500.0f, params.SDD = 1000.0f;
-    params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_x_mm = 0.25f;
-    params.vox_y_mm = 0.25f;
-    params.vox_z_mm = 0.25f;
+    params.du_mm = 0.25f, params.dv_mm = 0.25f, params.vox_x_mm = 0.1f;
+    params.vox_y_mm = 0.1f;
+    params.vox_z_mm = 0.1f;
 
 
     params.offsetU_mm = 0 * params.du_mm;
@@ -104,7 +105,6 @@ int main_fdk() {
 
     // 调用
     auto dump = [](int a, const char* tag, float* d_buf, size_t n) {
-        // 只看第0帧
         if (a != 0) return;
 
         std::vector<float> h(n);
@@ -118,6 +118,15 @@ int main_fdk() {
         }
         printf("[dump][a=%d][%s] n=%zu min=%.4f max=%.4f mean=%.6f\n",
             a, tag, n, minv, maxv, sum / (float)n);
+
+        // 保存为 raw，文件名格式：dump_a0_<tag>.raw
+        char path[256];
+        snprintf(path, sizeof(path), "dump_a%d_%s.raw", a, tag);
+        std::ofstream f(path, std::ios::binary);
+        if (f)
+            f.write(reinterpret_cast<const char*>(h.data()), n * sizeof(float));
+        else
+            fprintf(stderr, "[dump] cannot save %s\n", path);
         };
 
     MemoryController ctrl;
@@ -351,8 +360,8 @@ static void test_fp_runner(cudaStream_t stream)
     printf("\n[FpReconstructor] test\n");
 
     constexpr int   Nx = 512, Ny = 512, Nz = 400;
-    constexpr float vox_xy = 0.25f, vox_z = 0.25f;
-    constexpr int   Na = 360, Nu = 1024, Nv = 1024;
+    constexpr float vox_xy = 0.1f, vox_z = 0.1f;
+    constexpr int   Na = 480, Nu = 1024, Nv = 1024;
     constexpr float du = 0.25f, dv = 0.25f;
     constexpr float SID = 500.f, SDD = 1000.f;
 
@@ -374,7 +383,7 @@ static void test_fp_runner(cudaStream_t stream)
 
     params.angle_list.resize(Na);
     for (int i = 0; i < Na; ++i)
-        params.angle_list[i] = CUDA_PI * 3.f / 2.f + 2.f * CUDA_PI * i / Na;
+        params.angle_list[i] = 2.f * CUDA_PI * i / 720;
 
     // 加载体积
     std::vector<float> h_vol((size_t)Nx * Ny * Nz);
@@ -435,7 +444,7 @@ int main() {
     Logger::instance().set_level(LogLevel::Debug);
     //YKTest::testFFT();
     main_fdk();
-    test_fp_runner(0);
+    //test_fp_runner(0);
     //forward_project_example();
     //YKTest::testFilterWeightsSpectra_RamLak();
     //YKTest::test_gpumem3d();

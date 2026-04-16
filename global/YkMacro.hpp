@@ -37,7 +37,7 @@
 } while(0)
 #endif
 
-#define YK_DEBUG
+//#define YK_DEBUG
 
 #ifndef YK_CUDA_KERNEL_CHECK
 #ifdef YK_DEBUG
