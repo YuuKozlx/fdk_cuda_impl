@@ -93,17 +93,10 @@ static void test_fp_task()
         (size_t)Nx * Ny * Nz)) return;
     printf("  volume loaded\n");
 
-    void* d_vol = nullptr;
-    cudaMalloc(&d_vol, h_vol.size() * sizeof(float));
-    cudaMemcpy(d_vol, h_vol.data(),
-        h_vol.size() * sizeof(float), cudaMemcpyHostToDevice);
-    h_vol.clear();
 
     // --- 分配输出 ---
     const size_t sino_elems = (size_t)Na * Nv * Nu;
-    void* d_sino = nullptr;
-    cudaMalloc(&d_sino, sino_elems * sizeof(float));
-    cudaMemset(d_sino, 0, sino_elems * sizeof(float));
+
 
     // --- 构建角度 ---
     std::vector<float> angles(Na);
@@ -133,10 +126,14 @@ static void test_fp_task()
     }
     printf("  init OK\n");
 
+
+    std::vector<float> h_sino(sino_elems);
     // --- run ---
-    YK::TaskBatchParams batchP{};
-    batchP.d_vol_in = (float*)d_vol;
-    batchP.d_sino_out = (float*)d_sino;
+    YK::FpBatchParams batchP{};
+    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // 输入体积使用 CPU 内存，测试接口的自动管理功能
+    batchP.sino_mode = YK::EBufferMode::HostPtr;    // 输出正弦图使用 GPU 内存，测试不同模式混用
+    batchP.h_vol_in = h_vol.data();
+    batchP.h_sino_out = h_sino.data();
     batchP.h_angles = angles.data();
     batchP.K = Na;
     batchP.clearOut = true;
@@ -149,9 +146,6 @@ static void test_fp_task()
     printf("  run OK\n");
 
     // --- 回读统计 ---
-    std::vector<float> h_sino(sino_elems);
-    cudaMemcpy(h_sino.data(), d_sino,
-        sino_elems * sizeof(float), cudaMemcpyDeviceToHost);
     printStats(h_sino, "fp sino");
 
     saveRaw("dll_test1_fp_sino.raw", h_sino.data(), sino_elems);
@@ -159,8 +153,7 @@ static void test_fp_task()
 
     // --- 清理 ---
     YK::TaskFactory::destroy(task);
-    cudaFree(d_vol);
-    cudaFree(d_sino);
+
 }
 
 // ----------------------------------------------------------------
@@ -214,10 +207,13 @@ static void test_fdk_task()
     }
     printf("  init OK\n");
 
+
+    std::vector<float> h_vol((size_t)Nx * Ny * Nz);
     // --- run ---
-    YK::TaskBatchParams batchP{};
+    YK::FdkBatchParams batchP{};
+    batchP.vol_mode = YK::EBufferMode::HostPtr;   // 输出体积使用 CPU 内存，测试接口的自动管理功能
     batchP.h_proj = h_sino.data();
-    batchP.d_vol_out = (float*)d_vol;
+    batchP.h_vol_out = h_vol.data();
     batchP.h_angles = angles.data();
     batchP.K = Na;
     batchP.clearOut = true;
@@ -258,14 +254,98 @@ static void test_fdk_task()
     }
     printf("  run OK\n");
 
+
+    saveRaw("dll_test2_fdk_vol.raw", h_vol.data(), h_vol.size());
+    printf("  saved: dll_test2_fdk_vol.raw\n");
+
+    // --- 清理 ---
+    YK::TaskFactory::destroy(task);
+}
+
+static void test_fdk_task_online()
+{
+    printf("\n[DLL Test] FDK online chunked reconstruction\n");
+
+    constexpr int Na = 360, Nu = 1024, Nv = 1024;
+    constexpr int Nx = 512, Ny = 512, Nz = 400;
+    constexpr int ChunkSize = 32;  // 每次 feed 的视图数，Na 的因数
+
+    // --- 加载正弦图 ---
+    std::vector<float> h_sino;
+    if (!loadRaw("dll_test1_fp_sino.raw", h_sino, (size_t)Na * Nv * Nu)) {
+        fprintf(stderr, "  sino not found, run test1 first\n");
+        return;
+    }
+    printf("  sino loaded\n");
+    printStats(h_sino, "input sino");
+
+    // --- 分配输出体积 ---
+    void* d_vol = nullptr;
+    cudaMalloc(&d_vol, (size_t)Nx * Ny * Nz * sizeof(float));
+
+    // --- 构建角度 ---
+    std::vector<float> angles(Na);
+    for (int i = 0; i < Na; ++i)
+        angles[i] = 3.14159265f * 1.5f + 2.f * 3.14159265f * i / Na;
+
+    // --- 创建任务 ---
+    YK::ITask* task = YK::TaskFactory::create(YK::ETask::FDK);
+    if (!task) { fprintf(stderr, "  create failed\n"); return; }
+
+    // --- init ---
+    YK::SFdkAlgoParams fdkAlgo{};
+    fdkAlgo.filter = YK::EFdkFilter::RamLak;
+
+    YK::TaskInitParams initP{};
+    initP.task = YK::ETask::FDK;
+    initP.scan = makeScanParams();
+    initP.volume = makeVolumeParams();
+    initP.algoParams = &fdkAlgo;
+    initP.algoParamSize = sizeof(fdkAlgo);
+
+    if (!task->init(initP)) {
+        fprintf(stderr, "  init failed\n");
+        YK::TaskFactory::destroy(task);
+        return;
+    }
+    printf("  init OK\n");
+
+    // --- 分包 run ---
+    const size_t view_elems = (size_t)Nu * Nv;
+    int fed = 0;
+
+    for (int base = 0; base < Na; base += ChunkSize) {
+        const int K = std::min(ChunkSize, Na - base);
+
+        YK::FdkBatchParams batchP{};
+        batchP.vol_mode = YK::EBufferMode::DevicePtr;   // 输出体积使用 GPU 内存，测试接口的外部管理功能
+        batchP.h_proj = h_sino.data() + (size_t)base * view_elems;
+        batchP.d_vol_out = (float*)d_vol;
+        batchP.h_angles = angles.data() + base;
+        batchP.K = K;
+        batchP.clearOut = (base == 0);    // 只有第一包清零
+
+        if (!task->run(batchP)) {
+            fprintf(stderr, "  run failed at base=%d\n", base);
+            YK::TaskFactory::destroy(task);
+            cudaFree(d_vol);
+            return;
+        }
+
+        fed += K;
+        printf("  fed %d / %d views\n", fed, Na);
+    }
+
+    printf("  all chunks done\n");
+
     // --- 回读统计 ---
     std::vector<float> h_vol((size_t)Nx * Ny * Nz);
     cudaMemcpy(h_vol.data(), d_vol,
         h_vol.size() * sizeof(float), cudaMemcpyDeviceToHost);
     printStats(h_vol, "recon vol");
 
-    saveRaw("dll_test2_fdk_vol.raw", h_vol.data(), h_vol.size());
-    printf("  saved: dll_test2_fdk_vol.raw\n");
+    saveRaw("dll_test2_fdk_vol_online.raw", h_vol.data(), h_vol.size());
+    printf("  saved: dll_test2_fdk_vol_online.raw\n");
 
     // --- 清理 ---
     YK::TaskFactory::destroy(task);
@@ -283,14 +363,10 @@ static void test_reset()
     constexpr int Nx = 64, Ny = 64, Nz = 64;
 
     std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
-    void* d_vol = nullptr;
-    cudaMalloc(&d_vol, h_vol.size() * sizeof(float));
-    cudaMemcpy(d_vol, h_vol.data(),
-        h_vol.size() * sizeof(float), cudaMemcpyHostToDevice);
+
 
     const size_t sino_elems = (size_t)Na * Nv * Nu;
-    void* d_sino = nullptr;
-    cudaMalloc(&d_sino, sino_elems * sizeof(float));
+
 
     std::vector<float> angles(Na);
     for (int i = 0; i < Na; ++i)
@@ -303,6 +379,7 @@ static void test_reset()
     scan.du_mm = 1.f; scan.dv_mm = 1.f;
     scan.SOD_mm = 500.f; scan.SDD_mm = 1000.f;
     scan.scanRangeRad = 2.f * 3.14159265f;
+    scan.NAng = Na;
 
     YK::SVolumeParams vol{};
     vol.Nx = Nx; vol.Ny = Ny; vol.Nz = Nz;
@@ -314,28 +391,31 @@ static void test_reset()
     initP.volume = vol;
     task->init(initP);
 
-    YK::TaskBatchParams batchP{};
-    batchP.d_vol_in = (float*)d_vol;
-    batchP.d_sino_out = (float*)d_sino;
+    std::vector<float> h_sino1(sino_elems);
+    std::vector<float> h_sino2(sino_elems);
+
+    YK::FpBatchParams batchP{};
+    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // 输入体积使用 CPU 内存，测试接口的自动管理功能
+    batchP.h_vol_in = h_vol.data();
+    batchP.sino_mode = YK::EBufferMode::HostPtr;    // 输出正弦图使用 GPU 内存，测试不同模式混用
+    batchP.h_sino_out = h_sino1.data();
     batchP.h_angles = angles.data();
     batchP.K = Na;
     batchP.clearOut = true;
 
     // 第一次 run
-    cudaMemset(d_sino, 0, sino_elems * sizeof(float));
+
     task->run(batchP);
-    std::vector<float> h_sino1(sino_elems);
-    cudaMemcpy(h_sino1.data(), d_sino,
-        sino_elems * sizeof(float), cudaMemcpyDeviceToHost);
+
+
     printStats(h_sino1, "run1");
 
     // reset 后第二次 run
-    //task->reset();
-    cudaMemset(d_sino, 0, sino_elems * sizeof(float));
+    batchP.h_sino_out = h_sino2.data();
+    task->reset();
+
     task->run(batchP);
-    std::vector<float> h_sino2(sino_elems);
-    cudaMemcpy(h_sino2.data(), d_sino,
-        sino_elems * sizeof(float), cudaMemcpyDeviceToHost);
+
     printStats(h_sino2, "run2");
 
     // 两次结果应完全一致
@@ -346,8 +426,7 @@ static void test_reset()
         maxDiff, maxDiff < 1e-4 ? "OK" : "MISMATCH");
 
     YK::TaskFactory::destroy(task);
-    cudaFree(d_vol);
-    cudaFree(d_sino);
+
 }
 
 // ----------------------------------------------------------------
@@ -357,10 +436,10 @@ int main()
 {
     printf("=== TaskFactory DLL Interface Test ===\n");
 
-    test_fp_task();
-    test_fdk_task();
+    //test_fp_task();
+    //test_fdk_task();
+    //test_fdk_task_online();
     test_reset();
-
     cudaDeviceReset();
     printf("\n=== all done ===\n");
     return 0;

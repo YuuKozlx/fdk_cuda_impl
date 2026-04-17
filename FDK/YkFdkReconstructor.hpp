@@ -66,10 +66,10 @@ namespace YK {
         // gpu_ctx_ 按 iPAngTotal 分配 geo/gv/coeffs 容量，
         // proj buffer 仍按 Kchunk 分配。
         // ----------------------------------------------------------------
-        bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream)
+        bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream, int device_id = 0)
         {
             Kchunk = std::min(Kchunk, kMaxChunkAng); // clip Kchunk 上限
-            YK_LOGC("Kchunk is reset to {} (max {})", Kchunk, kMaxChunkAng);
+            YK_LOGD("Kchunk is reset to {} (max {})", Kchunk, kMaxChunkAng);
 
             Kchunk_ = Kchunk;
             bParker_ = params.bShortScan;
@@ -150,7 +150,7 @@ namespace YK {
                 // iPAng 字段传 iPA_total，让 geo buffer 按总视图数分配
                 SProjDims dims{ iPU, iPV, iPA_total };
                 // 空 geo/gv，只分配不上传
-                gpu_ctx_.init(dims, iPA_total, stream);
+                gpu_ctx_.init(dims, iPA_total, stream, device_id);
             }
 
             is_initialized_ = true;

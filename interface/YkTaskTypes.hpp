@@ -1,6 +1,10 @@
 // YkTaskTypes.hpp
 #pragma once
 #include <cstdint>
+#include <cuda_runtime_api.h>
+#include <vector>
+
+
 
 namespace YK {
 
@@ -24,6 +28,11 @@ namespace YK {
         Hann = 4,
         Hamming = 5,
         Blackman = 6,
+    };
+
+    enum class EBufferMode {
+        DevicePtr,  // 外部提供 GPU 指针
+        HostPtr,    // 外部提供 CPU 指针，内部自动管理回拷/预上传
     };
 
     enum class EFpStepSample : int32_t { x1 = 1, x2 = 2, x4 = 4 };
@@ -82,26 +91,74 @@ namespace YK {
         int   subsets = 1;
     };
 
+
+    struct GPURes {
+        std::vector<int> deviceIds;
+
+        // 自动探测所有可用 GPU
+        static GPURes autoDetect()
+        {
+            int count = 0;
+            cudaGetDeviceCount(&count);
+            GPURes res;
+            for (int i = 0; i < count; ++i)
+                res.deviceIds.push_back(i);
+            return res;
+        }
+
+        // 手动指定
+        static GPURes fromList(std::initializer_list<int> ids)
+        {
+            GPURes res;
+            res.deviceIds.assign(ids);
+            return res;
+        }
+
+        int count()              const { return (int)deviceIds.size(); }
+        int operator[](int i)    const { return deviceIds[i]; }
+        bool empty()             const { return deviceIds.empty(); }
+    };
+
     // ================================================================
     // 接口参数
     // ================================================================
-
     struct TaskInitParams {
         ETask     task = ETask::FDK;
         SScanParams   scan;
         SVolumeParams volume;
         const void* algoParams = nullptr;
         size_t        algoParamSize = 0;
+        GPURes  gpu = GPURes::fromList({ 0 });  // 默认用卡 0
     };
 
-    struct TaskBatchParams {
-        const float* h_proj = nullptr;
-        const float* d_vol_in = nullptr;
-        float* d_vol_out = nullptr;
-        float* d_sino_out = nullptr;
+    // 公共基类
+    struct BatchParams {
         const float* h_angles = nullptr;
         int          K = 0;
         bool         clearOut = true;
+    };
+
+    // FDK 重建参数
+    struct FdkBatchParams : BatchParams {
+        // 投影输入（仅 CPU）
+        const float* h_proj = nullptr;
+
+        // 体数据输出
+        float* d_vol_out = nullptr;
+        float* h_vol_out = nullptr;
+        EBufferMode vol_mode = EBufferMode::DevicePtr;
+    };
+
+    struct FpBatchParams : BatchParams {
+        // 体数据输入
+        const float* d_vol_in = nullptr;
+        const float* h_vol_in = nullptr;
+        EBufferMode  vol_in_mode = EBufferMode::DevicePtr;
+
+        // 正弦图输出
+        float* d_sino_out = nullptr;
+        float* h_sino_out = nullptr;
+        EBufferMode sino_mode = EBufferMode::DevicePtr;
     };
 
     using TaskDumpCallback = void(*)(

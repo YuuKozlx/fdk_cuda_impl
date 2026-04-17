@@ -17,6 +17,11 @@ namespace YK {
     //   ITask 的 FDK 重建实现
     //   stream 生命周期：init() 创建，release() / 析构时销毁
     //   Kchunk：内部固定为 kMaxChunkAng，外部通过 TaskBatchParams.K 控制分批
+    //
+    //   输出模式（vol_mode / sino_mode）：
+    //     DevicePtr — 外部提供 GPU 指针，直接写入，无回拷
+    //     HostPtr   — 外部提供 CPU 指针，内部分配显存暂存，
+    //                 最后一包（totalReceived >= iPAngTotal）时自动回拷
     // ----------------------------------------------------------------
     class FdkTaskHandle : public ITask {
     public:
@@ -37,10 +42,14 @@ namespace YK {
                 YK_LOGE("[FdkTaskHandle] init: wrong task type {}\n", (int)p.task);
                 return false;
             }
+            if (p.gpu.empty()) {
+                YK_LOGE("[FdkTaskHandle] init: no GPU specified.\n");
+                return false;
+            }
+            device_id_ = p.gpu[0];
 
             SCBCTParams cp = mapParams(p);
 
-            // 解析 FDK 专属参数
             if (p.algoParams && p.algoParamSize >= sizeof(SFdkAlgoParams)) {
                 const auto& ap = *static_cast<const SFdkAlgoParams*>(p.algoParams);
                 cp.desc = SFilterKernelDesc{ mapFilter(ap.filter) };
@@ -51,7 +60,7 @@ namespace YK {
 
             YK_CUDA_CHECK(cudaStreamCreate(&stream_));
 
-            if (!fp_.init(cp, kMaxChunkAng, stream_)) {
+            if (!fdk_.init(cp, kMaxChunkAng, stream_, device_id_)) {
                 cudaStreamDestroy(stream_);
                 stream_ = nullptr;
                 return false;
@@ -63,50 +72,21 @@ namespace YK {
         }
 
         // ----------------------------------------------------------------
-        // run
-        // K 可以小于 kMaxChunkAng（尾包），内部自动处理
-        // ----------------------------------------------------------------
-        bool run(
-            const TaskBatchParams& p,
-            TaskDumpCallback       dump_cb = nullptr,
-            void* userdata = nullptr) override
-        {
-            if (!is_initialized_) {
-                fprintf(stderr, "[FdkTaskHandle] run: not initialized.\n");
-                return false;
-            }
-            if (!p.h_proj || !p.h_angles || p.K <= 0 || !p.d_vol_out) {
-                fprintf(stderr, "[FdkTaskHandle] run: invalid params.\n");
-                return false;
-            }
-
-            SCBCTParams cp = params_;
-            cp.iPAng = p.K;
-            cp.angle_list.assign(p.h_angles, p.h_angles + p.K);
-
-            if (dump_cb) {
-                auto onDump = [&](int idx, const char* stage, float* d, size_t n) {
-                    dump_cb(userdata, idx, stage, d, n);
-                    };
-                return fp_.feed(p.h_proj, cp, stream_,
-                    p.d_vol_out, p.clearOut, onDump);
-            }
-
-            return fp_.feed(p.h_proj, cp, stream_,
-                p.d_vol_out, p.clearOut);
-        }
-
-        // ----------------------------------------------------------------
         // reset / release
         // ----------------------------------------------------------------
         void reset() override
         {
-            fp_.reset();
+            fdk_.reset();
+            h_vol_pending_ = nullptr;
         }
 
         void release() override
         {
-            fp_.release();
+            fdk_.release();
+
+
+            h_vol_pending_ = nullptr;
+            vol_size_bytes_ = 0;
 
             if (stream_) {
                 cudaStreamSynchronize(stream_);
@@ -121,18 +101,132 @@ namespace YK {
         // ----------------------------------------------------------------
         // 状态查询
         // ----------------------------------------------------------------
-        bool      isInitialized() const override { return is_initialized_; }
+        bool  isInitialized() const override { return is_initialized_; }
         ETask task()          const override { return ETask::FDK; }
-        int       totalReceived() const { return fp_.totalReceived(); }
+        int   totalReceived() const { return fdk_.totalReceived(); }
+
+        bool run(
+            const FdkBatchParams& p,
+            TaskDumpCallback       dump_cb = nullptr,
+            void* userdata = nullptr) override
+        {
+            if (!is_initialized_) {
+                YK_LOGE("[FdkTaskHandle] run: not initialized.");
+                return false;
+            }
+            if (!p.h_proj || !p.h_angles || p.K <= 0) {
+                YK_LOGE("[FdkTaskHandle] run: invalid params.");
+                return false;
+            }
+
+            switch (p.vol_mode) {
+            case EBufferMode::DevicePtr:
+                return runDevice_(p, dump_cb, userdata);
+            case EBufferMode::HostPtr:
+                return runHost_(p, dump_cb, userdata);
+            default:
+                YK_LOGE("[FdkTaskHandle] run: unknown vol_mode.");
+                return false;
+            }
+        }
+
 
     private:
-        FdkReconstructor fp_;
+
+        bool runDevice_(
+            const FdkBatchParams& p,
+            TaskDumpCallback       dump_cb,
+            void* userdata)
+        {
+            if (!p.d_vol_out) {
+                YK_LOGE("[FdkTaskHandle] runDevice_: d_vol_out is null.\n");
+                return false;
+            }
+
+            SCBCTParams cp = buildCp_(p);
+            return feedImpl_(p.h_proj, cp, p.d_vol_out, p.clearOut, dump_cb, userdata);
+        }
+
+        bool runHost_(
+            const FdkBatchParams& p,
+            TaskDumpCallback       dump_cb,
+            void* userdata)
+        {
+            if (!p.h_vol_out) {
+                fprintf(stderr, "[FdkTaskHandle] runHost_: h_vol_out is null.\n");
+                return false;
+            }
+
+            // 懒分配内部显存
+            if (!d_vol_internal_) {
+                Mem::MemoryController mc;
+                d_vol_internal_ = mc.allocateDevice3D<float>(
+                    params_.iVX, params_.iVY, params_.iVZ, 0, true);
+
+            }
+
+            SCBCTParams cp = buildCp_(p);
+            if (!feedImpl_(p.h_proj, cp, d_vol_internal_.data(), p.clearOut,
+                dump_cb, userdata))
+                return false;
+
+            // 最后一包时回拷
+            const bool is_last = (fdk_.totalReceived() >= params_.iPAngTotal);
+            if (is_last) {
+                cudaStreamSynchronize(stream_);
+
+                YK_CUDA_CHECK(cudaMemcpy(
+                    p.h_vol_out, d_vol_internal_.data(),
+                    d_vol_internal_.size() * sizeof(float),
+                    cudaMemcpyDeviceToHost));
+            }
+
+            return true;
+        }
+
+        // 公共：构建 SCBCTParams
+        SCBCTParams buildCp_(const FdkBatchParams& p) const
+        {
+            SCBCTParams cp = params_;
+            cp.iPAng = p.K;
+            cp.angle_list.assign(p.h_angles, p.h_angles + p.K);
+            return cp;
+        }
+
+        // 公共：调 fdk_.feed
+        bool feedImpl_(
+            const float* h_proj,
+            const SCBCTParams& cp,
+            float* d_out,
+            bool             clear_vol,
+            TaskDumpCallback dump_cb,
+            void* userdata)
+        {
+            if (dump_cb) {
+                auto onDump = [&](int idx, const char* stage, float* d, size_t n) {
+                    dump_cb(userdata, idx, stage, d, n);
+                    };
+                return fdk_.feed(h_proj, cp, stream_, d_out, clear_vol, onDump);
+            }
+            return fdk_.feed(h_proj, cp, stream_, d_out, clear_vol);
+        }
+
+
+
+    private:
+        FdkReconstructor fdk_;
         SCBCTParams      params_{};
         cudaStream_t     stream_ = nullptr;
         bool             is_initialized_ = false;
+        int              device_id_ = 0;
+
+        // 体数据内部显存（HostPtr 模式）
+        Mem::DeviceLinearBuffer3D<float> d_vol_internal_;
+        float* h_vol_pending_;
+        size_t  vol_size_bytes_ = 0;
 
         // ----------------------------------------------------------------
-        // 公共几何参数映射（与 FpTaskHandle 共用逻辑）
+        // 公共几何参数映射
         // ----------------------------------------------------------------
         static SCBCTParams mapParams(const TaskInitParams& p)
         {
@@ -165,7 +259,7 @@ namespace YK {
         }
 
         // ----------------------------------------------------------------
-        // EFdkFilter（对外枚举）→ EFilterKernel（内部枚举）
+        // EFdkFilter → EFilterKernel
         // ----------------------------------------------------------------
         static EFilterKernel mapFilter(EFdkFilter f)
         {
