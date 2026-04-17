@@ -27,32 +27,43 @@ namespace YK {
     // ================================================================
     // FdkReconstructor
     // ================================================================
+    // ================================================================
+    // FdkReconstructor
+    //
+    // 优化一：消除 O(N²) 的全量 geo 重建。
+    //   原版每次 feed 重建 new_total 个 geo 然后只用尾部，
+    //   改为只建当前 batch 的 geo，增量上传到 gpu_ctx_ 的
+    //   prev_total 偏移位置。
+    //   gpu_ctx_ 容量改为 iPAngTotal（在 init 时传入）。
+    //   其余逻辑（chunk 循环、processor、FdkGpuContext 结构）完全不变。
+    // ================================================================
     class FdkReconstructor {
     public:
         FdkReconstructor() = default;
 
-        // reset：开始新一轮扫描时清空累积状态
         void reset() {
-            angle_accum_.clear();
             total_received_ = 0;
         }
 
         int  totalReceived()  const { return total_received_; }
         bool isInitialized()  const { return is_initialized_; }
+
         void release()
         {
             pw_.release();
             pkw_.release();
             flt_.release();
             bp_.release();
-            reset();              // 清 angle_accum_ 和 total_received_
+            reset();
             Kchunk_ = 0;
             bParker_ = false;
             is_initialized_ = false;
         }
 
         // ----------------------------------------------------------------
-        // init：固定参数确定后调一次，processor 和 GPU 资源在此分配
+        // init：固定参数确定后调一次。
+        // gpu_ctx_ 按 iPAngTotal 分配 geo/gv/coeffs 容量，
+        // proj buffer 仍按 Kchunk 分配。
         // ----------------------------------------------------------------
         bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream)
         {
@@ -64,6 +75,7 @@ namespace YK {
             const int iVX = params.iVX;
             const int iVY = params.iVY;
             const int iVZ = params.iVZ;
+            const int iPA_total = params.iPAngTotal;  // geo buffer 容量
 
             // PreweightProcessor
             {
@@ -94,7 +106,7 @@ namespace YK {
                 }
             }
 
-            // FilterProcessor（FFT plan 在此创建，只做一次）
+            // FilterProcessor
             {
                 FdkFilterInitContext ictx{};
                 ictx.dims = SProjDims{ iPU, iPV, Kchunk };
@@ -127,13 +139,22 @@ namespace YK {
                 }
             }
 
+            // gpu_ctx_：
+            //   geo/gv/coeffs 按 iPAngTotal 分配（支持增量上传）
+            //   proj buffer 按 Kchunk 分配（每次 chunk 覆盖写）
+            {
+                // iPAng 字段传 iPA_total，让 geo buffer 按总视图数分配
+                SProjDims dims{ iPU, iPV, iPA_total };
+                // 空 geo/gv，只分配不上传
+                gpu_ctx_.init(dims, iPA_total, stream);
+            }
+
             is_initialized_ = true;
             return true;
         }
 
         bool reinitProcessors(const SCBCTParams& params, int K, cudaStream_t stream)
         {
-            // PreweightProcessor
             {
                 PreweightInitContext ictx{};
                 ictx.dims = SProjDims{ params.iPU, params.iPV, K };
@@ -177,9 +198,7 @@ namespace YK {
             return true;
         }
 
-        // ----------------------------------------------------------------
         // feed（无 dump）
-        // ----------------------------------------------------------------
         bool feed(
             const float* h_proj_batch,
             const SCBCTParams& params,
@@ -191,9 +210,7 @@ namespace YK {
                 d_vol_out, clear_vol, {});
         }
 
-        // ----------------------------------------------------------------
         // feed（有 dump）
-        // ----------------------------------------------------------------
         bool feed(
             const float* h_proj_batch,
             const SCBCTParams& params,
@@ -211,18 +228,14 @@ namespace YK {
         bool bParker_ = false;
         bool is_initialized_ = false;
 
-        int                total_received_ = 0;
-        std::vector<float> angle_accum_;
+        int total_received_ = 0;
 
-        // processor 持久化，init() 后常驻
         Fdk::PreweightProcessor    pw_;
         Fdk::ParkerWeightProcessor pkw_;
         Fdk::FilterProcessor       flt_;
         Fdk::BpProcessor           bp_;
+        FdkGpuContext              gpu_ctx_;   // 持久成员，init() 时分配
 
-        // ----------------------------------------------------------------
-        // feed_impl
-        // ----------------------------------------------------------------
         bool feed_impl(
             const float* h_proj_batch,
             const SCBCTParams& params,
@@ -250,12 +263,8 @@ namespace YK {
             }
 
             const int batch_count = params.iPAng;
-            const int prev_total = total_received_;
-
-            angle_accum_.insert(angle_accum_.end(),
-                params.angle_list.begin(), params.angle_list.end());
+            const int prev_total = total_received_;   // 本次 feed 前已接收的视图数
             total_received_ += batch_count;
-            const int new_total = total_received_;
 
             const int iPU = params.iPU;
             const int iPV = params.iPV;
@@ -265,11 +274,16 @@ namespace YK {
 
             auto rad2deg = [](float r) { return r * 180.f / CUDA_PI; };
 
-            std::vector<SConeProjGeomVec>    h_geo_full(new_total);
-            std::vector<SFDKGeoParamPerView> h_gv_full(new_total);
+            // -------------------------------------------------------
+            // [优化一] 只建当前 batch 的 geo，O(batch_count)
+            // 原版：h_geo_full(new_total) 重建全量，O(N²)
+            // -------------------------------------------------------
+            std::vector<SConeProjGeomVec>    h_geo(batch_count);
+            std::vector<SFDKGeoParamPerView> h_gv(batch_count);
 
             build_circular_vec_geometry_from_theta(
-                h_geo_full, angle_accum_, new_total, iPU, iPV,
+                h_geo, params.angle_list, batch_count,
+                iPU, iPV,
                 params.du_mm, params.dv_mm,
                 params.SID, params.SDD - params.SID,
                 f3(params.offsetU_mm, params.offsetV_mm, 0.f),
@@ -278,26 +292,23 @@ namespace YK {
                     rad2deg(params.tiltv_angle_rad)));
 
             GeoDerivedManagerVec{}.build_geo_params(
-                iPU, iPV, params.scan_range_rad, h_geo_full, h_gv_full);
+                iPU, iPV, params.scan_range_rad, h_geo, h_gv);
 
-            std::vector<SConeProjGeomVec>    h_geo(
-                h_geo_full.begin() + prev_total, h_geo_full.end());
-            std::vector<SFDKGeoParamPerView> h_gv(
-                h_gv_full.begin() + prev_total, h_gv_full.end());
+            // -------------------------------------------------------
+            // [优化一] 增量上传：写入 gpu_ctx_ 的 prev_total 偏移位置
+            // geo/gv/coeffs buffer 容量 = iPAngTotal，足以容纳全部视图
+            // -------------------------------------------------------
+            gpu_ctx_.uploadGeoIncremental(h_geo, h_gv, prev_total, batch_count, stream);
 
             if (clear_vol) {
                 const size_t n = (size_t)iVX * iVY * iVZ;
                 YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0, n * sizeof(float), stream));
             }
 
-            SProjDims dims{ iPU, iPV, batch_count };
-            FdkGpuContext ctx;
-            ctx.init(dims, h_geo, h_gv, Kchunk, stream);
-
             const size_t view_elems = (size_t)iPU * iPV;
-            float* d_chunk_in = ctx.proj.chunk_in.data();
-            float* d_chunk_pw = ctx.proj.chunk_pw.data();
-            float* d_chunk_flt = ctx.proj.chunk_flt.data();
+            float* d_chunk_in = gpu_ctx_.proj.chunk_in.data();
+            float* d_chunk_pw = gpu_ctx_.proj.chunk_pw.data();
+            float* d_chunk_flt = gpu_ctx_.proj.chunk_flt.data();
 
             bool filter_dirty = false;
 
@@ -310,22 +321,28 @@ namespace YK {
                     filter_dirty = true;
                 }
 
-                ctx.geo.uploadCoeffsChunk(ctx.geo.d_coeffs() + base, K, stream);
-                ctx.proj.uploadProjChunk(
+                // geo/gv/coeffs 偏移 = prev_total + base（全局位置）
+                const int global_base = prev_total + base;
+
+                gpu_ctx_.geo.uploadCoeffsChunk(
+                    gpu_ctx_.geo.d_coeffs() + global_base, K, stream);
+                gpu_ctx_.proj.uploadProjChunk(
                     h_proj_batch + (size_t)base * view_elems, K, stream);
 
+                // Preweight
                 PreweightChunkContext pctx{};
-                pctx.d_geo = ctx.geo.d_geo() + base;
-                pctx.d_gv = ctx.geo.d_gv() + base;
+                pctx.d_geo = gpu_ctx_.geo.d_geo() + global_base;
+                pctx.d_gv = gpu_ctx_.geo.d_gv() + global_base;
                 pctx.K = K;
                 pw_.setContext(&pctx);
                 pw_.process(d_chunk_in, d_chunk_pw, stream);
 
                 if (onDump)
                     for (int i = 0; i < K; ++i)
-                        onDump(base + i, "pw",
+                        onDump(global_base + i, "pw",
                             d_chunk_pw + i * view_elems, view_elems);
 
+                // ParkerWeight
                 if (bParker_) {
                     ParkerWeightChunkContext pkctx{};
                     pkctx.h_angles = params.angle_list.data() + base;
@@ -335,29 +352,30 @@ namespace YK {
 
                     if (onDump)
                         for (int i = 0; i < K; ++i)
-                            onDump(base + i, "parker",
+                            onDump(global_base + i, "parker",
                                 d_chunk_pw + i * view_elems, view_elems);
                 }
 
+                // Filter
                 FdkFilterContext fctx{ h_gv.data() + base, K };
                 flt_.setContext(&fctx);
                 flt_.process(d_chunk_pw, d_chunk_flt, stream);
 
                 if (onDump)
                     for (int i = 0; i < K; ++i)
-                        onDump(base + i, "flt",
+                        onDump(global_base + i, "flt",
                             d_chunk_flt + i * view_elems, view_elems);
 
+                // Backprojection
                 BpChunkContext bctx{};
-                bctx.d_geo = ctx.geo.d_geo() + base;
-                bctx.d_gv = ctx.geo.d_gv() + base;
+                bctx.d_geo = gpu_ctx_.geo.d_geo() + global_base;
+                bctx.d_gv = gpu_ctx_.geo.d_gv() + global_base;
                 bctx.K = K;
                 bp_.setContext(&bctx);
-                bp_.process(ctx.proj.d_texObjs(), d_vol_out, stream);
+                bp_.process(gpu_ctx_.proj.d_texObjs(), d_vol_out, stream);
             }
 
-
-            // 恢复标准尺寸，供下次 feed 使用
+            // 恢复标准尺寸供下次 feed 使用
             if (filter_dirty) {
                 if (!reinitProcessors(params, Kchunk_, stream)) return false;
             }

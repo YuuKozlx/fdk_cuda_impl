@@ -48,6 +48,7 @@ namespace YK {
         float scanRangeRad = 6.2832f;
         float startAngleRad = 0.f;
         bool  shortScan = false;
+        int  NAng = 0; // 仅 FDK 用，表示总视图数（非批次大小）
     };
 
     struct SVolumeParams {

@@ -38,8 +38,10 @@ namespace YK {
 
         int Nu_ = 0, Nv_ = 0;
 
-        void init(int Nu, int Nv, int Kchunk, cudaStream_t stream, int deviceId = 0)
+        void init(int Nu, int Nv, int Kchunk, int deviceId = 0)
         {
+            Kchunk = std::min(Kchunk, kMaxChunkAng);  // kMaxChunkAng 是硬上限
+
             Nu_ = Nu; Nv_ = Nv;
             const size_t view_elems = (size_t)Nu * Nv;
 
@@ -104,21 +106,33 @@ namespace YK {
         DeviceLinearBuffer<SFDKGeoParamPerView> gv;
         DeviceLinearBuffer<FdkAffineCoeff>      coeffs;
 
-        void init(
-            int iPA, cudaStream_t stream,
+
+        void init(int capacity = kMaxChunkAng, int deviceId = 0)
+        {
+            capacity = std::max(capacity, 1); // 避免零大小分配
+
+            PodDataController dc;
+            geo = dc.allocate<SConeProjGeomVec>(capacity, deviceId);
+            gv = dc.allocate<SFDKGeoParamPerView>(capacity, deviceId);
+            coeffs = dc.allocate<FdkAffineCoeff>(capacity, deviceId);
+            // 不上传，不计算 coeffs
+        }
+
+        // 在 FdkGeoData 里加这个方法
+        void uploadBatchIncremental(
             const std::vector<SConeProjGeomVec>& h_geo,
             const std::vector<SFDKGeoParamPerView>& h_gv,
-            int deviceId = 0)
+            int offset, int K, cudaStream_t stream)
         {
-            PodDataController dc;
-            geo = dc.allocateAndUpload(h_geo, deviceId);
-            gv = dc.allocateAndUpload(h_gv, deviceId);
-            coeffs = dc.allocate<FdkAffineCoeff>(iPA, deviceId);
-
+            YK_CUDA_CHECK(cudaMemcpy(
+                geo.data() + offset, h_geo.data(),
+                K * sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice));
+            YK_CUDA_CHECK(cudaMemcpy(
+                gv.data() + offset, h_gv.data(),
+                K * sizeof(SFDKGeoParamPerView), cudaMemcpyHostToDevice));
             Fdk::bp_launchPrecomputeCoeffs(
-                geo.data(), gv.data(),
-                coeffs.data(), iPA, stream);
-
+                geo.data() + offset, gv.data() + offset,
+                coeffs.data() + offset, K, stream);
         }
 
         void uploadCoeffsChunk(const FdkAffineCoeff* d_src, int K, cudaStream_t stream) const
@@ -179,21 +193,26 @@ namespace YK {
         FdkProjVolData proj;
         FdkGeoData     geo;
 
+
         FdkGpuContext() = default;
         FdkGpuContext(const FdkGpuContext&) = delete;
         FdkGpuContext& operator=(const FdkGpuContext&) = delete;
 
-        void init(
-            const SProjDims& dims,
-            const std::vector<SConeProjGeomVec>& h_geo,
-            const std::vector<SFDKGeoParamPerView>& h_gv,
-            int Kchunk, cudaStream_t stream,
-            int deviceId = 0)
+        void init(const SProjDims& dims, int capacity,
+            cudaStream_t stream, int deviceId = 0)
         {
-            proj.init(dims.iPU, dims.iPV, Kchunk, stream, deviceId);
-            geo.init(dims.iPAng, stream, h_geo, h_gv, deviceId);
+            proj.init(dims.iPU, dims.iPV, dims.iPAng, deviceId); // iPAng=Kchunk
+            geo.init(capacity, deviceId);  // capacity=iPAngTotal
         }
 
+
+        void uploadGeoIncremental(
+            const std::vector<SConeProjGeomVec>& h_geo,
+            const std::vector<SFDKGeoParamPerView>& h_gv,
+            int offset, int K, cudaStream_t stream)
+        {
+            geo.uploadBatchIncremental(h_geo, h_gv, offset, K, stream);
+        }
         ~FdkGpuContext() = default;
     };
 

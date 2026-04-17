@@ -82,7 +82,6 @@ namespace YK {
 
             SCBCTParams cp = params_;
             cp.iPAng = p.K;
-            cp.iPAngTotal = p.K;
             cp.angle_list.assign(p.h_angles, p.h_angles + p.K);
 
             if (dump_cb) {
@@ -140,6 +139,7 @@ namespace YK {
             SCBCTParams cp{};
             cp.iPU = p.scan.Nu;
             cp.iPV = p.scan.Nv;
+            cp.iPAngTotal = p.scan.NAng;
             cp.du_mm = p.scan.du_mm;
             cp.dv_mm = p.scan.dv_mm;
             cp.offsetU_mm = p.scan.offsetU_mm;

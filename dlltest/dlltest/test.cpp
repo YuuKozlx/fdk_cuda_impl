@@ -1,16 +1,17 @@
 // test_Task_dll.cpp
 // 测试 TaskFactory 创建 FDK 和 FP 任务，验证 DLL 接口完整性
 
-#include <cstdio>
-#include <vector>
-#include <fstream>
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <vector>
 
 
-#include "../../interface/IYkTask.hpp"
-#include "../../interface/YkTaskTypes.hpp"
-#include "../../interface/YkTaskFactory.hpp"
 #include <cuda_runtime_api.h>
+#include "../../global/YkLog.h"
+#include "../../interface/IYkTask.hpp"
+#include "../../interface/YkTaskFactory.hpp"
+#include "../../interface/YkTaskTypes.hpp"
 
 
 #pragma comment(lib, "YKCBCT.lib")
@@ -60,6 +61,7 @@ static YK::SScanParams makeScanParams()
     s.scanRangeRad = 2.f * 3.14159265f;
     s.startAngleRad = 3.14159265f * 1.5f;
     s.shortScan = false;
+    s.NAng = 360; // 仅 FDK 用，表示总视图数（非批次大小）
     return s;
 }
 
@@ -91,7 +93,7 @@ static void test_fp_task()
         (size_t)Nx * Ny * Nz)) return;
     printf("  volume loaded\n");
 
-    float* d_vol = nullptr;
+    void* d_vol = nullptr;
     cudaMalloc(&d_vol, h_vol.size() * sizeof(float));
     cudaMemcpy(d_vol, h_vol.data(),
         h_vol.size() * sizeof(float), cudaMemcpyHostToDevice);
@@ -99,14 +101,14 @@ static void test_fp_task()
 
     // --- 分配输出 ---
     const size_t sino_elems = (size_t)Na * Nv * Nu;
-    float* d_sino = nullptr;
+    void* d_sino = nullptr;
     cudaMalloc(&d_sino, sino_elems * sizeof(float));
     cudaMemset(d_sino, 0, sino_elems * sizeof(float));
 
     // --- 构建角度 ---
     std::vector<float> angles(Na);
     for (int i = 0; i < Na; ++i)
-        angles[i] = 3.14159265f * 1.5f + 2.f * 3.14159265f * i / Na;
+        angles[i] = 3.14159265f * 1.5f * 0 + 2.f * 3.14159265f * i / Na;
 
     // --- 创建任务 ---
     YK::ITask* task = YK::TaskFactory::create(YK::ETask::FP_Joseph);
@@ -133,8 +135,8 @@ static void test_fp_task()
 
     // --- run ---
     YK::TaskBatchParams batchP{};
-    batchP.d_vol_in = d_vol;
-    batchP.d_sino_out = d_sino;
+    batchP.d_vol_in = (float*)d_vol;
+    batchP.d_sino_out = (float*)d_sino;
     batchP.h_angles = angles.data();
     batchP.K = Na;
     batchP.clearOut = true;
@@ -182,7 +184,7 @@ static void test_fdk_task()
     printStats(h_sino, "input sino");
 
     // --- 分配输出体积 ---
-    float* d_vol = nullptr;
+    void* d_vol = nullptr;
     cudaMalloc(&d_vol, (size_t)Nx * Ny * Nz * sizeof(float));
 
     // --- 构建角度 ---
@@ -215,12 +217,41 @@ static void test_fdk_task()
     // --- run ---
     YK::TaskBatchParams batchP{};
     batchP.h_proj = h_sino.data();
-    batchP.d_vol_out = d_vol;
+    batchP.d_vol_out = (float*)d_vol;
     batchP.h_angles = angles.data();
     batchP.K = Na;
     batchP.clearOut = true;
 
-    if (!task->run(batchP)) {
+    YK::TaskDumpCallback dumpCb = [](void*, int a, const char* tag,
+        float* d_buf, size_t n)
+        {
+            if (a != 0) return;
+
+            std::vector<float> h(n);
+            cudaMemcpy(h.data(), d_buf, n * sizeof(float), cudaMemcpyDeviceToHost);
+
+            float sum = 0.f, maxv = -1e30f, minv = 1e30f;
+            for (auto v : h) {
+                sum += v;
+                maxv = std::max(maxv, v);
+                minv = std::min(minv, v);
+            }
+
+            //YK_LOGI("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
+            //    a, tag, n, minv, maxv, sum / (float)n);
+
+            //auto path = fmt::format("dump_a{}_{}.raw", a, tag);
+            auto path = std::string("dump_") + tag + ".raw";
+            std::ofstream f(path, std::ios::binary);
+            if (f)
+                f.write(reinterpret_cast<const char*>(h.data()), n * sizeof(float));
+            else
+                /*YK_LOGE("[dump] cannot save {}", path);*/
+                printf("  cannot save %s\n", path.c_str());
+        };
+
+
+    if (!task->run(batchP, dumpCb)) {
         fprintf(stderr, "  run failed\n");
         YK::TaskFactory::destroy(task);
         return;
@@ -252,13 +283,13 @@ static void test_reset()
     constexpr int Nx = 64, Ny = 64, Nz = 64;
 
     std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
-    float* d_vol = nullptr;
+    void* d_vol = nullptr;
     cudaMalloc(&d_vol, h_vol.size() * sizeof(float));
     cudaMemcpy(d_vol, h_vol.data(),
         h_vol.size() * sizeof(float), cudaMemcpyHostToDevice);
 
     const size_t sino_elems = (size_t)Na * Nv * Nu;
-    float* d_sino = nullptr;
+    void* d_sino = nullptr;
     cudaMalloc(&d_sino, sino_elems * sizeof(float));
 
     std::vector<float> angles(Na);
@@ -284,8 +315,8 @@ static void test_reset()
     task->init(initP);
 
     YK::TaskBatchParams batchP{};
-    batchP.d_vol_in = d_vol;
-    batchP.d_sino_out = d_sino;
+    batchP.d_vol_in = (float*)d_vol;
+    batchP.d_sino_out = (float*)d_sino;
     batchP.h_angles = angles.data();
     batchP.K = Na;
     batchP.clearOut = true;

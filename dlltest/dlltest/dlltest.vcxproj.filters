@@ -26,8 +26,8 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="test.cpp">
+    <ClCompile Include="test.cpp">
       <Filter>源文件</Filter>
-    </CudaCompile>
+    </ClCompile>
   </ItemGroup>
 </Project>
