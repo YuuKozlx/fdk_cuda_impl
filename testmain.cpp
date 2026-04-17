@@ -23,6 +23,7 @@
 #include <string>
 #include "FP/YkFPRunner.hpp"
 #include "interface/YkTaskTypes.hpp"
+#include "BP/YkBPRunner.hpp"
 
 
 
@@ -106,7 +107,16 @@ int main_fdk() {
 
 
     // 调用
-    auto dump = [](int a, const char* tag, float* d_buf, size_t n) {
+    auto dump = [](void* p) {
+        auto* payload = static_cast<DumpPayload*>(p);
+
+
+        const int    a = payload->viewIdx;
+        const char* tag = payload->stage;
+
+        float* d_buf = static_cast<float*>(payload->buf);
+        const size_t n = payload->n;
+
         if (a != 0) return;
 
         std::vector<float> h(n);
@@ -122,7 +132,6 @@ int main_fdk() {
         YK_LOGI("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
             a, tag, n, minv, maxv, sum / (float)n);
 
-        // 文件名用 fmt::format
         auto path = fmt::format("dump_a{}_{}.raw", a, tag);
         std::ofstream f(path, std::ios::binary);
         if (f)
@@ -141,7 +150,7 @@ int main_fdk() {
             h_proj.data(), d_vol_buf.data(),
             params,
             /*Kchunk=*/32, s,
-            /*clear_vol=*/true, dump);
+            /*clear_vol=*/true, dump, nullptr);
     }
 
 
@@ -301,6 +310,286 @@ static void test_fp_runner(cudaStream_t stream)
     cudaFree(d_sino);
 }
 
+int main_bp_runner() {
+    SCBCTParams params;
+
+    params.iPU = 1024; params.iPV = 1024;
+    params.iPAng = 480; params.iPAngTotal = 480;
+    params.tiltn_angle_rad = 0 * CUDA_PI / 180;
+
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = false;
+    params.scan_range_rad = 2.0f * (float)M_PI;
+
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)M_PI / params.iPAng;
+
+    params.scan_start_angle_rad = angle_list[0];
+    params.angle_list = angle_list;
+
+    params.SID = 500.0f; params.SDD = 1000.0f;
+    params.du_mm = 0.25f; params.dv_mm = 0.25f;
+    params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
+    params.offsetU_mm = 0.f;
+
+    const int Ang = params.iPAng;
+    const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * Ang;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    // ---- 读已滤波投影（假设外部已完成 preweight + filter）----
+    std::vector<float> h_flt(proj_elems);
+    if (!read_raw_float("proj_1024x1024x360.raw", h_flt)) {
+        YK_LOGE("Error: cannot read flt_1024x1024x480.raw (expect {} floats)", proj_elems);
+        return -1;
+    }
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+
+    MemoryController ctrl;
+
+    // 上传已滤波投影到 GPU
+    auto d_flt_buf = ctrl.allocateDevice3D<float>(
+        (size_t)params.iPU * params.iPV, Ang, 1, 0);
+    {
+        auto h_flt_view = ctrl.allocateCpu3D<float>(
+            (size_t)params.iPU * params.iPV, Ang, 1, false);
+        std::memcpy(h_flt_view.data(), h_flt.data(),
+            proj_elems * sizeof(float));
+        ctrl.upload3D(d_flt_buf, h_flt_view);
+    }
+
+    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+
+    // ----------------------------------------------------------------
+    // 离线反投影（一次性全量）
+    // ----------------------------------------------------------------
+    {
+        YK::BpReconstructor recon;
+        recon.init(params, /*Kchunk=*/32, s);
+
+        YK::Util::CudaTimer timer("bp_offline", s);
+        recon.feed(
+            d_flt_buf.data(),
+            params, s,
+            d_vol_buf.data(),
+            /*clear_vol=*/true);
+    }
+
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol_buf);
+        if (!write_raw_float("bp_vol_offline.raw", h_vol.cdata(), vol_elems)) {
+            YK_LOGE("Error: cannot write bp_vol_offline.raw");
+            return -2;
+        }
+        YK_LOGI("saved: bp_vol_offline.raw ({}x{}x{})", Nx, Ny, Nz);
+    }
+
+    // ----------------------------------------------------------------
+    // 在线反投影（分包）
+    // ----------------------------------------------------------------
+    const int batch_size = 32 * 3;
+    const int batch_num = (Ang + batch_size - 1) / batch_size;
+
+    YK::BpReconstructor recon_online;
+    recon_online.init(params, /*Kchunk=*/32, s);
+
+    {
+        YK::Util::CudaTimer timer("bp_online", s);
+
+        for (int i = 0; i < batch_num; ++i) {
+            const int base = i * batch_size;
+            const int count = std::min(batch_size, Ang - base);
+
+            SCBCTParams batch_params = params;
+            batch_params.iPAng = count;
+            batch_params.angle_list = std::vector<float>(
+                angle_list.begin() + base,
+                angle_list.begin() + base + count);
+
+            recon_online.feed(
+                d_flt_buf.data() + base * view_elems,
+                batch_params, s,
+                d_vol_buf.data(),
+                /*clear_vol=*/(i == 0));
+        }
+    }
+
+    recon_online.reset();
+
+    {
+        auto h_vol_online = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol_online, d_vol_buf);
+        if (!write_raw_float("bp_vol_online.raw",
+            h_vol_online.cdata(), vol_elems)) {
+            YK_LOGE("Error: cannot write bp_vol_online.raw");
+            return -2;
+        }
+        YK_LOGI("saved: bp_vol_online.raw ({}x{}x{})", Nx, Ny, Nz);
+    }
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    return 0;
+}
+
+int main_bp_verify() {
+    SCBCTParams params;
+
+    params.iPU = 1024; params.iPV = 1024; params.iPAng = 480; params.iPAngTotal = 480;
+    params.tiltn_angle_rad = 0 * CUDA_PI / 180;
+
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = true;
+    params.scan_range_rad = (float)M_PI * 4.0f / 3.0f;
+
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)M_PI / 720;
+
+    params.scan_start_angle_rad = angle_list[0];
+    params.angle_list = angle_list;
+
+    params.SID = 500.0f; params.SDD = 1000.0f;
+    params.du_mm = 0.25f; params.dv_mm = 0.25f;
+    params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
+    params.offsetU_mm = 0.f;
+
+    const int Ang = params.iPAng;
+    const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * Ang;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+    MemoryController ctrl;
+
+    // ---- 读原始投影 ----
+    std::vector<float> h_proj(proj_elems);
+    if (!read_raw_float("proj_1024x1024x360.raw", h_proj)) {
+        YK_LOGE("Error: cannot read proj_1024x1024x480.raw (expect {} floats)", proj_elems);
+        return -1;
+    }
+    YK_LOGI("proj loaded");
+
+    auto d_vol_fdk = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+    auto d_vol_bp = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+
+    // 预分配 CPU buffer 收集所有视图的滤波结果
+    std::vector<float> h_flt_all(proj_elems, 0.f);
+
+    // ----------------------------------------------------------------
+    // 路径一：完整 FDK，同时 dump flt 阶段数据
+    // ----------------------------------------------------------------
+    {
+        FdkReconstructor recon;
+        recon.init(params, 32, s);
+
+        struct MyDumpCtx {
+            cudaStream_t stream;
+            float* h_flt_all;
+            size_t       view_elems;
+        };
+
+        MyDumpCtx ctx{ s, h_flt_all.data(), view_elems };
+
+        TaskDumpCallback onDump = [](void* p) {
+            auto* payload = static_cast<FdkDumpPayload*>(p);
+            auto* ctx = static_cast<MyDumpCtx*>(payload->userdata);
+
+            if (std::string(payload->stage) != "flt") return;
+
+            cudaMemcpyAsync(
+                ctx->h_flt_all + (size_t)payload->viewIdx * ctx->view_elems,
+                payload->d_buf, payload->n * sizeof(float),
+                cudaMemcpyDeviceToHost, ctx->stream);
+            };
+
+        recon.feed(h_proj.data(), params, s,
+            d_vol_fdk.data(), true, onDump, &ctx);
+    }
+
+    // FDK 跑完立即同步并保存结果
+    cudaStreamSynchronize(s);
+    {
+        auto h_vol_fdk = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol_fdk, d_vol_fdk);
+        if (!write_raw_float("verify_vol_fdk.raw", h_vol_fdk.cdata(), vol_elems)) {
+            YK_LOGE("Error: cannot write verify_vol_fdk.raw");
+            return -2;
+        }
+        YK_LOGI("saved: verify_vol_fdk.raw");
+
+        // 顺便统计 flt dump 是否有效
+        float maxv = *std::max_element(h_flt_all.begin(), h_flt_all.end());
+        float minv = *std::min_element(h_flt_all.begin(), h_flt_all.end());
+        YK_LOGI("h_flt_all stats: min={:.6f} max={:.6f}", minv, maxv);
+    }
+
+    // ----------------------------------------------------------------
+    // 路径二：BpReconstructor，输入 flt dump 的结果
+    // ----------------------------------------------------------------
+
+    // 上传滤波投影到 GPU（用裸指针避免 3D 布局歧义）
+    float* d_flt_raw = nullptr;
+    YK_CUDA_CHECK(cudaMalloc(&d_flt_raw, proj_elems * sizeof(float)));
+    YK_CUDA_CHECK(cudaMemcpy(d_flt_raw, h_flt_all.data(),
+        proj_elems * sizeof(float), cudaMemcpyHostToDevice));
+
+    {
+        YK::BpReconstructor recon;
+        recon.init(params, 32, s);
+        recon.feed(d_flt_raw, params, s, d_vol_bp.data(), true);
+    }
+
+    cudaStreamSynchronize(s);
+    {
+        auto h_vol_bp = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol_bp, d_vol_bp);
+        if (!write_raw_float("verify_vol_bp.raw", h_vol_bp.cdata(), vol_elems)) {
+            YK_LOGE("Error: cannot write verify_vol_bp.raw");
+            cudaFree(d_flt_raw);
+            return -2;
+        }
+        YK_LOGI("saved: verify_vol_bp.raw");
+    }
+
+    cudaFree(d_flt_raw);
+
+    // ----------------------------------------------------------------
+    // 对比两个体数据
+    // ----------------------------------------------------------------
+    {
+        auto h_vol_fdk = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        auto h_vol_bp = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol_fdk, d_vol_fdk);
+        ctrl.download3D(h_vol_bp, d_vol_bp);
+
+        double maxDiff = 0.0, mse = 0.0;
+        for (size_t i = 0; i < vol_elems; ++i) {
+            double diff = std::abs(
+                (double)h_vol_fdk.cdata()[i] - (double)h_vol_bp.cdata()[i]);
+            maxDiff = std::max(maxDiff, diff);
+            mse += diff * diff;
+        }
+        mse /= (double)vol_elems;
+
+        YK_LOGI("maxDiff={:.8f}  MSE={:.8e}", maxDiff, mse);
+
+        if (maxDiff < 1e-5)
+            YK_LOGI("PASS: BpReconstructor matches FdkReconstructor");
+        else
+            YK_LOGE("FAIL: maxDiff={:.8f} exceeds threshold", maxDiff);
+    }
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    return 0;
+}
+
 int test_log() {
     std::string str = "world";
     YK_LOGI("hello,{}", str);
@@ -308,10 +597,12 @@ int test_log() {
     return 0;
 }
 
-int main0() {
+int main() {
     Logger::instance().set_level(LogLevel::Debug);
     //YKTest::testFFT();
-    main_fdk();
+    //main_fdk();
+    //main_bp_runner();
+    main_bp_verify();
     //test_fp_runner(0);
     //YKTest::testFilterWeightsSpectra_RamLak();
     //YKTest::test_gpumem3d();

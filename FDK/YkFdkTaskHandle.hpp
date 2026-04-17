@@ -199,16 +199,10 @@ namespace YK {
             const SCBCTParams& cp,
             float* d_out,
             bool             clear_vol,
-            TaskDumpCallback dump_cb,
-            void* userdata)
+            TaskDumpCallback dump_cb = nullptr,
+            void* userdata = nullptr)
         {
-            if (dump_cb) {
-                auto onDump = [&](int idx, const char* stage, float* d, size_t n) {
-                    dump_cb(userdata, idx, stage, d, n);
-                    };
-                return fdk_.feed(h_proj, cp, stream_, d_out, clear_vol, onDump);
-            }
-            return fdk_.feed(h_proj, cp, stream_, d_out, clear_vol);
+            return fdk_.feed(h_proj, cp, stream_, d_out, clear_vol, dump_cb, userdata);
         }
 
 

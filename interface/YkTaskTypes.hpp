@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdint>
 #include <cuda_runtime_api.h>
+#include <functional>
 #include <vector>
 
 
@@ -161,11 +162,18 @@ namespace YK {
         EBufferMode sino_mode = EBufferMode::DevicePtr;
     };
 
-    using TaskDumpCallback = void(*)(
-        void* userdata,
-        int         viewIndex,
-        const char* stageName,
-        float* d_data,
-        size_t      count);
+    // YkDump.hpp
+    struct DumpPayload {
+        int          viewIdx;
+        const char* stage;
+        void* buf;
+        size_t       n;
+        cudaStream_t stream;
+        void* userdata;
+        bool         isDevicePtr = true;  // true=GPU, false=CPU
+    };
+
+
+    using TaskDumpCallback = std::function<void(void*)>;
 
 } // namespace YK

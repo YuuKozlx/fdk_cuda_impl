@@ -16,6 +16,7 @@
 #include "../global/YkGlobals.h"
 #include "../global/YkLog.h"
 #include "../global/YkMacro.hpp"
+#include "../interface/YkTaskTypes.hpp"
 #include "../util/YkVecOperation.hpp"
 #include "YkFDKParkerWeightProcessor.hpp"
 #include "YkFDKPreWeightProcessor.hpp"
@@ -23,6 +24,19 @@
 #include "YkVecGeo.hpp"
 
 namespace YK {
+
+    // dump 回调的 payload，由内部构造，外部只读
+    struct FdkDumpPayload {
+        int          viewIdx;
+        const char* stage;
+        void* d_buf;
+        size_t       n;
+        cudaStream_t stream;
+        void* userdata;
+    };
+
+    using FdkDumpCallback = std::function<void(void*)>;
+
 
     // ================================================================
     // FdkReconstructor
@@ -202,29 +216,19 @@ namespace YK {
             return true;
         }
 
-        // feed（无 dump）
-        bool feed(
-            const float* h_proj_batch,
-            const SCBCTParams& params,
-            cudaStream_t       stream,
-            float* d_vol_out,
-            bool               clear_vol = false)
-        {
-            return feed_impl(h_proj_batch, params, Kchunk_, stream,
-                d_vol_out, clear_vol, {});
-        }
 
-        // feed（有 dump）
+
+        // feed
         bool feed(
             const float* h_proj_batch,
             const SCBCTParams& params,
             cudaStream_t       stream,
             float* d_vol_out,
-            bool               clear_vol,
-            std::function<void(int, const char*, float*, size_t)> onDump)
+            bool               clear_vol = false,
+            TaskDumpCallback onDump = nullptr, void* userdata = nullptr)
         {
             return feed_impl(h_proj_batch, params, Kchunk_, stream,
-                d_vol_out, clear_vol, onDump);
+                d_vol_out, clear_vol, onDump, userdata);
         }
 
     private:
@@ -247,7 +251,7 @@ namespace YK {
             cudaStream_t       stream,
             float* d_vol_out,
             bool               clear_vol,
-            std::function<void(int, const char*, float*, size_t)> onDump)
+            TaskDumpCallback    onDump = nullptr, void* userdata = nullptr)
         {
             if (!is_initialized_) {
                 YK_LOGE("[FdkReconstructor] not initialized, call init() first");
@@ -316,8 +320,13 @@ namespace YK {
 
             bool filter_dirty = false;
 
+            // chunk 循环开头定义一次
+
+
             for (int base = 0; base < batch_count; base += Kchunk) {
                 const int K = std::min(Kchunk, batch_count - base);
+
+
 
                 // 尾包时重建所有 processor
                 if (K != Kchunk_) {
@@ -327,6 +336,20 @@ namespace YK {
 
                 // geo/gv/coeffs 偏移 = prev_total + base（全局位置）
                 const int global_base = prev_total + base;
+
+
+                auto triggerDump = [&](const char* stage, float* d_base) {
+                    if (!onDump) return;
+                    cudaStreamSynchronize(stream);  // 只在有 dump 时同步
+                    for (int i = 0; i < K; ++i) {
+                        DumpPayload payload{
+                            global_base + i, stage,
+                            static_cast<void*>(d_base + i * view_elems),
+                            view_elems, stream, userdata
+                        };
+                        onDump(&payload);
+                    }
+                    };
 
                 gpu_ctx_.geo.uploadCoeffsChunk(
                     gpu_ctx_.geo.d_coeffs() + global_base, K, stream);
@@ -341,10 +364,7 @@ namespace YK {
                 pw_.setContext(&pctx);
                 pw_.process(d_chunk_in, d_chunk_pw, stream);
 
-                if (onDump)
-                    for (int i = 0; i < K; ++i)
-                        onDump(global_base + i, "pw",
-                            d_chunk_pw + i * view_elems, view_elems);
+                triggerDump("pw", d_chunk_pw);
 
                 // ParkerWeight
                 if (bParker_) {
@@ -354,21 +374,14 @@ namespace YK {
                     pkw_.setContext(&pkctx);
                     pkw_.process(d_chunk_pw, d_chunk_pw, stream);
 
-                    if (onDump)
-                        for (int i = 0; i < K; ++i)
-                            onDump(global_base + i, "parker",
-                                d_chunk_pw + i * view_elems, view_elems);
+                    triggerDump("parker", d_chunk_pw);
                 }
 
                 // Filter
                 FdkFilterContext fctx{ h_gv.data() + base, K };
                 flt_.setContext(&fctx);
                 flt_.process(d_chunk_pw, d_chunk_flt, stream);
-
-                if (onDump)
-                    for (int i = 0; i < K; ++i)
-                        onDump(global_base + i, "flt",
-                            d_chunk_flt + i * view_elems, view_elems);
+                triggerDump("flt", d_chunk_flt);
 
                 // Backprojection
                 BpChunkContext bctx{};
@@ -398,13 +411,13 @@ namespace YK {
         int                Kchunk,
         cudaStream_t       stream,
         bool               clear_vol = true,
-        std::function<void(int, const char*, float*, size_t)> onDump = nullptr)
+        TaskDumpCallback onDump = nullptr, void* userdata = nullptr)
     {
         FdkReconstructor recon;
         if (!recon.init(params, Kchunk, stream))
             return false;
         return recon.feed(h_proj, params, stream,
-            d_vol_out, clear_vol, onDump);
+            d_vol_out, clear_vol, onDump, userdata);
     }
 
 } // namespace YK

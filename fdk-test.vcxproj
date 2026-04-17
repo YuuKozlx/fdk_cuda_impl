@@ -42,7 +42,7 @@
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
@@ -129,6 +129,8 @@
     <CudaCompile />
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="BP\YkBPGpuContext.hpp" />
+    <ClInclude Include="BP\YkBPRunner.hpp" />
     <ClInclude Include="CVP\cvp_back.cuh" />
     <ClInclude Include="CVP\cvp_forward.cuh" />
     <ClInclude Include="CVP\cvp_geometry.cuh" />
