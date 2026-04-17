@@ -213,6 +213,14 @@ namespace YK {
         {
             geo.uploadBatchIncremental(h_geo, h_gv, offset, K, stream);
         }
+
+        void release()
+        {
+            proj.destroy();
+            geo.geo.reset();
+            geo.gv.reset();
+            geo.coeffs.reset();
+        }
         ~FdkGpuContext() = default;
     };
 

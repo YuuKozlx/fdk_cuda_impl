@@ -30,7 +30,7 @@ namespace YK {
     // ================================================================
     // FdkReconstructor
     //
-    // 优化一：消除 O(N²) 的全量 geo 重建。
+    // 优化一：消除 O(N²) 的全量 ProjGeom的计算。
     //   原版每次 feed 重建 new_total 个 geo 然后只用尾部，
     //   改为只建当前 batch 的 geo，增量上传到 gpu_ctx_ 的
     //   prev_total 偏移位置。
@@ -54,6 +54,7 @@ namespace YK {
             pkw_.release();
             flt_.release();
             bp_.release();
+            gpu_ctx_.release();  // 释放 proj buffer 和 geo buffer
             reset();
             Kchunk_ = 0;
             bParker_ = false;
@@ -67,6 +68,9 @@ namespace YK {
         // ----------------------------------------------------------------
         bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream)
         {
+            Kchunk = std::min(Kchunk, kMaxChunkAng); // clip Kchunk 上限
+            YK_LOGC("Kchunk is reset to {} (max {})", Kchunk, kMaxChunkAng);
+
             Kchunk_ = Kchunk;
             bParker_ = params.bShortScan;
 
