@@ -131,7 +131,7 @@
     <ClInclude Include="..\..\interface\YkTaskTypes.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="test.cu">
+    <CudaCompile Include="test.cpp">
       <FileType>Document</FileType>
     </CudaCompile>
   </ItemGroup>

@@ -22,6 +22,7 @@
 #include <fstream>
 #include <string>
 #include "FP/YkFPRunner.hpp"
+#include "interface/YkTaskTypes.hpp"
 
 
 
@@ -263,7 +264,7 @@ static void test_fp_runner(cudaStream_t stream)
 
     YK::FpReconstructor fpr;
 
-    if (!fpr.init(params, 0))
+    if (!fpr.init(params, ETask::FP_Joseph, 0))
     {
         YK_LOGE("FpReconstructor init failed");
     }
@@ -307,7 +308,7 @@ int test_log() {
     return 0;
 }
 
-int main() {
+int main0() {
     Logger::instance().set_level(LogLevel::Debug);
     //YKTest::testFFT();
     main_fdk();

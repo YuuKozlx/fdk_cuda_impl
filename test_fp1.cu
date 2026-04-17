@@ -1478,7 +1478,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                fp_cvp_launch(d_vol, d_sino, h_views, g, 1, Nu, Nv, stream);
+                fp_cvp_launch(d_vol, d_sino, h_views.data(), g, 1, Nu, Nv, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
                 std::vector<float> h_sino(sino_elems);
@@ -1545,7 +1545,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                fp_cvp_launch(d_vol, d_sino, h_views, g, Na, Nu, Nv, stream);
+                fp_cvp_launch(d_vol, d_sino, h_views.data(), g, Na, Nu, Nv, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
                 std::vector<float> h_sino(sino_elems);
@@ -1643,7 +1643,7 @@ namespace YK {
                 printf("  launching CVP FP: Na=%d Nu=%d Nv=%d...\n", Na, Nu, Nv);
                 {
                     YK::Util::CudaTimer t{ "cvp",stream };
-                    fp_cvp_launch(d_vol, d_sino, h_views, g, Na, Nu, Nv, stream);
+                    fp_cvp_launch(d_vol, d_sino, h_views.data(), g, Na, Nu, Nv, stream);
                 }
 
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));

@@ -34,7 +34,7 @@ namespace YK {
             release();
 
             if (p.task != ETask::FDK) {
-                fprintf(stderr, "[FdkTaskHandle] init: wrong task type %d\n", (int)p.task);
+                YK_LOGE("[FdkTaskHandle] init: wrong task type {}\n", (int)p.task);
                 return false;
             }
 
@@ -51,7 +51,7 @@ namespace YK {
 
             YK_CUDA_CHECK(cudaStreamCreate(&stream_));
 
-            if (!recon_.init(cp, kMaxChunkAng, stream_)) {
+            if (!fp_.init(cp, kMaxChunkAng, stream_)) {
                 cudaStreamDestroy(stream_);
                 stream_ = nullptr;
                 return false;
@@ -89,11 +89,11 @@ namespace YK {
                 auto onDump = [&](int idx, const char* stage, float* d, size_t n) {
                     dump_cb(userdata, idx, stage, d, n);
                     };
-                return recon_.feed(p.h_proj, cp, stream_,
+                return fp_.feed(p.h_proj, cp, stream_,
                     p.d_vol_out, p.clearOut, onDump);
             }
 
-            return recon_.feed(p.h_proj, cp, stream_,
+            return fp_.feed(p.h_proj, cp, stream_,
                 p.d_vol_out, p.clearOut);
         }
 
@@ -102,12 +102,12 @@ namespace YK {
         // ----------------------------------------------------------------
         void reset() override
         {
-            recon_.reset();
+            fp_.reset();
         }
 
         void release() override
         {
-            recon_.release();
+            fp_.release();
 
             if (stream_) {
                 cudaStreamSynchronize(stream_);
@@ -124,10 +124,10 @@ namespace YK {
         // ----------------------------------------------------------------
         bool      isInitialized() const override { return is_initialized_; }
         ETask task()          const override { return ETask::FDK; }
-        int       totalReceived() const { return recon_.totalReceived(); }
+        int       totalReceived() const { return fp_.totalReceived(); }
 
     private:
-        FdkReconstructor recon_;
+        FdkReconstructor fp_;
         SCBCTParams      params_{};
         cudaStream_t     stream_ = nullptr;
         bool             is_initialized_ = false;

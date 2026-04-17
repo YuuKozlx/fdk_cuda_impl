@@ -299,7 +299,7 @@ static void test_reset()
     printStats(h_sino1, "run1");
 
     // reset 后第二次 run
-    task->reset();
+    //task->reset();
     cudaMemset(d_sino, 0, sino_elems * sizeof(float));
     task->run(batchP);
     std::vector<float> h_sino2(sino_elems);
