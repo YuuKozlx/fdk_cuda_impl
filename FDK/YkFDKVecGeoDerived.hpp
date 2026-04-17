@@ -127,7 +127,7 @@ namespace YK {
                     gv.UU, gv.VV, gv.UV, gv.invDetUV);
 
                 gv.ray_center = geo.srcCR;
-                gv.det_n = f4_cross(geo.detV, geo.detU);
+                gv.det_n = f4_normalize(f4_cross(geo.detV, geo.detU));
                 gv.det_u = f4_normalize(geo.detU);
                 gv.det_v = f4_normalize(geo.detV);
                 float3 detS_src = f4_to_f3(geo.detS) - f4_to_f3(geo.src);
