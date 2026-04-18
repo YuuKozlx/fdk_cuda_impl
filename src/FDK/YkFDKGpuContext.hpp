@@ -1,4 +1,4 @@
-// YkFDKDataBus.hpp
+ï»¿// YkFDKDataBus.hpp
 #pragma once
 #include <cfloat>
 #include <cmath>
@@ -17,7 +17,7 @@
 
 
 namespace YK {
-    // ÔÚ namespace YK { ÄÚ²¿¶¥²¿¼Ó£º
+    // åœ¨ namespace YK { å†…éƒ¨é¡¶éƒ¨åŠ ï¼š
     using Mem::DeviceLinearBuffer;
     using Mem::PodDataController;
     using Mem::DeviceLinearBuffer3D;
@@ -26,8 +26,8 @@ namespace YK {
 
     // ================================================================
     // FdkProjVolData
-    // Í¶Ó°ÖĞ¼ä»º³å£ºfloat Êı¾İÓÃ MemoryController
-    // texture object Êı×éÓÃ DeviceLinearBuffer£¨POD ÀàĞÍ£©
+    // æŠ•å½±ä¸­é—´ç¼“å†²ï¼šfloat æ•°æ®ç”¨ MemoryController
+    // texture object æ•°ç»„ç”¨ DeviceLinearBufferï¼ˆPOD ç±»å‹ï¼‰
     // ================================================================
     struct FdkProjVolData {
         Mem::DeviceLinearBuffer3D<float>                   chunk_in;
@@ -40,7 +40,7 @@ namespace YK {
 
         void init(int Nu, int Nv, int Kchunk, int deviceId = 0)
         {
-            Kchunk = std::min(Kchunk, kMaxChunkAng);  // kMaxChunkAng ÊÇÓ²ÉÏÏŞ
+            Kchunk = std::min(Kchunk, kMaxChunkAng);  // kMaxChunkAng æ˜¯ç¡¬ä¸Šé™
 
             Nu_ = Nu; Nv_ = Nv;
             const size_t view_elems = (size_t)Nu * Nv;
@@ -54,10 +54,10 @@ namespace YK {
             tex_objs = dc.allocate<cudaTextureObject_t>(Kchunk, deviceId);
             h_tex_objs.resize(Kchunk);
 
-            // °´×î´ó Kchunk ½¨ºÃËùÓĞ¾ä±ú£¬°ó¶¨ chunk_flt µØÖ·
+            // æŒ‰æœ€å¤§ Kchunk å»ºå¥½æ‰€æœ‰å¥æŸ„ï¼Œç»‘å®š chunk_flt åœ°å€
             buildTexObjs_(Nu, Nv, Kchunk);
 
-            // ÉÏ´«Ò»´Î£¬Ö®ºó²»ÔÙĞèÒªÖØ¸´ÉÏ´«
+            // ä¸Šä¼ ä¸€æ¬¡ï¼Œä¹‹åä¸å†éœ€è¦é‡å¤ä¸Šä¼ 
             dc.upload(tex_objs, h_tex_objs.data(), Kchunk);
         }
 
@@ -88,7 +88,7 @@ namespace YK {
         void buildTexObjs_(int Nu, int Nv, int K) {
 
 
-            // floatÍ¶Ó°Êı¾İ£¬ÀàĞÍ×Ô¶¯ÍÆµ¼
+            // floatæŠ•å½±æ•°æ®ï¼Œç±»å‹è‡ªåŠ¨æ¨å¯¼
             h_tex_objs = Mem::TextureController::createTex2DLinearBatch(chunk_flt.data(), Nu, Nv, K);
 
 
@@ -99,7 +99,7 @@ namespace YK {
 
     // ================================================================
     // FdkGeoData
-    // ¼¸ºÎ²ÎÊı£º×Ô¶¨Òå½á¹¹ÌåÓÃ PodDataController + DeviceLinearBuffer
+    // å‡ ä½•å‚æ•°ï¼šè‡ªå®šä¹‰ç»“æ„ä½“ç”¨ PodDataController + DeviceLinearBuffer
     // ================================================================
     struct FdkGeoData {
         DeviceLinearBuffer<SConeProjGeomVec>  geo;
@@ -109,16 +109,16 @@ namespace YK {
 
         void init(int capacity = kMaxChunkAng, int deviceId = 0)
         {
-            capacity = std::max(capacity, 1); // ±ÜÃâÁã´óĞ¡·ÖÅä
+            capacity = std::max(capacity, 1); // é¿å…é›¶å¤§å°åˆ†é…
 
             PodDataController dc;
             geo = dc.allocate<SConeProjGeomVec>(capacity, deviceId);
             gv = dc.allocate<SFDKGeoParamPerView>(capacity, deviceId);
             coeffs = dc.allocate<FdkAffineCoeff>(capacity, deviceId);
-            // ²»ÉÏ´«£¬²»¼ÆËã coeffs
+            // ä¸ä¸Šä¼ ï¼Œä¸è®¡ç®— coeffs
         }
 
-        // ÔÚ FdkGeoData Àï¼ÓÕâ¸ö·½·¨
+        // åœ¨ FdkGeoData é‡ŒåŠ è¿™ä¸ªæ–¹æ³•
         void uploadBatchIncremental(
             const std::vector<SConeProjGeomVec>& h_geo,
             const std::vector<SFDKGeoParamPerView>& h_gv,
@@ -165,7 +165,7 @@ namespace YK {
 
             if (all_zero) {
                 YK_LOGE("verifyGCCoeffs: gC_coeffs[0..{}] all near-zero "
-                    "after upload ¡ª d_src may be uninitialized.", K - 1);
+                    "after upload â€” d_src may be uninitialized.", K - 1);
             }
             else {
                 YK_LOGD("verifyGCCoeffs: gC_coeffs[0] Cu=({:.4f},{:.4f},{:.4f},{:.4f}) "

@@ -1,4 +1,4 @@
-#include <cuda_runtime_api.h>
+ï»¿#include <cuda_runtime_api.h>
 #include "../global/YkGlobals.h"
 #include "YkConv.hpp"
 #include <algorithm>
@@ -8,38 +8,38 @@ namespace YK {
         namespace detail {
             // =============================================================================
             // pointwise_mul kernels
-            // ¹¦ÄÜ£º¶Ô batch ×é¸´ÊıÊı¾İµÄÃ¿¸öµã³ËÒÔ¶ÔÓ¦µÄÊµÊıÈ¨ÖØ
+            // åŠŸèƒ½ï¼šå¯¹ batch ç»„å¤æ•°æ•°æ®çš„æ¯ä¸ªç‚¹ä¹˜ä»¥å¯¹åº”çš„å®æ•°æƒé‡
             //       data[b][u] *= weights[u]   (u = 0 .. n_complex-1, b = 0 .. batch-1)
             //
-            // Ìá¹©ËÄ¸ö°æ±¾£¬ĞÔÄÜÒÀ´ÎÌáÉı£º
-            //   v1 - »ù´¡°æ       : 1Ïß³Ì´¦Àí1¸ö¸´Êı£¬Ö±½ÓÓ³Éä
-            //   v2 - warp stride  : warp¶ÔÆë·Ã´æ£¬stride loop¸²¸ÇÈÎÒâ³ß´ç
-            //   v3 - float2 ÏòÁ¿»¯: µ¥´Î64-bit LD/ST£¬¼õÉÙÄÚ´æÊÂÎñ
-            //   v4 - float4 ÏòÁ¿»¯: µ¥´Î128-bit LD/ST£¬Ã¿Ïß³Ì´¦Àí2¸ö¸´Êı
+            // æä¾›å››ä¸ªç‰ˆæœ¬ï¼Œæ€§èƒ½ä¾æ¬¡æå‡ï¼š
+            //   v1 - åŸºç¡€ç‰ˆ       : 1çº¿ç¨‹å¤„ç†1ä¸ªå¤æ•°ï¼Œç›´æ¥æ˜ å°„
+            //   v2 - warp stride  : warpå¯¹é½è®¿å­˜ï¼Œstride loopè¦†ç›–ä»»æ„å°ºå¯¸
+            //   v3 - float2 å‘é‡åŒ–: å•æ¬¡64-bit LD/STï¼Œå‡å°‘å†…å­˜äº‹åŠ¡
+            //   v4 - float4 å‘é‡åŒ–: å•æ¬¡128-bit LD/STï¼Œæ¯çº¿ç¨‹å¤„ç†2ä¸ªå¤æ•°
             // =============================================================================
 
 
                 // -----------------------------------------------------------------------------
-                // v1: »ù´¡°æ
-                // Ïß³ÌÓ³Éä£ºblockIdx.x * blockDim.x + threadIdx.x ¡ú Ö±½Ó¶ÔÓ¦ u£¨¸´ÊıÏÂ±ê£©
-                //           blockIdx.y                              ¡ú ¶ÔÓ¦ batch Î¬¶È b
-                // È±µã£ºn_complex ½Ï´óÊ±ĞèÒª¶à¸ö block£¬grid ËæÊı¾İ³ß´ç±ä»¯
+                // v1: åŸºç¡€ç‰ˆ
+                // çº¿ç¨‹æ˜ å°„ï¼šblockIdx.x * blockDim.x + threadIdx.x â†’ ç›´æ¥å¯¹åº” uï¼ˆå¤æ•°ä¸‹æ ‡ï¼‰
+                //           blockIdx.y                              â†’ å¯¹åº” batch ç»´åº¦ b
+                // ç¼ºç‚¹ï¼šn_complex è¾ƒå¤§æ—¶éœ€è¦å¤šä¸ª blockï¼Œgrid éšæ•°æ®å°ºå¯¸å˜åŒ–
                 // -----------------------------------------------------------------------------
             __global__ void _kernel_pointwise_mul_v1(
-                cufftComplex* data,        // [batch, n_complex] ¸´ÊıÊı×é£¨in/out£©
-                const float* weights,     // [n_complex]        ÊµÊıÈ¨ÖØ£¨Ö»¶Á£©
-                int            n_complex,   // Ã¿ÌõÊı¾İµÄ¸´ÊıµãÊı
-                int            batch)       // Êı¾İÌõÊı
+                cufftComplex* data,        // [batch, n_complex] å¤æ•°æ•°ç»„ï¼ˆin/outï¼‰
+                const float* weights,     // [n_complex]        å®æ•°æƒé‡ï¼ˆåªè¯»ï¼‰
+                int            n_complex,   // æ¯æ¡æ•°æ®çš„å¤æ•°ç‚¹æ•°
+                int            batch)       // æ•°æ®æ¡æ•°
             {
-                int u = blockIdx.x * blockDim.x + threadIdx.x;  // ¸´ÊıÏÂ±ê
-                int b = blockIdx.y;                              // batch ÏÂ±ê
+                int u = blockIdx.x * blockDim.x + threadIdx.x;  // å¤æ•°ä¸‹æ ‡
+                int b = blockIdx.y;                              // batch ä¸‹æ ‡
 
                 if (u < n_complex && b < batch)
                 {
-                    int idx = b * n_complex + u;    // Õ¹Æ½ºóµÄÏßĞÔÏÂ±ê
+                    int idx = b * n_complex + u;    // å±•å¹³åçš„çº¿æ€§ä¸‹æ ‡
                     float w = weights[u];
-                    data[idx].x *= w;               // Êµ²¿
-                    data[idx].y *= w;               // Ğé²¿
+                    data[idx].x *= w;               // å®éƒ¨
+                    data[idx].y *= w;               // è™šéƒ¨
                 }
             }
 
@@ -62,15 +62,15 @@ namespace YK {
     const int warp_global   = blockIdx.x * warps_per_blk + warp_in_blk;  \
     const int n_warps       = gridDim.x  * warps_per_blk;
             // -----------------------------------------------------------------------------
-            // v2: warp stride °æ
-            // ºËĞÄ¸Ä¶¯£ºÒÔ warp£¨32Ïß³Ì£©Îªµ¥Î»×ö stride loop
-            //   - warp ÄÚ 32 ¸öÏß³Ì´¦ÀíÁ¬ĞøµÄ 32 ¸ö¸´Êı ¡ú ±£Ö¤ coalesced access
-            //   - stride = n_warps * 32£¬Ã¿ÂÖ²½½øÒ»¸ö block µÄ¸²¸Ç¿í¶È
-            //   - grid.x ¹Ì¶¨Îª 1£¬²»Ëæ n_complex ±ä»¯
+            // v2: warp stride ç‰ˆ
+            // æ ¸å¿ƒæ”¹åŠ¨ï¼šä»¥ warpï¼ˆ32çº¿ç¨‹ï¼‰ä¸ºå•ä½åš stride loop
+            //   - warp å†… 32 ä¸ªçº¿ç¨‹å¤„ç†è¿ç»­çš„ 32 ä¸ªå¤æ•° â†’ ä¿è¯ coalesced access
+            //   - stride = n_warps * 32ï¼Œæ¯è½®æ­¥è¿›ä¸€ä¸ª block çš„è¦†ç›–å®½åº¦
+            //   - grid.x å›ºå®šä¸º 1ï¼Œä¸éš n_complex å˜åŒ–
             //
-            // Ïß³Ì½ÇÉ«£º
-            //   lane    = threadIdx.x % 32   ¡ú warp ÄÚÆ«ÒÆ£¨0~31£©
-            //   warp_id = threadIdx.x / 32   ¡ú ±¾ block ÄÚµÚ¼¸¸ö warp
+            // çº¿ç¨‹è§’è‰²ï¼š
+            //   lane    = threadIdx.x % 32   â†’ warp å†…åç§»ï¼ˆ0~31ï¼‰
+            //   warp_id = threadIdx.x / 32   â†’ æœ¬ block å†…ç¬¬å‡ ä¸ª warp
             // -----------------------------------------------------------------------------
             __global__ void _kernel_pointwise_mul_v2(
                 cufftComplex* data,
@@ -95,16 +95,16 @@ namespace YK {
             }
 
             // -----------------------------------------------------------------------------
-            // v3: float2 ÏòÁ¿»¯°æ
-            // cufftComplex ±¾ÖÊÉÏ¾ÍÊÇ float2£¨x=Êµ²¿, y=Ğé²¿£©£¬
-            // ½«Ö¸ÕëÖØ½âÊÍÎª float2* ºó£¬±àÒëÆ÷¿ÉÉú³Éµ¥Ìõ 64-bit Ö¸Áî£º
-            //   LDG.E.64£¨Ò»´Î¶Á 8 ×Ö½Ú£© / STG.E.64£¨Ò»´ÎĞ´ 8 ×Ö½Ú£©
-            // Ïà±È v2 µÄÁ½´Î 32-bit ·ÃÎÊ£¬ÄÚ´æÊÂÎñ¼õÉÙ 50%
+            // v3: float2 å‘é‡åŒ–ç‰ˆ
+            // cufftComplex æœ¬è´¨ä¸Šå°±æ˜¯ float2ï¼ˆx=å®éƒ¨, y=è™šéƒ¨ï¼‰ï¼Œ
+            // å°†æŒ‡é’ˆé‡è§£é‡Šä¸º float2* åï¼Œç¼–è¯‘å™¨å¯ç”Ÿæˆå•æ¡ 64-bit æŒ‡ä»¤ï¼š
+            //   LDG.E.64ï¼ˆä¸€æ¬¡è¯» 8 å­—èŠ‚ï¼‰ / STG.E.64ï¼ˆä¸€æ¬¡å†™ 8 å­—èŠ‚ï¼‰
+            // ç›¸æ¯” v2 çš„ä¸¤æ¬¡ 32-bit è®¿é—®ï¼Œå†…å­˜äº‹åŠ¡å‡å°‘ 50%
             //
-            // ÆäÓà stride loop Âß¼­Óë v2 ÍêÈ«ÏàÍ¬
+            // å…¶ä½™ stride loop é€»è¾‘ä¸ v2 å®Œå…¨ç›¸åŒ
             // -----------------------------------------------------------------------------
             __global__ void _kernel_pointwise_mul_v3(
-                float2* data,        // Óë cufftComplex* µÈ¼Û£¬ÏÔÊ½ÓÃ float2 ´¥·¢ÏòÁ¿»¯
+                float2* data,        // ä¸ cufftComplex* ç­‰ä»·ï¼Œæ˜¾å¼ç”¨ float2 è§¦å‘å‘é‡åŒ–
                 const float* weights,
                 int            n_complex,
                 int            batch)
@@ -121,35 +121,35 @@ namespace YK {
                     {
                         int    idx = b * n_complex + u;
 
-                        float2 c = data[idx];           // 64-bit LD£ºÒ»´Î¶ÁÈ¡Õû¸ö¸´Êı
+                        float2 c = data[idx];           // 64-bit LDï¼šä¸€æ¬¡è¯»å–æ•´ä¸ªå¤æ•°
                         float  w = weights[u];
 
-                        c.x *= w;                       // Êµ²¿
-                        c.y *= w;                       // Ğé²¿
+                        c.x *= w;                       // å®éƒ¨
+                        c.y *= w;                       // è™šéƒ¨
 
-                        data[idx] = c;                  // 64-bit ST£ºÒ»´ÎĞ´»ØÕû¸ö¸´Êı
+                        data[idx] = c;                  // 64-bit STï¼šä¸€æ¬¡å†™å›æ•´ä¸ªå¤æ•°
                     }
                 }
             }
 
             // -----------------------------------------------------------------------------
-            // v4: float4 ÏòÁ¿»¯°æ
-            // float4 = 16×Ö½Ú = 2¸ö cufftComplex
-            // ½« data ÖØ½âÊÍÎª float4* ºó£¬µ¥´Î 128-bit LD/ST ¸²¸ÇÁ½¸ö¸´Êı£º
-            //   float4.x, .y ¡ú µÚÒ»¸ö¸´Êı£¨Êµ²¿, Ğé²¿£©
-            //   float4.z, .w ¡ú µÚ¶ş¸ö¸´Êı£¨Êµ²¿, Ğé²¿£©
+            // v4: float4 å‘é‡åŒ–ç‰ˆ
+            // float4 = 16å­—èŠ‚ = 2ä¸ª cufftComplex
+            // å°† data é‡è§£é‡Šä¸º float4* åï¼Œå•æ¬¡ 128-bit LD/ST è¦†ç›–ä¸¤ä¸ªå¤æ•°ï¼š
+            //   float4.x, .y â†’ ç¬¬ä¸€ä¸ªå¤æ•°ï¼ˆå®éƒ¨, è™šéƒ¨ï¼‰
+            //   float4.z, .w â†’ ç¬¬äºŒä¸ªå¤æ•°ï¼ˆå®éƒ¨, è™šéƒ¨ï¼‰
             //
-            // Òò´ËËùÓĞÏÂ±ê¶¼ÒÔ n2 = n_complex/2 Îª»ù×¼£¬n_complex ±ØĞëÎªÅ¼Êı
+            // å› æ­¤æ‰€æœ‰ä¸‹æ ‡éƒ½ä»¥ n2 = n_complex/2 ä¸ºåŸºå‡†ï¼Œn_complex å¿…é¡»ä¸ºå¶æ•°
             //
-            // È¨ÖØË÷Òı£º
-            //   u ¶ÔÓ¦ float4 ÏÂ±ê£¬¸²¸ÇÔ­Ê¼¸´Êı [u*2, u*2+1]
-            //   ¡ú weights[u*2]   ÓÃÓÚ .x .y
-            //   ¡ú weights[u*2+1] ÓÃÓÚ .z .w
+            // æƒé‡ç´¢å¼•ï¼š
+            //   u å¯¹åº” float4 ä¸‹æ ‡ï¼Œè¦†ç›–åŸå§‹å¤æ•° [u*2, u*2+1]
+            //   â†’ weights[u*2]   ç”¨äº .x .y
+            //   â†’ weights[u*2+1] ç”¨äº .z .w
             // -----------------------------------------------------------------------------
             __global__ void _kernel_pointwise_mul_v4(
-                float4* data,        // ÖØ½âÊÍºóµÄÖ¸Õë£¬Ã¿ÔªËØ¸²¸Ç2¸ö¸´Êı
-                const float* weights,     // ÈÔÊÇÔ­Ê¼ weights[n_complex]£¬°´ĞèÈ¡Á½¸ö
-                int            n2,          // = n_complex / 2£¬float4 ÔªËØ×ÜÊı
+                float4* data,        // é‡è§£é‡Šåçš„æŒ‡é’ˆï¼Œæ¯å…ƒç´ è¦†ç›–2ä¸ªå¤æ•°
+                const float* weights,     // ä»æ˜¯åŸå§‹ weights[n_complex]ï¼ŒæŒ‰éœ€å–ä¸¤ä¸ª
+                int            n2,          // = n_complex / 2ï¼Œfloat4 å…ƒç´ æ€»æ•°
                 int            batch)
             {
                 WARP_STRIDE_INIT_BATCH()
@@ -157,24 +157,24 @@ namespace YK {
                     if (b >= batch) return;
 
 
-                // stride loop Óë v2/v3 ÏàÍ¬£¬Ö»ÊÇÔªËØµ¥Î»´Ó"1¸ö¸´Êı"±äÎª"2¸ö¸´Êı"
+                // stride loop ä¸ v2/v3 ç›¸åŒï¼Œåªæ˜¯å…ƒç´ å•ä½ä»"1ä¸ªå¤æ•°"å˜ä¸º"2ä¸ªå¤æ•°"
                 for (int base = warp_global * 32; base < n2; base += n_warps * 32)
                 {
-                    int u = base + lane;                // float4 ÏÂ±ê
+                    int u = base + lane;                // float4 ä¸‹æ ‡
                     if (u < n2)
                     {
                         int    idx = b * n2 + u;
 
-                        float4 c = data[idx];          // 128-bit LD£ºÒ»´Î¶ÁÈ¡ 2 ¸ö¸´Êı
+                        float4 c = data[idx];          // 128-bit LDï¼šä¸€æ¬¡è¯»å– 2 ä¸ªå¤æ•°
 
-                        // u ¶ÔÓ¦Ô­Ê¼¸´ÊıÏÂ±ê u*2 ºÍ u*2+1£¬¸÷È¡Ò»¸öÈ¨ÖØ
-                        float  w0 = weights[u * 2];     // µÚÒ»¸ö¸´ÊıµÄÈ¨ÖØ
-                        float  w1 = weights[u * 2 + 1]; // µÚ¶ş¸ö¸´ÊıµÄÈ¨ÖØ
+                        // u å¯¹åº”åŸå§‹å¤æ•°ä¸‹æ ‡ u*2 å’Œ u*2+1ï¼Œå„å–ä¸€ä¸ªæƒé‡
+                        float  w0 = weights[u * 2];     // ç¬¬ä¸€ä¸ªå¤æ•°çš„æƒé‡
+                        float  w1 = weights[u * 2 + 1]; // ç¬¬äºŒä¸ªå¤æ•°çš„æƒé‡
 
-                        c.x *= w0;  c.y *= w0;          // µÚÒ»¸ö¸´Êı£ºÊµ²¿¡¢Ğé²¿
-                        c.z *= w1;  c.w *= w1;          // µÚ¶ş¸ö¸´Êı£ºÊµ²¿¡¢Ğé²¿
+                        c.x *= w0;  c.y *= w0;          // ç¬¬ä¸€ä¸ªå¤æ•°ï¼šå®éƒ¨ã€è™šéƒ¨
+                        c.z *= w1;  c.w *= w1;          // ç¬¬äºŒä¸ªå¤æ•°ï¼šå®éƒ¨ã€è™šéƒ¨
 
-                        data[idx] = c;                  // 128-bit ST£ºÒ»´ÎĞ´»Ø 2 ¸ö¸´Êı
+                        data[idx] = c;                  // 128-bit STï¼šä¸€æ¬¡å†™å› 2 ä¸ªå¤æ•°
                     }
                 }
             }
@@ -193,7 +193,7 @@ namespace YK {
             SKernelLaunchPolicy policy;
             dim3 block(policy.block_threads, 1);
 
-            // fftµãÊıÈôÎª 2 µÄ±¶Êı Ôòµ÷ÓÃf4°æ£¬·ñÔòµ÷ÓÃf2°æ
+            // fftç‚¹æ•°è‹¥ä¸º 2 çš„å€æ•° åˆ™è°ƒç”¨f4ç‰ˆï¼Œå¦åˆ™è°ƒç”¨f2ç‰ˆ
             const int n_elem = (n_complex % 2 == 0) ? n_complex / 2 : n_complex;
             const int warps_per_blk = policy.block_threads >> 5;
             const int warps_need = (n_elem + 31) / 32;

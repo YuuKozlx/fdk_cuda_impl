@@ -1,4 +1,4 @@
-#pragma once 
+ï»¿#pragma once 
 #include <driver_types.h>
 #include <vector>
 #include "../../global/YkGlobals.h"
@@ -15,7 +15,7 @@ namespace YK {
             cudaStream_t stream);
 
         void fp_cvp_launch(
-            cudaTextureObject_t tex_vol,    // ¡û ÎÆÀí°æ±¾
+            cudaTextureObject_t tex_vol,    // â† çº¹ç†ç‰ˆæœ¬
             float* d_sino,
             const SConeProjGeomVec* h_views,
             const YK::SVolGeom& g,

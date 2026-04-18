@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifdef _WIN32
 #  ifdef YKCBCT_EXPORTS
 #    define YK_API __declspec(dllexport)

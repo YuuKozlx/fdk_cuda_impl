@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <cstdint>
@@ -12,9 +12,9 @@ namespace YK {
     class CudaFFT {
     public:
         enum class EPlanMode : uint8_t {
-            Both,       // R2C + C2R£¨Ä¬ÈÏ£©
-            R2COnly,    // Ö»½¨ FFT
-            C2ROnly     // Ö»½¨ IFFT
+            Both,       // R2C + C2Rï¼ˆé»˜è®¤ï¼‰
+            R2COnly,    // åªå»º FFT
+            C2ROnly     // åªå»º IFFT
         };
 
         CudaFFT() = default;
@@ -36,11 +36,11 @@ namespace YK {
         bool init(int N, int batch, EPlanMode mode, cudaStream_t stream = 0) {
             if (N <= 0 || batch <= 0) return false;
 
-            // ¹Ì¶¨/¼ÇÂ¼ device£¨±ÜÃâÍâ²¿ÇĞ device µ¼ÖÂ plan/workspace ¿çÉè±¸£©
+            // å›ºå®š/è®°å½• deviceï¼ˆé¿å…å¤–éƒ¨åˆ‡ device å¯¼è‡´ plan/workspace è·¨è®¾å¤‡ï¼‰
             int curDev = -1;
             YK_CUDA_CHECK(cudaGetDevice(&curDev));
 
-            // ¸´ÓÃÌõ¼ş£º²ÎÊıÏàÍ¬ + µ±Ç° device ÏàÍ¬ + mode ¶ÔÓ¦µÄ plan ¶¼´æÔÚ
+            // å¤ç”¨æ¡ä»¶ï¼šå‚æ•°ç›¸åŒ + å½“å‰ device ç›¸åŒ + mode å¯¹åº”çš„ plan éƒ½å­˜åœ¨
             if (N == N_ && batch == batch_ && mode == mode_ && curDev == device_) {
                 const bool need_r2c = (mode_ == EPlanMode::Both || mode_ == EPlanMode::R2COnly);
                 const bool need_c2r = (mode_ == EPlanMode::Both || mode_ == EPlanMode::C2ROnly);
@@ -69,7 +69,7 @@ namespace YK {
                 YK_CUFFT_CHECK(cufftCreate(&plan_r2c_));
                 YK_CUFFT_CHECK(cufftSetStream(plan_r2c_, stream_));
 
-                // ¹Ø¼ü£º¹Ø±Õ auto-allocation£¬È·±£ÎÒÃÇ×Ô¼ºµÄ work area ÉúĞ§ÇÒ²»»á¶îÍâ·ÖÅä
+                // å…³é”®ï¼šå…³é—­ auto-allocationï¼Œç¡®ä¿æˆ‘ä»¬è‡ªå·±çš„ work area ç”Ÿæ•ˆä¸”ä¸ä¼šé¢å¤–åˆ†é…
                 YK_CUFFT_CHECK(cufftSetAutoAllocation(plan_r2c_, 0));
 
                 int inembed[1] = { N_ };
@@ -91,10 +91,10 @@ namespace YK {
                 YK_CUFFT_CHECK(cufftCreate(&plan_c2r_));
                 YK_CUFFT_CHECK(cufftSetStream(plan_c2r_, stream_));
 
-                // ¹Ø¼ü£º¹Ø±Õ auto-allocation
+                // å…³é”®ï¼šå…³é—­ auto-allocation
                 YK_CUFFT_CHECK(cufftSetAutoAllocation(plan_c2r_, 0));
 
-                // CUFFT_C2R µÄ n ÈÔÈ»ÊÇÊµÓò³¤¶È N_
+                // CUFFT_C2R çš„ n ä»ç„¶æ˜¯å®åŸŸé•¿åº¦ N_
                 int inembed[1] = { n_complex_ };
                 int onembed[1] = { N_ };
                 int istride = 1, ostride = 1;
@@ -112,9 +112,9 @@ namespace YK {
             // ---------------- workspace ----------------
             work_bytes_ = (work_r2c > work_c2r) ? work_r2c : work_c2r;
 
-            // ¿ÉÑ¡£º0 workspace Ò²ÔÊĞí£¨Ä³Ğ©³ß´ç/°æ±¾¿ÉÄÜ·µ»Ø 0£©
+            // å¯é€‰ï¼š0 workspace ä¹Ÿå…è®¸ï¼ˆæŸäº›å°ºå¯¸/ç‰ˆæœ¬å¯èƒ½è¿”å› 0ï¼‰
             if (work_bytes_ > 0) {
-                // È·±£ÈÔÔÚÍ¬ device ÉÏ·ÖÅä
+                // ç¡®ä¿ä»åœ¨åŒ device ä¸Šåˆ†é…
                 int dev2 = -1;
                 YK_CUDA_CHECK(cudaGetDevice(&dev2));
                 YK_ASSERT(dev2 == device_ && "CudaFFT::init: current device changed unexpectedly");
@@ -125,7 +125,7 @@ namespace YK {
                 if (plan_c2r_) YK_CUFFT_CHECK(cufftSetWorkArea(plan_c2r_, d_work_));
             }
             else {
-                // Ã÷È·ÖÃ¿Õ£¬±ÜÃâÎóÓÃ
+                // æ˜ç¡®ç½®ç©ºï¼Œé¿å…è¯¯ç”¨
                 d_work_ = nullptr;
             }
 
@@ -138,7 +138,7 @@ namespace YK {
             if (plan_c2r_) YK_CUFFT_CHECK(cufftSetStream(plan_c2r_, stream_));
         }
 
-        // Í¬Ò» handle ²»Òª²¢·¢Ö´ĞĞ£¨Í¬/²»Í¬ stream ¶¼²»½¨Òé£©
+        // åŒä¸€ handle ä¸è¦å¹¶å‘æ‰§è¡Œï¼ˆåŒ/ä¸åŒ stream éƒ½ä¸å»ºè®®ï¼‰
         void fft(float* d_real, cufftComplex* d_complex) const {
             YK_ASSERT(device_ >= 0 && "CudaFFT not initialized");
             int curDev = -1;
@@ -243,7 +243,7 @@ namespace YK {
         cudaStream_t stream_ = 0;
         EPlanMode mode_ = EPlanMode::Both;
 
-        int device_ = -1; // ĞÂÔö£º¼ÇÂ¼´´½¨/·ÖÅäËùÔÚ device
+        int device_ = -1; // æ–°å¢ï¼šè®°å½•åˆ›å»º/åˆ†é…æ‰€åœ¨ device
     };
 
 } // namespace YK

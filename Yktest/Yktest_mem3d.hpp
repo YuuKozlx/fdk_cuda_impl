@@ -1,8 +1,8 @@
-#pragma once
+ï»¿#pragma once
 #include <iostream>
 #include <vector>
 #include <cassert>
-#include "global/YkMem3d.hpp"  // ĞÂ°æÍ·ÎÄ¼ş
+#include "global/YkMem3d.hpp"  // æ–°ç‰ˆå¤´æ–‡ä»¶
 
 namespace YKTest {
 
@@ -11,7 +11,7 @@ namespace YKTest {
 
         MemoryController ctrl;
 
-        // »ñÈ¡ GPU ÊıÁ¿
+        // è·å– GPU æ•°é‡
         int deviceCount = 0;
         cudaGetDeviceCount(&deviceCount);
         if (deviceCount == 0) {
@@ -19,38 +19,38 @@ namespace YKTest {
             return;
         }
 
-        cudaStream_t s = nullptr; // ÕâÀï²»Ê¹ÓÃ stream£¬±£³ÖÍ¬²½µ÷ÓÃ
-        YK_CUDA_CHECK(cudaStreamCreate(&s)); // ´´½¨ stream£¬ËäÈ»²»Ê¹ÓÃ£¬µ«È·±£ API µ÷ÓÃÕıÈ·
+        cudaStream_t s = nullptr; // è¿™é‡Œä¸ä½¿ç”¨ streamï¼Œä¿æŒåŒæ­¥è°ƒç”¨
+        YK_CUDA_CHECK(cudaStreamCreate(&s)); // åˆ›å»º streamï¼Œè™½ç„¶ä¸ä½¿ç”¨ï¼Œä½†ç¡®ä¿ API è°ƒç”¨æ­£ç¡®
 
 
-        int deviceId = 0; // ²âÊÔµÚÒ»¸ö GPU
+        int deviceId = 0; // æµ‹è¯•ç¬¬ä¸€ä¸ª GPU
 
-        // 1. ·ÖÅä 3D DeviceBuffer
+        // 1. åˆ†é… 3D DeviceBuffer
         auto buf = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, true);
         assert(buf);
         std::cout << "Allocated DeviceLinearBuffer3D: "
             << buf.shape().nx << "x" << buf.shape().ny << "x" << buf.shape().nz
             << " (pitchBytes=" << buf.pitch() << ")" << std::endl;
 
-        // 2. ×¼±¸ CPU Êı¾İ
+        // 2. å‡†å¤‡ CPU æ•°æ®
         CpuBuffer3D<float> hostBuf(16, 8, 4);
-        auto hostView = hostBuf.view(); // ·Ç const view ÓÃÓÚĞ´Èë
+        auto hostView = hostBuf.view(); // é const view ç”¨äºå†™å…¥
 
         for (int z = 0; z < hostBuf.shape().nz; ++z)
             for (int y = 0; y < hostBuf.shape().ny; ++y)
                 for (int x = 0; x < hostBuf.shape().nx; ++x)
                     hostView(x, y, z) = 42.0f;
 
-        // 3. ÉÏ´«µ½ GPU
+        // 3. ä¸Šä¼ åˆ° GPU
         ctrl.upload3D(buf, hostBuf);
 
-        // 4. ÏÂÔØ»Ø CPU
+        // 4. ä¸‹è½½å› CPU
         CpuBuffer3D<float> hostOut(16, 8, 4);
         auto outView = hostOut.view();
         ctrl.download3D(hostOut, buf);
 
-        // ÑéÖ¤
-        auto outCView = hostOut.cview(); // const view ÓÃÓÚÖ»¶Á
+        // éªŒè¯
+        auto outCView = hostOut.cview(); // const view ç”¨äºåªè¯»
         for (int z = 0; z < hostOut.shape().nz; ++z)
             for (int y = 0; y < hostOut.shape().ny; ++y)
                 for (int x = 0; x < hostOut.shape().nx; ++x)
@@ -58,13 +58,13 @@ namespace YKTest {
 
         std::cout << "Upload/download test passed." << std::endl;
 
-        // 5. ÒÆ¶¯¹¹Ôì
+        // 5. ç§»åŠ¨æ„é€ 
         DeviceLinearBuffer3D<float> buf2(std::move(buf));
         assert(buf2);
         assert(!buf);
         std::cout << "Move constructor test passed." << std::endl;
 
-        // 6. ÒÆ¶¯¸³Öµ
+        // 6. ç§»åŠ¨èµ‹å€¼
         auto buf3 = ctrl.allocateDevice3D<float>(16, 8, 4, deviceId, s);
         buf3 = std::move(buf2);
         assert(buf3);

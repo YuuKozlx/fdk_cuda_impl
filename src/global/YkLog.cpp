@@ -1,4 +1,4 @@
-// yk_log.cpp
+ï»¿// yk_log.cpp
 #include "YkLog.h"
 
 #ifndef FMT_UNICODE
@@ -12,7 +12,7 @@
 namespace YK {
 
     // --------------------------------------------------------
-    //  spdlog ÊµÀı£¬Ö»ÔÚÕâ¸ö±àÒëµ¥Ôª¿É¼û
+    //  spdlog å®ä¾‹ï¼Œåªåœ¨è¿™ä¸ªç¼–è¯‘å•å…ƒå¯è§
     // --------------------------------------------------------
     static spdlog::logger& dev_logger() {
         static const auto l = []() {
@@ -26,7 +26,7 @@ namespace YK {
     }
 
     // --------------------------------------------------------
-    //  LogLevel <-> spdlog::level Ó³Éä
+    //  LogLevel <-> spdlog::level æ˜ å°„
     // --------------------------------------------------------
     static spdlog::level::level_enum to_spdlog_level(LogLevel lv) {
         switch (lv) {
@@ -41,7 +41,7 @@ namespace YK {
     }
 
     // --------------------------------------------------------
-    //  Logger ÊµÏÖ
+    //  Logger å®ç°
     // --------------------------------------------------------
     Logger& Logger::instance() {
         static Logger s;
@@ -50,7 +50,7 @@ namespace YK {
 
     void Logger::set_level(LogLevel lv) {
         min_level_ = lv;
-        dev_logger().set_level(to_spdlog_level(lv));  // Á½±ßÍ¬²½
+        dev_logger().set_level(to_spdlog_level(lv));  // ä¸¤è¾¹åŒæ­¥
     }
 
     LogLevel Logger::level() const {

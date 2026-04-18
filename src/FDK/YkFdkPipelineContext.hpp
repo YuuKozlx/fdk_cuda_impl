@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "Filter/YkCreateFilterKernel.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
@@ -6,7 +6,7 @@
 
 namespace YK {
 
-    // ³õÊ¼»¯½×¶ÎÅäÖÃ
+    // åˆå§‹åŒ–é˜¶æ®µé…ç½®
     struct FdkFilterInitContext {
         SProjDims       dims;           // dims.iPAng = Kchunk
         SFilterKernelDesc    desc;
@@ -16,25 +16,25 @@ namespace YK {
 
 
     struct FdkFilterContext {
-        const SFDKGeoParamPerView* h_gv = nullptr;  // host pointer£¬µ±Ç° chunk ÆğÊ¼
-        int                        K = 0;         // µ±Ç° chunk Êµ¼ÊÊÓ½ÇÊı
+        const SFDKGeoParamPerView* h_gv = nullptr;  // host pointerï¼Œå½“å‰ chunk èµ·å§‹
+        int                        K = 0;         // å½“å‰ chunk å®é™…è§†è§’æ•°
     };
 
     // ============================================================
-    // Context ½á¹¹Ìå
+    // Context ç»“æ„ä½“
     // ============================================================
 
-    // setInitContext ×¢Èë
+    // setInitContext æ³¨å…¥
     struct PreweightInitContext {
         SProjDims      dims = {};
         SKernelLaunchPolicy policy = {};
     };
 
-    // setContext ×¢Èë£¨Ã¿ chunk Ç°µ÷ÓÃ£©
+    // setContext æ³¨å…¥ï¼ˆæ¯ chunk å‰è°ƒç”¨ï¼‰
     struct PreweightChunkContext {
-        const SConeProjGeomVec* d_geo = nullptr;  // device£¬ÒÑÆ«ÒÆµ½ chunk ÆğÊ¼
-        const SFDKGeoParamPerView* d_gv = nullptr;  // device£¬ÒÑÆ«ÒÆµ½ chunk ÆğÊ¼
-        int                        K = 0;         // µ±Ç° chunk Êµ¼ÊÊÓ½ÇÊı
+        const SConeProjGeomVec* d_geo = nullptr;  // deviceï¼Œå·²åç§»åˆ° chunk èµ·å§‹
+        const SFDKGeoParamPerView* d_gv = nullptr;  // deviceï¼Œå·²åç§»åˆ° chunk èµ·å§‹
+        int                        K = 0;         // å½“å‰ chunk å®é™…è§†è§’æ•°
     };
 
     // ============================================================
@@ -45,13 +45,13 @@ namespace YK {
         float        fDetUSize = 1.f;
         float        fSrcOrigin = 0.f;
         float        fDetOrigin = 0.f;
-        int          iPAnglesTotal = 0; // Õû¸öÉ¨ÃèµÄ×ÜÊÓ½ÇÊı£¨·Ç chunk ÄÚ£©£¬ÓÃÓÚ¼ÆËãÏà¶Ô½Ç¶È
-        float        fScanRangeRad = 2.f * CUDA_PI; // É¨Ãè·¶Î§£¨»¡¶È£©£¬¶ÌÉ¨ÃèÊ± < 2Pi
-        float        fStartAngleRad;     // È«¾ÖÆğÊ¼½Ç¶È
+        int          iPAnglesTotal = 0; // æ•´ä¸ªæ‰«æçš„æ€»è§†è§’æ•°ï¼ˆé chunk å†…ï¼‰ï¼Œç”¨äºè®¡ç®—ç›¸å¯¹è§’åº¦
+        float        fScanRangeRad = 2.f * CUDA_PI; // æ‰«æèŒƒå›´ï¼ˆå¼§åº¦ï¼‰ï¼ŒçŸ­æ‰«ææ—¶ < 2Pi
+        float        fStartAngleRad;     // å…¨å±€èµ·å§‹è§’åº¦
     };
 
     struct ParkerWeightChunkContext {
-        const float* h_angles = nullptr;  // ±¾ chunk µÄ½Ç¶ÈÁĞ±í£¬´óĞ¡ = K
+        const float* h_angles = nullptr;  // æœ¬ chunk çš„è§’åº¦åˆ—è¡¨ï¼Œå¤§å° = K
         int          K = 0;
     };
 
@@ -60,7 +60,7 @@ namespace YK {
     // ----------------------------------------------------------------
     struct BpInitContext {
         SVolGeom vol_geom;
-        bool use_precomputed = true;  // true: Ô¤¼ÆËã°æ±¾£¬false: ·ÇÔ¤¼ÆËã°æ±¾
+        bool use_precomputed = true;  // true: é¢„è®¡ç®—ç‰ˆæœ¬ï¼Œfalse: éé¢„è®¡ç®—ç‰ˆæœ¬
     };
 
     struct BpChunkContext {

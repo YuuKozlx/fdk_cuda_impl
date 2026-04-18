@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <math.h>
 
@@ -24,7 +24,7 @@ namespace YK {
                 x = fminf(fmaxf(x, 0.0f), 1.0f);
 
                 switch (kind) {
-                    // None ÔÚÍâ²¿±»´¦Àí
+                    // None åœ¨å¤–éƒ¨è¢«å¤„ç†
                 case EFilterKernel::RamLak:
                     return 1.0f;
 

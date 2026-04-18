@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include <string>
 #include <vector>
@@ -39,7 +39,7 @@ namespace YK {
 
         ////////////////////////////////////////////////////////////
         // VolumeData
-        // shape: nx ¡Á ny ¡Á nz
+        // shape: nx Ã— ny Ã— nz
         ////////////////////////////////////////////////////////////
 
         template<typename T, typename Buffer>
@@ -71,7 +71,7 @@ namespace YK {
 
         ////////////////////////////////////////////////////////////
         // ProjectionData
-        // shape: detector_u ¡Á detector_v ¡Á views
+        // shape: detector_u Ã— detector_v Ã— views
         ////////////////////////////////////////////////////////////
 
         template<typename T, typename Buffer>
@@ -103,7 +103,7 @@ namespace YK {
 
         ////////////////////////////////////////////////////////////
         // SinogramData
-        // shape: detector_u ¡Á views ¡Á detector_v
+        // shape: detector_u Ã— views Ã— detector_v
         ////////////////////////////////////////////////////////////
 
         template<typename T, typename Buffer>
@@ -150,7 +150,7 @@ namespace YK {
         template<typename T> using PinnedProjection = ProjectionData<T, Mem::HostPinnedBuffer3D<T>>;
         template<typename T> using PinnedSinogram = SinogramData<T, Mem::HostPinnedBuffer3D<T>>;
 
-        // GPU Linear£¨vol¡¢Í¶Ó°¡¢sinogram ¾ùÓÃÏßĞÔ·ÖÅä£©
+        // GPU Linearï¼ˆvolã€æŠ•å½±ã€sinogram å‡ç”¨çº¿æ€§åˆ†é…ï¼‰
         template<typename T> using GpuVolume = VolumeData<T, Mem::DeviceLinearBuffer3D<T>>;
         template<typename T> using GpuProjection = ProjectionData<T, Mem::DeviceLinearBuffer3D<T>>;
         template<typename T> using GpuSinogram = SinogramData<T, Mem::DeviceLinearBuffer3D<T>>;
@@ -228,7 +228,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // GPU Projection£¨ÏßĞÔ·ÖÅä£¬chunkÎÆÀíÁÙÊ±°ó¶¨£¬²»ĞèÒªpitched£©
+            // GPU Projectionï¼ˆçº¿æ€§åˆ†é…ï¼Œchunkçº¹ç†ä¸´æ—¶ç»‘å®šï¼Œä¸éœ€è¦pitchedï¼‰
             // ----------------------------------------------------------------
             template<typename T>
             GpuProjection<T> createGpuProjection(int nu, int nv, int views, int device)

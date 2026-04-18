@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -14,29 +14,29 @@ namespace YK {
 
     // ============================================================
     // GeoDerivedManagerVec (stateless builder)
-    // Ä¿±ê£ºÖ»Ğ´ gv£¨ÒıÓÃ¸³Öµ£©£¬²»·µ»ØÈßÓà result ½á¹¹Ìå,ÓÃÓÚFDKµÄKernel²ÎÊıµÄÖĞ¼ä²ÎÊı¼ÆËã
+    // ç›®æ ‡ï¼šåªå†™ gvï¼ˆå¼•ç”¨èµ‹å€¼ï¼‰ï¼Œä¸è¿”å›å†—ä½™ result ç»“æ„ä½“,ç”¨äºFDKçš„Kernelå‚æ•°çš„ä¸­é—´å‚æ•°è®¡ç®—
     //
-    // ¹Ø¼üÔ¼Êø/¶¨Òå£º
-    //   - ÊÀ½çÖĞĞÄ¹Ì¶¨Îª (0,0,0)£¨isocenter Ä¿Ç°½ö±£Áô×Ö¶Î£¬²»²ÎÓë¼ÆËã£©
-    //   - Ö÷ÉäÏßÊ¼ÖÕÔÚ XY Æ½Ãæ£ºd(theta)=(cos, sin, 0)
-    //   - principal point£ºÖ÷ÉäÏßÓëÌ½²âÆ÷Æ½ÃæµÄ½»µã
-    //   - offsetU/V£ºprincipal point ¶ÔÓ¦ÏñËØ×ø±êÏà¶ÔÖĞĞÄÏñËØµÄÆ«ÒÆ£¨pixel£©
+    // å…³é”®çº¦æŸ/å®šä¹‰ï¼š
+    //   - ä¸–ç•Œä¸­å¿ƒå›ºå®šä¸º (0,0,0)ï¼ˆisocenter ç›®å‰ä»…ä¿ç•™å­—æ®µï¼Œä¸å‚ä¸è®¡ç®—ï¼‰
+    //   - ä¸»å°„çº¿å§‹ç»ˆåœ¨ XY å¹³é¢ï¼šd(theta)=(cos, sin, 0)
+    //   - principal pointï¼šä¸»å°„çº¿ä¸æ¢æµ‹å™¨å¹³é¢çš„äº¤ç‚¹
+    //   - offsetU/Vï¼šprincipal point å¯¹åº”åƒç´ åæ ‡ç›¸å¯¹ä¸­å¿ƒåƒç´ çš„åç§»ï¼ˆpixelï¼‰
     //
-    // SID£¨Äã¹Ì¶¨µÄ¶¨Òå£©£º
-    //   - Æ½Ãæ ¦°(theta)£º¾­¹ı Z Öá£¬·¨Ïß·½Ïò ¡Î d(theta)
-    //   - d(theta)=(cos,sin,0), |d|=1 Ê±£¬¦°(theta): d¡¤X=0
-    //   - SID = | d¡¤src |
+    // SIDï¼ˆä½ å›ºå®šçš„å®šä¹‰ï¼‰ï¼š
+    //   - å¹³é¢ Î (theta)ï¼šç»è¿‡ Z è½´ï¼Œæ³•çº¿æ–¹å‘ âˆ¥ d(theta)
+    //   - d(theta)=(cos,sin,0), |d|=1 æ—¶ï¼ŒÎ (theta): dÂ·X=0
+    //   - SID = | dÂ·src |
     //
-    // µ¼³öË³Ğò£¨ÑÏ¸ñ×ñ´ÓÄãµÄÒªÇó£©£º
+    // å¯¼å‡ºé¡ºåºï¼ˆä¸¥æ ¼éµä»ä½ çš„è¦æ±‚ï¼‰ï¼š
     //   1) theta
     //   2) dtheta
     //   3) du/dv
-    //   4) (1) Ö÷ÉäÏß·½Ïò + SID
+    //   4) (1) ä¸»å°„çº¿æ–¹å‘ + SID
     //      (2) principal point -> SDD + offsetU/V + ray0hat
     //   5) nhat + DSD_n + detector basis cache + invU2/invV2
     //
-    // ×¢Òâ£º
-    //   - Çó½»Ê±ÔÊĞí¡°¾Ö²¿·­×ª·¨ÏßÒÔ±£Ö¤ t>0¡±£¬²»¸Ä±äÄã´æ´¢µÄ·¨Ïß¶¨ÒåÂß¼­¡£
+    // æ³¨æ„ï¼š
+    //   - æ±‚äº¤æ—¶å…è®¸â€œå±€éƒ¨ç¿»è½¬æ³•çº¿ä»¥ä¿è¯ t>0â€ï¼Œä¸æ”¹å˜ä½ å­˜å‚¨çš„æ³•çº¿å®šä¹‰é€»è¾‘ã€‚
     // ============================================================
     class GeoDerivedManagerVec
     {
@@ -178,7 +178,7 @@ namespace YK {
 
 
         // -----------------------------
-        // SID by your definition: SID = | d ¡¤ src |
+        // SID by your definition: SID = | d Â· src |
         // (plane through Z-axis with normal || d, and |d|=1)
         // -----------------------------
         static float sid_mm_from_source_to_zaxis(const float3& src)
@@ -214,23 +214,23 @@ namespace YK {
         // ----------------------------------------------------------------
         // compute_SDD_offsets
         //
-        // ¼ÆËãÖ÷ÉäÏßÓëÌ½²âÆ÷Æ½ÃæµÄ½»µã£¨principal point£©£¬²¢ÓÉ´ËµÃ³ö£º
-        //   1. SDD_mm       ¡ª Ô´µãÑØÖ÷ÉäÏßµ½ principal point µÄÊµ¼Ê¾àÀë
-        //   2. SDD_plane_mm ¡ª Ô´µãµ½Ì½²âÆ÷Æ½ÃæÑØ·¨ÏòÁ¿µÄÍ¶Ó°¾àÀë£¬ÓÃÓÚÇó½»²ÎÊı t
-        //   3. offsetU/V    ¡ª principal point Ïà¶ÔÌ½²âÆ÷ÎïÀíÖĞĞÄµÄÏñËØÆ«ÒÆ
+        // è®¡ç®—ä¸»å°„çº¿ä¸æ¢æµ‹å™¨å¹³é¢çš„äº¤ç‚¹ï¼ˆprincipal pointï¼‰ï¼Œå¹¶ç”±æ­¤å¾—å‡ºï¼š
+        //   1. SDD_mm       â€” æºç‚¹æ²¿ä¸»å°„çº¿åˆ° principal point çš„å®é™…è·ç¦»
+        //   2. SDD_plane_mm â€” æºç‚¹åˆ°æ¢æµ‹å™¨å¹³é¢æ²¿æ³•å‘é‡çš„æŠ•å½±è·ç¦»ï¼Œç”¨äºæ±‚äº¤å‚æ•° t
+        //   3. offsetU/V    â€” principal point ç›¸å¯¹æ¢æµ‹å™¨ç‰©ç†ä¸­å¿ƒçš„åƒç´ åç§»
         //
-        // ÊäÈë£º
-        //   geo                ¡ª ÏòÁ¿¼¸ºÎ²ÎÊı£¨src, srcCR, detS, detU, detV£©
-        //   detector_pixels_u  ¡ª Ì½²âÆ÷ U ·½ÏòÏñËØÊı
-        //   detector_pixels_v  ¡ª Ì½²âÆ÷ V ·½ÏòÏñËØÊı
+        // è¾“å…¥ï¼š
+        //   geo                â€” å‘é‡å‡ ä½•å‚æ•°ï¼ˆsrc, srcCR, detS, detU, detVï¼‰
+        //   detector_pixels_u  â€” æ¢æµ‹å™¨ U æ–¹å‘åƒç´ æ•°
+        //   detector_pixels_v  â€” æ¢æµ‹å™¨ V æ–¹å‘åƒç´ æ•°
         //
-        // Êä³ö£º
-        //   out_offsetU_pix ¡ª principal point µÄ U ÏñËØ×ø±ê - Ì½²âÆ÷ÖĞĞÄ U ×ø±ê
-        //   out_offsetV_pix ¡ª principal point µÄ V ÏñËØ×ø±ê - Ì½²âÆ÷ÖĞĞÄ V ×ø±ê
-        //   out_SDD_mm      ¡ª Ö÷ÉäÏßÊµ¼Ê³¤¶È |principal_point - src|
-        //   out_SDD_plane_mm¡ª (detS - src) ¡¤ det_n£¬Çó½»·Ö×ÓÏî
+        // è¾“å‡ºï¼š
+        //   out_offsetU_pix â€” principal point çš„ U åƒç´ åæ ‡ - æ¢æµ‹å™¨ä¸­å¿ƒ U åæ ‡
+        //   out_offsetV_pix â€” principal point çš„ V åƒç´ åæ ‡ - æ¢æµ‹å™¨ä¸­å¿ƒ V åæ ‡
+        //   out_SDD_mm      â€” ä¸»å°„çº¿å®é™…é•¿åº¦ |principal_point - src|
+        //   out_SDD_plane_mmâ€” (detS - src) Â· det_nï¼Œæ±‚äº¤åˆ†å­é¡¹
         //
-        // ·µ»Ø false£ºÌ½²âÆ÷·¨ÏòÁ¿ÍË»¯£¬»òÖ÷ÉäÏßÆ½ĞĞÓÚÌ½²âÆ÷Æ½Ãæ
+        // è¿”å› falseï¼šæ¢æµ‹å™¨æ³•å‘é‡é€€åŒ–ï¼Œæˆ–ä¸»å°„çº¿å¹³è¡Œäºæ¢æµ‹å™¨å¹³é¢
         // ----------------------------------------------------------------
         static bool compute_SDD_offsets(
             const SConeProjGeomVec& geo,
@@ -245,13 +245,13 @@ namespace YK {
             const float3 detU = f4_to_f3(geo.detU);
             const float3 detV = f4_to_f3(geo.detV);
 
-            // Ì½²âÆ÷·¨ÏòÁ¿
+            // æ¢æµ‹å™¨æ³•å‘é‡
             float3 n = cross(detV, detU);
             const float n2 = dot(n, n);
             if (n2 < 1e-24f) return false;
             const float3 det_n = n * rsqrtf(n2);
 
-            // Çó½»²ÎÊı
+            // æ±‚äº¤å‚æ•°
             const float denom = dot(det_n, det_n);
             if (fabsf(denom) < 1e-24f) return false;
 
@@ -269,7 +269,7 @@ namespace YK {
             if (ray0_len2 < 1e-20f) return false;
             out_SDD_mm = sqrtf(ray0_len2);
 
-            // principal point ÏñËØ×ø±ê£¨Cramer£©
+            // principal point åƒç´ åæ ‡ï¼ˆCramerï¼‰
             const float3 D = principal_point - detS;
             const float  UU = dot(detU, detU);
             const float  VV = dot(detV, detV);

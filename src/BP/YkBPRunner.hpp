@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 // YkBpReconstructor.hpp
 #include <cuda_runtime_api.h>
 #include <vector>
@@ -18,7 +18,7 @@ namespace YK {
 
     struct BpDumpPayload {
         int          viewIdx;
-        const char* stage;    // "flt_in"£¨ÊäÈëµÄÂË²¨Í¶Ó°£©/ "vol"£¨ÌåÊı¾İ£©
+        const char* stage;    // "flt_in"ï¼ˆè¾“å…¥çš„æ»¤æ³¢æŠ•å½±ï¼‰/ "vol"ï¼ˆä½“æ•°æ®ï¼‰
         void* d_buf;
         size_t       n;
         cudaStream_t stream;
@@ -50,7 +50,7 @@ namespace YK {
 
         // ----------------------------------------------------------------
         // init
-        // d_flt_proj ÒÑ¾­ÊÇÂË²¨ºóµÄÍ¶Ó°£¬Íâ²¿¸ºÔğÂË²¨
+        // d_flt_proj å·²ç»æ˜¯æ»¤æ³¢åçš„æŠ•å½±ï¼Œå¤–éƒ¨è´Ÿè´£æ»¤æ³¢
         // ----------------------------------------------------------------
         bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream,
             int device_id = 0)
@@ -83,7 +83,7 @@ namespace YK {
                 }
             }
 
-            // GpuContext£ºgeo °´ iPAngTotal ·ÖÅä£¬proj °´ Kchunk ·ÖÅä
+            // GpuContextï¼šgeo æŒ‰ iPAngTotal åˆ†é…ï¼Œproj æŒ‰ Kchunk åˆ†é…
             {
                 SProjDims dims{ iPU, iPV, iPA_total };
                 gpu_ctx_.init(dims, iPA_total, stream, device_id);
@@ -94,10 +94,10 @@ namespace YK {
         }
 
         // ----------------------------------------------------------------
-        // feed£ºÊäÈëÒÑÂË²¨Í¶Ó°£¨GPU Ö¸Õë£©£¬Ö´ĞĞ·´Í¶Ó°ÀÛ¼Óµ½ d_vol_out
+        // feedï¼šè¾“å…¥å·²æ»¤æ³¢æŠ•å½±ï¼ˆGPU æŒ‡é’ˆï¼‰ï¼Œæ‰§è¡ŒåæŠ•å½±ç´¯åŠ åˆ° d_vol_out
         // ----------------------------------------------------------------
         bool feed(
-            const float* d_flt_proj,   // ÒÑÂË²¨Í¶Ó°£¬GPU Ö¸Õë
+            const float* d_flt_proj,   // å·²æ»¤æ³¢æŠ•å½±ï¼ŒGPU æŒ‡é’ˆ
             const SCBCTParams& params,
             cudaStream_t       stream,
             float* d_vol_out,
@@ -130,7 +130,7 @@ namespace YK {
 
             auto rad2deg = [](float r) { return r * 180.f / CUDA_PI; };
 
-            // geo Ö»½¨µ±Ç° batch
+            // geo åªå»ºå½“å‰ batch
             std::vector<SConeProjGeomVec>    h_geo(batch_count);
             std::vector<SFDKGeoParamPerView> h_gv(batch_count);
 
@@ -147,7 +147,7 @@ namespace YK {
             GeoDerivedManagerVec{}.build_geo_params(
                 iPU, iPV, params.scan_range_rad, h_geo, h_gv);
 
-            // ÔöÁ¿ÉÏ´« geo
+            // å¢é‡ä¸Šä¼  geo
             gpu_ctx_.uploadGeoIncremental(h_geo, h_gv, prev_total, batch_count, stream);
 
             if (clear_vol) {
@@ -161,7 +161,7 @@ namespace YK {
                 const int K = std::min(Kchunk_, batch_count - base);
                 const int global_base = prev_total + base;
 
-                // Íâ²¿ÂË²¨Êı¾İ¿½Èë d_sino£¨texture °ó¶¨ÔÚ´Ë£©
+                // å¤–éƒ¨æ»¤æ³¢æ•°æ®æ‹·å…¥ d_sinoï¼ˆtexture ç»‘å®šåœ¨æ­¤ï¼‰
                 YK_CUDA_CHECK(cudaMemcpyAsync(
                     gpu_ctx_.proj.d_sino.data(),
                     d_flt_proj + (size_t)base * view_elems,
@@ -178,7 +178,7 @@ namespace YK {
                 bp_.setContext(&bctx);
                 bp_.process(gpu_ctx_.proj.d_texObjs(), d_vol_out, stream);
 
-                // dump ×îÖÕÌåÊı¾İ
+                // dump æœ€ç»ˆä½“æ•°æ®
                 if (onDump) {
                     DumpPayload payload{
                         prev_total, "vol",
@@ -205,7 +205,7 @@ namespace YK {
 
     // ====================================================================
 // fp_project
-// ±ã½İº¯Êı£ºÒ»´ÎĞÔµ÷ÓÃ£¬ÄÚ²¿×Ô¶¯ init + run
+// ä¾¿æ·å‡½æ•°ï¼šä¸€æ¬¡æ€§è°ƒç”¨ï¼Œå†…éƒ¨è‡ªåŠ¨ init + run
 // ====================================================================
     YK_INLINE bool bp_project(const float* d_flt_proj, const SCBCTParams& params,
         cudaStream_t stream, float* d_vol_out, bool clear_vol = false,

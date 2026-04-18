@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "Filter/YkFFT.hpp"
 
 #include <vector>
@@ -12,7 +12,7 @@ namespace YKTest {
     using namespace YK;
 
     static inline void dump_spectrum_one_batch(
-        const cufftComplex* spec_b, // Ö¸ÏòÄ³Ò»¸ö batch µÄÆµÆ×ÆğÊ¼
+        const cufftComplex* spec_b, // æŒ‡å‘æŸä¸€ä¸ª batch çš„é¢‘è°±èµ·å§‹
         int n_complex,
         int max_k = 32)
     {
@@ -36,7 +36,7 @@ namespace YKTest {
         std::vector<float>& h,
         int N,
         int batch,
-        int m,              // ÆµÂÊ bin£¨ÕûÊı£¬0 < m < N/2£©
+        int m,              // é¢‘ç‡ binï¼ˆæ•´æ•°ï¼Œ0 < m < N/2ï¼‰
         float amp = 1.0f)
     {
         std::fill(h.begin(), h.end(), 0.0f);
@@ -66,7 +66,7 @@ namespace YKTest {
         const int dump_batch = 0;
         const int dump_bins = 40;
 
-        // Îó²îãĞÖµ£ºIFFT ºóÊÇ N*x
+        // è¯¯å·®é˜ˆå€¼ï¼šIFFT åæ˜¯ N*x
         const float tol_rel = 2e-4f;
         const float tol_abs = 2e-4f;
 
@@ -106,7 +106,7 @@ namespace YKTest {
         // ----------------
         fft.fft(d_real_in, d_cplx);
 
-        // ¿½»ØÆµÆ×²¢´òÓ¡£¨¿ÉÑ¡£©
+        // æ‹·å›é¢‘è°±å¹¶æ‰“å°ï¼ˆå¯é€‰ï¼‰
         std::vector<cufftComplex> h_spec(size_t(n_complex) * batch);
         YK_CUDA_CHECK(cudaMemcpyAsync(h_spec.data(), d_cplx, complex_bytes, cudaMemcpyDeviceToHost, stream));
         YK_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -122,12 +122,12 @@ namespace YKTest {
         // ----------------
         fft.ifft(d_cplx, d_real_rec);
 
-        // ¿½»ØÖØ½¨
+        // æ‹·å›é‡å»º
         YK_CUDA_CHECK(cudaMemcpyAsync(h_rec.data(), d_real_rec, real_bytes, cudaMemcpyDeviceToHost, stream));
         YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
         // ----------------
-        // Check: rec ¡Ö N * in
+        // Check: rec â‰ˆ N * in
         // ----------------
         bool ok = true;
         float max_abs_err = 0.0f;

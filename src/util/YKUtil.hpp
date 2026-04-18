@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdio>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>

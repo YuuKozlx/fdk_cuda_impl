@@ -1,10 +1,10 @@
-// =============================================================================
+ï»¿// =============================================================================
 // YkWarpStrideCtx.cuh
 //
-// Warp Stride Loop ÉÏÏÂÎÄÄ£°å
+// Warp Stride Loop ä¸Šä¸‹æ–‡æ¨¡æ¿
 //
-// ÓÃÍ¾£ºÍ³Ò»¹ÜÀí CUDA kernel ÖĞµÄ warp Éí·İ¼ÆËã£¬±ÜÃâÖØ¸´ÊÖĞ´
-//       ¸ù¾İÊı¾İÎ¬¶ÈÑ¡Ôñ¶ÔÓ¦ÌØ»¯£¬±àÒëÆÚÁã¿ªÏú
+// ç”¨é€”ï¼šç»Ÿä¸€ç®¡ç† CUDA kernel ä¸­çš„ warp èº«ä»½è®¡ç®—ï¼Œé¿å…é‡å¤æ‰‹å†™
+//       æ ¹æ®æ•°æ®ç»´åº¦é€‰æ‹©å¯¹åº”ç‰¹åŒ–ï¼Œç¼–è¯‘æœŸé›¶å¼€é”€
 // =============================================================================
 #pragma once
 
@@ -13,41 +13,41 @@
 namespace YK {
 
     // -----------------------------------------------------------------------------
-    // ·½ÏòÃ¶¾Ù
+    // æ–¹å‘æšä¸¾
     //
-    //   X       : 1D Á¬ĞøÊı×é£¬Êı¾İÔÚ x ·½Ïò
-    //             ÊÊÓÃ£ºÂË²¨È¨ÖØÌî³ä¡¢scale¡¢window µÈ 1D kernel
+    //   X       : 1D è¿ç»­æ•°ç»„ï¼Œæ•°æ®åœ¨ x æ–¹å‘
+    //             é€‚ç”¨ï¼šæ»¤æ³¢æƒé‡å¡«å……ã€scaleã€window ç­‰ 1D kernel
     //
-    //   XY      : 2D£¬batch ÔÚ blockIdx.y£¬Êı¾İÔÚ x ·½Ïò stride loop
-    //             ÊÊÓÃ£ºpointwise_mul µÈÓĞ batch Î¬¶ÈµÄ kernel
+    //   XY      : 2Dï¼Œbatch åœ¨ blockIdx.yï¼Œæ•°æ®åœ¨ x æ–¹å‘ stride loop
+    //             é€‚ç”¨ï¼špointwise_mul ç­‰æœ‰ batch ç»´åº¦çš„ kernel
     //
-    //   RowWarp : ĞĞ¼¶£¬Ã¿¸ö warp ¶ÀÕ¼Ò»ĞĞ£¬Íâ²ã stride loop ¿çĞĞ
-    //             ÊÊÓÃ£ºpreweight µÈ per-row ¼ÆËã kernel
+    //   RowWarp : è¡Œçº§ï¼Œæ¯ä¸ª warp ç‹¬å ä¸€è¡Œï¼Œå¤–å±‚ stride loop è·¨è¡Œ
+    //             é€‚ç”¨ï¼špreweight ç­‰ per-row è®¡ç®— kernel
     // -----------------------------------------------------------------------------
     enum class EWarpStrideAxis { X, XY, RowWarp };
 
 
-    // Ö÷Ä£°å£¨Î´ÌØ»¯Ê±²»¿ÉÓÃ£©
+    // ä¸»æ¨¡æ¿ï¼ˆæœªç‰¹åŒ–æ—¶ä¸å¯ç”¨ï¼‰
     template<EWarpStrideAxis Axis>
     struct WarpStrideCtx;
 
 
     // -----------------------------------------------------------------------------
-    // ÌØ»¯£ºX ¡ª 1D kernel
+    // ç‰¹åŒ–ï¼šX â€” 1D kernel
     //
-    // ¡¾Launch ·¶Ê½ ¡ª Ğ¡Êı¾İ£¨n <= 2048£¬Ò»´ÎĞÔ³õÊ¼»¯£©¡¿
-    //   // µ¥ block ×ã¹»£¬stride loop ×Ô¶¯¶àÂÖ¸²¸Ç
+    // ã€Launch èŒƒå¼ â€” å°æ•°æ®ï¼ˆn <= 2048ï¼Œä¸€æ¬¡æ€§åˆå§‹åŒ–ï¼‰ã€‘
+    //   // å• block è¶³å¤Ÿï¼Œstride loop è‡ªåŠ¨å¤šè½®è¦†ç›–
     //   dim3 block(256, 1, 1);
     //   dim3 grid(1, 1, 1);
     //   kernel<<<grid, block, 0, stream>>>(..., n);
     //
-    //   ÊÊÓÃ³¡¾°£º
-    //     ÂË²¨È¨ÖØ³õÊ¼»¯£¨n = 512~2048£©
-    //     ·ÇÈÈÂ·¾¶£¬Æô¶¯¿ªÏú±È¼ÆËã±¾Éí¸üÏÔÖø
-    //     Ã¿Ïß³ÌÅÜ n/256 ÂÖ£¬µ¥ block ´®ĞĞ¸²¸Ç
+    //   é€‚ç”¨åœºæ™¯ï¼š
+    //     æ»¤æ³¢æƒé‡åˆå§‹åŒ–ï¼ˆn = 512~2048ï¼‰
+    //     éçƒ­è·¯å¾„ï¼Œå¯åŠ¨å¼€é”€æ¯”è®¡ç®—æœ¬èº«æ›´æ˜¾è‘—
+    //     æ¯çº¿ç¨‹è·‘ n/256 è½®ï¼Œå• block ä¸²è¡Œè¦†ç›–
     //
-    // ¡¾Launch ·¶Ê½ ¡ª ´óÊı¾İ£¨n > 2048£¬ÈÈÂ·¾¶£©¡¿
-    //   // °´ SM ÊıÁ¿¹Ì¶¨ grid£¬±ÜÃâ¹ı¶ÈÆô¶¯
+    // ã€Launch èŒƒå¼ â€” å¤§æ•°æ®ï¼ˆn > 2048ï¼Œçƒ­è·¯å¾„ï¼‰ã€‘
+    //   // æŒ‰ SM æ•°é‡å›ºå®š gridï¼Œé¿å…è¿‡åº¦å¯åŠ¨
     //   static int sm_count = 0;
     //   if (sm_count == 0)
     //       cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0);
@@ -55,17 +55,17 @@ namespace YK {
     //   const int warps_per_blk = 256 / 32;                               // = 8
     //   const int warps_need    = (n + 31) / 32;
     //   const int blocks_need   = (warps_need + warps_per_blk - 1) / warps_per_blk;
-    //   const int grid_x        = min(blocks_need, sm_count * 2);         // ÉÏÏŞ
+    //   const int grid_x        = min(blocks_need, sm_count * 2);         // ä¸Šé™
     //   dim3 block(256, 1, 1);
     //   dim3 grid(grid_x, 1, 1);
     //   kernel<<<grid, block, 0, stream>>>(..., n);
     //
-    //   ÊÊÓÃ³¡¾°£º
-    //     ´ó¹æÄ£ÖğÔªËØ²Ù×÷£¨n = ¼¸Ê®ÍòÒÔÉÏ£©
-    //     ÈÈÂ·¾¶£¬ĞèÒª³ä·ÖÀûÓÃËùÓĞ SM
-    //     Ã¿Ïß³ÌÅÜ ceil(n / (grid_x*256)) ÂÖ
+    //   é€‚ç”¨åœºæ™¯ï¼š
+    //     å¤§è§„æ¨¡é€å…ƒç´ æ“ä½œï¼ˆn = å‡ åä¸‡ä»¥ä¸Šï¼‰
+    //     çƒ­è·¯å¾„ï¼Œéœ€è¦å……åˆ†åˆ©ç”¨æ‰€æœ‰ SM
+    //     æ¯çº¿ç¨‹è·‘ ceil(n / (grid_x*256)) è½®
     //
-    // ¡¾Kernel ·¶Ê½¡¿
+    // ã€Kernel èŒƒå¼ã€‘
     //   __global__ void kernel(..., int n)
     //   {
     //       WarpStrideCtx<EWarpStrideAxis::X> ctx;
@@ -73,15 +73,15 @@ namespace YK {
     //       for (int base = ctx.warp_global * 32; base < n; base += ctx.n_warps * 32)
     //       {
     //           int k = base + ctx.lane;
-    //           if (k >= n) break;        // Î²²¿±ß½ç±£»¤£¬Ìø³ö±¾ÂÖ
-    //           // ... ¼ÆËã ...
+    //           if (k >= n) break;        // å°¾éƒ¨è¾¹ç•Œä¿æŠ¤ï¼Œè·³å‡ºæœ¬è½®
+    //           // ... è®¡ç®— ...
     //       }
     //   }
     //
-    // ¡¾±ß½çËµÃ÷¡¿
-    //   - Ñ­»·Ìõ¼ş base < n     : ÕûÂÖÔ½½çÊ±²»½øÈëÑ­»·Ìå
-    //   - if (k >= n) break     : Î²²¿ warp ÄÚ²¿·Ö lane Ô½½çÊ±Ìø³ö
-    //   - ²»ĞèÒª¶¥²ã return ±£»¤: stride loop ÌìÈ»´¦Àí warp Êı³¬¹ıÊı¾İÁ¿µÄÇé¿ö
+    // ã€è¾¹ç•Œè¯´æ˜ã€‘
+    //   - å¾ªç¯æ¡ä»¶ base < n     : æ•´è½®è¶Šç•Œæ—¶ä¸è¿›å…¥å¾ªç¯ä½“
+    //   - if (k >= n) break     : å°¾éƒ¨ warp å†…éƒ¨åˆ† lane è¶Šç•Œæ—¶è·³å‡º
+    //   - ä¸éœ€è¦é¡¶å±‚ return ä¿æŠ¤: stride loop å¤©ç„¶å¤„ç† warp æ•°è¶…è¿‡æ•°æ®é‡çš„æƒ…å†µ
     // -----------------------------------------------------------------------------
     template<>
     struct WarpStrideCtx<EWarpStrideAxis::X>
@@ -102,20 +102,20 @@ namespace YK {
 
 
     // -----------------------------------------------------------------------------
-    // ÌØ»¯£ºXY ¡ª 2D batch kernel
+    // ç‰¹åŒ–ï¼šXY â€” 2D batch kernel
     //
-    // ¡¾Launch ·¶Ê½ ¡ª Ğ¡Êı¾İ£¨n_complex <= 2048£¬batch ½ÏĞ¡£©¡¿
-    //   // x ·½Ïòµ¥ block£¬y ·½Ïò¶ÔÓ¦ batch
+    // ã€Launch èŒƒå¼ â€” å°æ•°æ®ï¼ˆn_complex <= 2048ï¼Œbatch è¾ƒå°ï¼‰ã€‘
+    //   // x æ–¹å‘å• blockï¼Œy æ–¹å‘å¯¹åº” batch
     //   dim3 block(256, 1, 1);
     //   dim3 grid(1, batch, 1);
     //   kernel<<<grid, block, 0, stream>>>(..., n, batch);
     //
-    //   ÊÊÓÃ³¡¾°£º
-    //     n_complex = 512~2048£¬batch = ¼¸Ê®µ½¼¸°Ù
-    //     Ã¿Ïß³ÌÔÚ x ·½ÏòÅÜ n/256 ÂÖ£¬y ·½Ïò 1:1 ¶ÔÓ¦ batch
-    //     batch ½ÏĞ¡Ê± gridDim.y ²»»á³¬³öÓ²¼şÏŞÖÆ£¨65535£©
+    //   é€‚ç”¨åœºæ™¯ï¼š
+    //     n_complex = 512~2048ï¼Œbatch = å‡ ååˆ°å‡ ç™¾
+    //     æ¯çº¿ç¨‹åœ¨ x æ–¹å‘è·‘ n/256 è½®ï¼Œy æ–¹å‘ 1:1 å¯¹åº” batch
+    //     batch è¾ƒå°æ—¶ gridDim.y ä¸ä¼šè¶…å‡ºç¡¬ä»¶é™åˆ¶ï¼ˆ65535ï¼‰
     //
-    // ¡¾Launch ·¶Ê½ ¡ª ´óÊı¾İ£¨n_complex > 2048 »ò batch ¼«´ó£©¡¿
+    // ã€Launch èŒƒå¼ â€” å¤§æ•°æ®ï¼ˆn_complex > 2048 æˆ– batch æå¤§ï¼‰ã€‘
     //   static int sm_count = 0;
     //   if (sm_count == 0)
     //       cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0);
@@ -123,37 +123,37 @@ namespace YK {
     //   const int warps_per_blk = 256 / 32;
     //   const int warps_need    = (n + 31) / 32;
     //   const int blocks_need   = (warps_need + warps_per_blk - 1) / warps_per_blk;
-    //   const int grid_x        = min(blocks_need, sm_count * 2);         // x ÉÏÏŞ
-    //   const int grid_y        = min(batch, 65535);                      // y ÉÏÏŞ
+    //   const int grid_x        = min(blocks_need, sm_count * 2);         // x ä¸Šé™
+    //   const int grid_y        = min(batch, 65535);                      // y ä¸Šé™
     //   dim3 block(256, 1, 1);
     //   dim3 grid(grid_x, grid_y, 1);
     //   kernel<<<grid, block, 0, stream>>>(..., n, batch);
     //
-    //   ×¢Òâ£ºbatch ³¬³ö 65535 Ê±ĞèÒªÔÚ kernel ÄÚ¶Ô b Ò²×ö stride loop
-    //         µ±Ç°ÌØ»¯²»°üº¬ b µÄ stride£¬³¬´ó batch Ğèµ¥¶À´¦Àí
+    //   æ³¨æ„ï¼šbatch è¶…å‡º 65535 æ—¶éœ€è¦åœ¨ kernel å†…å¯¹ b ä¹Ÿåš stride loop
+    //         å½“å‰ç‰¹åŒ–ä¸åŒ…å« b çš„ strideï¼Œè¶…å¤§ batch éœ€å•ç‹¬å¤„ç†
     //
-    // ¡¾Kernel ·¶Ê½¡¿
+    // ã€Kernel èŒƒå¼ã€‘
     //   __global__ void kernel(..., int n, int batch)
     //   {
     //       WarpStrideCtx<EWarpStrideAxis::XY> ctx;
-    //       if (ctx.b >= batch) return;   // y ·½Ïò¶¥²ãÔ½½ç£ºÕû¸öÏß³ÌÎŞÈÎÎñ
+    //       if (ctx.b >= batch) return;   // y æ–¹å‘é¡¶å±‚è¶Šç•Œï¼šæ•´ä¸ªçº¿ç¨‹æ— ä»»åŠ¡
     //
     //       for (int base = ctx.warp_global * 32; base < n; base += ctx.n_warps * 32)
     //       {
     //           int u = base + ctx.lane;
-    //           if (u >= n) break;         // x ·½ÏòÎ²²¿Ô½½ç
+    //           if (u >= n) break;         // x æ–¹å‘å°¾éƒ¨è¶Šç•Œ
     //           int idx = ctx.b * n + u;
-    //           // ... ¼ÆËã ...
+    //           // ... è®¡ç®— ...
     //       }
     //   }
     //
-    // ¡¾±ß½çËµÃ÷¡¿
-    //   - if (ctx.b >= batch) return : y ·½Ïò gridDim.y ³¬³ö batch Ê±£¬
-    //                                  Õû¸öÏß³Ì¿éÎŞÈÎÎñ£¬Ö±½ÓÍË³ö
-    //   - if (u >= n) break          : x ·½ÏòÎ²²¿ lane Ô½½ç£¬Ìø³öÑ­»·
-    //   - y ·½ÏòÓÃ return£¬x ·½ÏòÓÃ break
-    //     Ô­Òò£ºy Ô½½çÒâÎ¶×ÅÕû¸öÏß³ÌÎŞÈÎºÎÈÎÎñ
-    //           x Ô½½çÖ»ÊÇµ±Ç°ÂÖÎ²²¿£¬ºóĞøÂÖ´Î¿ÉÄÜÈÔÓĞÊı¾İ£¨stride loop£©
+    // ã€è¾¹ç•Œè¯´æ˜ã€‘
+    //   - if (ctx.b >= batch) return : y æ–¹å‘ gridDim.y è¶…å‡º batch æ—¶ï¼Œ
+    //                                  æ•´ä¸ªçº¿ç¨‹å—æ— ä»»åŠ¡ï¼Œç›´æ¥é€€å‡º
+    //   - if (u >= n) break          : x æ–¹å‘å°¾éƒ¨ lane è¶Šç•Œï¼Œè·³å‡ºå¾ªç¯
+    //   - y æ–¹å‘ç”¨ returnï¼Œx æ–¹å‘ç”¨ break
+    //     åŸå› ï¼šy è¶Šç•Œæ„å‘³ç€æ•´ä¸ªçº¿ç¨‹æ— ä»»ä½•ä»»åŠ¡
+    //           x è¶Šç•Œåªæ˜¯å½“å‰è½®å°¾éƒ¨ï¼Œåç»­è½®æ¬¡å¯èƒ½ä»æœ‰æ•°æ®ï¼ˆstride loopï¼‰
     // -----------------------------------------------------------------------------
     template<>
     struct WarpStrideCtx<EWarpStrideAxis::XY>
@@ -176,10 +176,10 @@ namespace YK {
 
 
     // -----------------------------------------------------------------------------
-    // ÌØ»¯£ºRowWarp ¡ª ĞĞ¼¶ per-row kernel
+    // ç‰¹åŒ–ï¼šRowWarp â€” è¡Œçº§ per-row kernel
     //
-    // ¡¾Launch ·¶Ê½ ¡ª Ğ¡Êı¾İ£¨K*Nv ½ÏĞ¡£¬ĞĞÊı <= sm_count*warps_per_blk£©¡¿
-    //   // ¾«È··ÖÅä£¬Ã¿ĞĞÇ¡ºÃÒ»¸ö warp£¬ÎŞ stride
+    // ã€Launch èŒƒå¼ â€” å°æ•°æ®ï¼ˆK*Nv è¾ƒå°ï¼Œè¡Œæ•° <= sm_count*warps_per_blkï¼‰ã€‘
+    //   // ç²¾ç¡®åˆ†é…ï¼Œæ¯è¡Œæ°å¥½ä¸€ä¸ª warpï¼Œæ—  stride
     //   const int total_rows    = K * Nv;
     //   const int warps_per_blk = 256 / 32;                               // = 8
     //   const int blocks        = (total_rows + warps_per_blk - 1) / warps_per_blk;
@@ -187,12 +187,12 @@ namespace YK {
     //   dim3 grid(blocks, 1, 1);
     //   kernel<<<grid, block, 0, stream>>>(...);
     //
-    //   ÊÊÓÃ³¡¾°£º
-    //     K*Nv ½ÏĞ¡£¬block Êı²»»á¹ı¶à
-    //     Ã¿¸ö warp Ö»ÅÜÒ»ĞĞ£¬Íâ²ã stride loop Ö»Ö´ĞĞÒ»ÂÖ
-    //     Nu ½Ï´óÊ±ĞĞÄÚ lane loop ÈÔÓĞ×ã¹»¹¤×÷Á¿
+    //   é€‚ç”¨åœºæ™¯ï¼š
+    //     K*Nv è¾ƒå°ï¼Œblock æ•°ä¸ä¼šè¿‡å¤š
+    //     æ¯ä¸ª warp åªè·‘ä¸€è¡Œï¼Œå¤–å±‚ stride loop åªæ‰§è¡Œä¸€è½®
+    //     Nu è¾ƒå¤§æ—¶è¡Œå†… lane loop ä»æœ‰è¶³å¤Ÿå·¥ä½œé‡
     //
-    // ¡¾Launch ·¶Ê½ ¡ª ´óÊı¾İ£¨K*Nv ºÜ´ó£¬ĞèÒªÏŞÖÆ block Êı£©¡¿
+    // ã€Launch èŒƒå¼ â€” å¤§æ•°æ®ï¼ˆK*Nv å¾ˆå¤§ï¼Œéœ€è¦é™åˆ¶ block æ•°ï¼‰ã€‘
     //   static int sm_count = 0;
     //   if (sm_count == 0)
     //       cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0);
@@ -200,55 +200,55 @@ namespace YK {
     //   const int total_rows    = K * Nv;
     //   const int warps_per_blk = 256 / 32;
     //   const int blocks_need   = (total_rows + warps_per_blk - 1) / warps_per_blk;
-    //   const int blocks        = min(blocks_need, sm_count * 2);         // ÉÏÏŞ
+    //   const int blocks        = min(blocks_need, sm_count * 2);         // ä¸Šé™
     //   dim3 block(256, 1, 1);
     //   dim3 grid(blocks, 1, 1);
     //   kernel<<<grid, block, 0, stream>>>(...);
     //
-    //   ÊÊÓÃ³¡¾°£º
-    //     K = ¼¸°ÙÖ¡£¬Nv = ¼¸°ÙĞĞ£¬K*Nv = ¼¸Íòµ½¼¸Ê®Íò
-    //     ¼ÓÉÏÏŞºó block Êı¹Ì¶¨£¬stride loop ·ÖÌ¯Ê£ÓàĞĞ
-    //     geo[i] ·´¸´¶ÁÈ¡µ« K ½ÏĞ¡£¬´ó¸ÅÂÊÃüÖĞ L1 cache
+    //   é€‚ç”¨åœºæ™¯ï¼š
+    //     K = å‡ ç™¾å¸§ï¼ŒNv = å‡ ç™¾è¡Œï¼ŒK*Nv = å‡ ä¸‡åˆ°å‡ åä¸‡
+    //     åŠ ä¸Šé™å block æ•°å›ºå®šï¼Œstride loop åˆ†æ‘Šå‰©ä½™è¡Œ
+    //     geo[i] åå¤è¯»å–ä½† K è¾ƒå°ï¼Œå¤§æ¦‚ç‡å‘½ä¸­ L1 cache
     //
-    // ¡¾Kernel ·¶Ê½¡¿
+    // ã€Kernel èŒƒå¼ã€‘
     //   __global__ void kernel(..., int Nu, int Nv, int K)
     //   {
     //       WarpStrideCtx<EWarpStrideAxis::RowWarp> ctx;
     //
-    //       // Íâ²ã£º¿çĞĞ stride loop£¬Ò»¸ö warp ´¦Àí¶àĞĞ
+    //       // å¤–å±‚ï¼šè·¨è¡Œ stride loopï¼Œä¸€ä¸ª warp å¤„ç†å¤šè¡Œ
     //       for (int row = ctx.warp_global; row < K * Nv; row += ctx.n_warps)
     //       {
     //           int i = row / Nv;
     //           int v = row - i * Nv;
     //
-    //           if (i >= K) continue;      // ·ÀÓùĞÔ¼ì²é£¬Ìø¹ıÒì³£ĞĞ£¬¼ÌĞøºóĞøĞĞ
+    //           if (i >= K) continue;      // é˜²å¾¡æ€§æ£€æŸ¥ï¼Œè·³è¿‡å¼‚å¸¸è¡Œï¼Œç»§ç»­åç»­è¡Œ
     //
-    //           // Ã¿ĞĞÖØĞÂ¼ÓÔØĞĞ¼¶²ÎÊı£¨Èç geo[i]£©...
+    //           // æ¯è¡Œé‡æ–°åŠ è½½è¡Œçº§å‚æ•°ï¼ˆå¦‚ geo[i]ï¼‰...
     //
-    //           // ÄÚ²ã£ºĞĞÄÚ lane loop£¬²½½ø¹Ì¶¨ 32
+    //           // å†…å±‚ï¼šè¡Œå†… lane loopï¼Œæ­¥è¿›å›ºå®š 32
     //           for (int u = ctx.lane; u < Nu; u += 32)
     //           {
-    //               // ... ¼ÆËã ...
-    //           }                          // ĞĞÄÚÎŞĞèÏÔÊ½Ô½½ç¼ì²é£¬Ñ­»·Ìõ¼ş±£Ö¤
+    //               // ... è®¡ç®— ...
+    //           }                          // è¡Œå†…æ— éœ€æ˜¾å¼è¶Šç•Œæ£€æŸ¥ï¼Œå¾ªç¯æ¡ä»¶ä¿è¯
     //       }
     //   }
     //
-    // ¡¾±ß½çËµÃ÷¡¿
-    //   - Íâ²ãÑ­»·Ìõ¼ş row < K*Nv : ĞĞ±àºÅÔ½½çÊ±²»½øÈëÑ­»·£¬×ÔÈ»ÍË³ö
-    //   - if (i >= K) continue    : ·ÀÓùĞÔ±£»¤£¬Òì³£ĞĞÌø¹ı¶ø·Ç return
-    //                               Ô­Òò£ººóĞøĞĞÈÔĞè´¦Àí£¬return »áµ¼ÖÂÂ©´¦Àí
-    //   - ÄÚ²ãÑ­»·Ìõ¼ş u < Nu     : ĞĞÄÚÌìÈ»±ß½ç£¬ÎŞĞè¶îÍâ break
-    //   - ²»ÔÚ¶¥²ã×ö return ±£»¤  : Óë X/XY ²»Í¬£¬¶¥²ã return »áµ¼ÖÂ
-    //                               ºóĞøĞĞÂ©´¦Àí
+    // ã€è¾¹ç•Œè¯´æ˜ã€‘
+    //   - å¤–å±‚å¾ªç¯æ¡ä»¶ row < K*Nv : è¡Œç¼–å·è¶Šç•Œæ—¶ä¸è¿›å…¥å¾ªç¯ï¼Œè‡ªç„¶é€€å‡º
+    //   - if (i >= K) continue    : é˜²å¾¡æ€§ä¿æŠ¤ï¼Œå¼‚å¸¸è¡Œè·³è¿‡è€Œé return
+    //                               åŸå› ï¼šåç»­è¡Œä»éœ€å¤„ç†ï¼Œreturn ä¼šå¯¼è‡´æ¼å¤„ç†
+    //   - å†…å±‚å¾ªç¯æ¡ä»¶ u < Nu     : è¡Œå†…å¤©ç„¶è¾¹ç•Œï¼Œæ— éœ€é¢å¤– break
+    //   - ä¸åœ¨é¡¶å±‚åš return ä¿æŠ¤  : ä¸ X/XY ä¸åŒï¼Œé¡¶å±‚ return ä¼šå¯¼è‡´
+    //                               åç»­è¡Œæ¼å¤„ç†
     //
-    // ¡¾Ğ¡Êı¾İ vs ´óÊı¾İµÄºËĞÄÇø±ğ¡¿
-    //   Ğ¡Êı¾İ£ºblocks ¾«È·¸²¸Ç£¬Ã¿ warp Ö»ÅÜÒ»ĞĞ£¬stride loop ÍË»¯Îªµ¥ÂÖ
-    //   ´óÊı¾İ£ºblocks ¼ÓÉÏÏŞ£¬Ã¿ warp ÅÜ¶àĞĞ£¬stride loop ·ÖÌ¯Ê£Óà
-    //   Á½ÖÖÇé¿ö kernel ´úÂëÍêÈ«ÏàÍ¬£¬Ö»ÓĞ launch ²àµÄ blocks ¼ÆËã²»Í¬
+    // ã€å°æ•°æ® vs å¤§æ•°æ®çš„æ ¸å¿ƒåŒºåˆ«ã€‘
+    //   å°æ•°æ®ï¼šblocks ç²¾ç¡®è¦†ç›–ï¼Œæ¯ warp åªè·‘ä¸€è¡Œï¼Œstride loop é€€åŒ–ä¸ºå•è½®
+    //   å¤§æ•°æ®ï¼šblocks åŠ ä¸Šé™ï¼Œæ¯ warp è·‘å¤šè¡Œï¼Œstride loop åˆ†æ‘Šå‰©ä½™
+    //   ä¸¤ç§æƒ…å†µ kernel ä»£ç å®Œå…¨ç›¸åŒï¼Œåªæœ‰ launch ä¾§çš„ blocks è®¡ç®—ä¸åŒ
     //
-    // ¡¾Óë X/XY µÄ¹Ø¼üÇø±ğ¡¿
-    //   X/XY    : ÔªËØ¼¶ stride£¬warp ´¦Àí¶à¸ö¶ÀÁ¢ÔªËØ£¬Ô½½çÓÃ break
-    //   RowWarp : ĞĞ¼¶ stride£¬warp ´¦Àí¶àĞĞ£¬ĞĞÄÚĞ­×÷£¬Ô½½çÓÃ continue
+    // ã€ä¸ X/XY çš„å…³é”®åŒºåˆ«ã€‘
+    //   X/XY    : å…ƒç´ çº§ strideï¼Œwarp å¤„ç†å¤šä¸ªç‹¬ç«‹å…ƒç´ ï¼Œè¶Šç•Œç”¨ break
+    //   RowWarp : è¡Œçº§ strideï¼Œwarp å¤„ç†å¤šè¡Œï¼Œè¡Œå†…åä½œï¼Œè¶Šç•Œç”¨ continue
     // -----------------------------------------------------------------------------
     template<>
     struct WarpStrideCtx<EWarpStrideAxis::RowWarp>

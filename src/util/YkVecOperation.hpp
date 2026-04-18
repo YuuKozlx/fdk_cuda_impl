@@ -1,8 +1,8 @@
-#pragma once
+ï»¿#pragma once
 /**
- * YkVec.h ¡ª YK ÏòÁ¿ÊıÑ§¿â
- * »ù´¡ÔËËãÒÀÀµ helper_math.h£¨CUDA SDK£©
- * ±¾ÎÄ¼şÖ»Ìá¹© helper_math.h Î´¸²¸ÇµÄÀ©Õ¹
+ * YkVec.h â€” YK å‘é‡æ•°å­¦åº“
+ * åŸºç¡€è¿ç®—ä¾èµ– helper_math.hï¼ˆCUDA SDKï¼‰
+ * æœ¬æ–‡ä»¶åªæä¾› helper_math.h æœªè¦†ç›–çš„æ‰©å±•
  */
 #include <cuda_runtime.h>
 #include "helper_math.h"
@@ -22,7 +22,7 @@ namespace YK {
     YK_HD YK_FORCE_INLINE float yk_lerp(float a, float b, float t) { return a + (b - a) * t; }
 
     // ============================================================
-    // float3 À©Õ¹
+    // float3 æ‰©å±•
     // ============================================================
 
     YK_HD YK_FORCE_INLINE float3 f3_normalize(float3 a, float eps = 1e-20f) {
@@ -49,7 +49,7 @@ namespace YK {
     }
 
     // ============================================================
-    // float3 Ğı×ª
+    // float3 æ—‹è½¬
     // ============================================================
 
     YK_HD YK_FORCE_INLINE float3 f3_rotx(float3 v, float a) {
@@ -78,7 +78,7 @@ namespace YK {
     YK_HD YK_FORCE_INLINE float3 f3_rot_axis_about(float3 p, float3 p0, float3 k, float a) { return p0 + f3_rot_axis(p - p0, k, a); }
 
     // ============================================================
-    // float3 ·´Éä
+    // float3 åå°„
     // ============================================================
 
     YK_HD YK_FORCE_INLINE float3 f3_reflect_plane_origin(float3 p, float3 n) { return p - 2.f * dot(p, n) * n; }
@@ -87,14 +87,14 @@ namespace YK {
     YK_HD YK_FORCE_INLINE float3 f3_reflect_axis(float3 p, float3 p0, float3 u) { return p0 + f3_reflect_axis_origin(p - p0, u); }
 
     // ============================================================
-    // float4 À©Õ¹£¨w ÓÀÔ¶Îª 0£¬¼¸ºÎÔËËãÖ±½ÓÓÃ helper_math£©
+    // float4 æ‰©å±•ï¼ˆw æ°¸è¿œä¸º 0ï¼Œå‡ ä½•è¿ç®—ç›´æ¥ç”¨ helper_mathï¼‰
     // ============================================================
 
-    // »¥×ª£¬w ¹Ì¶¨Îª 0
+    // äº’è½¬ï¼Œw å›ºå®šä¸º 0
     YK_HD YK_FORCE_INLINE float4 f3_to_f4(float3 v) { return make_float4(v.x, v.y, v.z, 0.f); }
     YK_HD YK_FORCE_INLINE float3 f4_to_f3(float4 v) { return make_float3(v.x, v.y, v.z); }
 
-    // cross£¨helper_math Ã»ÓĞ float4 °æ±¾£©
+    // crossï¼ˆhelper_math æ²¡æœ‰ float4 ç‰ˆæœ¬ï¼‰
     YK_HD YK_FORCE_INLINE float4 f4_cross(float4 a, float4 b) {
         return make_float4(
             a.y * b.z - a.z * b.y,
@@ -104,9 +104,9 @@ namespace YK {
         );
     }
 
-    // normalize ´ø eps ±£»¤£¨helper_math ÎŞ±£»¤£©
+    // normalize å¸¦ eps ä¿æŠ¤ï¼ˆhelper_math æ— ä¿æŠ¤ï¼‰
     YK_HD YK_FORCE_INLINE float4 f4_normalize(float4 a, float eps = 1e-20f) {
-        float l2 = dot(a, a);  // w=0£¬µÈ¼ÛÓÚ xyz dot
+        float l2 = dot(a, a);  // w=0ï¼Œç­‰ä»·äº xyz dot
         if (l2 < eps) return make_float4(0.f, 0.f, 0.f, 0.f);
 #if defined(__CUDA_ARCH__)
         return a * rsqrtf(l2);
@@ -128,7 +128,7 @@ namespace YK {
         return d.x <= eps && d.y <= eps && d.z <= eps;
     }
 
-    // Ğı×ª£¬w Êä³ö 0
+    // æ—‹è½¬ï¼Œw è¾“å‡º 0
     YK_HD YK_FORCE_INLINE float4 f4_rotx(float4 v, float a) { return f3_to_f4(f3_rotx(f4_to_f3(v), a)); }
     YK_HD YK_FORCE_INLINE float4 f4_roty(float4 v, float a) { return f3_to_f4(f3_roty(f4_to_f3(v), a)); }
     YK_HD YK_FORCE_INLINE float4 f4_rotz(float4 v, float a) { return f3_to_f4(f3_rotz(f4_to_f3(v), a)); }
@@ -266,7 +266,7 @@ namespace YK {
     };
 
     // ============================================================
-    // ¼æÈİ²ã
+    // å…¼å®¹å±‚
     // ============================================================
 
     // float3

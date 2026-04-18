@@ -1,4 +1,4 @@
-#include "test_common.hpp"
+﻿#include "test_common.hpp"
 #include <cuda_runtime.h>
 #include <vector>
 #include <fstream>

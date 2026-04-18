@@ -1,5 +1,5 @@
-// test_Task_dll.cpp
-// ²âÊÔ TaskFactory ´´½¨ FDK ºÍ FP ÈÎÎñ£¬ÑéÖ¤ DLL ½Ó¿ÚÍêÕûĞÔ
+ï»¿// test_Task_dll.cpp
+// æµ‹è¯• TaskFactory åˆ›å»º FDK å’Œ FP ä»»åŠ¡ï¼ŒéªŒè¯ DLL æ¥å£å®Œæ•´æ€§
 
 #include <algorithm>
 #include <cstdio>
@@ -26,7 +26,7 @@
 
 
 // ----------------------------------------------------------------
-// ¹¤¾ßº¯Êı
+// å·¥å…·å‡½æ•°
 // ----------------------------------------------------------------
 static bool loadRaw(const char* path, std::vector<float>& buf, size_t count)
 {
@@ -73,7 +73,7 @@ static bool createLogger()
 }
 
 // ----------------------------------------------------------------
-// ¹«¹²¼¸ºÎ²ÎÊı£¬FDK ºÍ FP ¹²ÓÃ
+// å…¬å…±å‡ ä½•å‚æ•°ï¼ŒFDK å’Œ FP å…±ç”¨
 // ----------------------------------------------------------------
 static YK::SScanParams makeScanParams()
 {
@@ -87,7 +87,7 @@ static YK::SScanParams makeScanParams()
     s.scanRangeRad = 2.f * 3.14159265f;
     s.startAngleRad = 3.14159265f * 1.5f;
     s.shortScan = false;
-    s.NAng = 360; // ½ö FDK ÓÃ£¬±íÊ¾×ÜÊÓÍ¼Êı£¨·ÇÅú´Î´óĞ¡£©
+    s.NAng = 360; // ä»… FDK ç”¨ï¼Œè¡¨ç¤ºæ€»è§†å›¾æ•°ï¼ˆéæ‰¹æ¬¡å¤§å°ï¼‰
     return s;
 }
 
@@ -104,7 +104,7 @@ static YK::SVolumeParams makeVolumeParams()
 }
 
 // ----------------------------------------------------------------
-// ²âÊÔ1£ºFP ÕıÍ¶Ó°
+// æµ‹è¯•1ï¼šFP æ­£æŠ•å½±
 // ----------------------------------------------------------------
 static void test_fp_task()
 {
@@ -113,23 +113,23 @@ static void test_fp_task()
     constexpr int Na = 360, Nu = 1024, Nv = 1024;
     constexpr int Nx = 512, Ny = 512, Nz = 400;
 
-    // --- ¼ÓÔØÌå»ı ---
+    // --- åŠ è½½ä½“ç§¯ ---
     std::vector<float> h_vol;
     if (!loadRaw("fdk_vec_vol_offline.raw", h_vol,
         (size_t)Nx * Ny * Nz)) return;
     printf("  volume loaded\n");
 
 
-    // --- ·ÖÅäÊä³ö ---
+    // --- åˆ†é…è¾“å‡º ---
     const size_t sino_elems = (size_t)Na * Nv * Nu;
 
 
-    // --- ¹¹½¨½Ç¶È ---
+    // --- æ„å»ºè§’åº¦ ---
     std::vector<float> angles(Na);
     for (int i = 0; i < Na; ++i)
         angles[i] = 3.14159265f * 1.5f * 0 + 2.f * 3.14159265f * i / Na;
 
-    // --- ´´½¨ÈÎÎñ ---
+    // --- åˆ›å»ºä»»åŠ¡ ---
     YK::ITask* task = YK::TaskFactory::create(YK::ETask::FP_Joseph);
     if (!task) { fprintf(stderr, "  create failed\n"); return; }
 
@@ -156,8 +156,8 @@ static void test_fp_task()
     std::vector<float> h_sino(sino_elems);
     // --- run ---
     YK::FpBatchParams batchP{};
-    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // ÊäÈëÌå»ıÊ¹ÓÃ CPU ÄÚ´æ£¬²âÊÔ½Ó¿ÚµÄ×Ô¶¯¹ÜÀí¹¦ÄÜ
-    batchP.sino_mode = YK::EBufferMode::HostPtr;    // Êä³öÕıÏÒÍ¼Ê¹ÓÃ GPU ÄÚ´æ£¬²âÊÔ²»Í¬Ä£Ê½»ìÓÃ
+    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // è¾“å…¥ä½“ç§¯ä½¿ç”¨ CPU å†…å­˜ï¼Œæµ‹è¯•æ¥å£çš„è‡ªåŠ¨ç®¡ç†åŠŸèƒ½
+    batchP.sino_mode = YK::EBufferMode::HostPtr;    // è¾“å‡ºæ­£å¼¦å›¾ä½¿ç”¨ GPU å†…å­˜ï¼Œæµ‹è¯•ä¸åŒæ¨¡å¼æ··ç”¨
     batchP.h_vol_in = h_vol.data();
     batchP.h_sino_out = h_sino.data();
     batchP.h_angles = angles.data();
@@ -171,19 +171,19 @@ static void test_fp_task()
     }
     printf("  run OK\n");
 
-    // --- »Ø¶ÁÍ³¼Æ ---
+    // --- å›è¯»ç»Ÿè®¡ ---
     printStats(h_sino, "fp sino");
 
     saveRaw("dll_test1_fp_sino.raw", h_sino.data(), sino_elems);
     printf("  saved: dll_test1_fp_sino.raw\n");
 
-    // --- ÇåÀí ---
+    // --- æ¸…ç† ---
     YK::TaskFactory::destroy(task);
 
 }
 
 // ----------------------------------------------------------------
-// ²âÊÔ2£ºFDK ÖØ½¨
+// æµ‹è¯•2ï¼šFDK é‡å»º
 // ----------------------------------------------------------------
 static void test_fdk_task()
 {
@@ -193,7 +193,7 @@ static void test_fdk_task()
     constexpr int Na = 360, Nu = 1024, Nv = 1024;
     constexpr int Nx = 512, Ny = 512, Nz = 400;
 
-    // --- ¼ÓÔØÕıÏÒÍ¼ ---
+    // --- åŠ è½½æ­£å¼¦å›¾ ---
     std::vector<float> h_sino;
     if (!loadRaw("dll_test1_fp_sino.raw", h_sino,
         (size_t)Na * Nv * Nu)) {
@@ -203,16 +203,16 @@ static void test_fdk_task()
     printf("  sino loaded\n");
     printStats(h_sino, "input sino");
 
-    // --- ·ÖÅäÊä³öÌå»ı ---
+    // --- åˆ†é…è¾“å‡ºä½“ç§¯ ---
     void* d_vol = nullptr;
     cudaMalloc(&d_vol, (size_t)Nx * Ny * Nz * sizeof(float));
 
-    // --- ¹¹½¨½Ç¶È ---
+    // --- æ„å»ºè§’åº¦ ---
     std::vector<float> angles(Na);
     for (int i = 0; i < Na; ++i)
         angles[i] = 3.14159265f * 1.5f + 2.f * 3.14159265f * i / Na;
 
-    // --- ´´½¨ÈÎÎñ ---
+    // --- åˆ›å»ºä»»åŠ¡ ---
     YK::ITask* task = YK::TaskFactory::create(YK::ETask::FDK);
     if (!task) { fprintf(stderr, "  create failed\n"); return; }
 
@@ -238,7 +238,7 @@ static void test_fdk_task()
     std::vector<float> h_vol((size_t)Nx * Ny * Nz);
     // --- run ---
     YK::FdkBatchParams batchP{};
-    batchP.vol_mode = YK::EBufferMode::HostPtr;   // Êä³öÌå»ıÊ¹ÓÃ CPU ÄÚ´æ£¬²âÊÔ½Ó¿ÚµÄ×Ô¶¯¹ÜÀí¹¦ÄÜ
+    batchP.vol_mode = YK::EBufferMode::HostPtr;   // è¾“å‡ºä½“ç§¯ä½¿ç”¨ CPU å†…å­˜ï¼Œæµ‹è¯•æ¥å£çš„è‡ªåŠ¨ç®¡ç†åŠŸèƒ½
     batchP.h_proj = h_sino.data();
     batchP.h_vol_out = h_vol.data();
     batchP.h_angles = angles.data();
@@ -286,7 +286,7 @@ static void test_fdk_task()
     saveRaw("dll_test2_fdk_vol.raw", h_vol.data(), h_vol.size());
     printf("  saved: dll_test2_fdk_vol.raw\n");
 
-    // --- ÇåÀí ---
+    // --- æ¸…ç† ---
     YK::TaskFactory::destroy(task);
 }
 
@@ -296,9 +296,9 @@ static void test_fdk_task_online()
 
     constexpr int Na = 360, Nu = 1024, Nv = 1024;
     constexpr int Nx = 512, Ny = 512, Nz = 400;
-    constexpr int ChunkSize = 32;  // Ã¿´Î feed µÄÊÓÍ¼Êı£¬Na µÄÒòÊı
+    constexpr int ChunkSize = 32;  // æ¯æ¬¡ feed çš„è§†å›¾æ•°ï¼ŒNa çš„å› æ•°
 
-    // --- ¼ÓÔØÕıÏÒÍ¼ ---
+    // --- åŠ è½½æ­£å¼¦å›¾ ---
     std::vector<float> h_sino;
     if (!loadRaw("dll_test1_fp_sino.raw", h_sino, (size_t)Na * Nv * Nu)) {
         fprintf(stderr, "  sino not found, run test1 first\n");
@@ -307,16 +307,16 @@ static void test_fdk_task_online()
     printf("  sino loaded\n");
     printStats(h_sino, "input sino");
 
-    // --- ·ÖÅäÊä³öÌå»ı ---
+    // --- åˆ†é…è¾“å‡ºä½“ç§¯ ---
     void* d_vol = nullptr;
     cudaMalloc(&d_vol, (size_t)Nx * Ny * Nz * sizeof(float));
 
-    // --- ¹¹½¨½Ç¶È ---
+    // --- æ„å»ºè§’åº¦ ---
     std::vector<float> angles(Na);
     for (int i = 0; i < Na; ++i)
         angles[i] = 3.14159265f * 1.5f + 2.f * 3.14159265f * i / Na;
 
-    // --- ´´½¨ÈÎÎñ ---
+    // --- åˆ›å»ºä»»åŠ¡ ---
     YK::ITask* task = YK::TaskFactory::create(YK::ETask::FDK);
     if (!task) { fprintf(stderr, "  create failed\n"); return; }
 
@@ -338,7 +338,7 @@ static void test_fdk_task_online()
     }
     printf("  init OK\n");
 
-    // --- ·Ö°ü run ---
+    // --- åˆ†åŒ… run ---
     const size_t view_elems = (size_t)Nu * Nv;
     int fed = 0;
 
@@ -346,12 +346,12 @@ static void test_fdk_task_online()
         const int K = std::min(ChunkSize, Na - base);
 
         YK::FdkBatchParams batchP{};
-        batchP.vol_mode = YK::EBufferMode::DevicePtr;   // Êä³öÌå»ıÊ¹ÓÃ GPU ÄÚ´æ£¬²âÊÔ½Ó¿ÚµÄÍâ²¿¹ÜÀí¹¦ÄÜ
+        batchP.vol_mode = YK::EBufferMode::DevicePtr;   // è¾“å‡ºä½“ç§¯ä½¿ç”¨ GPU å†…å­˜ï¼Œæµ‹è¯•æ¥å£çš„å¤–éƒ¨ç®¡ç†åŠŸèƒ½
         batchP.h_proj = h_sino.data() + (size_t)base * view_elems;
         batchP.d_vol_out = (float*)d_vol;
         batchP.h_angles = angles.data() + base;
         batchP.K = K;
-        batchP.clearOut = (base == 0);    // Ö»ÓĞµÚÒ»°üÇåÁã
+        batchP.clearOut = (base == 0);    // åªæœ‰ç¬¬ä¸€åŒ…æ¸…é›¶
 
         if (!task->run(batchP)) {
             fprintf(stderr, "  run failed at base=%d\n", base);
@@ -366,7 +366,7 @@ static void test_fdk_task_online()
 
     printf("  all chunks done\n");
 
-    // --- »Ø¶ÁÍ³¼Æ ---
+    // --- å›è¯»ç»Ÿè®¡ ---
     std::vector<float> h_vol((size_t)Nx * Ny * Nz);
     cudaMemcpy(h_vol.data(), d_vol,
         h_vol.size() * sizeof(float), cudaMemcpyDeviceToHost);
@@ -375,13 +375,13 @@ static void test_fdk_task_online()
     saveRaw("dll_test2_fdk_vol_online.raw", h_vol.data(), h_vol.size());
     printf("  saved: dll_test2_fdk_vol_online.raw\n");
 
-    // --- ÇåÀí ---
+    // --- æ¸…ç† ---
     YK::TaskFactory::destroy(task);
     cudaFree(d_vol);
 }
 
 // ----------------------------------------------------------------
-// ²âÊÔ3£ºreset ºóÖØ¸´ run
+// æµ‹è¯•3ï¼šreset åé‡å¤ run
 // ----------------------------------------------------------------
 static void test_reset()
 {
@@ -423,22 +423,22 @@ static void test_reset()
     std::vector<float> h_sino2(sino_elems);
 
     YK::FpBatchParams batchP{};
-    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // ÊäÈëÌå»ıÊ¹ÓÃ CPU ÄÚ´æ£¬²âÊÔ½Ó¿ÚµÄ×Ô¶¯¹ÜÀí¹¦ÄÜ
+    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // è¾“å…¥ä½“ç§¯ä½¿ç”¨ CPU å†…å­˜ï¼Œæµ‹è¯•æ¥å£çš„è‡ªåŠ¨ç®¡ç†åŠŸèƒ½
     batchP.h_vol_in = h_vol.data();
-    batchP.sino_mode = YK::EBufferMode::HostPtr;    // Êä³öÕıÏÒÍ¼Ê¹ÓÃ GPU ÄÚ´æ£¬²âÊÔ²»Í¬Ä£Ê½»ìÓÃ
+    batchP.sino_mode = YK::EBufferMode::HostPtr;    // è¾“å‡ºæ­£å¼¦å›¾ä½¿ç”¨ GPU å†…å­˜ï¼Œæµ‹è¯•ä¸åŒæ¨¡å¼æ··ç”¨
     batchP.h_sino_out = h_sino1.data();
     batchP.h_angles = angles.data();
     batchP.K = Na;
     batchP.clearOut = true;
 
-    // µÚÒ»´Î run
+    // ç¬¬ä¸€æ¬¡ run
 
     task->run(batchP);
 
 
     printStats(h_sino1, "run1");
 
-    // reset ºóµÚ¶ş´Î run
+    // reset åç¬¬äºŒæ¬¡ run
     batchP.h_sino_out = h_sino2.data();
     task->reset();
 
@@ -446,7 +446,7 @@ static void test_reset()
 
     printStats(h_sino2, "run2");
 
-    // Á½´Î½á¹ûÓ¦ÍêÈ«Ò»ÖÂ
+    // ä¸¤æ¬¡ç»“æœåº”å®Œå…¨ä¸€è‡´
     double maxDiff = 0.0;
     for (size_t k = 0; k < sino_elems; ++k)
         maxDiff = std::max(maxDiff, (double)std::abs(h_sino1[k] - h_sino2[k]));
@@ -458,7 +458,7 @@ static void test_reset()
 }
 
 // ----------------------------------------------------------------
-// Ö÷Èë¿Ú
+// ä¸»å…¥å£
 // ----------------------------------------------------------------
 int main()
 {

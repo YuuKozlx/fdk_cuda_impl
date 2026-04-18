@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include <cmath>
 #include <iostream>
@@ -9,7 +9,7 @@
 #endif
 
 namespace YK_Test {
-    // Éú³É¿Õ¼äÓò RL ºË
+    // ç”Ÿæˆç©ºé—´åŸŸ RL æ ¸
     std::vector<float> generateSpatialRLKernel(int size, float du) {
         std::vector<float> kernel(size);
         int center = size / 2;
@@ -28,7 +28,7 @@ namespace YK_Test {
         return kernel;
     }
 
-    // CPU ¿Õ¼äÓò¾í»ı (¼òµ¥ÊµÏÖ£¬ÓÃÓÚÑéÖ¤)
+    // CPU ç©ºé—´åŸŸå·ç§¯ (ç®€å•å®ç°ï¼Œç”¨äºéªŒè¯)
     std::vector<float> cpuConvolve(const std::vector<float>& input, const std::vector<float>& kernel) {
         int n = input.size();
         int k = kernel.size();
