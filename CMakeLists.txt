@@ -203,3 +203,15 @@ option(BUILD_DLLTEST "Build DLL interface test" ON)
 if(BUILD_DLLTEST)
     add_subdirectory(dlltest)
 endif()
+
+
+# ----------------------------------------------------------------
+# extra: pre-commit hook 自动安装,禁止大文件提交等
+# ----------------------------------------------------------------
+find_program(PRE_COMMIT pre-commit)
+if(PRE_COMMIT AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND ${PRE_COMMIT} install
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+endif()

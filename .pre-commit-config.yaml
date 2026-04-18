@@ -1,0 +1,14 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=2000']
+
+  - repo: local
+    hooks:
+      - id: no-binary-files
+        name: No binary files
+        language: system
+        entry: grep -Iq "" 
+        types: [file]
