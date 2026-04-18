@@ -1,6 +1,6 @@
-#pragma once
+ï»¿#pragma once
 #include "cvp_geometry.cuh"
-#include ¡°YkMacro.hpp"
+#include ï¿½ï¿½YkMacro.hpp"
 
 namespace cvp
 {

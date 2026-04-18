@@ -1,4 +1,4 @@
-// YkFdkTaskHandle.hpp
+ï»¿// YkFdkTaskHandle.hpp
 #pragma once
 #include <cuda_runtime.h>
 
@@ -14,14 +14,14 @@ namespace YK {
     // ----------------------------------------------------------------
     // FdkTaskHandle
     //
-    //   ITask µÄ FDK ÖØ½¨ÊµÏÖ
-    //   stream ÉúÃüÖÜÆÚ£ºinit() ´´½¨£¬release() / Îö¹¹Ê±Ïú»Ù
-    //   Kchunk£ºÄÚ²¿¹Ì¶¨Îª kMaxChunkAng£¬Íâ²¿Í¨¹ý TaskBatchParams.K ¿ØÖÆ·ÖÅú
+    //   ITask ï¿½ï¿½ FDK ï¿½Ø½ï¿½Êµï¿½ï¿½
+    //   stream ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú£ï¿½init() ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½release() / ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½
+    //   Kchunkï¿½ï¿½ï¿½Ú²ï¿½ï¿½Ì¶ï¿½Îª kMaxChunkAngï¿½ï¿½ï¿½â²¿Í¨ï¿½ï¿½ TaskBatchParams.K ï¿½ï¿½ï¿½Æ·ï¿½ï¿½ï¿½
     //
-    //   Êä³öÄ£Ê½£¨vol_mode / sino_mode£©£º
-    //     DevicePtr ¡ª Íâ²¿Ìá¹© GPU Ö¸Õë£¬Ö±½ÓÐ´Èë£¬ÎÞ»Ø¿½
-    //     HostPtr   ¡ª Íâ²¿Ìá¹© CPU Ö¸Õë£¬ÄÚ²¿·ÖÅäÏÔ´æÔÝ´æ£¬
-    //                 ×îºóÒ»°ü£¨totalReceived >= iPAngTotal£©Ê±×Ô¶¯»Ø¿½
+    //   ï¿½ï¿½ï¿½Ä£Ê½ï¿½ï¿½vol_mode / sino_modeï¿½ï¿½ï¿½ï¿½
+    //     DevicePtr ï¿½ï¿½ ï¿½â²¿ï¿½á¹© GPU Ö¸ï¿½ë£¬Ö±ï¿½ï¿½Ð´ï¿½ë£¬ï¿½Þ»Ø¿ï¿½
+    //     HostPtr   ï¿½ï¿½ ï¿½â²¿ï¿½á¹© CPU Ö¸ï¿½ë£¬ï¿½Ú²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô´ï¿½ï¿½Ý´æ£¬
+    //                 ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½totalReceived >= iPAngTotalï¿½ï¿½Ê±ï¿½Ô¶ï¿½ï¿½Ø¿ï¿½
     // ----------------------------------------------------------------
     class FdkTaskHandle : public ITask {
     public:
@@ -99,7 +99,7 @@ namespace YK {
         }
 
         // ----------------------------------------------------------------
-        // ×´Ì¬²éÑ¯
+        // ×´Ì¬ï¿½ï¿½Ñ¯
         // ----------------------------------------------------------------
         bool  isInitialized() const override { return is_initialized_; }
         ETask task()          const override { return ETask::FDK; }
@@ -157,7 +157,7 @@ namespace YK {
                 return false;
             }
 
-            // ÀÁ·ÖÅäÄÚ²¿ÏÔ´æ
+            // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú²ï¿½ï¿½Ô´ï¿½
             if (!d_vol_internal_) {
                 Mem::MemoryController mc;
                 d_vol_internal_ = mc.allocateDevice3D<float>(
@@ -170,7 +170,7 @@ namespace YK {
                 dump_cb, userdata))
                 return false;
 
-            // ×îºóÒ»°üÊ±»Ø¿½
+            // ï¿½ï¿½ï¿½Ò»ï¿½ï¿½Ê±ï¿½Ø¿ï¿½
             const bool is_last = (fdk_.totalReceived() >= params_.iPAngTotal);
             if (is_last) {
                 cudaStreamSynchronize(stream_);
@@ -184,7 +184,7 @@ namespace YK {
             return true;
         }
 
-        // ¹«¹²£º¹¹½¨ SCBCTParams
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ SCBCTParams
         SCBCTParams buildCp_(const FdkBatchParams& p) const
         {
             SCBCTParams cp = params_;
@@ -193,7 +193,7 @@ namespace YK {
             return cp;
         }
 
-        // ¹«¹²£ºµ÷ fdk_.feed
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ fdk_.feed
         bool feedImpl_(
             const float* h_proj,
             const SCBCTParams& cp,
@@ -214,13 +214,13 @@ namespace YK {
         bool             is_initialized_ = false;
         int              device_id_ = 0;
 
-        // ÌåÊý¾ÝÄÚ²¿ÏÔ´æ£¨HostPtr Ä£Ê½£©
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú²ï¿½ï¿½Ô´æ£¨HostPtr Ä£Ê½ï¿½ï¿½
         Mem::DeviceLinearBuffer3D<float> d_vol_internal_;
         float* h_vol_pending_;
         size_t  vol_size_bytes_ = 0;
 
         // ----------------------------------------------------------------
-        // ¹«¹²¼¸ºÎ²ÎÊýÓ³Éä
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î²ï¿½ï¿½ï¿½Ó³ï¿½ï¿½
         // ----------------------------------------------------------------
         static SCBCTParams mapParams(const TaskInitParams& p)
         {
@@ -253,7 +253,7 @@ namespace YK {
         }
 
         // ----------------------------------------------------------------
-        // EFdkFilter ¡ú EFilterKernel
+        // EFdkFilter ï¿½ï¿½ EFilterKernel
         // ----------------------------------------------------------------
         static EFilterKernel mapFilter(EFdkFilter f)
         {

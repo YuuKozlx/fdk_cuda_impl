@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include "YkGlobals.h"
 
@@ -16,9 +16,9 @@ struct SCBCTParams {
     float dv_mm = 1.0f;; // detector pixel size in V direction in mm
     float offsetU_mm = 0.0f; // detector offset in U direction in mm
     float offsetV_mm = 0.0f; // detector offset in V direction in mm
-    float tiltn_angle_rad = 0.0f; // detector skew angle in radians (Ì½²âÆ÷Æ½ÃæÈÆÖĞĞÄÉäÏßµÄĞı×ª½Ç£¬ÓÒÊÖ¹æÔò£¬ÕıÖµ±íÊ¾ÄæÊ±ÕëĞı×ª)
-    float tiltu_angle_rad = 0.0f; // detector slant angle in radians (Ì½²âÆ÷Æ½ÃæÈÆË®Æ½ÖáµÄĞı×ª½Ç£¬ÓÒÊÖ¹æÔò£¬ÕıÖµ±íÊ¾Ç°Çã)
-    float tiltv_angle_rad = 0.0f; // detector tilt angle in radians (Ì½²âÆ÷Æ½ÃæÈÆ´¹Ö±ÖáµÄĞı×ª½Ç£¬ÓÒÊÖ¹æÔò£¬ÕıÖµ±íÊ¾×óÇã)
+    float tiltn_angle_rad = 0.0f; // detector skew angle in radians (Ì½ï¿½ï¿½ï¿½ï¿½Æ½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ßµï¿½ï¿½ï¿½×ªï¿½Ç£ï¿½ï¿½ï¿½ï¿½Ö¹ï¿½ï¿½ï¿½ï¿½ï¿½Öµï¿½ï¿½Ê¾ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½×ª)
+    float tiltu_angle_rad = 0.0f; // detector slant angle in radians (Ì½ï¿½ï¿½ï¿½ï¿½Æ½ï¿½ï¿½ï¿½ï¿½Ë®Æ½ï¿½ï¿½ï¿½ï¿½ï¿½×ªï¿½Ç£ï¿½ï¿½ï¿½ï¿½Ö¹ï¿½ï¿½ï¿½ï¿½ï¿½Öµï¿½ï¿½Ê¾Ç°ï¿½ï¿½)
+    float tiltv_angle_rad = 0.0f; // detector tilt angle in radians (Ì½ï¿½ï¿½ï¿½ï¿½Æ½ï¿½ï¿½ï¿½Æ´ï¿½Ö±ï¿½ï¿½ï¿½ï¿½ï¿½×ªï¿½Ç£ï¿½ï¿½ï¿½ï¿½Ö¹ï¿½ï¿½ï¿½ï¿½ï¿½Öµï¿½ï¿½Ê¾ï¿½ï¿½ï¿½ï¿½)
 
 
 

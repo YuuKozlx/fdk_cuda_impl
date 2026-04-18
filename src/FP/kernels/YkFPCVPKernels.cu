@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 #include "../../global/YkMacro.hpp"
@@ -133,7 +133,7 @@ namespace YK
 
 
             __global__ void cvp_forward_kernel_tex(
-                cudaTextureObject_t tex_vol,    // ¡û Ìæ»» const float* volume
+                cudaTextureObject_t tex_vol,    // ï¿½ï¿½ ï¿½æ»» const float* volume
                 float* sinogram,
                 SCVPViewCache c)
             {
@@ -143,12 +143,12 @@ namespace YK
 
                 if (ix >= c.Nx || iy >= c.Ny || iz >= c.Nz) return;
 
-                // ¶ÁÈ¡¸Ä³É tex3D£¬¼Ó 0.5f ¶ÔÆëµ½ÌåËØÖÐÐÄ
+                // ï¿½ï¿½È¡ï¿½Ä³ï¿½ tex3Dï¿½ï¿½ï¿½ï¿½ 0.5f ï¿½ï¿½ï¿½ëµ½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 const float mu = tex3D<float>(tex_vol,
                     ix + 0.5f, iy + 0.5f, iz + 0.5f);
                 if (mu == 0.f) return;
 
-                // ÒÔÏÂÍêÈ«²»±ä
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½ï¿½ï¿½ï¿½
                 const float3 vc = make_float3(
                     c.vol_origin.x + ix * c.a1,
                     c.vol_origin.y + iy * c.a2,
@@ -199,7 +199,7 @@ namespace YK
 
 
             // ============================================================
-            // normalize kernel ÄÚ²¿Ö±½ÓËã cos_theta
+            // normalize kernel ï¿½Ú²ï¿½Ö±ï¿½ï¿½ï¿½ï¿½ cos_theta
             __global__ void cvp_normalize_kernel(
                 float* d_sino,
                 float            SDD,
@@ -233,7 +233,7 @@ namespace YK
             int Na, int Nu, int Nv,
             cudaStream_t stream)
         {
-            // d_cos_theta ÍêÈ«²»ÐèÒªÁË
+            // d_cos_theta ï¿½ï¿½È«ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½
             for (int a = 0; a < Na; ++a)
             {
                 const auto cache = make_view_cache(h_views[a], Nu, Nv, g);
@@ -249,7 +249,7 @@ namespace YK
                     detail::cvp_forward_kernel << <grid, block, 0, stream >> > (
                         d_vol, d_s, cache);
                 }
-                // Step 2: normalize£¨ÄÚ²¿Ëã cos_theta£©
+                // Step 2: normalizeï¿½ï¿½ï¿½Ú²ï¿½ï¿½ï¿½ cos_thetaï¿½ï¿½
                 {
                     dim3 block(16, 16);
                     dim3 grid((Nu + 15) / 16, (Nv + 15) / 16);
@@ -261,7 +261,7 @@ namespace YK
 
 
         void fp_cvp_launch(
-            cudaTextureObject_t tex_vol,    // ¡û ÎÆÀí°æ±¾
+            cudaTextureObject_t tex_vol,    // ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½æ±¾
             float* d_sino,
             const SConeProjGeomVec* h_views,
             const YK::SVolGeom& g,
@@ -273,7 +273,7 @@ namespace YK
                 const auto cache = make_view_cache(h_views[a], Nu, Nv, g);
                 float* d_s = d_sino + (size_t)a * Nv * Nu;
 
-                // Step 1: scatter£¨ÎÆÀí°æ±¾£©
+                // Step 1: scatterï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½æ±¾ï¿½ï¿½
                 {
                     dim3 block(8, 8, 8);
                     dim3 grid(
@@ -284,7 +284,7 @@ namespace YK
                         tex_vol, d_s, cache);
                 }
 
-                // Step 2: normalize£¨²»±ä£©
+                // Step 2: normalizeï¿½ï¿½ï¿½ï¿½ï¿½ä£©
                 {
                     dim3 block(16, 16);
                     dim3 grid(

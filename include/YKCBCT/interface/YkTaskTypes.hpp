@@ -1,4 +1,4 @@
-// YkTaskTypes.hpp
+ï»¿// YkTaskTypes.hpp
 #pragma once
 #include <cstdint>
 #include <cuda_runtime_api.h>
@@ -10,7 +10,7 @@
 namespace YK {
 
     // ----------------------------------------------------------------
-    // ÈÎÎñÀàÐÍ
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     // ----------------------------------------------------------------
     enum class ETask : int32_t {
         FDK = 0,
@@ -32,15 +32,15 @@ namespace YK {
     };
 
     enum class EBufferMode {
-        DevicePtr,  // Íâ²¿Ìá¹© GPU Ö¸Õë
-        HostPtr,    // Íâ²¿Ìá¹© CPU Ö¸Õë£¬ÄÚ²¿×Ô¶¯¹ÜÀí»Ø¿½/Ô¤ÉÏ´«
+        DevicePtr,  // ï¿½â²¿ï¿½á¹© GPU Ö¸ï¿½ï¿½
+        HostPtr,    // ï¿½â²¿ï¿½á¹© CPU Ö¸ï¿½ë£¬ï¿½Ú²ï¿½ï¿½Ô¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø¿ï¿½/Ô¤ï¿½Ï´ï¿½
     };
 
     enum class EFpStepSample : int32_t { x1 = 1, x2 = 2, x4 = 4 };
     enum class EFpDetSample : int32_t { x1 = 1, x2 = 2, x4 = 4 };
 
     // ================================================================
-    // ¼¸ºÎÓëÌå»ý
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     // ================================================================
 
     struct SScanParams {
@@ -58,7 +58,7 @@ namespace YK {
         float scanRangeRad = 6.2832f;
         float startAngleRad = 0.f;
         bool  shortScan = false;
-        int  NAng = 0; // ½ö FDK ÓÃ£¬±íÊ¾×ÜÊÓÍ¼Êý£¨·ÇÅú´Î´óÐ¡£©
+        int  NAng = 0; // ï¿½ï¿½ FDK ï¿½Ã£ï¿½ï¿½ï¿½Ê¾ï¿½ï¿½ï¿½ï¿½Í¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î´ï¿½Ð¡ï¿½ï¿½
     };
 
     struct SVolumeParams {
@@ -74,7 +74,7 @@ namespace YK {
     };
 
     // ================================================================
-    // Ëã·¨×¨Êô²ÎÊý
+    // ï¿½ã·¨×¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     // ================================================================
 
     struct SFdkAlgoParams {
@@ -96,7 +96,7 @@ namespace YK {
     struct GPURes {
         std::vector<int> deviceIds;
 
-        // ×Ô¶¯Ì½²âËùÓÐ¿ÉÓÃ GPU
+        // ï¿½Ô¶ï¿½Ì½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¿ï¿½ï¿½ï¿½ GPU
         static GPURes autoDetect()
         {
             int count = 0;
@@ -107,7 +107,7 @@ namespace YK {
             return res;
         }
 
-        // ÊÖ¶¯Ö¸¶¨
+        // ï¿½Ö¶ï¿½Ö¸ï¿½ï¿½
         static GPURes fromList(std::initializer_list<int> ids)
         {
             GPURes res;
@@ -121,7 +121,7 @@ namespace YK {
     };
 
     // ================================================================
-    // ½Ó¿Ú²ÎÊý
+    // ï¿½Ó¿Ú²ï¿½ï¿½ï¿½
     // ================================================================
     struct TaskInitParams {
         ETask     task = ETask::FDK;
@@ -129,34 +129,34 @@ namespace YK {
         SVolumeParams volume;
         const void* algoParams = nullptr;
         size_t        algoParamSize = 0;
-        GPURes  gpu = GPURes::fromList({ 0 });  // Ä¬ÈÏÓÃ¿¨ 0
+        GPURes  gpu = GPURes::fromList({ 0 });  // Ä¬ï¿½ï¿½ï¿½Ã¿ï¿½ 0
     };
 
-    // ¹«¹²»ùÀà
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     struct BatchParams {
         const float* h_angles = nullptr;
         int          K = 0;
         bool         clearOut = true;
     };
 
-    // FDK ÖØ½¨²ÎÊý
+    // FDK ï¿½Ø½ï¿½ï¿½ï¿½ï¿½ï¿½
     struct FdkBatchParams : BatchParams {
-        // Í¶Ó°ÊäÈë£¨½ö CPU£©
+        // Í¶Ó°ï¿½ï¿½ï¿½ë£¨ï¿½ï¿½ CPUï¿½ï¿½
         const float* h_proj = nullptr;
 
-        // ÌåÊý¾ÝÊä³ö
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         float* d_vol_out = nullptr;
         float* h_vol_out = nullptr;
         EBufferMode vol_mode = EBufferMode::DevicePtr;
     };
 
     struct FpBatchParams : BatchParams {
-        // ÌåÊý¾ÝÊäÈë
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         const float* d_vol_in = nullptr;
         const float* h_vol_in = nullptr;
         EBufferMode  vol_in_mode = EBufferMode::DevicePtr;
 
-        // ÕýÏÒÍ¼Êä³ö
+        // ï¿½ï¿½ï¿½ï¿½Í¼ï¿½ï¿½ï¿½
         float* d_sino_out = nullptr;
         float* h_sino_out = nullptr;
         EBufferMode sino_mode = EBufferMode::DevicePtr;

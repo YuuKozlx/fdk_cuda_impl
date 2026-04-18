@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include "global/YkGlobals.h"
 
@@ -85,7 +85,7 @@ namespace YK
             c.SDD = dcx * g.srcCR.x + dcy * g.srcCR.y + dcz * g.srcCR.z;
 
             // Volume
-            c.vol_origin = vol.origin();     // »òÕß make_float3(vol.ox, vol.oy, vol.oz)
+            c.vol_origin = vol.origin();     // ï¿½ï¿½ï¿½ï¿½ make_float3(vol.ox, vol.oy, vol.oz)
             c.a1 = vol.vox_x;
             c.a2 = vol.vox_y;
             c.a3 = vol.vox_z;
@@ -135,15 +135,15 @@ namespace YK
             cudaArray_t          array = nullptr;
             cudaTextureObject_t  tex = 0;
 
-            // ´Ó device ÏßÐÔÄÚ´æ´´½¨ÎÆÀí
-            // d_vol ²¼¾Ö£º[Nz][Ny][Nx]£¬z-major
+            // ï¿½ï¿½ device ï¿½ï¿½ï¿½ï¿½ï¿½Ú´æ´´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+            // d_vol ï¿½ï¿½ï¿½Ö£ï¿½[Nz][Ny][Nx]ï¿½ï¿½z-major
             void create(const float* d_vol, int Nx, int Ny, int Nz) {
-                // 1. ·ÖÅä cudaArray
+                // 1. ï¿½ï¿½ï¿½ï¿½ cudaArray
                 cudaChannelFormatDesc desc = cudaCreateChannelDesc<float>();
                 cudaExtent extent = make_cudaExtent(Nx, Ny, Nz);
                 YK_CUDA_CHECK(cudaMalloc3DArray(&array, &desc, extent));
 
-                // 2. ¿½±´Êý¾Ý
+                // 2. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 cudaMemcpy3DParms p = {};
                 p.srcPtr = make_cudaPitchedPtr(
                     const_cast<float*>(d_vol),
@@ -153,18 +153,18 @@ namespace YK
                 p.kind = cudaMemcpyDeviceToDevice;
                 YK_CUDA_CHECK(cudaMemcpy3D(&p));
 
-                // 3. ´´½¨ÎÆÀí¶ÔÏó
+                // 3. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 cudaResourceDesc resDesc = {};
                 resDesc.resType = cudaResourceTypeArray;
                 resDesc.res.array.array = array;
 
                 cudaTextureDesc texDesc = {};
-                texDesc.addressMode[0] = cudaAddressModeBorder;  // ±ß½çÍâ·µ»Ø 0
+                texDesc.addressMode[0] = cudaAddressModeBorder;  // ï¿½ß½ï¿½ï¿½â·µï¿½ï¿½ 0
                 texDesc.addressMode[1] = cudaAddressModeBorder;
                 texDesc.addressMode[2] = cudaAddressModeBorder;
-                texDesc.filterMode = cudaFilterModePoint;    // ²»²åÖµ
+                texDesc.filterMode = cudaFilterModePoint;    // ï¿½ï¿½ï¿½ï¿½Öµ
                 texDesc.readMode = cudaReadModeElementType;
-                texDesc.normalizedCoords = 0;                     // ÏñËØ×ø±ê
+                texDesc.normalizedCoords = 0;                     // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
                 YK_CUDA_CHECK(cudaCreateTextureObject(&tex, &resDesc, &texDesc, nullptr));
             }

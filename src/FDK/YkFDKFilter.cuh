@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // YkFDKFilter.cuh — Filter 模块 umbrella header
 //

@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <cstdint>
@@ -12,9 +12,9 @@ namespace YK {
     class CudaFFT {
     public:
         enum class EPlanMode : uint8_t {
-            Both,       // R2C + C2R£¨Ä¬ÈÏ£©
-            R2COnly,    // Ö»½¨ FFT
-            C2ROnly     // Ö»½¨ IFFT
+            Both,       // R2C + C2Rï¿½ï¿½Ä¬ï¿½Ï£ï¿½
+            R2COnly,    // Ö»ï¿½ï¿½ FFT
+            C2ROnly     // Ö»ï¿½ï¿½ IFFT
         };
 
         CudaFFT() = default;
@@ -36,11 +36,11 @@ namespace YK {
         bool init(int N, int batch, EPlanMode mode, cudaStream_t stream = 0) {
             if (N <= 0 || batch <= 0) return false;
 
-            // ¹Ì¶¨/¼ÇÂ¼ device£¨±ÜÃâÍâ²¿ÇÐ device µ¼ÖÂ plan/workspace ¿çÉè±¸£©
+            // ï¿½Ì¶ï¿½/ï¿½ï¿½Â¼ deviceï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½â²¿ï¿½ï¿½ device ï¿½ï¿½ï¿½ï¿½ plan/workspace ï¿½ï¿½ï¿½è±¸ï¿½ï¿½
             int curDev = -1;
             YK_CUDA_CHECK(cudaGetDevice(&curDev));
 
-            // ¸´ÓÃÌõ¼þ£º²ÎÊýÏàÍ¬ + µ±Ç° device ÏàÍ¬ + mode ¶ÔÓ¦µÄ plan ¶¼´æÔÚ
+            // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¬ + ï¿½ï¿½Ç° device ï¿½ï¿½Í¬ + mode ï¿½ï¿½Ó¦ï¿½ï¿½ plan ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             if (N == N_ && batch == batch_ && mode == mode_ && curDev == device_) {
                 const bool need_r2c = (mode_ == EPlanMode::Both || mode_ == EPlanMode::R2COnly);
                 const bool need_c2r = (mode_ == EPlanMode::Both || mode_ == EPlanMode::C2ROnly);
@@ -69,7 +69,7 @@ namespace YK {
                 YK_CUFFT_CHECK(cufftCreate(&plan_r2c_));
                 YK_CUFFT_CHECK(cufftSetStream(plan_r2c_, stream_));
 
-                // ¹Ø¼ü£º¹Ø±Õ auto-allocation£¬È·±£ÎÒÃÇ×Ô¼ºµÄ work area ÉúÐ§ÇÒ²»»á¶îÍâ·ÖÅä
+                // ï¿½Ø¼ï¿½ï¿½ï¿½ï¿½Ø±ï¿½ auto-allocationï¿½ï¿½È·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô¼ï¿½ï¿½ï¿½ work area ï¿½ï¿½Ð§ï¿½Ò²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 YK_CUFFT_CHECK(cufftSetAutoAllocation(plan_r2c_, 0));
 
                 int inembed[1] = { N_ };
@@ -91,10 +91,10 @@ namespace YK {
                 YK_CUFFT_CHECK(cufftCreate(&plan_c2r_));
                 YK_CUFFT_CHECK(cufftSetStream(plan_c2r_, stream_));
 
-                // ¹Ø¼ü£º¹Ø±Õ auto-allocation
+                // ï¿½Ø¼ï¿½ï¿½ï¿½ï¿½Ø±ï¿½ auto-allocation
                 YK_CUFFT_CHECK(cufftSetAutoAllocation(plan_c2r_, 0));
 
-                // CUFFT_C2R µÄ n ÈÔÈ»ÊÇÊµÓò³¤¶È N_
+                // CUFFT_C2R ï¿½ï¿½ n ï¿½ï¿½È»ï¿½ï¿½Êµï¿½ò³¤¶ï¿½ N_
                 int inembed[1] = { n_complex_ };
                 int onembed[1] = { N_ };
                 int istride = 1, ostride = 1;
@@ -112,9 +112,9 @@ namespace YK {
             // ---------------- workspace ----------------
             work_bytes_ = (work_r2c > work_c2r) ? work_r2c : work_c2r;
 
-            // ¿ÉÑ¡£º0 workspace Ò²ÔÊÐí£¨Ä³Ð©³ß´ç/°æ±¾¿ÉÄÜ·µ»Ø 0£©
+            // ï¿½ï¿½Ñ¡ï¿½ï¿½0 workspace Ò²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä³Ð©ï¿½ß´ï¿½/ï¿½æ±¾ï¿½ï¿½ï¿½Ü·ï¿½ï¿½ï¿½ 0ï¿½ï¿½
             if (work_bytes_ > 0) {
-                // È·±£ÈÔÔÚÍ¬ device ÉÏ·ÖÅä
+                // È·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¬ device ï¿½Ï·ï¿½ï¿½ï¿½
                 int dev2 = -1;
                 YK_CUDA_CHECK(cudaGetDevice(&dev2));
                 YK_ASSERT(dev2 == device_ && "CudaFFT::init: current device changed unexpectedly");
@@ -125,7 +125,7 @@ namespace YK {
                 if (plan_c2r_) YK_CUFFT_CHECK(cufftSetWorkArea(plan_c2r_, d_work_));
             }
             else {
-                // Ã÷È·ÖÃ¿Õ£¬±ÜÃâÎóÓÃ
+                // ï¿½ï¿½È·ï¿½Ã¿Õ£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 d_work_ = nullptr;
             }
 
@@ -138,7 +138,7 @@ namespace YK {
             if (plan_c2r_) YK_CUFFT_CHECK(cufftSetStream(plan_c2r_, stream_));
         }
 
-        // Í¬Ò» handle ²»Òª²¢·¢Ö´ÐÐ£¨Í¬/²»Í¬ stream ¶¼²»½¨Òé£©
+        // Í¬Ò» handle ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½Ö´ï¿½Ð£ï¿½Í¬/ï¿½ï¿½Í¬ stream ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½é£©
         void fft(float* d_real, cufftComplex* d_complex) const {
             YK_ASSERT(device_ >= 0 && "CudaFFT not initialized");
             int curDev = -1;
@@ -243,7 +243,7 @@ namespace YK {
         cudaStream_t stream_ = 0;
         EPlanMode mode_ = EPlanMode::Both;
 
-        int device_ = -1; // ÐÂÔö£º¼ÇÂ¼´´½¨/·ÖÅäËùÔÚ device
+        int device_ = -1; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½ï¿½/ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ device
     };
 
 } // namespace YK

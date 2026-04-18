@@ -1,8 +1,8 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <device_launch_parameters.h>
-#include "YkFFT.hpp"  // ÉÏÃæµÄ CudaFFTPlan
+#include "YkFFT.hpp"  // ï¿½ï¿½ï¿½ï¿½ï¿½ CudaFFTPlan
 #include "../global/YkMacro.hpp"
 
 namespace YK {
@@ -23,10 +23,10 @@ namespace YK {
 
                 n_complex_ = paddedN_ / 2 + 1;
 
-                // ¸´ÓÃ FFT plan
+                // ï¿½ï¿½ï¿½ï¿½ FFT plan
                 fft_.init(paddedN_, batch_, stream_);
 
-                // ¸´ÓÃÆµÓò»º³å
+                // ï¿½ï¿½ï¿½ï¿½Æµï¿½ò»º³ï¿½
                 YK_CUDA_CHECK(cudaMalloc(&d_complex_, (size_t)batch_ * n_complex_ * sizeof(cufftComplex)));
                 return true;
             }

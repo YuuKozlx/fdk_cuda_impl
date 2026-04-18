@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 
 #define YK_INLINE inline
@@ -210,8 +210,8 @@ YK_INLINE void cuda_set_device(int device_id) {
 }
 
 // ============================================================
-// 9. ÈÕÖ¾ºê£¨.cu ±àÒëµ¥Ôª×¨ÓÃ£¬fprintf/printf£¬ÎÞÍâ²¿ÒÀÀµ£©
-//    .cpp ±àÒëµ¥ÔªÇëÊ¹ÓÃ yk_log.h ÖÐµÄ YK_LOGI µÈºê
+// 9. ï¿½ï¿½Ö¾ï¿½ê£¨.cu ï¿½ï¿½ï¿½ëµ¥Ôª×¨ï¿½Ã£ï¿½fprintf/printfï¿½ï¿½ï¿½ï¿½ï¿½â²¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+//    .cpp ï¿½ï¿½ï¿½ëµ¥Ôªï¿½ï¿½Ê¹ï¿½ï¿½ yk_log.h ï¿½Ðµï¿½ YK_LOGI ï¿½Èºï¿½
 // ============================================================
 
 
@@ -222,7 +222,7 @@ YK_INLINE void cuda_set_device(int device_id) {
 #  define YK_LOG_TAG "YK"
 #endif
 
-// ---- ÄÚ²¿ÊµÏÖ -----------------------------------------------
+// ---- ï¿½Ú²ï¿½Êµï¿½ï¿½ -----------------------------------------------
 
 #define _YK_CU_LOG(level_str_, stream_, fmt_, ...)                              \
     do {                                                                        \
@@ -246,7 +246,7 @@ YK_INLINE void cuda_set_device(int device_id) {
 #define YK_LOGE_LOC(fmt, ...) _YK_CU_LOG_LOC("E", stderr, fmt, ##__VA_ARGS__)
 #define YK_LOGC_LOC(fmt, ...) _YK_CU_LOG_LOC("C", stderr, fmt, ##__VA_ARGS__)
 
-// ---- device kernel ÄÚ²¿ -------------------------------------
+// ---- device kernel ï¿½Ú²ï¿½ -------------------------------------
 
 #define YK_DEV_LOGD(fmt, ...) printf("[D][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 #define YK_DEV_LOGI(fmt, ...) printf("[I][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)

@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -82,7 +82,7 @@ namespace YKTest {
     }
 
     // ------------------------------------------------------------
-    // ÖØÐ´²âÊÔ£º¶Ô±È AnalyticFreq vs DiscreteRLFFT£¨Í³Ò»ÐÂ½Ó¿Ú£©
+    // ï¿½ï¿½Ð´ï¿½ï¿½ï¿½Ô£ï¿½ï¿½Ô±ï¿½ AnalyticFreq vs DiscreteRLFFTï¿½ï¿½Í³Ò»ï¿½Â½Ó¿Ú£ï¿½
     // ------------------------------------------------------------
     inline bool testFilterWeightsSpectra_RamLak(
         int Nu = 512,
@@ -102,7 +102,7 @@ namespace YKTest {
         std::printf("[testWeights] Nu=%d paddedN=%d n_complex=%d bake_invN=%d force_dc_zero=%d\n",
             Nu, paddedN, n_complex, (int)bake_invN, (int)force_dc_zero);
 
-        // ---- ·ÖÅäÉè±¸ÄÚ´æ ----
+        // ---- ï¿½ï¿½ï¿½ï¿½ï¿½è±¸ï¿½Ú´ï¿½ ----
         float* d_w_A = nullptr;
         float* d_w_B = nullptr;
         float* d_w_I = nullptr;
@@ -113,7 +113,7 @@ namespace YKTest {
         Filter::CreateFilterKernelFromFFT kernel;
         kernel.prepare(paddedN, stream);
 
-        // RAII cleanup£¬Ìæ´ú goto
+        // RAII cleanupï¿½ï¿½ï¿½ï¿½ï¿½ goto
         auto cleanup = [&]() {
             cudaFree(d_w_A);
             cudaFree(d_w_B);

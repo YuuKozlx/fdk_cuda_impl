@@ -1,4 +1,4 @@
-//#include "Fp/kernels/YkFPHelpers.cuh"
+ï»¿//#include "Fp/kernels/YkFPHelpers.cuh"
 //#include "Fp/YkFPPipelineContext.hpp"
 //#include "global/YkCudaTextureController.hpp"
 //#include "global/YkMacro.hpp"
@@ -14,34 +14,34 @@
 //__global__ void cone_fp_kernel2(
 //    cudaTextureObject_t      volTex,
 //    float3 src,
-//    float3 detS,        // ÏñËØ(0,0)×óÉÏ½ÇÊÀ½ç×ø±ê
-//    float3 detU,        // U·½Ïò²½³¤ÏòÁ¿
-//    float3 detV,        // V·½Ïò²½³¤ÏòÁ¿
-//    float3 vol_origin,  // ÌåËØ(0,0,0)ÊÀ½ç×ø±ê
-//    float  vox0,        // Ö÷ÖáÌåËØ³ß´ç
+//    float3 detS,        // ï¿½ï¿½ï¿½ï¿½(0,0)ï¿½ï¿½ï¿½Ï½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+//    float3 detU,        // Uï¿½ï¿½ï¿½ò²½³ï¿½ï¿½ï¿½ï¿½ï¿½
+//    float3 detV,        // Vï¿½ï¿½ï¿½ò²½³ï¿½ï¿½ï¿½ï¿½ï¿½
+//    float3 vol_origin,  // ï¿½ï¿½ï¿½ï¿½(0,0,0)ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+//    float  vox0,        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø³ß´ï¿½
 //    float  vox1,
 //    float  vox2,
-//    int    nSlices,     // Ö÷ÖáÌåËØÊý
+//    int    nSlices,     // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 //    int    nDim1,
 //    int    nDim2,
 //    int    Nu, int Nv,
-//    float* d_sino,      // [Nv][Nu]£¬µ¥ÕÅÍ¶Ó°
+//    float* d_sino,      // [Nv][Nu]ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¶Ó°
 //    bool   accumulate)
 //{
 //    const int detU_idx = blockIdx.x * blockDim.x + threadIdx.x;
 //    const int detV_idx = blockIdx.y * blockDim.y + threadIdx.y;
 //    if (detU_idx >= Nu || detV_idx >= Nv) return;
 //
-//    // Ì½²âÆ÷ÏñËØÖÐÐÄÊÀ½ç×ø±ê£¨detS ÊÇ×óÉÏ½Ç£¬+0.5²½³¤µ½ÖÐÐÄ£©
+//    // Ì½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ê£¨detS ï¿½ï¿½ï¿½ï¿½ï¿½Ï½Ç£ï¿½+0.5ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½
 //    const float3 detCenter = {
 //        detS.x + (detU_idx + 0.5f) * detU.x + (detV_idx + 0.5f) * detV.x,
 //        detS.y + (detU_idx + 0.5f) * detU.y + (detV_idx + 0.5f) * detV.y,
 //        detS.z + (detU_idx + 0.5f) * detU.z + (detV_idx + 0.5f) * detV.z
 //    };
 //
-//    // world ¡ú ÌåËØ×ø±ê
+//    // world ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 //    // tex_coord = (world - vol_origin) / vox + 0.5
-//    // ºÏ²¢£ºtex_coord = world / vox - (vol_origin/vox - 0.5)
+//    // ï¿½Ï²ï¿½ï¿½ï¿½tex_coord = world / vox - (vol_origin/vox - 0.5)
 //    const float invVox0 = 1.f / vox0;
 //    const float invVox1 = 1.f / vox1;
 //    const float invVox2 = 1.f / vox2;
@@ -58,18 +58,18 @@
 //    const float det1 = DIR::c1(detCenter.x, detCenter.y, detCenter.z) * invVox1 - orig1;
 //    const float det2 = DIR::c2(detCenter.x, detCenter.y, detCenter.z) * invVox2 - orig2;
 //
-//    // ÌåËØ×ø±êÏµÏÂ²ÎÊý»¯ ray£ºÖ÷Öá·½Ïò²½½ø
+//    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ïµï¿½Â²ï¿½ï¿½ï¿½ï¿½ï¿½ rayï¿½ï¿½ï¿½ï¿½ï¿½á·½ï¿½ò²½½ï¿½
 //    const float inv_d0 = 1.f / (src0 - det0);
 //    const float a1 = (src1 - det1) * inv_d0;
 //    const float a2 = (src2 - det2) * inv_d0;
 //    const float b1 = src1 - a1 * src0;
 //    const float b2 = src2 - a2 * src0;
 //
-//    // Â·¾¶³¤¶ÈÐÞÕý
+//    // Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 //    const float fDistCorr = sqrtf(a1 * a1 + a2 * a2 + 1.f) * vox0;
 //
-//    // ÑØÖ÷Öá»ý·Ö
-//    float f0 = 0.5f;   // µÚÒ»¸öÌåËØÖÐÐÄ
+//    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+//    float f0 = 0.5f;   // ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 //    float f1 = a1 * f0 + b1;
 //    float f2 = a2 * f0 + b2;
 //
@@ -95,7 +95,7 @@
 //        namespace Test {
 //
 //            // ----------------------------------------------------------------
-//            // Ö÷ÖáÑ¡Ôñ + kernel dispatch£¨µ¥ÕÅÍ¶Ó°£©
+//            // ï¿½ï¿½ï¿½ï¿½Ñ¡ï¿½ï¿½ + kernel dispatchï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¶Ó°ï¿½ï¿½
 //            // ----------------------------------------------------------------
 //            static void dispatchOneView(
 //                cudaTextureObject_t      volTex,
@@ -150,7 +150,7 @@
 //            }
 //
 //            // ----------------------------------------------------------------
-//            // ¹¤¾ß£º±£´æ raw float
+//            // ï¿½ï¿½ï¿½ß£ï¿½ï¿½ï¿½ï¿½ï¿½ raw float
 //            // ----------------------------------------------------------------
 //            static bool saveRaw(const std::string& path, const float* data, size_t count)
 //            {
@@ -178,9 +178,9 @@
 //                constexpr int   Nu = 128, Nv = 128;
 //                constexpr float du = 1.f, dv = 1.f;
 //                constexpr float SID = 500.f, SDD = 1000.f;
-//                const float mag = SDD / SID;   // ·Å´ó±¶ÂÊ = 2.0
+//                const float mag = SDD / SID;   // ï¿½Å´ï¿½ï¿½ï¿½ = 2.0
 //
-//                // ¹¹Ôì view£¨ÕýÇ°·½£¬gantry=0£©
+//                // ï¿½ï¿½ï¿½ï¿½ viewï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½ï¿½ï¿½gantry=0ï¿½ï¿½
 //                SConeProjGeomVec v;
 //                v.src = make_float3(0.f, -SID, 0.f);
 //                v.srcCR = make_float3(0.f, 1.f, 0.f);
@@ -191,7 +191,7 @@
 //
 //                std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
 //
-//                // ²âÊÔÈýÖÖÆ«ÖÃ£¬ÑéÖ¤Í¶Ó°·åÖµÎ»ÖÃÊÇ·ñ·ûºÏÔ¤ÆÚ
+//                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ«ï¿½Ã£ï¿½ï¿½ï¿½Ö¤Í¶Ó°ï¿½ï¿½ÖµÎ»ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½Ô¤ï¿½ï¿½
 //                struct OffsetCase {
 //                    float ox, oy, oz;
 //                    const char* label;
@@ -199,8 +199,8 @@
 //
 //                OffsetCase cases[] = {
 //                    { 0.f,  0.f,  0.f, "no offset"     },
-//                    { 10.f, 0.f,  0.f, "offset x=+10"  },  // U·½ÏòÆ«ÒÆ£¬Í¶Ó°·åÖµÓ¦ÔÚ Nu/2 + 10*mag
-//                    { 0.f,  0.f, 15.f, "offset z=+15"  },  // V·½ÏòÆ«ÒÆ£¬Í¶Ó°·åÖµÓ¦ÔÚ Nv/2 + 15*mag
+//                    { 10.f, 0.f,  0.f, "offset x=+10"  },  // Uï¿½ï¿½ï¿½ï¿½Æ«ï¿½Æ£ï¿½Í¶Ó°ï¿½ï¿½ÖµÓ¦ï¿½ï¿½ Nu/2 + 10*mag
+//                    { 0.f,  0.f, 15.f, "offset z=+15"  },  // Vï¿½ï¿½ï¿½ï¿½Æ«ï¿½Æ£ï¿½Í¶Ó°ï¿½ï¿½ÖµÓ¦ï¿½ï¿½ Nv/2 + 15*mag
 //                    { 10.f, 5.f, 15.f, "offset x=10 y=5 z=15" },
 //                };
 //
@@ -224,7 +224,7 @@
 //                    YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
 //                        sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 //
-//                    // ÕÒ·åÖµÎ»ÖÃ£¨Í¶Ó°ÂÖÀªµÄÖØÐÄ£©
+//                    // ï¿½Ò·ï¿½ÖµÎ»ï¿½Ã£ï¿½Í¶Ó°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½
 //                    float sum_u = 0.f, sum_v = 0.f, total = 0.f;
 //                    for (int iv = 0; iv < Nv; ++iv)
 //                        for (int iu = 0; iu < Nu; ++iu) {
@@ -236,10 +236,10 @@
 //                    const float centroid_u = sum_u / total;
 //                    const float centroid_v = sum_v / total;
 //
-//                    // ÀíÂÛÖØÐÄ£ºÌå»ýÖÐÐÄÍ¶Ó°µ½Ì½²âÆ÷
-//                    // x Æ«ÖÃ ¡ú U ·½Ïò£ºdet_u = Nu/2 + ox * mag / du
-//                    // z Æ«ÖÃ ¡ú V ·½Ïò£ºdet_v = Nv/2 + oz * mag / dv
-//                    // y Æ«ÖÃÖ»Ó°ÏìÂ·¾¶³¤¶È£¬²»Ó°ÏìÍ¶Ó°Î»ÖÃ£¨ÑØÉäÏß·½Ïò£©
+//                    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¶Ó°ï¿½ï¿½Ì½ï¿½ï¿½ï¿½ï¿½
+//                    // x Æ«ï¿½ï¿½ ï¿½ï¿½ U ï¿½ï¿½ï¿½ï¿½det_u = Nu/2 + ox * mag / du
+//                    // z Æ«ï¿½ï¿½ ï¿½ï¿½ V ï¿½ï¿½ï¿½ï¿½det_v = Nv/2 + oz * mag / dv
+//                    // y Æ«ï¿½ï¿½Ö»Ó°ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½È£ï¿½ï¿½ï¿½Ó°ï¿½ï¿½Í¶Ó°Î»ï¿½Ã£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß·ï¿½ï¿½ï¿½
 //                    const float expect_u = Nu * 0.5f + c.ox * mag / du;
 //                    const float expect_v = Nv * 0.5f + c.oz * mag / dv;
 //
@@ -251,10 +251,10 @@
 //                        fabsf(centroid_u - expect_u),
 //                        fabsf(centroid_v - expect_v));
 //
-//                    // ±£´æ
+//                    // ï¿½ï¿½ï¿½ï¿½
 //                    char fname[64];
 //                    snprintf(fname, sizeof(fname), "test_offset_%s.raw", c.label);
-//                    // Ìæ»»¿Õ¸ñ±ÜÃâÎÄ¼þÃûÎÊÌâ
+//                    // ï¿½æ»»ï¿½Õ¸ï¿½ï¿½ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 //                    for (char* p = fname; *p; ++p) if (*p == ' ' || *p == '=') *p = '_';
 //                    saveRaw(fname, h_sino.data(), sino_elems);
 //                    printf("    saved: %s  [%d x %d]\n", fname, Nv, Nu);
@@ -264,52 +264,52 @@
 //            }
 //
 //            // ----------------------------------------------------------------
-//            // ²âÊÔ1£º¾ùÔÈÌå£¨ËùÓÐÌåËØ=1£©£¬ÑéÖ¤»ý·ÖÂ·¾¶³¤¶ÈÊÇ·ñºÏÀí
+//            // ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½å£¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½=1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½
 //            //
-//            // Ô¤ÆÚ£º¶ÔÓÚ¹ýÖÐÐÄµÄÉäÏß£¬»ý·ÖÖµ ¡Ö ´©Ô½Ìå»ýµÄÊµ¼ÊÂ·¾¶³¤¶È£¨mm£©
+//            // Ô¤ï¿½Ú£ï¿½ï¿½ï¿½ï¿½Ú¹ï¿½ï¿½ï¿½ï¿½Äµï¿½ï¿½ï¿½ï¿½ß£ï¿½ï¿½ï¿½ï¿½ï¿½Öµ ï¿½ï¿½ ï¿½ï¿½Ô½ï¿½ï¿½ï¿½ï¿½ï¿½Êµï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½È£ï¿½mmï¿½ï¿½
 //            // ----------------------------------------------------------------
 //            static void test_uniform_volume(cudaStream_t stream)
 //            {
 //                printf("\n[Test1] uniform volume (all voxels = 1.0)\n");
 //
-//                // Ð¡Ìå»ý£¬·½±ãÑéÖ¤
+//                // Ð¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö¤
 //                constexpr int   Nx = 64, Ny = 64, Nz = 64;
-//                constexpr float vox = 1.f;   // 1mm ÌåËØ
+//                constexpr float vox = 1.f;   // 1mm ï¿½ï¿½ï¿½ï¿½
 //
 //                SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox);
 //
-//                // Ìå»ýÈ«1
+//                // ï¿½ï¿½ï¿½È«1
 //                std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
 //
-//                // µ¥ÕÅÌ½²âÆ÷
+//                // ï¿½ï¿½ï¿½ï¿½Ì½ï¿½ï¿½ï¿½ï¿½
 //                constexpr int   Nu = 64, Nv = 64;
 //                constexpr float du = 1.f, dv = 1.f;
 //                constexpr float SID = 500.f, SDD = 1000.f;
 //
-//                // ¹¹ÔìÒ»¸öÕýÇ°·½µÄ view£¨gantry angle = 0£©
-//                // src ÔÚ -y Öá£¬Ì½²âÆ÷ÔÚ +y ·½Ïò
+//                // ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½ï¿½ï¿½ viewï¿½ï¿½gantry angle = 0ï¿½ï¿½
+//                // src ï¿½ï¿½ -y ï¿½á£¬Ì½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ +y ï¿½ï¿½ï¿½ï¿½
 //                SConeProjGeomVec v;
 //                v.src = make_float3(0.f, -SID, 0.f);
-//                v.srcCR = make_float3(0.f, 1.f, 0.f);   // ÖÐÐÄÉäÏß·½Ïò +y
-//                // Ì½²âÆ÷ÖÐÐÄÔÚ +y ·½Ïò SDD ´¦
-//                // detS = Ì½²âÆ÷(0,0)×óÉÏ½Ç
+//                v.srcCR = make_float3(0.f, 1.f, 0.f);   // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß·ï¿½ï¿½ï¿½ +y
+//                // Ì½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ +y ï¿½ï¿½ï¿½ï¿½ SDD ï¿½ï¿½
+//                // detS = Ì½ï¿½ï¿½ï¿½ï¿½(0,0)ï¿½ï¿½ï¿½Ï½ï¿½
 //                const float detCX = 0.f;
-//                const float detCY = SDD - SID;   // Ì½²âÆ÷ÖÐÐÄµÄ y£¨Ïà¶Ô isocenter£©
+//                const float detCY = SDD - SID;   // Ì½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Äµï¿½ yï¿½ï¿½ï¿½ï¿½ï¿½ isocenterï¿½ï¿½
 //                const float detCZ = 0.f;
 //                v.detU = make_float3(du, 0.f, 0.f);
 //                v.detV = make_float3(0.f, 0.f, dv);
-//                // detS = Ì½²âÆ÷ÖÐÐÄ - Nu/2*detU - Nv/2*detV
+//                // detS = Ì½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ - Nu/2*detU - Nv/2*detV
 //                v.detS = make_float3(
 //                    detCX - Nu * 0.5f * du,
 //                    detCY,
 //                    detCZ - Nv * 0.5f * dv);
 //                v.angle = make_float3(0.f, 0.f, 0.f);
 //
-//                // ÉÏ´«Ìå»ý
+//                // ï¿½Ï´ï¿½ï¿½ï¿½ï¿½
 //                Mem::TextureController tc;
 //                auto volTex = tc.createTex3DFromHost(h_vol.data(), g);
 //
-//                // ·ÖÅä sinogram£¨µ¥ÕÅ£©
+//                // ï¿½ï¿½ï¿½ï¿½ sinogramï¿½ï¿½ï¿½ï¿½ï¿½Å£ï¿½
 //                const size_t sino_elems = (size_t)Nu * Nv;
 //                float* d_sino = nullptr;
 //                YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
@@ -318,20 +318,20 @@
 //                dispatchOneView(volTex.tex, v, g, Nu, Nv, d_sino, false, stream);
 //                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 //
-//                // ÏÂÔØ½á¹û
+//                // ï¿½ï¿½ï¿½Ø½ï¿½ï¿½
 //                std::vector<float> h_sino(sino_elems);
 //                YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
 //                    sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 //
-//                // ÑéÖ¤ÖÐÐÄÏñËØ£¨Nu/2, Nv/2£©
-//                // ÖÐÐÄÉäÏßÑØ y Öá´©Ô½ 64mm Ìå»ý£¬Â·¾¶³¤¶È = 64mm£¨ÌåËØ=1mm£¬»ý·Ö64²½£©
+//                // ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø£ï¿½Nu/2, Nv/2ï¿½ï¿½
+//                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ y ï¿½á´©Ô½ 64mm ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ = 64mmï¿½ï¿½ï¿½ï¿½ï¿½ï¿½=1mmï¿½ï¿½ï¿½ï¿½ï¿½ï¿½64ï¿½ï¿½ï¿½ï¿½
 //                const int cu = Nu / 2, cv = Nv / 2;
 //                const float center_val = h_sino[cv * Nu + cu];
 //                const float expected = (float)Ny * vox;   // 64mm
-//                printf("  center pixel (%d,%d): got=%.4f  expected¡Ö%.4f  diff=%.4f\n",
+//                printf("  center pixel (%d,%d): got=%.4f  expectedï¿½ï¿½%.4f  diff=%.4f\n",
 //                    cu, cv, center_val, expected, fabsf(center_val - expected));
 //
-//                // Í³¼Æ£º±ßÔµÏñËØÓ¦¸Ã±ÈÖÐÐÄÐ¡£¨Ð±Éä´©Ô½Â·¾¶¸ü³¤µ«ÊÜÌå»ý±ß½ç½Ø¶Ï£©
+//                // Í³ï¿½Æ£ï¿½ï¿½ï¿½Ôµï¿½ï¿½ï¿½ï¿½Ó¦ï¿½Ã±ï¿½ï¿½ï¿½ï¿½ï¿½Ð¡ï¿½ï¿½Ð±ï¿½ä´©Ô½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß½ï¿½Ø¶Ï£ï¿½
 //                float sum = 0.f, maxv = 0.f;
 //                for (auto x : h_sino) { sum += x; maxv = fmaxf(maxv, x); }
 //                printf("  sino sum=%.1f  max=%.4f\n", sum, maxv);
@@ -343,9 +343,9 @@
 //            }
 //
 //            // ----------------------------------------------------------------
-//            // ²âÊÔ2£ºµ¥µãÌåËØ£¨ÖÐÐÄÒ»¸öÌåËØ=1£¬ÆäÓà=0£©£¬ÑéÖ¤Í¶Ó°Î»ÖÃ
+//            // ï¿½ï¿½ï¿½ï¿½2ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø£ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½=1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½=0ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö¤Í¶Ó°Î»ï¿½ï¿½
 //            //
-//            // Ô¤ÆÚ£ºsinogram ÉÏÖ»ÓÐ¹ýÌå»ýÖÐÐÄµÄÉäÏßÓÐ·ÇÁãÏìÓ¦
+//            // Ô¤ï¿½Ú£ï¿½sinogram ï¿½ï¿½Ö»ï¿½Ð¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Äµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð·ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦
 //            // ----------------------------------------------------------------
 //            static void test_single_voxel(cudaStream_t stream)
 //            {
@@ -356,7 +356,7 @@
 //
 //                SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox);
 //
-//                // Ö»ÓÐÖÐÐÄÌåËØÎª1
+//                // Ö»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Îª1
 //                std::vector<float> h_vol(Nx * Ny * Nz, 0.f);
 //                h_vol[(Nz / 2) * Ny * Nx + (Ny / 2) * Nx + (Nx / 2)] = 1.f;
 //
@@ -364,7 +364,7 @@
 //                constexpr float du = 1.f, dv = 1.f;
 //                constexpr float SID = 500.f, SDD = 1000.f;
 //
-//                // Í¬ test1 µÄ view
+//                // Í¬ test1 ï¿½ï¿½ view
 //                SConeProjGeomVec v;
 //                v.src = make_float3(0.f, -SID, 0.f);
 //                v.srcCR = make_float3(0.f, 1.f, 0.f);
@@ -388,7 +388,7 @@
 //                YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
 //                    sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 //
-//                // ÕÒ·ÇÁãÏñËØ
+//                // ï¿½Ò·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 //                int nonzero = 0;
 //                int peak_u = -1, peak_v = -1;
 //                float peak_val = 0.f;
@@ -413,7 +413,7 @@
 //
 //
 //            // ----------------------------------------------------------------
-//            // Ö÷²âÊÔÈë¿Ú
+//            // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 //            // ----------------------------------------------------------------
 //            inline void runAllTests()
 //            {
@@ -479,7 +479,7 @@ namespace YK {
         namespace SiddonTest {
 
             // ----------------------------------------------------------------
-            // ¹¤¾ß
+            // ï¿½ï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static bool saveRaw(const char* path, const float* data, size_t count)
             {
@@ -517,9 +517,9 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ1£º¾ùÔÈÌå£¬µ¥½Ç¶È£¬ÑéÖ¤ÖÐÐÄÏñËØÂ·¾¶³¤¶È
+            // ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½å£¬ï¿½ï¿½ï¿½Ç¶È£ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             //
-            // Ô¤ÆÚ£ºÖÐÐÄÏñËØ ¡Ö Ny * vox_y£¨´©Ô½Ìå»ýµÄÂ·¾¶³¤¶È£©
+            // Ô¤ï¿½Ú£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ Ny * vox_yï¿½ï¿½ï¿½ï¿½Ô½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½È£ï¿½
             // ----------------------------------------------------------------
             static void test1_uniform_single(cudaStream_t stream)
             {
@@ -533,14 +533,14 @@ namespace YK {
 
                 SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox);
 
-                // ¾ùÔÈÌå
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
                 float* d_vol = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_vol, h_vol.size() * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
                     h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
 
-                // µ¥¸öÕýÇ°·½ view£¨src ÔÚ -y£©
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½ viewï¿½ï¿½src ï¿½ï¿½ -yï¿½ï¿½
                 SConeProjGeomVec view;
                 view.src = make_float4(0.f, -SID, 0.f, 0.f);
                 view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
@@ -567,13 +567,13 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                // ÖÐÐÄÏñËØÑéÖ¤
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö¤
                 const float center = h_sino[(Nv / 2) * Nu + Nu / 2];
                 const float expect = (float)Ny * vox;
                 printf("  center pixel: got=%.4f  expected=%.4f  diff=%.6f\n",
                     center, expect, fabsf(center - expect));
 
-                // Ð±ÉäÏñËØÓ¦¸Ã¸ü´ó£¨Â·¾¶¸ü³¤£©
+                // Ð±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½Ã¸ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 const float corner = h_sino[0];
                 printf("  corner pixel (0,0): %.4f  (should be > center for cone beam)\n",
                     corner);
@@ -588,9 +588,9 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ2£ºµ¥µãÌåËØ£¨ÖÐÐÄ£©£¬ÑéÖ¤Í¶Ó°Î»ÖÃ
+            // ï¿½ï¿½ï¿½ï¿½2ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø£ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½ï¿½Ö¤Í¶Ó°Î»ï¿½ï¿½
             //
-            // Ô¤ÆÚ£ºÖ»ÓÐ¹ýÌå»ýÖÐÐÄµÄÉäÏßÓÐÏìÓ¦£¬·åÖµÔÚÌ½²âÆ÷ÖÐÐÄ
+            // Ô¤ï¿½Ú£ï¿½Ö»ï¿½Ð¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Äµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½Öµï¿½ï¿½Ì½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static void test2_single_voxel(cudaStream_t stream)
             {
@@ -638,7 +638,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                // ÕÒ·åÖµÎ»ÖÃ
+                // ï¿½Ò·ï¿½ÖµÎ»ï¿½ï¿½
                 int peak_u = -1, peak_v = -1;
                 float peak_val = 0.f;
                 int nonzero = 0;
@@ -665,10 +665,10 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ3£º¾ùÔÈÌå£¬¶à½Ç¶È£¬ÑéÖ¤¸÷½Ç¶ÈÒ»ÖÂÐÔ
+            // ï¿½ï¿½ï¿½ï¿½3ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½å£¬ï¿½ï¿½Ç¶È£ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½Ç¶ï¿½Ò»ï¿½ï¿½ï¿½ï¿½
             //
-            // Ô¤ÆÚ£ºÇòÐÎ¾ùÔÈÌåÈÎÒâ½Ç¶ÈÖÐÐÄÏñËØÒ»ÖÂ£»
-            //       Á¢·½ÌåÒò¼¸ºÎÐÎ×´£¬²»Í¬½Ç¶ÈÂ·¾¶³¤¶ÈÓÐ²îÒì
+            // Ô¤ï¿½Ú£ï¿½ï¿½ï¿½ï¿½Î¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½Â£ï¿½
+            //       ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ò¼¸ºï¿½ï¿½ï¿½×´ï¿½ï¿½ï¿½ï¿½Í¬ï¿½Ç¶ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð²ï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static void test3_multi_view(cudaStream_t stream)
             {
@@ -689,7 +689,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
                     h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
 
-                // ¹¹½¨¾ùÔÈ½Ç¶È
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È½Ç¶ï¿½
                 std::vector<float> angles(Na);
                 for (int i = 0; i < Na; ++i)
                     angles[i] = 2.f * CUDA_PI * i / Na;
@@ -720,7 +720,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                // ¸÷½Ç¶ÈÖÐÐÄÏñËØÍ³¼Æ
+                // ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í³ï¿½ï¿½
                 std::vector<float> center_vals(Na);
                 for (int a = 0; a < Na; ++a)
                     center_vals[a] = h_sino[((size_t)a * Nv + Nv / 2) * Nu + Nu / 2];
@@ -743,9 +743,9 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ4£ºÆ«ÖÃÑéÖ¤
+            // ï¿½ï¿½ï¿½ï¿½4ï¿½ï¿½Æ«ï¿½ï¿½ï¿½ï¿½Ö¤
             //
-            // Ô¤ÆÚ£ºÍ¶Ó°ÖØÐÄËæÌå»ýÖÐÐÄÆ«ÖÃÏßÐÔÒÆ¶¯
+            // Ô¤ï¿½Ú£ï¿½Í¶Ó°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¶ï¿½
             // ----------------------------------------------------------------
             static void test4_offset(cudaStream_t stream)
             {
@@ -805,7 +805,7 @@ namespace YK {
                     YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                         sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                    // ÖØÐÄ¼ÆËã
+                    // ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½
                     float su = 0.f, sv = 0.f, total = 0.f;
                     for (int iv = 0; iv < Nv; ++iv)
                         for (int iu = 0; iu < Nu; ++iu) {
@@ -817,7 +817,7 @@ namespace YK {
                     const float cu = su / total;
                     const float cv = sv / total;
 
-                    // ÀíÂÛÖØÐÄ
+                    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                     const float eu = Nu * 0.5f + c.ox * mag / du;
                     const float ev = Nv * 0.5f + c.oz * mag / dv;
 
@@ -838,7 +838,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ5£ºÕæÊµÌå»ý
+            // ï¿½ï¿½ï¿½ï¿½5ï¿½ï¿½ï¿½ï¿½Êµï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static void test5_real_volume(cudaStream_t stream)
             {
@@ -851,7 +851,7 @@ namespace YK {
                 constexpr float SID = 500.f, SDD = 1000.f;
 
                 SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox_xy, vox_z);
-                g.center = make_float3(0.f, 0.f, 0.f);  // Êµ¼ÊÆ«ÖÃÌîÕâÀï
+                g.center = make_float3(0.f, 0.f, 0.f);  // Êµï¿½ï¿½Æ«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
                 std::vector<float> h_vol;
                 if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
@@ -909,7 +909,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // Ö÷Èë¿Ú
+            // ï¿½ï¿½ï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             inline void runSiddonTests()
             {
@@ -937,7 +937,7 @@ namespace YK {
             using namespace YK::Fp;
 
             // ----------------------------------------------------------------
-            // ¹¤¾ßº¯Êý
+            // ï¿½ï¿½ï¿½ßºï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static bool saveRaw(const char* path, const float* data, size_t count)
             {
@@ -958,7 +958,7 @@ namespace YK {
 
 
             // ----------------------------------------------------------------
-            // ²âÊÔ1£º¾ùÔÈÌå£¬µ¥½Ç¶È£¬ÑéÖ¤ÖÐÐÄÏñËØÂ·¾¶³¤¶È
+            // ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½å£¬ï¿½ï¿½ï¿½Ç¶È£ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static void test_uniform_single_view(cudaStream_t stream)
             {
@@ -974,7 +974,7 @@ namespace YK {
 
                 std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
 
-                // µ¥¸ö view£¬gantry=0£¬src ÔÚ -y
+                // ï¿½ï¿½ï¿½ï¿½ viewï¿½ï¿½gantry=0ï¿½ï¿½src ï¿½ï¿½ -y
                 SConeProjGeomVec view;
                 view.src = make_float4(0.f, -SID, 0.f, 0.f);
                 view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
@@ -987,17 +987,17 @@ namespace YK {
 
                 h_views = Fp::normalizeToVoxelBatch(h_views, g);
 
-                // ÉÏ´« views
+                // ï¿½Ï´ï¿½ views
                 SConeProjGeomVec* d_views = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_views, sizeof(SConeProjGeomVec)));
                 YK_CUDA_CHECK(cudaMemcpy(d_views, h_views.data(),
                     sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice));
 
-                // ÉÏ´«Ìå»ý texture
+                // ï¿½Ï´ï¿½ï¿½ï¿½ï¿½ texture
 
                 auto volTex = Mem::TextureController::createTex3DFromHost(h_vol.data(), g);
 
-                // ·ÖÅä sinogram [1][Nv][Nu]
+                // ï¿½ï¿½ï¿½ï¿½ sinogram [1][Nv][Nu]
                 const size_t sino_elems = (size_t)1 * Nv * Nu;
                 float* d_sino = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
@@ -1011,7 +1011,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                // ÖÐÐÄÏñËØÓ¦ ¡Ö Ny * vox = 64mm
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦ ï¿½ï¿½ Ny * vox = 64mm
                 const float center = h_sino[(Nv / 2) * Nu + Nu / 2];
                 const float expect = (float)Ny * vox;
                 printf("  center pixel: got=%.4f  expected=%.4f  diff=%.4f\n",
@@ -1025,8 +1025,8 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ2£º¾ùÔÈÌå£¬¶à½Ç¶È£¬ÑéÖ¤¸÷½Ç¶ÈÍ¶Ó°Ò»ÖÂÐÔ
-            // £¨¾ùÔÈÌåÈÎÒâ½Ç¶ÈµÄÖÐÐÄÏñËØÓ¦ÏàÍ¬£©
+            // ï¿½ï¿½ï¿½ï¿½2ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½å£¬ï¿½ï¿½Ç¶È£ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½Ç¶ï¿½Í¶Ó°Ò»ï¿½ï¿½ï¿½ï¿½
+            // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç¶Èµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½ï¿½Í¬ï¿½ï¿½
             // ----------------------------------------------------------------
             static void test_uniform_multi_view(cudaStream_t stream)
             {
@@ -1042,12 +1042,12 @@ namespace YK {
                 SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox);
                 std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
 
-                // ¹¹½¨¾ùÔÈ½Ç¶ÈÁÐ±í
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È½Ç¶ï¿½ï¿½Ð±ï¿½
                 std::vector<float> angles(Na);
                 for (int i = 0; i < Na; ++i)
                     angles[i] = 2.f * CUDA_PI * i / Na;
 
-                // ¹¹½¨ views
+                // ï¿½ï¿½ï¿½ï¿½ views
                 std::vector<SConeProjGeomVec> h_views(Na);
                 std::vector<SFDKGeoParamPerView> h_gv(Na);
                 build_circular_vec_geometry_from_theta(
@@ -1059,7 +1059,7 @@ namespace YK {
 
                 h_views = Fp::normalizeToVoxelBatch(h_views, g);
 
-                // ÉÏ´« views
+                // ï¿½Ï´ï¿½ views
                 SConeProjGeomVec* d_views = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_views, Na * sizeof(SConeProjGeomVec)));
                 YK_CUDA_CHECK(cudaMemcpy(d_views, h_views.data(),
@@ -1081,7 +1081,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                // ÑéÖ¤Ã¿¸ö½Ç¶ÈÖÐÐÄÏñËØµÄÒ»ÖÂÐÔ
+                // ï¿½ï¿½Ö¤Ã¿ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Øµï¿½Ò»ï¿½ï¿½ï¿½ï¿½
                 float minVal = 1e9f, maxVal = -1e9f, sumVal = 0.f;
                 for (int a = 0; a < Na; ++a) {
                     float v = h_sino[((size_t)a * Nv + Nv / 2) * Nu + Nu / 2];
@@ -1104,7 +1104,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ3£ºÆ«ÖÃÑéÖ¤£¬¾ùÔÈÌåÖÐÐÄÆ«ÒÆ£¬ÑéÖ¤Í¶Ó°ÖØÐÄÆ«ÒÆ
+            // ï¿½ï¿½ï¿½ï¿½3ï¿½ï¿½Æ«ï¿½ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ«ï¿½Æ£ï¿½ï¿½ï¿½Ö¤Í¶Ó°ï¿½ï¿½ï¿½ï¿½Æ«ï¿½ï¿½
             // ----------------------------------------------------------------
             static void test_offset(cudaStream_t stream)
             {
@@ -1119,7 +1119,7 @@ namespace YK {
 
                 std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
 
-                // µ¥¸öÕýÇ°·½ view
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½ view
                 SConeProjGeomVec view;
                 view.src = make_float4(0.f, -SID, 0.f, 0.f);
                 view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
@@ -1169,7 +1169,7 @@ namespace YK {
                     YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                         sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                    // ¼ÆËãÖØÐÄ
+                    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                     float su = 0.f, sv = 0.f, total = 0.f;
                     for (int iv = 0; iv < Nv; ++iv)
                         for (int iu = 0; iu < Nu; ++iu) {
@@ -1181,7 +1181,7 @@ namespace YK {
                     const float cu = su / total;
                     const float cv = sv / total;
 
-                    // ÀíÂÛÖØÐÄ
+                    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                     const float eu = Nu * 0.5f + c.ox * mag / du;
                     const float ev = Nv * 0.5f + c.oz * mag / dv;
 
@@ -1201,7 +1201,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // ²âÊÔ4£ºÕæÊµÌå»ý£¬È«½Ç¶È
+            // ï¿½ï¿½ï¿½ï¿½4ï¿½ï¿½ï¿½ï¿½Êµï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½Ç¶ï¿½
             // ----------------------------------------------------------------
             static void test_real_volume(cudaStream_t stream)
             {
@@ -1214,7 +1214,7 @@ namespace YK {
                 constexpr float SID = 500.f, SDD = 1000.f;
 
                 SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox_xy, vox_z);
-                g.center = make_float3(0.f, 0.f, 0.f);  // Êµ¼ÊÆ«ÖÃÌîÕâÀï
+                g.center = make_float3(0.f, 0.f, 0.f);  // Êµï¿½ï¿½Æ«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
                 std::vector<float> h_vol;
                 if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
@@ -1232,13 +1232,13 @@ namespace YK {
                     f3(0.f, 0.f, 0.f),
                     f3(0.f, 0.f, 0.f));
 
-                // build_circular_vec_geometry_from_theta Ö®ºó£¬¹éÒ»»¯Ö®Ç°´òÓ¡¼¸¸ö
+                // build_circular_vec_geometry_from_theta Ö®ï¿½ó£¬¹ï¿½Ò»ï¿½ï¿½Ö®Ç°ï¿½ï¿½Ó¡ï¿½ï¿½ï¿½ï¿½
                 for (int a : {0}) {
                     if (a < Na) continue;
                     printf("  view[%d] srcCR=(%.3f,%.3f,%.3f)\n",
                         a, h_views[a].srcCR.x, h_views[a].srcCR.y, h_views[a].srcCR.z);
                 }
-                // ¹éÒ»»¯ºóÔÙ´òÓ¡
+                // ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½Ù´ï¿½Ó¡
                 h_views = Fp::normalizeToVoxelBatch(h_views, g);
                 for (int a : {0}) {
                     if (a < Na) continue;
@@ -1297,7 +1297,7 @@ namespace YK {
                 cudaFree(d_sino);
             }
 
-            // ²âÊÔ4£ºÕæÊµÌå»ý£¬È«½Ç¶È
+            // ï¿½ï¿½ï¿½ï¿½4ï¿½ï¿½ï¿½ï¿½Êµï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½Ç¶ï¿½
            // ----------------------------------------------------------------
             static void test_real_volume_ss(cudaStream_t stream)
             {
@@ -1310,7 +1310,7 @@ namespace YK {
                 constexpr float SID = 500.f, SDD = 1000.f;
 
                 SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox_xy, vox_z);
-                g.center = make_float3(0.f, 0.f, 0.f);  // Êµ¼ÊÆ«ÖÃÌîÕâÀï
+                g.center = make_float3(0.f, 0.f, 0.f);  // Êµï¿½ï¿½Æ«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
                 std::vector<float> h_vol;
                 if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
@@ -1328,13 +1328,13 @@ namespace YK {
                     f3(0.f, 0.f, 0.f),
                     f3(0.f, 0.f, 0.f));
 
-                // build_circular_vec_geometry_from_theta Ö®ºó£¬¹éÒ»»¯Ö®Ç°´òÓ¡¼¸¸ö
+                // build_circular_vec_geometry_from_theta Ö®ï¿½ó£¬¹ï¿½Ò»ï¿½ï¿½Ö®Ç°ï¿½ï¿½Ó¡ï¿½ï¿½ï¿½ï¿½
                 for (int a : {0}) {
                     if (a < Na) continue;
                     printf("  view[%d] srcCR=(%.3f,%.3f,%.3f)\n",
                         a, h_views[a].srcCR.x, h_views[a].srcCR.y, h_views[a].srcCR.z);
                 }
-                // ¹éÒ»»¯ºóÔÙ´òÓ¡
+                // ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½Ù´ï¿½Ó¡
                 h_views = Fp::normalizeToVoxelBatch(h_views, g);
                 for (int a : {0}) {
                     if (a < Na) continue;
@@ -1394,7 +1394,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // Ö÷Èë¿Ú
+            // ï¿½ï¿½ï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             inline void runRawTests()
             {
@@ -1422,7 +1422,7 @@ namespace YK {
 
 
             // ----------------------------------------------------------------
-            // ¹¤¾ßº¯Êý
+            // ï¿½ï¿½ï¿½ßºï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static bool saveRaw(const char* path, const float* data, size_t count)
             {
@@ -1441,7 +1441,7 @@ namespace YK {
                 return (size_t)f.gcount() == count * sizeof(float);
             }
             // ----------------------------------------------------------------
-// CVP²âÊÔ1£º¾ùÔÈÌå£¬µ¥½Ç¶È£¬ÑéÖ¤ÖÐÐÄÏñËØÂ·¾¶³¤¶È
+// CVPï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½å£¬ï¿½ï¿½ï¿½Ç¶È£ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 // ----------------------------------------------------------------
             static void test_cvp_uniform_single_view(cudaStream_t stream)
             {
@@ -1461,7 +1461,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
                     h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
 
-                // µ¥¸ö view£¬gantry=0£¬src ÔÚ -y£¬Óë RawTest1 ÍêÈ«ÏàÍ¬µÄ¼¸ºÎ
+                // ï¿½ï¿½ï¿½ï¿½ viewï¿½ï¿½gantry=0ï¿½ï¿½src ï¿½ï¿½ -yï¿½ï¿½ï¿½ï¿½ RawTest1 ï¿½ï¿½È«ï¿½ï¿½Í¬ï¿½Ä¼ï¿½ï¿½ï¿½
                 SConeProjGeomVec view;
                 view.src = make_float4(0.f, -SID, 0.f, 0.f);
                 view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
@@ -1470,7 +1470,7 @@ namespace YK {
                 view.detS = make_float4(-Nu * 0.5f * du, SDD - SID, -Nv * 0.5f * dv, 0.f);
                 view.angle = make_float4(0.f, 0.f, 0.f, 0.f);
 
-                // CVP ÓÃÎïÀí×ø±ê£¬²»¹éÒ»»¯
+                // CVP ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ê£¬ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½
                 std::vector<SConeProjGeomVec> h_views = { view };
 
                 const size_t sino_elems = (size_t)1 * Nv * Nu;
@@ -1485,14 +1485,14 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                // ÖÐÐÄÏñËØÓ¦ ¡Ö Ny * vox = 6.4mm£¨Óë Joseph/Siddon ¶ÔÆë£©
+                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦ ï¿½ï¿½ Ny * vox = 6.4mmï¿½ï¿½ï¿½ï¿½ Joseph/Siddon ï¿½ï¿½ï¿½ë£©
                 const float center = h_sino[(Nv / 2) * Nu + Nu / 2];
                 const float expect = (float)Ny * vox;
                 printf("  center pixel: got=%.4f  expected=%.4f  diff=%.4f  rel=%.4f%%\n",
                     center, expect, fabsf(center - expect),
                     fabsf(center - expect) / expect * 100.f);
 
-                // ´òÓ¡ÖÐÐÄÐÐ£¬·½±ã¹Û²ì footprint ¿í¶È
+                // ï¿½ï¿½Ó¡ï¿½ï¿½ï¿½ï¿½ï¿½Ð£ï¿½ï¿½ï¿½ï¿½ï¿½Û²ï¿½ footprint ï¿½ï¿½ï¿½ï¿½
                 printf("  center row (v=%d):", Nv / 2);
                 for (int u = Nu / 2 - 4; u <= Nu / 2 + 4; ++u)
                     printf(" %.3f", h_sino[(Nv / 2) * Nu + u]);
@@ -1506,7 +1506,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // CVP²âÊÔ2£º¾ùÔÈÌå£¬¶à½Ç¶È£¬ÑéÖ¤¸÷½Ç¶ÈÖÐÐÄÏñËØÒ»ÖÂÐÔ
+            // CVPï¿½ï¿½ï¿½ï¿½2ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½å£¬ï¿½ï¿½Ç¶È£ï¿½ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½
             // ----------------------------------------------------------------
             static void test_cvp_uniform_multi_view(cudaStream_t stream)
             {
@@ -1531,7 +1531,7 @@ namespace YK {
                 for (int i = 0; i < Na; ++i)
                     angles[i] = 2.f * CUDA_PI * i / Na;
 
-                // CVP ÓÃÎïÀí×ø±ê£¬²»¹éÒ»»¯
+                // CVP ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ê£¬ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½
                 std::vector<SConeProjGeomVec> h_views(Na);
                 std::vector<SFDKGeoParamPerView> h_gv(Na);
                 build_circular_vec_geometry_from_theta(
@@ -1552,7 +1552,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
-                // ÑéÖ¤¸÷½Ç¶ÈÖÐÐÄÏñËØÒ»ÖÂÐÔ
+                // ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½
                 float minVal = 1e9f, maxVal = -1e9f, sumVal = 0.f;
                 for (int a = 0; a < Na; ++a) {
                     float v = h_sino[((size_t)a * Nv + Nv / 2) * Nu + Nu / 2];
@@ -1565,9 +1565,9 @@ namespace YK {
                 printf("    min=%.4f  max=%.4f  mean=%.4f  range=%.4f  range/mean=%.4f%%\n",
                     minVal, maxVal, mean, maxVal - minVal,
                     (maxVal - minVal) / mean * 100.f);
-                printf("  expected mean ¡Ö %.4f (Ny * vox)\n", (float)Ny * vox);
+                printf("  expected mean ï¿½ï¿½ %.4f (Ny * vox)\n", (float)Ny * vox);
 
-                // Óë Joseph µ¥ÊÓ½Ç½á¹û¶Ô±È£¨Èç¹û´æÔÚ£©
+                // ï¿½ï¿½ Joseph ï¿½ï¿½ï¿½Ó½Ç½ï¿½ï¿½ï¿½Ô±È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú£ï¿½
                 {
                     std::vector<float> h_ref;
                     if (loadRaw("rawtest2_multi_view.raw", h_ref, sino_elems)) {
@@ -1604,7 +1604,7 @@ namespace YK {
                 SVolGeom g = SVolGeom::make_centered(Nx, Ny, Nz, vox_xy, vox_z);
                 g.center = make_float3(0.f, 0.f, 0.f);
 
-                // ---------- ¼ÓÔØÌå»ý ----------
+                // ---------- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ----------
                 std::vector<float> h_vol;
                 if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
                 printf("  volume loaded\n");
@@ -1615,7 +1615,7 @@ namespace YK {
                     h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
                 h_vol.clear();
 
-                // ---------- ¹¹½¨Í¶Ó°¼¸ºÎ£¨ÎïÀí×ø±ê£¬²»¹éÒ»»¯£©----------
+                // ---------- ï¿½ï¿½ï¿½ï¿½Í¶Ó°ï¿½ï¿½ï¿½Î£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ê£¬ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½----------
                 std::vector<float> angles(Na);
                 for (int i = 0; i < Na; ++i)
                     angles[i] = 2.f * CUDA_PI * i / Na;
@@ -1627,19 +1627,19 @@ namespace YK {
                     f3(0.f, 0.f, 0.f),
                     f3(0.f, 0.f, 0.f));
 
-                // ´òÓ¡µÚ0Ö¡È·ÈÏ¼¸ºÎÕýÈ·
+                // ï¿½ï¿½Ó¡ï¿½ï¿½0Ö¡È·ï¿½Ï¼ï¿½ï¿½ï¿½ï¿½ï¿½È·
                 printf("  view[0] src=(%.2f, %.2f, %.2f)\n",
                     h_views[0].src.x, h_views[0].src.y, h_views[0].src.z);
                 printf("  view[0] srcCR=(%.4f, %.4f, %.4f)\n",
                     h_views[0].srcCR.x, h_views[0].srcCR.y, h_views[0].srcCR.z);
 
-                // ---------- ·ÖÅäÕýÏÒÍ¼ ----------
+                // ---------- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¼ ----------
                 const size_t sino_elems = (size_t)Na * Nv * Nu;
                 float* d_sino = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
                 YK_CUDA_CHECK(cudaMemset(d_sino, 0, sino_elems * sizeof(float)));
 
-                // ---------- Æô¶¯ CVP ----------
+                // ---------- ï¿½ï¿½ï¿½ï¿½ CVP ----------
                 printf("  launching CVP FP: Na=%d Nu=%d Nv=%d...\n", Na, Nu, Nv);
                 {
                     YK::Util::CudaTimer t{ "cvp",stream };
@@ -1649,7 +1649,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 printf("  done\n");
 
-                // ---------- »Ø¶Á + Í³¼Æ ----------
+                // ---------- ï¿½Ø¶ï¿½ + Í³ï¿½ï¿½ ----------
                 std::vector<float> h_sino(sino_elems);
                 YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
@@ -1669,7 +1669,7 @@ namespace YK {
                 for (auto x : h_sino) sumv += x;
                 printf("  sino: max=%.4f  sum=%.3e\n", maxv, sumv);
 
-                // ---------- Óë Joseph ½á¹û¶Ô±È£¨Èç¹û´æÔÚ£©----------
+                // ---------- ï¿½ï¿½ Joseph ï¿½ï¿½ï¿½ï¿½Ô±È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú£ï¿½----------
                 {
                     std::vector<float> h_ref;
                     if (loadRaw("rawtest4_real_sino.raw", h_ref, sino_elems)) {

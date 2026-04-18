@@ -1,4 +1,4 @@
-#include "YkFPHelpers.cuh"
+ï»¿#include "YkFPHelpers.cuh"
 #include "YkFPLaunch.cuh"
 
 namespace YK {
@@ -64,43 +64,43 @@ namespace YK {
             // ============================================================
             // fp_joseph_kernel
             //
-            // Ïß³Ì·Ö¹¤£º
-            //   threadIdx.x ¡ª detector U ·½Ïò
-            //   threadIdx.y ¡ª chunk ÄÚÏà¶Ô½Ç¶È£¨kAnglesPerBlock ¸ö£©
-            //   blockIdx.x  ¡ª (detV block, detU block) ´ò°ü
-            //   blockIdx.y  ¡ª ½Ç¶È block
+            // ï¿½ß³Ì·Ö¹ï¿½ï¿½ï¿½
+            //   threadIdx.x ï¿½ï¿½ detector U ï¿½ï¿½ï¿½ï¿½
+            //   threadIdx.y ï¿½ï¿½ chunk ï¿½ï¿½ï¿½ï¿½Ô½Ç¶È£ï¿½kAnglesPerBlock ï¿½ï¿½ï¿½ï¿½
+            //   blockIdx.x  ï¿½ï¿½ (detV block, detU block) ï¿½ï¿½ï¿½
+            //   blockIdx.y  ï¿½ï¿½ ï¿½Ç¶ï¿½ block
             //
-            // Ã¿´Î launch Ö»´¦ÀíÒ»¶ÎÁ¬ÐøµÄÖ÷ÖáÇÐÆ¬ [startSlice, startSlice+kBlockSlices)
-            // Íâ²ãÔÚ launchGroup ÀïÑ­»·ËùÓÐÇÐÆ¬
+            // Ã¿ï¿½ï¿½ launch Ö»ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¬ [startSlice, startSlice+kBlockSlices)
+            // ï¿½ï¿½ï¿½ï¿½ï¿½ launchGroup ï¿½ï¿½Ñ­ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¬
             //
-            // sinogram ²¼¾Ö£º[Na_total][Nv][Nu]£¬U ×î¿ì
-            // Ð´ÈëÎ»ÖÃ£º(angleOffset + startAngle + localAngle, detV, detU)
+            // sinogram ï¿½ï¿½ï¿½Ö£ï¿½[Na_total][Nv][Nu]ï¿½ï¿½U ï¿½ï¿½ï¿½
+            // Ð´ï¿½ï¿½Î»ï¿½Ã£ï¿½(angleOffset + startAngle + localAngle, detV, detU)
             // ============================================================
             // ============================================================
             // fp_joseph_kernel
             //
-            // Ïß³Ì·Ö¹¤£º
-            //   threadIdx.x ¡ª detector U ·½Ïò
-            //   threadIdx.y ¡ª chunk ÄÚÏà¶Ô½Ç¶È£¨kAnglesPerBlock ¸ö£©
-            //   blockIdx.x  ¡ª (detV block, detU block) ´ò°ü
-            //   blockIdx.y  ¡ª ½Ç¶È block
+            // ï¿½ß³Ì·Ö¹ï¿½ï¿½ï¿½
+            //   threadIdx.x ï¿½ï¿½ detector U ï¿½ï¿½ï¿½ï¿½
+            //   threadIdx.y ï¿½ï¿½ chunk ï¿½ï¿½ï¿½ï¿½Ô½Ç¶È£ï¿½kAnglesPerBlock ï¿½ï¿½ï¿½ï¿½
+            //   blockIdx.x  ï¿½ï¿½ (detV block, detU block) ï¿½ï¿½ï¿½
+            //   blockIdx.y  ï¿½ï¿½ ï¿½Ç¶ï¿½ block
             //
-            // Ã¿´Î launch Ö»´¦ÀíÒ»¶ÎÁ¬ÐøµÄÖ÷ÖáÇÐÆ¬ [startSlice, startSlice+kBlockSlices)
-            // Íâ²ãÔÚ launchGroup ÀïÑ­»·ËùÓÐÇÐÆ¬
+            // Ã¿ï¿½ï¿½ launch Ö»ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¬ [startSlice, startSlice+kBlockSlices)
+            // ï¿½ï¿½ï¿½ï¿½ï¿½ launchGroup ï¿½ï¿½Ñ­ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¬
             //
-            // sinogram ²¼¾Ö£º[Na_total][Nv][Nu]£¬U ×î¿ì
-            // Ð´ÈëÎ»ÖÃ£º(angleOffset + startAngle + localAngle, detV, detU)
+            // sinogram ï¿½ï¿½ï¿½Ö£ï¿½[Na_total][Nv][Nu]ï¿½ï¿½U ï¿½ï¿½ï¿½
+            // Ð´ï¿½ï¿½Î»ï¿½Ã£ï¿½(angleOffset + startAngle + localAngle, detV, detU)
             // ============================================================
             template<typename DIR, int kStepDenom = 1>
             __global__ void fp_joseph_kernel(
                 cudaTextureObject_t      volTex,
-                const SConeProjGeomVec* d_views,   // ÒÑ¹éÒ»»¯£¬ÌåËØ×ø±êÏµ
+                const SConeProjGeomVec* d_views,   // ï¿½Ñ¹ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ïµ
                 float* d_sino,
                 int nSlices, int nDim1, int nDim2,
                 int Nu, int Nv,
                 int startSlice,
                 int startAngle, int endAngle,
-                float fMainAxisVox,  // Ö÷Öá·½ÏòÌåËØÎïÀí³ß´ç [mm]£¬½«ÌåËØÂ·¾¶³¤¶È×ª»»Îª mm
+                float fMainAxisVox,  // ï¿½ï¿½ï¿½á·½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß´ï¿½ [mm]ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×ªï¿½ï¿½Îª mm
                 bool accumulate)
             {
                 const int localAngle = blockIdx.y * kAnglesPerBlock + threadIdx.y;
@@ -130,7 +130,7 @@ namespace YK {
                     const float fDetY = fDetSY + detU * fDetUY + detV * fDetVY;
                     const float fDetZ = fDetSZ + detU * fDetUZ + detV * fDetVZ;
 
-                    // ÍêÈ«ÕÕ°á ASTRA£¬ÎÞÈÎºÎ»»Ëã
+                    // ï¿½ï¿½È«ï¿½Õ°ï¿½ ASTRAï¿½ï¿½ï¿½ï¿½ï¿½ÎºÎ»ï¿½ï¿½ï¿½
                     const float a1 = (DIR::c1(fSrcX, fSrcY, fSrcZ) - DIR::c1(fDetX, fDetY, fDetZ))
                         / (DIR::c0(fSrcX, fSrcY, fSrcZ) - DIR::c0(fDetX, fDetY, fDetZ));
                     const float a2 = (DIR::c2(fSrcX, fSrcY, fSrcZ) - DIR::c2(fDetX, fDetY, fDetZ))
@@ -140,13 +140,13 @@ namespace YK {
 
                     const float fDistCorr = sqrtf(a1 * a1 + a2 * a2 + 1.f);
 
-                    // ²½³¤ = 1.0 / kStepDenom
+                    // ï¿½ï¿½ï¿½ï¿½ = 1.0 / kStepDenom
                     constexpr float step = 1.f / (float)kStepDenom;
 
-                    // Ô­Ê¼ nSlices£¨ÌåËØÊý£©= nSlices / kStepDenom
+                    // Ô­Ê¼ nSlicesï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½= nSlices / kStepDenom
                     const int nSlicesOrig = nSlices / kStepDenom;
 
-                    // ASTRA Ô­°æ f0/f1/f2 ÍÆµ¼
+                    // ASTRA Ô­ï¿½ï¿½ f0/f1/f2 ï¿½Æµï¿½
                     float f0 = startSlice * step + 0.5f * step;
                     float f1 = a1 * (startSlice * step - 0.5f * nSlicesOrig + 0.5f * step)
                         + b1 + 0.5f * nDim1 - 0.5f + 0.5f;
@@ -162,8 +162,8 @@ namespace YK {
                         f1 += a1 * step;
                         f2 += a2 * step;
                     }
-                    fVal *= fDistCorr * step;  // Â·¾¶³¤¶È²¹³¥³ËÒÔ²½³¤
-                    fVal *= fMainAxisVox;  // Ö÷Öá·½ÏòÌåËØÎïÀí³ß´ç [mm]£¬½«ÌåËØÂ·¾¶³¤¶È×ª»»Îª mm
+                    fVal *= fDistCorr * step;  // Â·ï¿½ï¿½ï¿½ï¿½ï¿½È²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô²ï¿½ï¿½ï¿½
+                    fVal *= fMainAxisVox;  // ï¿½ï¿½ï¿½á·½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß´ï¿½ [mm]ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×ªï¿½ï¿½Îª mm
 
 
                     const size_t idx = ((size_t)localAngle * Nv + detV) * Nu + detU;
@@ -182,7 +182,7 @@ namespace YK {
                 int Nu, int Nv,
                 int startSlice,
                 int startAngle, int endAngle,
-                float fMainAxisVox,  // Ö÷Öá·½ÏòÌåËØÎïÀí³ß´ç [mm]£¬½«ÌåËØÂ·¾¶³¤¶È×ª»»Îª mm
+                float fMainAxisVox,  // ï¿½ï¿½ï¿½á·½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß´ï¿½ [mm]ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×ªï¿½ï¿½Îª mm
                 bool accumulate)
             {
                 const int localAngle = blockIdx.y * kAnglesPerBlock + threadIdx.y;
@@ -211,7 +211,7 @@ namespace YK {
                 {
                     float fV = 0.f;
 
-                    // ×ÓÉäÏßÑ­»·£ºU ·½Ïò kRaysPerDim ¸ö£¬V ·½Ïò kRaysPerDim ¸ö
+                    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ­ï¿½ï¿½ï¿½ï¿½U ï¿½ï¿½ï¿½ï¿½ kRaysPerDim ï¿½ï¿½ï¿½ï¿½V ï¿½ï¿½ï¿½ï¿½ kRaysPerDim ï¿½ï¿½
                     float fdU = detU - 0.5f + 0.5f * kSubStep;
                     for (int iSubU = 0; iSubU < kRaysPerDim; ++iSubU, fdU += kSubStep)
                     {
@@ -250,9 +250,9 @@ namespace YK {
                         }
                     }
 
-                    // ×ÓÉäÏßÆ½¾ù
+                    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ½ï¿½ï¿½
                     fV /= (float)(kRaysPerDim * kRaysPerDim);
-                    fV *= fMainAxisVox;  // Ö÷Öá·½ÏòÌåËØÎïÀí³ß´ç [mm]£¬½«ÌåËØÂ·¾¶³¤¶È×ª»»Îª mm
+                    fV *= fMainAxisVox;  // ï¿½ï¿½ï¿½á·½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß´ï¿½ [mm]ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×ªï¿½ï¿½Îª mm
 
                     const size_t idx = ((size_t)localAngle * Nv + detV) * Nu + detU;
                     if (accumulate) d_sino[idx] += fV;
@@ -263,11 +263,11 @@ namespace YK {
 
 
 
-            // launchGroupImpl ¼ÓÄ£°å²ÎÊý
+            // launchGroupImpl ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½ï¿½
             template<typename DIR, int kStepDenom = 1>
-            // kStepDenom=1 ¡ú ²½³¤1.0£¨Ô­Ê¼£©
-            // kStepDenom=2 ¡ú ²½³¤0.5
-            // kStepDenom=4 ¡ú ²½³¤0.25
+            // kStepDenom=1 ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½1.0ï¿½ï¿½Ô­Ê¼ï¿½ï¿½
+            // kStepDenom=2 ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½0.5
+            // kStepDenom=4 ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½0.25
             static void fp_joseph_launch_group_impl(
                 cudaTextureObject_t      volTex,
                 const SConeProjGeomVec* d_views_vox,
@@ -292,7 +292,7 @@ namespace YK {
                 dim3 block(kDetBlockU, kAnglesPerBlock);
                 dim3 grid(nUBlocks * nVBlocks, nABlocks);
 
-                const float fVoxScale = DIR::voxSize(g);  // °´Ö÷ÖáÑ¡ÌåËØ³ß´ç
+                const float fVoxScale = DIR::voxSize(g);  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¡ï¿½ï¿½ï¿½Ø³ß´ï¿½
 
                 for (int s = 0; s < nSlices; s += kBlockSlices)
                 {
@@ -328,7 +328,7 @@ namespace YK {
                 dim3 block(kDetBlockU, kAnglesPerBlock);
                 dim3 grid(nUBlocks * nVBlocks, nABlocks);
 
-                const float fVoxScale = DIR::voxSize(g);  // °´Ö÷ÖáÑ¡ÌåËØ³ß´ç
+                const float fVoxScale = DIR::voxSize(g);  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¡ï¿½ï¿½ï¿½Ø³ß´ï¿½
 
                 for (int s = 0; s < nSlices; s += kBlockSlices)
                 {
@@ -380,7 +380,7 @@ namespace YK {
                 }
             }
 
-            // ¸¨Öúº¯Êý£¬±ÜÃâ switch Ç¶Ì×
+            // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ switch Ç¶ï¿½ï¿½
             template<int kStepDenom>
             static void launchAngle(
                 MainAxis ax,
@@ -389,7 +389,7 @@ namespace YK {
                 float* d_s,
                 const SVolGeom& g,
                 int Nu, int Nv,
-                int startAngle, int endAngle,   // ¡û ¸ÄÕâÀï
+                int startAngle, int endAngle,   // ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                 bool accumulate,
                 cudaStream_t stream)
             {
@@ -410,7 +410,7 @@ namespace YK {
             }
 
 
-            // Í³Ò»·Ö·¢£¬±ÜÃâÁ½¸öÖØÔØÖØ¸´ if - else
+            // Í³Ò»ï¿½Ö·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø¸ï¿½ if - else
             template<typename GetAxis>
             static void fp_ss_dispatch(
                 GetAxis                  getAxis,   // lambda: int -> MainAxis
@@ -481,7 +481,7 @@ namespace YK {
 
         void fp_joseph_launch(
             cudaTextureObject_t                  volTex,
-            const std::vector<SConeProjGeomVec>& h_views,   // ÓÃÓÚÖ÷ÖáÅÐ¶Ï
+            const std::vector<SConeProjGeomVec>& h_views,   // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¶ï¿½
             const SConeProjGeomVec* d_views,
             float* d_sino,
             const SVolGeom& g,
@@ -516,7 +516,7 @@ namespace YK {
 
 
         // ============================================================
-         // ÖØÔØ1£ºh_src_dirs£¬per-angle
+         // ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½h_src_dirsï¿½ï¿½per-angle
          // ============================================================
         void fp_joseph_ss_launch(
             cudaTextureObject_t              volTex,
@@ -538,7 +538,7 @@ namespace YK {
         }
 
         // ============================================================
-        // ÖØÔØ2£ºh_views£¬Á¬Ðø run ·Ö×é
+        // ï¿½ï¿½ï¿½ï¿½2ï¿½ï¿½h_viewsï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ run ï¿½ï¿½ï¿½ï¿½
         // ============================================================
         void fp_joseph_ss_launch(
             cudaTextureObject_t                  volTex,

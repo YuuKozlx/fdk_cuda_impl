@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 // YkBpGpuContext.hpp
 #pragma once
 #include <vector>
@@ -20,7 +20,7 @@ namespace YK {
 
         // ================================================================
         // BpProjData
-        // Ö»±£Áô d_sino + texture£¬È¥µô chunk_in / chunk_pw
+        // Ö»ï¿½ï¿½ï¿½ï¿½ d_sino + textureï¿½ï¿½È¥ï¿½ï¿½ chunk_in / chunk_pw
         // ================================================================
         struct BpProjData {
             Mem::DeviceLinearBuffer3D<float>             d_sino;
@@ -47,7 +47,7 @@ namespace YK {
                 dc.upload(tex_objs, h_tex_objs.data(), Kchunk);
             }
 
-            // ÉÏ´«ÒÑÂË²¨Í¶Ó°µ½ d_sino£¨D2D£©
+            // ï¿½Ï´ï¿½ï¿½ï¿½ï¿½Ë²ï¿½Í¶Ó°ï¿½ï¿½ d_sinoï¿½ï¿½D2Dï¿½ï¿½
             void uploadFltChunk(const float* d_src, int K,
                 cudaStream_t stream) const
             {
@@ -73,7 +73,7 @@ namespace YK {
 
         // ================================================================
         // BpGeoData
-        // Óë FdkGeoData ÏàÍ¬£¬¶ÀÁ¢Ò»·Ý
+        // ï¿½ï¿½ FdkGeoData ï¿½ï¿½Í¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½
         // ================================================================
         struct BpGeoData {
             DeviceLinearBuffer<SConeProjGeomVec>     geo;

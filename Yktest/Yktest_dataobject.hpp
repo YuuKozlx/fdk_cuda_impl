@@ -1,4 +1,4 @@
-#include <iostream>
+ï»¿#include <iostream>
 #include <vector>
 
 #include "global/YkMem3d.hpp"
@@ -37,7 +37,7 @@ namespace YKTest {
         auto cpuVol = data.createCpuVolume<float>(NX, NY, NZ);
         auto cpuView = cpuVol.view();
 
-        // ³õÊ¼»¯Êý¾Ý
+        // ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         for (int z = 0; z < NZ; z++)
             for (int y = 0; y < NY; y++)
                 for (int x = 0; x < NX; x++)
@@ -51,7 +51,7 @@ namespace YKTest {
 
         std::vector<float> externalData(size_t(NX) * NY * NZ);
         for (int i = 0; i < externalData.size(); ++i)
-            externalData[i] = float(i); // ÈÎÒâ³õÊ¼»¯
+            externalData[i] = float(i); // ï¿½ï¿½ï¿½ï¿½ï¿½Ê¼ï¿½ï¿½
 
         auto cpuVolWrap = data.wrapCpuVolume<float>(externalData.data(), NX, NY, NZ);
         auto wrapView = cpuVolWrap.view();
@@ -59,7 +59,7 @@ namespace YKTest {
         std::cout << "Wrap sample before copy: " << wrapView(1, 1, 1) << "\n";
 
         ////////////////////////////////////////////////////////////
-        // copy wrapped CPU ¡ú GPU
+        // copy wrapped CPU ï¿½ï¿½ GPU
         ////////////////////////////////////////////////////////////
         int device = 0;
         cudaStream_t stream;
@@ -68,11 +68,11 @@ namespace YKTest {
 
         mem.upload3D(
             gpuVol.buffer(),
-            cpuVolWrap.buffer()  // Ê¹ÓÃ wrap Êý¾ÝÉÏ´«
+            cpuVolWrap.buffer()  // Ê¹ï¿½ï¿½ wrap ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½
         );
 
         ////////////////////////////////////////////////////////////
-        // GPU ¡ú wrapped CPU copy
+        // GPU ï¿½ï¿½ wrapped CPU copy
         ////////////////////////////////////////////////////////////
 
         mem.download3D(
@@ -125,18 +125,18 @@ namespace YKTest {
         const int NY = 4;
         const int NZ = 4;
 
-        // Íâ²¿Êý¾Ý
+        // ï¿½â²¿ï¿½ï¿½ï¿½ï¿½
         std::vector<float> externalData(size_t(NX) * NY * NZ);
         for (int i = 0; i < externalData.size(); ++i)
             externalData[i] = float(i);
 
-        // wrap Íâ²¿Êý¾Ý
+        // wrap ï¿½â²¿ï¿½ï¿½ï¿½ï¿½
         auto cpuVolWrap = data.wrapCpuVolume<float>(externalData.data(), NX, NY, NZ);
         auto wrapView = cpuVolWrap.view();
 
         std::cout << "Initial wrap sample: " << wrapView(1, 1, 1) << "\n";
 
-        // ´´½¨³£¹æ CPU volume
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ CPU volume
         auto cpuVol = data.createCpuVolume<float>(NX, NY, NZ);
         auto cpuView = cpuVol.view();
 
@@ -146,7 +146,7 @@ namespace YKTest {
                 for (int x = 0; x < NX; ++x)
                     cpuView(x, y, z) = wrapView(x, y, z);
 
-        // ÑéÖ¤¸´ÖÆ
+        // ï¿½ï¿½Ö¤ï¿½ï¿½ï¿½ï¿½
         bool ok = true;
         for (int z = 0; z < NZ; ++z)
             for (int y = 0; y < NY; ++y)
@@ -156,10 +156,10 @@ namespace YKTest {
 
         std::cout << "Copy wrap->cpuVol test: " << (ok ? "PASS" : "FAIL") << "\n";
 
-        // ÐÞ¸Ä cpuVol
+        // ï¿½Þ¸ï¿½ cpuVol
         cpuView(1, 1, 1) = 999.0f;
 
-        // wrap Êý¾Ý²»ÊÜÓ°Ïì
+        // wrap ï¿½ï¿½ï¿½Ý²ï¿½ï¿½ï¿½Ó°ï¿½ï¿½
         std::cout << "After modifying cpuVol, wrap sample: " << wrapView(1, 1, 1) << "\n";
         std::cout << "cpuVol sample: " << cpuView(1, 1, 1) << "\n";
 
