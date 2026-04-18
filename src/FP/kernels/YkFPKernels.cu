@@ -1,5 +1,6 @@
 ﻿#include "YkFPHelpers.cuh"
 #include "YkFPLaunch.cuh"
+#include "global/YkMacro.hpp"
 
 namespace YK {
     namespace Fp {
@@ -440,8 +441,15 @@ namespace YK {
                     launchAngle_ss<2, 2>(ax, volTex, d_views, d_s, g, Nu, Nv, start, end, accumulate, stream);
                 else if (ss == FpStepSuperSample::x1 && det == FpDetSuperSample::x4)
                     launchAngle_ss<1, 4>(ax, volTex, d_views, d_s, g, Nu, Nv, start, end, accumulate, stream);
-                else
+                else if (ss == FpStepSuperSample::x2 && det == FpDetSuperSample::x4)
+                    launchAngle_ss<2, 4>(ax, volTex, d_views, d_s, g, Nu, Nv, start, end, accumulate, stream);
+                else if (ss == FpStepSuperSample::x4 && det == FpDetSuperSample::x2)
+                    launchAngle_ss<4, 2>(ax, volTex, d_views, d_s, g, Nu, Nv, start, end, accumulate, stream);
+                else {
+                    YK_LOGW("Unsupported super-sampling combination, fallback to no super-sampling");
                     launchAngle_ss<1, 1>(ax, volTex, d_views, d_s, g, Nu, Nv, start, end, accumulate, stream);
+                }
+
             }
 
         }; // detail 

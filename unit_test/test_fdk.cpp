@@ -16,6 +16,9 @@
 using namespace YK;
 using namespace Mem;
 
+const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string PROJ_FILE = test_data_dir + "proj_1024x1024x360.raw";
+
 // ----------------------------------------------------------------
 // 公共参数构造
 // ----------------------------------------------------------------
@@ -50,7 +53,7 @@ TEST(FdkTest, OfflineRecon_NonZeroOutput)
     const size_t vol_elems = (size_t)params.iVX * params.iVY * params.iVZ;
 
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float("proj_1024x1024x360.raw", h_proj)) {
+    if (!read_raw_float(PROJ_FILE.c_str(), h_proj)) {
         GTEST_SKIP() << "proj_1024x1024x360.raw not found, skipping";
     }
 
@@ -70,7 +73,7 @@ TEST(FdkTest, OfflineRecon_NonZeroOutput)
     float maxv = *std::max_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
     EXPECT_GT(maxv, 0.f) << "Reconstructed volume is all zeros";
 
-    write_raw_float("fdk_vec_vol_offline.raw", h_vol.cdata(), vol_elems);
+    write_raw_float((test_data_dir + "fdk_vec_vol_offline.raw").c_str(), h_vol.cdata(), vol_elems);
 
     cudaStreamDestroy(s);
 }
@@ -87,7 +90,7 @@ TEST(FdkTest, OnlineRecon_MatchesOffline)
     const size_t vol_elems = (size_t)params.iVX * params.iVY * params.iVZ;
 
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float("proj_1024x1024x360.raw", h_proj)) {
+    if (!read_raw_float(PROJ_FILE.c_str(), h_proj)) {
         GTEST_SKIP() << "proj_1024x1024x360.raw not found, skipping";
     }
 
@@ -141,7 +144,7 @@ TEST(FdkTest, OnlineRecon_MatchesOffline)
 
     EXPECT_LT(maxDiff, 1e-4) << "Online recon differs from offline, maxDiff=" << maxDiff;
 
-    write_raw_float("fdk_vec_vol_online.raw", h_online.cdata(), vol_elems);
+    write_raw_float((test_data_dir + "fdk_vec_vol_online.raw").c_str(), h_online.cdata(), vol_elems);
 
     cudaStreamDestroy(s);
 }
@@ -158,7 +161,7 @@ TEST(FdkTest, BpReconstructor_MatchesFdk)
     const size_t vol_elems = (size_t)params.iVX * params.iVY * params.iVZ;
 
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float("proj_1024x1024x360.raw", h_proj)) {
+    if (!read_raw_float(PROJ_FILE.c_str(), h_proj)) {
         GTEST_SKIP() << "proj_1024x1024x360.raw not found, skipping";
     }
 
@@ -227,6 +230,9 @@ TEST(FdkTest, BpReconstructor_MatchesFdk)
 
     EXPECT_LT(maxDiff, 1e-5) << "BpReconstructor differs from FDK, maxDiff=" << maxDiff;
     EXPECT_LT(mse, 1e-10) << "MSE too large: " << mse;
+
+    write_raw_float((test_data_dir + "bp_vec_vol_online_bpvsfdk.raw").c_str(), h_vol_bp.cdata(), vol_elems);
+    write_raw_float((test_data_dir + "fdk_vec_vol_online_bpvsfdk.raw").c_str(), h_vol_fdk.cdata(), vol_elems);
 
     cudaStreamDestroy(s);
 }

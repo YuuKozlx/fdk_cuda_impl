@@ -15,6 +15,8 @@
 using namespace YK;
 using namespace Mem;
 
+const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+
 // ----------------------------------------------------------------
 // main_bp_runner：离线 + 在线反投影
 // ----------------------------------------------------------------
@@ -45,7 +47,7 @@ int main_bp_runner()
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
     std::vector<float> h_flt(proj_elems);
-    if (!read_raw_float("proj_1024x1024x360.raw", h_flt)) {
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_flt)) {
         YK_LOGE("cannot read proj_1024x1024x360.raw");
         return -1;
     }
@@ -76,7 +78,7 @@ int main_bp_runner()
     {
         auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
         ctrl.download3D(h_vol, d_vol_buf);
-        write_raw_float("bp_vol_offline.raw", h_vol.cdata(), vol_elems);
+        write_raw_float((test_data_dir + "bp_vol_offline.raw").c_str(), h_vol.cdata(), vol_elems);
         YK_LOGI("saved: bp_vol_offline.raw ({}x{}x{})", Nx, Ny, Nz);
     }
 
@@ -105,7 +107,7 @@ int main_bp_runner()
     {
         auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
         ctrl.download3D(h_vol, d_vol_buf);
-        write_raw_float("bp_vol_online.raw", h_vol.cdata(), vol_elems);
+        write_raw_float((test_data_dir + "bp_vol_online.raw").c_str(), h_vol.cdata(), vol_elems);
         YK_LOGI("saved: bp_vol_online.raw ({}x{}x{})", Nx, Ny, Nz);
     }
 
@@ -143,7 +145,7 @@ int main_bp_verify()
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float("proj_1024x1024x360.raw", h_proj)) {
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_proj)) {
         YK_LOGE("cannot read proj_1024x1024x360.raw");
         return -1;
     }
@@ -183,7 +185,7 @@ int main_bp_verify()
     {
         auto h_vol_fdk = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
         ctrl.download3D(h_vol_fdk, d_vol_fdk);
-        write_raw_float("verify_vol_fdk.raw", h_vol_fdk.cdata(), vol_elems);
+        write_raw_float((test_data_dir + "verify_vol_fdk.raw").c_str(), h_vol_fdk.cdata(), vol_elems);
         YK_LOGI("saved: verify_vol_fdk.raw");
 
         float maxv = *std::max_element(h_flt_all.begin(), h_flt_all.end());
@@ -205,7 +207,7 @@ int main_bp_verify()
     {
         auto h_vol_bp = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
         ctrl.download3D(h_vol_bp, d_vol_bp);
-        write_raw_float("verify_vol_bp.raw", h_vol_bp.cdata(), vol_elems);
+        write_raw_float((test_data_dir + "verify_vol_bp.raw").c_str(), h_vol_bp.cdata(), vol_elems);
         YK_LOGI("saved: verify_vol_bp.raw");
     }
     cudaFree(d_flt_raw);

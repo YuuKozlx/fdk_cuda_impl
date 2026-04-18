@@ -10,6 +10,8 @@
 
 using namespace YK;
 
+const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+
 void test_fp_runner(cudaStream_t stream)
 {
     printf("\n[FpReconstructor] test\n");
@@ -40,7 +42,7 @@ void test_fp_runner(cudaStream_t stream)
         params.angle_list[i] = 2.f * CUDA_PI * i / 720;
 
     std::vector<float> h_vol((size_t)Nx * Ny * Nz);
-    if (!read_raw_float("fdk_vec_vol_offline.raw", h_vol)) {
+    if (!read_raw_float((test_data_dir + "fdk_vec_vol_offline.raw").c_str(), h_vol)) {
         printf("  fdk_vec_vol_offline.raw not found, skip\n");
         return;
     }
@@ -49,7 +51,7 @@ void test_fp_runner(cudaStream_t stream)
     float* d_vol = nullptr;
     YK_CUDA_CHECK(cudaMalloc(&d_vol, h_vol.size() * sizeof(float)));
     YK_CUDA_CHECK(cudaMemcpy(d_vol, h_vol.data(),
-                             h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
+        h_vol.size() * sizeof(float), cudaMemcpyHostToDevice));
     h_vol.clear();
 
     const size_t sino_elems = (size_t)Na * Nv * Nu;
@@ -69,10 +71,10 @@ void test_fp_runner(cudaStream_t stream)
 
     std::vector<float> h_sino(sino_elems);
     YK_CUDA_CHECK(cudaMemcpy(h_sino.data(), d_sino,
-                             sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
+        sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
     printStats(h_sino, "sino");
-    write_raw_float("fp_reconstructor_sino.raw", h_sino.data(), sino_elems);
+    write_raw_float((test_data_dir + "fp_reconstructor_sino.raw").c_str(), h_sino.data(), sino_elems);
     printf("  saved: fp_reconstructor_sino.raw\n");
 
     cudaFree(d_vol);

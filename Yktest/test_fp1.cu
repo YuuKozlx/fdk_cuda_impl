@@ -473,6 +473,12 @@
 #include "common/YkVecGeo.hpp"
 #include "FP/kernels/YkFPCVPLaunch.cuh"
 #include "util/YkCudatimer.hpp"
+#include <string>
+#include <FP/YkFPCommon.cuh>
+
+
+const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+
 
 namespace YK {
     namespace Fp {
@@ -579,7 +585,7 @@ namespace YK {
                     corner);
 
                 printSinoStats(h_sino, 1, Nv, Nu, "sino");
-                saveRaw("siddon_test1_single.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "siddon_test1_single.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: siddon_test1_single.raw [%d x %d]\n", Nv, Nu);
 
                 cudaFree(d_vol);
@@ -656,7 +662,7 @@ namespace YK {
                 printf("  peak at (%d,%d)=%.6f  expected center (%d,%d)\n",
                     peak_u, peak_v, peak_val, Nu / 2, Nv / 2);
 
-                saveRaw("siddon_test2_single_voxel.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "siddon_test2_single_voxel.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: siddon_test2_single_voxel.raw [%d x %d]\n", Nv, Nu);
 
                 cudaFree(d_vol);
@@ -734,7 +740,7 @@ namespace YK {
                     cmin, cmax, cmean, cmax - cmin);
 
                 printSinoStats(h_sino, Na, Nv, Nu, "full sino");
-                saveRaw("siddon_test3_multi.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "siddon_test3_multi.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: siddon_test3_multi.raw [%d x %d x %d]\n", Na, Nv, Nu);
 
                 cudaFree(d_vol);
@@ -827,7 +833,7 @@ namespace YK {
                         fabsf(cu - eu), fabsf(cv - ev));
 
                     char fname[64];
-                    snprintf(fname, sizeof(fname), "siddon_test4_%s.raw", c.label);
+                    snprintf(fname, sizeof(fname), (test_data_dir + "siddon_test4_%s.raw").c_str(), c.label);
                     saveRaw(fname, h_sino.data(), sino_elems);
 
                     cudaFree(d_vol);
@@ -854,7 +860,7 @@ namespace YK {
                 g.center = make_float3(0.f, 0.f, 0.f);  // 实际偏置填这里
 
                 std::vector<float> h_vol;
-                if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
+                if (!loadRaw((test_data_dir + "fdk_vec_vol_offline.raw").c_str(), h_vol, (size_t)Nx * Ny * Nz)) return;
                 printf("  volume loaded\n");
 
                 float* d_vol = nullptr;
@@ -900,7 +906,7 @@ namespace YK {
                     sino_elems * sizeof(float), cudaMemcpyDeviceToHost));
 
                 printSinoStats(h_sino, Na, Nv, Nu, "real sino");
-                saveRaw("siddon_test5_real.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "siddon_test5_real.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: siddon_test5_real.raw [%d x %d x %d]\n", Na, Nv, Nu);
 
                 cudaFree(d_vol);
@@ -1017,7 +1023,7 @@ namespace YK {
                 printf("  center pixel: got=%.4f  expected=%.4f  diff=%.4f\n",
                     center, expect, fabsf(center - expect));
 
-                saveRaw("rawtest1_single_view.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "rawtest1_single_view.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: rawtest1_single_view.raw [%d x %d]\n", Nv, Nu);
 
                 cudaFree(d_views);
@@ -1095,7 +1101,7 @@ namespace YK {
                 printf("  (range should be small for uniform sphere, "
                     "larger for cube due to geometry)\n");
 
-                saveRaw("rawtest2_multi_view.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "rawtest2_multi_view.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: rawtest2_multi_view.raw [%d x %d x %d]  Na x Nv x Nu\n",
                     Na, Nv, Nu);
 
@@ -1191,7 +1197,7 @@ namespace YK {
                         fabsf(cu - eu), fabsf(cv - ev));
 
                     char fname[64];
-                    snprintf(fname, sizeof(fname), "rawtest3_%s.raw", c.label);
+                    snprintf(fname, sizeof(fname), (test_data_dir + "rawtest3_%s.raw").c_str(), c.label);
                     saveRaw(fname, h_sino.data(), sino_elems);
 
                     cudaFree(d_sino);
@@ -1217,7 +1223,7 @@ namespace YK {
                 g.center = make_float3(0.f, 0.f, 0.f);  // 实际偏置填这里
 
                 std::vector<float> h_vol;
-                if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
+                if (!loadRaw((test_data_dir + "fdk_vec_vol_offline.raw").c_str(), h_vol, (size_t)Nx * Ny * Nz)) return;
                 printf("  volume loaded\n");
 
                 std::vector<float> angles(Na);
@@ -1290,7 +1296,7 @@ namespace YK {
                 for (auto x : h_sino) sumv += x;
                 printf("  sino: max=%.4f  sum=%.3e\n", maxv, sumv);
 
-                saveRaw("rawtest4_real_sino.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "rawtest4_real_sino.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: rawtest4_real_sino.raw [%d x %d x %d]\n", Na, Nv, Nu);
 
                 cudaFree(d_views);
@@ -1313,7 +1319,7 @@ namespace YK {
                 g.center = make_float3(0.f, 0.f, 0.f);  // 实际偏置填这里
 
                 std::vector<float> h_vol;
-                if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
+                if (!loadRaw((test_data_dir + "fdk_vec_vol_offline.raw").c_str(), h_vol, (size_t)Nx * Ny * Nz)) return;
                 printf("  volume loaded\n");
 
                 std::vector<float> angles(Na);
@@ -1361,7 +1367,7 @@ namespace YK {
                 {
                     YK::Util::CudaTimer t{ "joseph",stream };
                     fp_joseph_ss_launch(volTex.tex, h_views, d_views, d_sino, g,
-                        Na, Nu, Nv, false, stream, FpStepSuperSample::x4, FpDetSuperSample::x2);
+                        Na, Nu, Nv, false, stream, FpStepSuperSample::x1, FpDetSuperSample::x2);
                 }
 
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -1386,8 +1392,8 @@ namespace YK {
                 for (auto x : h_sino) sumv += x;
                 printf("  sino: max=%.4f  sum=%.3e\n", maxv, sumv);
 
-                saveRaw("rawtest5_real_sino_x4_x2.raw", h_sino.data(), sino_elems);
-                printf("  saved: rawtest4_real_sino.raw [%d x %d x %d]\n", Na, Nv, Nu);
+                saveRaw((test_data_dir + "rawtest5_real_sino_x1_x2.raw").c_str(), h_sino.data(), sino_elems);
+                printf("  saved: rawtest5_real_sino_x1_x2.raw [%d x %d x %d]\n", Na, Nv, Nu);
 
                 cudaFree(d_views);
                 cudaFree(d_sino);
@@ -1498,7 +1504,7 @@ namespace YK {
                     printf(" %.3f", h_sino[(Nv / 2) * Nu + u]);
                 printf("\n");
 
-                saveRaw("cvptest1_single_view.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "cvptest1_single_view.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: cvptest1_single_view.raw [%d x %d]\n", Nv, Nu);
 
                 cudaFree(d_vol);
@@ -1570,7 +1576,7 @@ namespace YK {
                 // 与 Joseph 单视角结果对比（如果存在）
                 {
                     std::vector<float> h_ref;
-                    if (loadRaw("rawtest2_multi_view.raw", h_ref, sino_elems)) {
+                    if (loadRaw((test_data_dir + "rawtest2_multi_view.raw").c_str(), h_ref, sino_elems)) {
                         double diff2 = 0.0, ref2 = 0.0;
                         for (size_t k = 0; k < sino_elems; ++k) {
                             double d = h_sino[k] - h_ref[k];
@@ -1581,7 +1587,7 @@ namespace YK {
                     }
                 }
 
-                saveRaw("cvptest2_multi_view.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "cvptest2_multi_view.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: cvptest2_multi_view.raw [%d x %d x %d]\n", Na, Nv, Nu);
 
                 cudaFree(d_vol);
@@ -1606,7 +1612,7 @@ namespace YK {
 
                 // ---------- 加载体积 ----------
                 std::vector<float> h_vol;
-                if (!loadRaw("fdk_vec_vol_offline.raw", h_vol, (size_t)Nx * Ny * Nz)) return;
+                if (!loadRaw((test_data_dir + "fdk_vec_vol_offline.raw").c_str(), h_vol, (size_t)Nx * Ny * Nz)) return;
                 printf("  volume loaded\n");
 
                 float* d_vol = nullptr;
@@ -1672,7 +1678,7 @@ namespace YK {
                 // ---------- 与 Joseph 结果对比（如果存在）----------
                 {
                     std::vector<float> h_ref;
-                    if (loadRaw("rawtest4_real_sino.raw", h_ref, sino_elems)) {
+                    if (loadRaw((test_data_dir + "rawtest4_real_sino.raw").c_str(), h_ref, sino_elems)) {
                         double diff2 = 0.0, ref2 = 0.0;
                         for (size_t k = 0; k < sino_elems; ++k) {
                             double d = h_sino[k] - h_ref[k];
@@ -1686,7 +1692,7 @@ namespace YK {
                     }
                 }
 
-                saveRaw("cvp_test_real_sino.raw", h_sino.data(), sino_elems);
+                saveRaw((test_data_dir + "cvp_test_real_sino.raw").c_str(), h_sino.data(), sino_elems);
                 printf("  saved: cvp_test_real_sino.raw [%d x %d x %d]\n", Na, Nv, Nu);
 
                 cudaFree(d_vol);
@@ -1711,9 +1717,9 @@ namespace YK {
 
 //
 int main_fp() {
-    YK::Fp::SiddonTest::runSiddonTests();
+    //YK::Fp::SiddonTest::runSiddonTests();
     YK::Fp::RawTest::runRawTests();
-    YK::Fp::CVPTest::runCVPTests();
+    //YK::Fp::CVPTest::runCVPTests();
 
     return 0;
 }

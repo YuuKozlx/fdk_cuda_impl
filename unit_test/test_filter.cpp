@@ -1,6 +1,7 @@
 ﻿#include <gtest/gtest.h>
 #include <global/YkMacro.hpp>
 #include "Yktest/Yktest_fdkflter.hpp"
+#include <global/YkLog.h>
 
 // ----------------------------------------------------------------
 // FilterTest：滤波权重正确性验证

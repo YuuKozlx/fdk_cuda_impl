@@ -13,6 +13,8 @@
 using namespace YK;
 using namespace Mem;
 
+const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+
 static SCBCTParams makeBpParams()
 {
     SCBCTParams params;
@@ -44,7 +46,7 @@ TEST(BpTest, OfflineBp_NonZeroOutput)
     const size_t vol_elems = (size_t)params.iVX * params.iVY * params.iVZ;
 
     std::vector<float> h_flt(proj_elems);
-    if (!read_raw_float("proj_1024x1024x360.raw", h_flt)) {
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_flt)) {
         GTEST_SKIP() << "proj_1024x1024x360.raw not found, skipping";
     }
 
@@ -78,7 +80,7 @@ TEST(BpTest, OfflineBp_NonZeroOutput)
     float maxv = *std::max_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
     EXPECT_GT(maxv, 0.f) << "BP output is all zeros";
 
-    write_raw_float("bp_vol_offline.raw", h_vol.cdata(), vol_elems);
+    write_raw_float((test_data_dir + "bp_vol_offline.raw").c_str(), h_vol.cdata(), vol_elems);
 
     cudaStreamDestroy(s);
 }
@@ -95,7 +97,7 @@ TEST(BpTest, OnlineBp_MatchesOffline)
     const size_t vol_elems = (size_t)params.iVX * params.iVY * params.iVZ;
 
     std::vector<float> h_flt(proj_elems);
-    if (!read_raw_float("proj_1024x1024x360.raw", h_flt)) {
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_flt)) {
         GTEST_SKIP() << "proj_1024x1024x360.raw not found, skipping";
     }
 
@@ -162,7 +164,8 @@ TEST(BpTest, OnlineBp_MatchesOffline)
 
     EXPECT_LT(maxDiff, 1e-4) << "Online BP differs from offline, maxDiff=" << maxDiff;
 
-    write_raw_float("bp_vol_online.raw", h_online.cdata(), vol_elems);
+    write_raw_float((test_data_dir + "bp_vol_online.raw").c_str(), h_online.cdata(), vol_elems);
+    write_raw_float((test_data_dir + "bp_vol_offline.raw").c_str(), h_offline.cdata(), vol_elems);
 
     cudaStreamDestroy(s);
 }
