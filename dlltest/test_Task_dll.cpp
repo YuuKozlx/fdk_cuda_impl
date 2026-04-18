@@ -9,9 +9,9 @@
 
 #include <cuda_runtime_api.h>
 
-#include "../../interface/IYkTask.hpp"
-#include "../../interface/YkTaskFactory.hpp"
-#include "../../interface/YkTaskTypes.hpp"
+#include "YKCBCT/interface/IYkTask.hpp"
+#include "YKCBCT/interface/YkTaskFactory.hpp"
+#include "YKCBCT/interface/YkTaskTypes.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/common.h>

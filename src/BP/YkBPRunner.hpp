@@ -11,6 +11,7 @@
 #include "global/YkLog.h"
 #include "global/YkMacro.hpp"
 #include "YkBPGpuContext.hpp"
+#include <YKCBCT/interface/YkTaskTypes.hpp>
 
 namespace YK {
 

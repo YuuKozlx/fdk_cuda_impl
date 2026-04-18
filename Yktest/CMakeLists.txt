@@ -1,6 +1,8 @@
 add_executable(YKCBCT_test
     ${CMAKE_CURRENT_SOURCE_DIR}/testmain.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cu
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_fdk.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_fp_runner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_bp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp1.cu
     $<TARGET_OBJECTS:YKCBCT_obj>
 )
