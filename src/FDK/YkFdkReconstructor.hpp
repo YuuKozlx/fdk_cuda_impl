@@ -12,16 +12,16 @@
 
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
-#include "../global/YkCBCTParams.h"
-#include "../global/YkGlobals.h"
-#include "../global/YkLog.h"
-#include "../global/YkMacro.hpp"
-#include "../interface/YkTaskTypes.hpp"
-#include "../util/YkVecOperation.hpp"
-#include "YkFDKParkerWeightProcessor.hpp"
-#include "YkFDKPreWeightProcessor.hpp"
-#include "YkFdkPipelineContext.hpp"
-#include "YkVecGeo.hpp"
+#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "FDK/YkFDKParkerWeightProcessor.hpp"
+#include "FDK/YkFDKPreWeightProcessor.hpp"
+#include "FDK/YkFdkPipelineContext.hpp"
+#include "common/YkVecGeo.hpp"
+#include "global/YkCBCTParams.h"
+#include "global/YkGlobals.h"
+#include "global/YkLog.h"
+#include "global/YkMacro.hpp"
+#include "util/YkVecOperation.hpp"
 
 namespace YK {
 

@@ -1,11 +1,11 @@
 // YkTaskFactory.cpp
-#include "YkTaskFactory.hpp"
+#include "YKCBCT/interface/YkTaskFactory.hpp"
 
 #include <cstdio>
-#include "../FDK/YkFdkTaskHandle.hpp"
-#include "../FP/YkFpTaskHandle.hpp"
-#include "IYkTask.hpp"
-#include "YkTaskTypes.hpp"
+#include "FDK/YkFdkTaskHandle.hpp"
+#include "FP/YkFpTaskHandle.hpp"
+#include "YKCBCT/interface/IYkTask.hpp"
+#include "YKCBCT/interface/YkTaskTypes.hpp"
 
 namespace YK {
 

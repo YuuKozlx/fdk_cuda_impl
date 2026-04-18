@@ -2,14 +2,14 @@
 // YkBpReconstructor.hpp
 #include <cuda_runtime_api.h>
 #include <vector>
-#include "../FDK/YkBackProjectProcessor.hpp"
-#include "../FDK/YkFDKVecGeoDerived.hpp"
-#include "../FDK/YkFdkPipelineContext.hpp"
-#include "../FDK/YkVecGeo.hpp"
-#include "../global/YkCBCTParams.h"
-#include "../global/YkGlobals.h"
-#include "../global/YkLog.h"
-#include "../global/YkMacro.hpp"
+#include "FDK/YkBackProjectProcessor.hpp"
+#include "FDK/YkFDKVecGeoDerived.hpp"
+#include "FDK/YkFdkPipelineContext.hpp"
+#include "common/YkVecGeo.hpp"
+#include "global/YkCBCTParams.h"
+#include "global/YkGlobals.h"
+#include "global/YkLog.h"
+#include "global/YkMacro.hpp"
 #include "YkBPGpuContext.hpp"
 
 namespace YK {

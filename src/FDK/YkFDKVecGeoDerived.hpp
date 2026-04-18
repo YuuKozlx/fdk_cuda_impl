@@ -5,16 +5,16 @@
 
 #include <vector_functions.hpp>
 
-#include "../FDK/YkVecGeo.hpp"
-#include "../global/YkGlobals.h"
-#include "../util/YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
-#include "../util/helper_math.h"
+#include "common/YkVecGeo.hpp"
+#include "global/YkGlobals.h"
+#include "util/YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
+#include "util/helper_math.h"
 
 namespace YK {
 
     // ============================================================
     // GeoDerivedManagerVec (stateless builder)
-    // 目标：只写 gv（引用赋值），不返回冗余 result 结构体
+    // 目标：只写 gv（引用赋值），不返回冗余 result 结构体,用于FDK的Kernel参数的中间参数计算
     //
     // 关键约束/定义：
     //   - 世界中心固定为 (0,0,0)（isocenter 目前仅保留字段，不参与计算）

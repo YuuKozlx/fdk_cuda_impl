@@ -3,11 +3,11 @@
 #pragma once
 #include <vector>
 #include <cuda_runtime_api.h>
-#include "../global/YkMem3d.hpp"
-#include "../global/YkCudaTextureController.hpp"
-#include "../global/YkMacro.hpp"
-#include "../FDK/YkVecGeo.hpp"
-#include "../FDK/YkFDKBackProject.cuh"
+#include "global/YkMem3d.hpp"
+#include "global/YkCudaTextureController.hpp"
+#include "global/YkMacro.hpp"
+#include "common/YkVecGeo.hpp"
+#include "FDK/YkFDKBackProject.cuh"
 
 
 

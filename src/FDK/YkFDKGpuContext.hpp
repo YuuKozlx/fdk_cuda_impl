@@ -7,13 +7,13 @@
 #include <driver_types.h>
 #include <texture_types.h>
 #include <vector>
-#include "../global/YkCudaTextureController.hpp"
-#include "../global/YkGlobals.h"
-#include "../global/YkMacro.hpp"
-#include "../global/YkMem3d.hpp"
-#include "YkFDKBackProject.cuh"
-#include "cuh/YkFDKBpHelpers.cuh"
-#include "cuh/YkFDKBpPrecompute.cuh"
+#include "global/YkCudaTextureController.hpp"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
+#include "global/YkMem3d.hpp"
+#include "FDK/YkFDKBackProject.cuh"
+#include "FDK/cuh/YkFDKBpHelpers.cuh"
+#include "FDK/cuh/YkFDKBpPrecompute.cuh"
 
 
 namespace YK {

@@ -1,7 +1,7 @@
 #pragma once
 #include <cuda_runtime.h>
-#include "../../global/YkGlobals.h"
-#include "../../CVP/cvp_geometry.cuh"
+#include "global/YkGlobals.h"
+
 
 namespace YK
 {

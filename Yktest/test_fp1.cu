@@ -470,7 +470,7 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
-#include "FDK/YkVecGeo.hpp"
+#include "common/YkVecGeo.hpp"
 #include "FP/kernels/YkFPCVPLaunch.cuh"
 #include "util/YkCudatimer.hpp"
 

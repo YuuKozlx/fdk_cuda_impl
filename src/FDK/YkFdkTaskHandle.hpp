@@ -2,12 +2,12 @@
 #pragma once
 #include <cuda_runtime.h>
 
-#include "../global/YkCBCTParams.h"
-#include "../global/YkGlobals.h"
-#include "../global/YkMacro.hpp"
-#include "../interface/IYkTask.hpp"
-#include "../interface/YkTaskTypes.hpp"
-#include "YkFdkReconstructor.hpp"
+#include "global/YkCBCTParams.h"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
+#include "YKCBCT/interface/IYkTask.hpp"
+#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "FDK/YkFdkReconstructor.hpp"
 
 namespace YK {
 

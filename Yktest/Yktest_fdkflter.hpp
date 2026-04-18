@@ -6,7 +6,7 @@
 
 #include <cuda_runtime.h>
 
-#include "../Filter/YkCreateFilterKernel.cuh"
+#include "Filter/YkCreateFilterKernel.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
 
@@ -90,12 +90,9 @@ namespace YKTest {
         bool force_dc_zero = false,
         bool bake_invN = true,
         bool ignore_dc_in_stats = true,
-        float pass_max_rel = 5e-3f,   // 经验阈值：0.5%
-        float pass_max_abs = 1e-6f)   // 经验阈值（取决于 bake_invN / N）
+        float pass_max_rel = 5e-3f,
+        float pass_max_abs = 1e-6f)
     {
-        // -----------------------------
-        // paddedN：按你 FilterManager 同步逻辑（>=2*Nu 的最近2次幂）
-        // -----------------------------
         int paddedN = 1;
         while (paddedN < 2 * Nu) paddedN <<= 1;
         const int n_complex = paddedN / 2 + 1;
@@ -105,96 +102,87 @@ namespace YKTest {
         std::printf("[testWeights] Nu=%d paddedN=%d n_complex=%d bake_invN=%d force_dc_zero=%d\n",
             Nu, paddedN, n_complex, (int)bake_invN, (int)force_dc_zero);
 
-        // -----------------------------
-        // Create builder
-        // -----------------------------
-        Filter::CreateFilterKernelFromFFT kernel;
-        kernel.prepare(paddedN, stream);
-
-        // device weights
-        float* d_w_A = nullptr; // analytic
-        float* d_w_B = nullptr; // discrete RL FFT
-        float* d_w_I = nullptr; // identity (None)
+        // ---- 分配设备内存 ----
+        float* d_w_A = nullptr;
+        float* d_w_B = nullptr;
+        float* d_w_I = nullptr;
         YK_CUDA_CHECK(cudaMalloc(&d_w_A, (size_t)n_complex * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_w_B, (size_t)n_complex * sizeof(float)));
         YK_CUDA_CHECK(cudaMalloc(&d_w_I, (size_t)n_complex * sizeof(float)));
 
-        // -----------------------------
-        // 0) Identity sanity (None)
-        // -----------------------------
+        Filter::CreateFilterKernelFromFFT kernel;
+        kernel.prepare(paddedN, stream);
+
+        // RAII cleanup，替代 goto
+        auto cleanup = [&]() {
+            cudaFree(d_w_A);
+            cudaFree(d_w_B);
+            cudaFree(d_w_I);
+            kernel.release();
+            };
+
+        // ---- Identity (None) ----
         {
             SFilterKernelDesc descI{};
             descI.kind = EFilterKernel::None;
             descI.gain = 1.0f;
-            descI.cutoff = 0.5f;              // ignored for None
-            descI.force_dc_zero = false;      // 直通别砍 DC
-            descI.source = EWeightsBuildSource::AnalyticFreq; // irrelevant for None
-
+            descI.cutoff = 0.5f;
+            descI.force_dc_zero = false;
+            descI.source = EWeightsBuildSource::AnalyticFreq;
             kernel.build_weights(d_w_I, descI, bake_invN);
         }
 
-        // -----------------------------
-        // 1) AnalyticFreq RamLak
-        // -----------------------------
+        // ---- AnalyticFreq RamLak ----
         SFilterKernelDesc descA{};
         descA.kind = EFilterKernel::RamLak;
         descA.cutoff = 0.5f;
         descA.gain = 1.0f;
         descA.force_dc_zero = force_dc_zero;
         descA.source = EWeightsBuildSource::AnalyticFreq;
-        descA.extract_mode = ERampExtractMode::Magnitude; // unused for AnalyticFreq, but set anyway
-
+        descA.extract_mode = ERampExtractMode::Magnitude;
         kernel.build_weights(d_w_A, descA, bake_invN);
 
-        // -----------------------------
-        // 2) DiscreteRLFFT RamLak
-        // -----------------------------
+        // ---- DiscreteRLFFT RamLak ----
         SFilterKernelDesc descB = descA;
         descB.source = EWeightsBuildSource::DiscreteRLFFT;
-
-        // 离散提取推荐 Magnitude（更稳），你也可以改 RealPart 对齐旧实现
         kernel.build_weights(d_w_B, descB, bake_invN);
 
-        // -----------------------------
-        // Copy back
-        // -----------------------------
+        // ---- Copy back ----
         std::vector<float> hA(n_complex), hB(n_complex), hI(n_complex);
-
-        YK_CUDA_CHECK(cudaMemcpyAsync(hA.data(), d_w_A, (size_t)n_complex * sizeof(float),
-            cudaMemcpyDeviceToHost, stream));
-        YK_CUDA_CHECK(cudaMemcpyAsync(hB.data(), d_w_B, (size_t)n_complex * sizeof(float),
-            cudaMemcpyDeviceToHost, stream));
-        YK_CUDA_CHECK(cudaMemcpyAsync(hI.data(), d_w_I, (size_t)n_complex * sizeof(float),
-            cudaMemcpyDeviceToHost, stream));
+        YK_CUDA_CHECK(cudaMemcpyAsync(hA.data(), d_w_A,
+            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost, stream));
+        YK_CUDA_CHECK(cudaMemcpyAsync(hB.data(), d_w_B,
+            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost, stream));
+        YK_CUDA_CHECK(cudaMemcpyAsync(hI.data(), d_w_I,
+            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost, stream));
         YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
-        // -----------------------------
-        // Sanity checks
-        // -----------------------------
+        // ---- Sanity checks ----
         if (!is_finite_vec(hA) || !is_finite_vec(hB) || !is_finite_vec(hI)) {
             std::printf("[testWeights][FAIL] NaN/Inf detected in weights.\n");
-            goto cleanup_fail;
+            cleanup();
+            return false;
         }
 
-        // identity expected value
+        // ---- Identity check ----
         float expected_I = bake_invN ? (1.0f / (float)paddedN) : 1.0f;
-        int kI = -1; float max_abs_I = 0.0f;
-        summarize_identity(hI, n_complex, paddedN, expected_I, /*ignore_dc=*/false, kI, max_abs_I);
+        int kI = -1;
+        float max_abs_I = 0.0f;
+        summarize_identity(hI, n_complex, paddedN, expected_I,
+            /*ignore_dc=*/false, kI, max_abs_I);
         std::printf("[testWeights] Identity(None) check: expected=%.8e max_abs=%.3e at k=%d\n",
             expected_I, max_abs_I, kI);
 
-        // -----------------------------
-        // Dump first bins
-        // -----------------------------
-        std::printf("\n[testWeights] Dump first %d bins (A=AnalyticFreq, B=DiscreteRLFFT)\n", dump_bins);
+        // ---- Dump first bins ----
+        std::printf("\n[testWeights] Dump first %d bins (A=AnalyticFreq, B=DiscreteRLFFT)\n",
+            dump_bins);
         dump_weights_compare(hA.data(), hB.data(), n_complex, paddedN, dump_bins);
 
-        // -----------------------------
-        // Summary stats
-        // -----------------------------
+        // ---- Summary stats ----
         int k_abs = -1, k_rel = -1;
         float max_abs = 0.0f, max_rel = 0.0f;
-        summarize_diff(hA.data(), hB.data(), n_complex, ignore_dc_in_stats, k_abs, max_abs, k_rel, max_rel);
+        summarize_diff(hA.data(), hB.data(), n_complex,
+            ignore_dc_in_stats, k_abs, max_abs, k_rel, max_rel);
 
         float f_abs = (paddedN > 0 && k_abs >= 0) ? (float)k_abs / (float)paddedN : 0.0f;
         float f_rel = (paddedN > 0 && k_rel >= 0) ? (float)k_rel / (float)paddedN : 0.0f;
@@ -204,25 +192,23 @@ namespace YKTest {
             max_abs, k_abs, f_abs,
             (k_abs >= 0 ? hA[k_abs] : 0.0f),
             (k_abs >= 0 ? hB[k_abs] : 0.0f));
-
         std::printf("  max_rel_diff = %.6e at k=%d (f=%.6f)  A=%.6e  B=%.6e\n",
             max_rel, k_rel, f_rel,
             (k_rel >= 0 ? hA[k_rel] : 0.0f),
             (k_rel >= 0 ? hB[k_rel] : 0.0f));
 
-        // -----------------------------
-        // Simple PASS/FAIL (可按你需要调阈值)
-        // -----------------------------
+        // ---- PASS/FAIL ----
         bool pass = true;
         if (max_rel > pass_max_rel) {
-            std::printf("[testWeights][WARN] max_rel_diff(%.3e) > threshold(%.3e)\n", max_rel, pass_max_rel);
+            std::printf("[testWeights][WARN] max_rel_diff(%.3e) > threshold(%.3e)\n",
+                max_rel, pass_max_rel);
             pass = false;
         }
         if (max_abs > pass_max_abs) {
-            std::printf("[testWeights][WARN] max_abs_diff(%.3e) > threshold(%.3e)\n", max_abs, pass_max_abs);
+            std::printf("[testWeights][WARN] max_abs_diff(%.3e) > threshold(%.3e)\n",
+                max_abs, pass_max_abs);
             pass = false;
         }
-        // identity check（宽松点）
         if (max_abs_I > 1e-6f) {
             std::printf("[testWeights][WARN] identity(None) max_abs(%.3e) too large (expected %.3e)\n",
                 max_abs_I, expected_I);
@@ -231,19 +217,8 @@ namespace YKTest {
 
         std::printf("[testWeights] %s\n", pass ? "PASS" : "FAIL");
 
-        // -----------------------------
-        // Cleanup
-        // -----------------------------
-    cleanup_ok:
-        YK_CUDA_CHECK(cudaFree(d_w_A));
-        YK_CUDA_CHECK(cudaFree(d_w_B));
-        YK_CUDA_CHECK(cudaFree(d_w_I));
-        kernel.release();
+        cleanup();
         return pass;
-
-    cleanup_fail:
-        // fallthrough
-        goto cleanup_ok;
     }
 
 } // namespace YKTest

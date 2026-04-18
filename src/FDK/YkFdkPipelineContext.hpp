@@ -1,8 +1,8 @@
 #pragma once
-#include "../Filter/YkCreateFilterKernel.cuh"
-#include "../global/YkGlobals.h"
-#include "../global/YkMacro.hpp"
-#include "YkVecGeo.hpp"
+#include "Filter/YkCreateFilterKernel.cuh"
+#include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
+#include "common/YkVecGeo.hpp"
 
 namespace YK {
 

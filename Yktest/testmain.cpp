@@ -4,17 +4,17 @@
 #include <vector>
 
 #include "FDK/YkFdkReconstructor.hpp"
-#include "FDK/YkVecGeo.hpp"
+#include "common/YkVecGeo.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 
 
 
 #include "global/YkMem3d.hpp"
-#include "test/Yktest_dataobject.hpp"
-#include "test/Yktest_fdkflter.hpp"
-#include "test/Yktest_fft.hpp"
-#include "test/Yktest_mem3d.hpp"
+#include "Yktest_dataobject.hpp"
+#include "Yktest_fdkflter.hpp"
+#include "Yktest_fft.hpp"
+#include "Yktest_mem3d.hpp"
 #include "util/YkCudaTimer.hpp"
 #include "util/YkVecOperation.hpp"
 
@@ -22,7 +22,7 @@
 #include <fstream>
 #include <string>
 #include "FP/YkFPRunner.hpp"
-#include "interface/YkTaskTypes.hpp"
+#include "YKCBCT/interface/YkTaskTypes.hpp"
 #include "BP/YkBPRunner.hpp"
 
 
