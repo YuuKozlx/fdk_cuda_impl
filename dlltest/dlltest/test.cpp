@@ -8,13 +8,22 @@
 
 
 #include <cuda_runtime_api.h>
-#include "../../global/YkLog.h"
+
 #include "../../interface/IYkTask.hpp"
 #include "../../interface/YkTaskFactory.hpp"
 #include "../../interface/YkTaskTypes.hpp"
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/common.h>
+
+#ifndef FMT_UNICODE
+#  define FMT_UNICODE 0
+#endif
 
 
 #pragma comment(lib, "YKCBCT.lib")
+
+
 
 // ----------------------------------------------------------------
 // ¹¤¾ßº¯Êý
@@ -44,6 +53,23 @@ static void printStats(const std::vector<float>& v, const char* tag)
     for (auto x : v) sum += x;
     printf("  [%s] min=%.4f  max=%.4f  sum=%.3e  count=%zu\n",
         tag, mn, mx, sum, v.size());
+}
+
+static bool createLogger()
+{
+    try {
+        auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        auto logger = std::make_shared<spdlog::logger>("default", sink);
+        spdlog::set_default_logger(logger);
+        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%P] [YK] %v");
+        spdlog::set_level(spdlog::level::debug);
+        spdlog::info("Logger initialized");
+        return true;
+    }
+    catch (const spdlog::spdlog_ex& ex) {
+        fprintf(stderr, "Log initialization failed: %s\n", ex.what());
+        return false;
+    }
 }
 
 // ----------------------------------------------------------------
@@ -161,6 +187,7 @@ static void test_fp_task()
 // ----------------------------------------------------------------
 static void test_fdk_task()
 {
+    createLogger();
     printf("\n[DLL Test2] FDK reconstruction\n");
 
     constexpr int Na = 360, Nu = 1024, Nv = 1024;
@@ -218,13 +245,14 @@ static void test_fdk_task()
     batchP.K = Na;
     batchP.clearOut = true;
 
-    YK::TaskDumpCallback dumpCb = [](void*, int a, const char* tag,
-        float* d_buf, size_t n)
+    YK::TaskDumpCallback dumpCb = [&](void* payload)
         {
-            if (a != 0) return;
+            if (!payload) return;
+            YK::DumpPayload* p = static_cast<YK::DumpPayload*>(payload);
+            if (p->viewIdx != 0) return;
 
-            std::vector<float> h(n);
-            cudaMemcpy(h.data(), d_buf, n * sizeof(float), cudaMemcpyDeviceToHost);
+            std::vector<float> h(p->n);
+            cudaMemcpy(h.data(), p->buf, p->n * sizeof(float), cudaMemcpyDeviceToHost);
 
             float sum = 0.f, maxv = -1e30f, minv = 1e30f;
             for (auto v : h) {
@@ -233,14 +261,14 @@ static void test_fdk_task()
                 minv = std::min(minv, v);
             }
 
-            //YK_LOGI("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
-            //    a, tag, n, minv, maxv, sum / (float)n);
+            spdlog::info("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
+                p->viewIdx, p->stage, p->n, minv, maxv, sum / (float)p->n);
 
-            //auto path = fmt::format("dump_a{}_{}.raw", a, tag);
-            auto path = std::string("dump_") + tag + ".raw";
+            auto path = fmt::format("dump_a{}_{}.raw", p->viewIdx, p->stage);
+            //auto path = std::string("dump_") + p->stage + ".raw";
             std::ofstream f(path, std::ios::binary);
             if (f)
-                f.write(reinterpret_cast<const char*>(h.data()), n * sizeof(float));
+                f.write(reinterpret_cast<const char*>(h.data()), p->n * sizeof(float));
             else
                 /*YK_LOGE("[dump] cannot save {}", path);*/
                 printf("  cannot save %s\n", path.c_str());
@@ -436,9 +464,9 @@ int main()
 {
     printf("=== TaskFactory DLL Interface Test ===\n");
 
-    //test_fp_task();
-    //test_fdk_task();
-    //test_fdk_task_online();
+    test_fp_task();
+    test_fdk_task();
+    test_fdk_task_online();
     test_reset();
     cudaDeviceReset();
     printf("\n=== all done ===\n");
