@@ -14,10 +14,17 @@
       "variables": [
         {
           "name": "VCPKG_MANIFEST_MODE",
-          "value": "false",
+          "value": "true",
           "type": "BOOL"
+        },
+
+        {
+          "name": "VCPKG_INSTALLED_DIR",
+          "value": "${projectDir}\\thirdparty\\vcpkg_installed",
+          "type": "STRING"
         }
-      ]
+      ],
+      "intelliSenseMode": "windows-clang-x64"
     },
     {
       "name": "x64-Release",
@@ -30,7 +37,20 @@
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
       "cmakeToolchain": "D:/Users/zlx/scoop/apps/vcpkg/current/scripts/buildsystems/vcpkg.cmake",
-      "variables": []
+      "variables": [
+        {
+          "name": "VCPKG_MANIFEST_MODE",
+          "value": "true",
+          "type": "BOOL"
+        },
+
+        {
+          "name": "VCPKG_INSTALLED_DIR",
+          "value": "${projectDir}\\thirdparty\\vcpkg_installed",
+          "type": "STRING"
+        }
+      ],
+      "intelliSenseMode": "windows-clang-x64"
     },
     {
       "name": "x64-RelWithDebInfo",
@@ -46,10 +66,17 @@
       "variables": [
         {
           "name": "VCPKG_MANIFEST_MODE",
-          "value": "false",
+          "value": "true",
           "type": "BOOL"
+        },
+
+        {
+          "name": "VCPKG_INSTALLED_DIR",
+          "value": "${projectDir}\\thirdparty\\vcpkg_installed",
+          "type": "STRING"
         }
-      ]
+      ],
+      "intelliSenseMode": "windows-clang-x64"
     }
   ]
 }
