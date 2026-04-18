@@ -403,3 +403,7 @@ FodyWeavers.xsd
 *.raw
 *.mha
 *.dcm
+
+
+#
+[Tt]hirdparty/
