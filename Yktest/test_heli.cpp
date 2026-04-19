@@ -36,7 +36,7 @@ int main_helical_verify()
     cfg.pitch_mm = 3.0f;
     cfg.auto_start_z = true;
     cfg.z_block_mm = 3.0f;
-    cfg.z_step_mm = 1.5f;
+    cfg.z_step_mm = 1.0f;
     cfg.Kchunk = 32;
     cfg.views_per_rot = 360;
     cfg.n_rotations = 0;
@@ -246,5 +246,163 @@ int main_helical_verify()
     YK_CUDA_CHECK(cudaStreamDestroy(s));
     printf("Done: helical verify  views=%d  slabs=%d\n",
         recon.totalViews(), recon.totalSlabs());
+    return 0;
+}
+
+
+int main_helical_from_volume()
+{
+    // ----------------------------------------------------------------
+    // 参数：512x512x400，体素 0.1mm
+    // ----------------------------------------------------------------
+    SCBCTParams params;
+    params.iPU = 1024;  params.iPV = 32;
+    params.iVX = 512;  params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = false;
+    params.SID = 500.0f; params.SDD = 1000.0f;
+    params.du_mm = 0.25f;  params.dv_mm = 0.25f;
+    params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f;
+    params.vox_z_mm = 0.1f;
+    params.offsetU_mm = 0.f;
+    params.tiltu_angle_rad = 0.f;
+    params.tiltn_angle_rad = 0.f;
+    params.tiltv_angle_rad = 0.f;
+    params.vol_offset_x_mm = 0.f;
+    params.vol_offset_y_mm = 0.f;
+    params.vol_offset_z_mm = 0.f;
+
+    // ----------------------------------------------------------------
+    // 螺旋参数
+    // z_vol = 400 * 0.1 = 40mm
+    // pitch = 3mm，z_block = 3mm，z_step = 1.5mm
+    // ----------------------------------------------------------------
+    YK::HelicalReconstructor::SHeliFpConfig cfg;
+    cfg.pitch_mm = 3.0f;
+    cfg.auto_start_z = true;
+    cfg.z_block_mm = 3.0f;
+    cfg.z_step_mm = 0.5f;
+    cfg.Kchunk = 32;
+    cfg.views_per_rot = 720;
+    cfg.n_rotations = 0;
+    cfg.fp_task = ETask::FP_Joseph;
+
+    const size_t vol_elems =
+        (size_t)params.iVX * params.iVY * params.iVZ;
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+    Mem::MemoryController ctrl;
+
+    // ----------------------------------------------------------------
+    // 从外部读取体积
+    // ----------------------------------------------------------------
+    std::vector<float> h_phantom(vol_elems);
+    const std::string vol_path =
+        test_data_dir + "arrow_phantom_512x512x400_f.raw";
+    if (!read_raw_float(vol_path.c_str(), h_phantom)) {
+        YK_LOGE("cannot read {}", vol_path);
+        YK_CUDA_CHECK(cudaStreamDestroy(s));
+        return -1;
+    }
+    YK_LOGI("loaded: {} ({}x{}x{})",
+        vol_path, params.iVX, params.iVY, params.iVZ);
+
+
+
+    {
+        float minv = *std::min_element(h_phantom.begin(), h_phantom.end());
+        float maxv = *std::max_element(h_phantom.begin(), h_phantom.end());
+        YK_LOGI("phantom stats: min={:.4f} max={:.4f}", minv, maxv);
+    }
+
+    // 上传体模到设备端
+    auto d_phantom = ctrl.allocateDevice3D<float>(
+        params.iVX, params.iVY, params.iVZ, 0, false);
+    YK_CUDA_CHECK(cudaMemcpy(
+        d_phantom.data(), h_phantom.data(),
+        vol_elems * sizeof(float), cudaMemcpyHostToDevice));
+
+    // ----------------------------------------------------------------
+    // 初始化重建器
+    // ----------------------------------------------------------------
+    YK::HelicalReconstructor recon;
+    if (!recon.init(params, cfg, s)) {
+        YK_LOGE("HelicalReconstructor init failed");
+        YK_CUDA_CHECK(cudaStreamDestroy(s));
+        return -1;
+    }
+
+    YK_LOGI("total views={} slabs={} z=[{:.2f},{:.2f}]mm",
+        recon.totalViews(), recon.totalSlabs(),
+        recon.zVolStart(), recon.zVolEnd());
+
+    // ----------------------------------------------------------------
+    // 螺旋正投影
+    // ----------------------------------------------------------------
+    const size_t proj_elems =
+        (size_t)params.iPU * params.iPV * recon.totalViews();
+    std::vector<float> h_proj(proj_elems, 0.f);
+
+    {
+        Util::CudaTimer timer("helical_fp", s);
+        if (!recon.forwardProject(d_phantom.data(), h_proj.data(), s)) {
+            YK_LOGE("forwardProject failed");
+            recon.release();
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+    }
+
+    write_raw_float(
+        (test_data_dir + "helical_proj_512.raw").c_str(),
+        h_proj.data(), proj_elems);
+    YK_LOGI("saved: helical_proj_512.raw ({}x{}x{})",
+        params.iPU, params.iPV, recon.totalViews());
+
+    {
+        float minv = *std::min_element(h_proj.begin(), h_proj.end());
+        float maxv = *std::max_element(h_proj.begin(), h_proj.end());
+        YK_LOGI("proj stats: min={:.4f} max={:.4f}", minv, maxv);
+    }
+
+    // ----------------------------------------------------------------
+    // 分段螺旋 FDK 重建
+    // ----------------------------------------------------------------
+    std::vector<float> h_vol_out(vol_elems, 0.f);
+
+    {
+        Util::CudaTimer timer("helical_recon", s);
+        if (!recon.reconstruct(h_proj.data(), h_vol_out.data(), s)) {
+            YK_LOGE("reconstruct failed");
+            recon.release();
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+    }
+
+    write_raw_float(
+        (test_data_dir + "helical_recon_512.raw").c_str(),
+        h_vol_out.data(), vol_elems);
+    YK_LOGI("saved: helical_recon_512.raw ({}x{}x{})",
+        params.iVX, params.iVY, params.iVZ);
+
+    // ----------------------------------------------------------------
+    // 统计
+    // ----------------------------------------------------------------
+    {
+        float maxv = 0.f, mean = 0.f;
+        for (size_t i = 0; i < vol_elems; ++i) {
+            maxv = std::max(maxv, h_vol_out[i]);
+            mean += h_vol_out[i];
+        }
+        mean /= (float)vol_elems;
+        YK_LOGI("recon stats: max={:.4f} mean={:.6f}", maxv, mean);
+    }
+
+    printf("Done: helical_from_volume  views=%d  slabs=%d\n",
+        recon.totalViews(), recon.totalSlabs());
+
+    recon.release();
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
     return 0;
 }

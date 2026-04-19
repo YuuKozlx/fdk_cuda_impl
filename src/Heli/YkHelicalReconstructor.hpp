@@ -27,15 +27,19 @@ namespace YK {
     public:
 
         struct SHeliFpConfig {
-            float pitch_mm = 3.f;
-            float start_z_mm = 0.f;
-            bool  auto_start_z = true;
-            float z_block_mm = 3.f;
-            float z_step_mm = 1.5f;
-            int   Kchunk = 32;
-            int   views_per_rot = 360;
-            int   n_rotations = 0;
+            // scan config
+            float pitch_mm = 3.f; // 仿真螺旋进给量
+            float start_z_mm = 0.f;  // auto_start_z=true 时该值自动计算，被覆盖，表示扫描起始位置
+            bool  auto_start_z = true;  // 自动计算扫描起始 Z
+
+            int   views_per_rot = 360;// 每圈投影数
+            int   n_rotations = 0;   // 自动计算圈数
             ETask fp_task = ETask::FP_Joseph;
+
+
+            float z_block_mm = 3.f;  // 每段重建厚度 = pitch
+            float z_step_mm = 1.f;   // 段间步进，50% 重叠
+            int   Kchunk = 32;
         };
 
         bool init(const SCBCTParams& params,
@@ -77,16 +81,20 @@ namespace YK {
                 params.SID, params.SDD - params.SID,
                 cfg_.pitch_mm, cfg_.start_z_mm);
 
-            // z_src_all_ 不再需要，删掉
+            // parker_half：π+2γ 的一半，用于投影选取
+            const float half_fan = std::atan(
+                params.iPU * 0.5f * params.du_mm / params.SDD);
+            const float parker_half = params.bShortScan
+                ? (CUDA_PI + 2.f * half_fan) * 0.5f  // π+2γ，约195°
+                : CUDA_PI;
+
+            // buildHelicalSlabs 只传 geo，信息源唯一
             slabs_ = buildHelicalSlabs(
                 z_vol_start_, z_vol_end_,
                 cfg_.z_step_mm, cfg_.z_block_mm,
                 params.vox_z_mm,
-                cfg_.pitch_mm, cfg_.start_z_mm,
-                params.SID, params.SDD,
-                params.du_mm, params.iPU,
-                params.dv_mm, params.iPV,
-                angle_list_);
+                computeViewSelectionHalf_(),
+                helical_geo_);
 
             if (slabs_.empty()) {
                 YK_LOGE("[HelicalReconstructor] no slabs generated");
@@ -103,10 +111,12 @@ namespace YK {
             is_initialized_ = true;
             YK_LOGI("[HelicalReconstructor] init OK: "
                 "{}x{}x{} vox  {} slabs  {} views  "
-                "pitch={:.1f}mm  start_z={:.1f}mm  margin={:.2f}mm",
+                "pitch={:.1f}mm  start_z={:.1f}mm  margin={:.2f}mm  "
+                "parker_half={:.2f}deg",
                 params.iVX, params.iVY, params.iVZ,
                 (int)slabs_.size(), total_views,
-                cfg_.pitch_mm, cfg_.start_z_mm, margin_);
+                cfg_.pitch_mm, cfg_.start_z_mm, margin_,
+                parker_half * 180.f / CUDA_PI);
             return true;
         }
 
@@ -223,12 +233,8 @@ namespace YK {
                 std::vector<SConeProjGeomVec>    h_geo(K);
                 std::vector<SFDKGeoParamPerView> h_gv(K);
 
-                build_helical_vec_geometry_from_theta(
-                    h_geo, slab.views.angles, K,
-                    iPU, iPV,
-                    params_.du_mm, params_.dv_mm,
-                    params_.SID, params_.SDD - params_.SID,
-                    cfg_.pitch_mm, cfg_.start_z_mm);
+                for (int i = 0; i < K; ++i)
+                    h_geo[i] = helical_geo_[slab.views.indices[i]];
 
                 GeoDerivedManagerVec{}.build_geo_params(
                     iPU, iPV,
@@ -304,12 +310,15 @@ namespace YK {
                     pw_.process(d_chunk_in, d_chunk_pw, stream);
 
                     // helical parker
-                    Helical::HelicalParkerChunkContext hpkctx{};
-                    hpkctx.h_angles = slab.views.angles.data() + base;
-                    hpkctx.K = Kc;
-                    hpkctx.angle_base = slab.views.angles.front();
-                    hpw_.setContext(&hpkctx);
-                    hpw_.process(d_chunk_pw, stream);
+                    if (params_.bShortScan) {
+                        Helical::HelicalParkerChunkContext hpkctx{};
+                        hpkctx.h_angles = slab.views.angles.data() + base;
+                        hpkctx.K = Kc;
+                        hpkctx.angle_base = slab.views.angles.front();
+                        hpw_.setContext(&hpkctx);
+                        hpw_.process(d_chunk_pw, stream);
+                    }
+
 
                     // filter
                     FdkFilterContext fctx{ h_gv.data() + base, Kc };
@@ -365,6 +374,21 @@ namespace YK {
                 * params_.SID / params_.SDD;
         }
 
+        // 改名更清晰
+        float computeViewSelectionHalf_() const
+        {
+            if (params_.bShortScan) {
+                // Parker 模式：选取 π+2γ
+                const float half_fan = std::atan(
+                    params_.iPU * 0.5f * params_.du_mm / params_.SDD);
+                return (CUDA_PI + 2.f * half_fan) * 0.5f;
+            }
+            else {
+                // 整圈模式：选取 π
+                return CUDA_PI;
+            }
+        }
+
         bool initPipeline_()
         {
             const int iPU = params_.iPU;
@@ -415,6 +439,8 @@ namespace YK {
         // z0 参数删掉，Parker 不再需要
         bool reinitHelicalParker_(int iPU, int iPV, int K)
         {
+
+
             Helical::HelicalParkerInitContext hpctx{};
             hpctx.dims = SProjDims{ iPU, iPV, K };
             hpctx.fDetUSize = params_.du_mm;
