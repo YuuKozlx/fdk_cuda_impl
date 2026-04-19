@@ -6,6 +6,8 @@
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 #include "util/YkVecOperation.hpp"
+#include "Heli/YkHeliCTParams.h"  // SHeliCTParam 定义在这里
+
 
 namespace YK {
 
@@ -30,29 +32,28 @@ namespace YK {
     };
 
     // ----------------------------------------------------------------
-    // build_helical_vec_geometry_from_theta
+    // build_helical_vec_geometry
+    // 从 SHeliCTParam 构建螺旋几何，angle_list 外部传入
     // ----------------------------------------------------------------
-    YK_INLINE void build_helical_vec_geometry_from_theta(
+    YK_INLINE void build_helical_vec_geometry(
         std::vector<SConeProjGeomVec>& geo,
-        const std::vector<float>& theta,
-        int Ang, int Nu, int Nv,
-        float du, float dv,
-        float SID, float IDD,
-        float pitch_mm,
-        float start_z_mm = 0.f,
-        float3 det_offset = make_float3(0.f, 0.f, 0.f),
-        float3 detTilt_deg = make_float3(0.f, 0.f, 0.f),
-        float3 src_offset = make_float3(0.f, 0.f, 0.f),
-        float3 srcCRTilt_deg = make_float3(0.f, 0.f, 0.f))
+        const SHeliCTParam& param)
     {
+        const auto& theta = param.angle_list;
+        const int   Ang = (int)theta.size();
+
         geo.resize(Ang);
 
         auto deg2rad = [](float deg) { return deg * CUDA_PI / 180.f; };
+        auto rad2deg = [](float rad) { return rad * 180.f / CUDA_PI; };
 
-        const float tiltu_deg = detTilt_deg.x;
-        const float tiltv_deg = detTilt_deg.z;
-        const float tiltn_deg = detTilt_deg.y;
+        const float tiltu_deg = rad2deg(param.tiltu_angle_rad);
+        const float tiltv_deg = rad2deg(param.tiltv_angle_rad);
+        const float tiltn_deg = rad2deg(param.tiltn_angle_rad);
 
+        const float IDD = param.SDD - param.SID;
+
+        // ---- 探测器 U/V 方向 ----
         float3 detU_dir = make_float3(1.f, 0.f, 0.f);
         float3 detV_dir = make_float3(0.f, 0.f, 1.f);
         {
@@ -69,30 +70,29 @@ namespace YK {
             detV_dir = f3_rot_axis(detV_dir, normal, deg2rad(tiltn_deg));
         }
 
-        float3 srcCR_dir = make_float3(0.f, 1.f, 0.f);
-        {
-            srcCR_dir = f3_rot_axis(srcCR_dir, make_float3(1.f, 0.f, 0.f), deg2rad(srcCRTilt_deg.x));
-            srcCR_dir = f3_rot_axis(srcCR_dir, make_float3(0.f, 0.f, 1.f), deg2rad(srcCRTilt_deg.y));
-            srcCR_dir = f3_rot_axis(srcCR_dir, f3_normalize(srcCR_dir), deg2rad(srcCRTilt_deg.z));
-            srcCR_dir = f3_normalize(srcCR_dir);
-        }
+        // ---- 主射线方向 ----
+        float3 srcCR_dir = f3_normalize(make_float3(0.f, 1.f, 0.f));
 
-        const float3 src0 = make_float3(0.f, -SID, 0.f);
+        const float3 src0 = make_float3(0.f, -param.SID, 0.f);
         const float3 detC0 = make_float3(0.f, IDD, 0.f);
-        const float  cu = 0.5f * (Nu - 1);
-        const float  cv = 0.5f * (Nv - 1);
+        const float  cu = 0.5f * (param.iPU - 1);
+        const float  cv = 0.5f * (param.iPV - 1);
+
+        // det_offset 包含 U/V 偏移
+        const float3 det_offset = make_float3(
+            param.offsetU_mm, param.offsetV_mm, 0.f);
 
         for (int a = 0; a < Ang; ++a) {
-            const float t = theta[a];
-            const float src_z = start_z_mm
-                + pitch_mm * t / (2.f * CUDA_PI);
+            const float  t = theta[a];
+            const float  src_z = param.start_z_mm
+                + param.pitch_mm * t / (2.f * CUDA_PI);
             const float3 helical_z = make_float3(0.f, 0.f, src_z);
 
-            float3 src = f3_rotz(src0 + src_offset, t) + helical_z;
+            float3 src = f3_rotz(src0, t) + helical_z;
             float3 detC = f3_rotz(detC0 + det_offset, t) + helical_z;
             float3 srcCR = f3_rotz(srcCR_dir, t);
-            float3 U = f3_rotz(detU_dir, t) * du;
-            float3 V = f3_rotz(detV_dir, t) * dv;
+            float3 U = f3_rotz(detU_dir, t) * param.du_mm;
+            float3 V = f3_rotz(detV_dir, t) * param.dv_mm;
             float3 detS = detC - U * cu - V * cv;
 
             geo[a] = SConeProjGeomVec{
@@ -107,15 +107,13 @@ namespace YK {
     }
 
     // ----------------------------------------------------------------
-    // selectHelicalViews：从 geo 直接读 src.z 和 angle.x
-    // 不依赖 pitch/start_z，支持真实扫描数据
+    // selectHelicalViews
     // ----------------------------------------------------------------
     YK_INLINE HelicalViewSelection selectHelicalViews(
         float z_center,
         float view_half,
         const std::vector<SConeProjGeomVec>& geo)
     {
-        // 找离 z_center 最近的投影作为角度中心
         int   center_idx = 0;
         float min_dz = std::numeric_limits<float>::max();
         for (int i = 0; i < (int)geo.size(); ++i) {
@@ -149,23 +147,30 @@ namespace YK {
     // buildHelicalSlabs
     // ----------------------------------------------------------------
     YK_INLINE std::vector<HelicalSlabConfig> buildHelicalSlabs(
-        float z_vol_start, float z_vol_end,
-        float z_step_mm, float z_block_mm,
-        float vox_z_mm,
-        float view_half,   // 投影选取的角度半宽，与 Parker 无关
+        const SHeliCTParam& param,
+        float                                view_half,
         const std::vector<SConeProjGeomVec>& geo)
     {
+        const float z_vol_half =
+            param.iVZ * param.vox_z_mm * 0.5f;
+        const float z_vol_start =
+            param.vol_offset_z_mm - z_vol_half;
+        const float z_vol_end =
+            param.vol_offset_z_mm + z_vol_half;
+
         std::vector<HelicalSlabConfig> slabs;
 
-        for (float z0 = z_vol_start + z_block_mm * 0.5f;
-            z0 <= z_vol_end - z_block_mm * 0.5f + 1e-4f;
-            z0 += z_step_mm)
+        for (float z0 = z_vol_start + param.z_block_mm * 0.5f;
+            z0 <= z_vol_end - param.z_block_mm * 0.5f + 1e-4f;
+            z0 += param.z_step_mm)
         {
             HelicalSlabConfig cfg{};
             cfg.z_center = z0;
             cfg.z_start_vox = (int)roundf(
-                (z0 - z_block_mm * 0.5f - z_vol_start) / vox_z_mm);
-            cfg.z_count_vox = (int)roundf(z_block_mm / vox_z_mm);
+                (z0 - param.z_block_mm * 0.5f - z_vol_start)
+                / param.vox_z_mm);
+            cfg.z_count_vox = (int)roundf(
+                param.z_block_mm / param.vox_z_mm);
             cfg.views = selectHelicalViews(z0, view_half, geo);
 
             if (cfg.views.indices.empty()) {
