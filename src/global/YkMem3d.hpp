@@ -2,10 +2,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 #include <memory>
 #include <stdexcept>
 #include <vector>
-#include <cuda_runtime.h>
 #include "YkGlobals.h"  // YK_CUDA_CHECK
 #include "YkMacro.hpp"
 
@@ -203,6 +204,11 @@ namespace YK {
             const T* cdata()  const noexcept { return ptr_.get(); }
             uint64_t     size()   const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
             explicit operator bool() const noexcept { return ptr_ != nullptr; }
+            void reset() noexcept {
+                ptr_.reset();
+                sh_ = {};
+                sliceStride_ = 0;
+            }
 
         private:
             std::unique_ptr<T[]> ptr_;
@@ -255,6 +261,11 @@ namespace YK {
             const T* cdata()  const noexcept { return ptr_; }
             uint64_t     size()   const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
             explicit operator bool() const noexcept { return ptr_ != nullptr; }
+            void reset() noexcept {
+                ptr_ = nullptr;
+                sh_ = {};
+                sliceStride_ = 0;
+            }
 
         private:
             T* ptr_ = nullptr;
@@ -295,7 +306,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMallocHost(&ptr_, n * sizeof(T)));
             }
 
-            void reset() {
+            void reset() noexcept {
                 if (ptr_) { cudaFreeHost(ptr_); ptr_ = nullptr; }
                 n_ = 0;
             }
@@ -348,7 +359,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMallocHost(&ptr_, uint64_t(nx) * ny * nz * sizeof(T)));
             }
 
-            void reset() {
+            void reset() noexcept {
                 if (ptr_) { cudaFreeHost(ptr_); ptr_ = nullptr; }
                 sh_ = {};
             }
@@ -367,6 +378,110 @@ namespace YK {
         private:
             T* ptr_ = nullptr;
             Shape3D sh_{};
+        };
+
+
+        // ============================================================
+// CpuLinearBuffer  —  1D 线性 CPU 缓冲
+// 用于结构体/POD数组（geo参数、LUT、校正表等）
+// 底层：new[]
+// ============================================================
+        template<typename T>
+        class CpuLinearBuffer {
+        public:
+            CpuLinearBuffer() = default;
+            ~CpuLinearBuffer() { reset(); }
+
+            CpuLinearBuffer(const CpuLinearBuffer&) = delete;
+            CpuLinearBuffer& operator=(const CpuLinearBuffer&) = delete;
+
+            CpuLinearBuffer(CpuLinearBuffer&& o) noexcept
+                : ptr_(o.ptr_), n_(o.n_)
+            {
+                o.ptr_ = nullptr; o.n_ = 0;
+            }
+
+            CpuLinearBuffer& operator=(CpuLinearBuffer&& o) noexcept {
+                if (this != &o) {
+                    reset();
+                    ptr_ = o.ptr_;  o.ptr_ = nullptr;
+                    n_ = o.n_;    o.n_ = 0;
+                }
+                return *this;
+            }
+
+            void alloc(int n, bool zero = false) {
+                reset();
+                n_ = n;
+                ptr_ = new T[n];
+                if (zero) std::memset(ptr_, 0, n * sizeof(T));
+            }
+
+            void reset() noexcept {
+                delete[] ptr_;
+                ptr_ = nullptr;
+                n_ = 0;
+            }
+
+            T* data()  const noexcept { return ptr_; }
+            int      count() const noexcept { return n_; }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+        private:
+            T* ptr_ = nullptr;
+            int n_ = 0;
+        };
+
+
+        // ============================================================
+// CpuLinearBufferBorrowed  —  非拥有 1D CPU 缓冲，指向外部内存
+// 用于裸指针/std::vector::data() 的无拷贝包装
+// ============================================================
+        template<typename T>
+        class CpuLinearBufferBorrowed {
+        public:
+            CpuLinearBufferBorrowed() = default;
+
+            CpuLinearBufferBorrowed(T* ptr, int n)
+                : ptr_(ptr), n_(n)
+            {
+                if (!ptr)
+                    throw std::invalid_argument("CpuLinearBufferBorrowed: ptr is null");
+                if (n <= 0)
+                    throw std::invalid_argument("CpuLinearBufferBorrowed: n must > 0");
+            }
+
+            CpuLinearBufferBorrowed(const CpuLinearBufferBorrowed&) = delete;
+            CpuLinearBufferBorrowed& operator=(const CpuLinearBufferBorrowed&) = delete;
+
+            CpuLinearBufferBorrowed(CpuLinearBufferBorrowed&& o) noexcept
+                : ptr_(o.ptr_), n_(o.n_)
+            {
+                o.ptr_ = nullptr; o.n_ = 0;
+            }
+
+            CpuLinearBufferBorrowed& operator=(CpuLinearBufferBorrowed&& o) noexcept {
+                if (this != &o) {
+                    ptr_ = o.ptr_;  o.ptr_ = nullptr;
+                    n_ = o.n_;    o.n_ = 0;
+                }
+                return *this;
+            }
+
+            ~CpuLinearBufferBorrowed() = default;   // 不释放，外部管理
+
+            void reset() noexcept {
+                ptr_ = nullptr;
+                n_ = 0;
+            }
+
+            T* data()  const noexcept { return ptr_; }
+            int      count() const noexcept { return n_; }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+        private:
+            T* ptr_ = nullptr;
+            int n_ = 0;
         };
 
         // ============================================================
@@ -407,7 +522,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&ptr_, n * sizeof(T)));
             }
 
-            void reset() {
+            void reset() noexcept {
                 if (ptr_) {
                     cudaSetDevice(deviceId_);
                     cudaFree(ptr_);
@@ -995,6 +1110,10 @@ namespace YK {
         class PodDataController {
         public:
 
+            // ----------------------------------------------------------------
+            // Device 分配
+            // ----------------------------------------------------------------
+
             template<typename T>
             DeviceLinearBuffer<T> allocate(int n, int deviceId = 0) const
             {
@@ -1012,7 +1131,30 @@ namespace YK {
                 return buf;
             }
 
-            // 同步上传
+            // ----------------------------------------------------------------
+            // CPU 分配
+            // ----------------------------------------------------------------
+
+            template<typename T>
+            CpuLinearBuffer<T> allocateCpu(int n, bool zero = false) const
+            {
+                CpuLinearBuffer<T> buf;
+                buf.alloc(n, zero);
+                return buf;
+            }
+
+            template<typename T>
+            CpuLinearBuffer<T> allocateCpuAndCopy(const std::vector<T>& src) const
+            {
+                auto buf = allocateCpu<T>((int)src.size());
+                std::memcpy(buf.data(), src.data(), src.size() * sizeof(T));
+                return buf;
+            }
+
+            // ----------------------------------------------------------------
+            // Upload  (Host → Device)
+            // ----------------------------------------------------------------
+
             template<typename T>
             void upload(const DeviceLinearBuffer<T>& dst,
                 const std::vector<T>& src) const
@@ -1037,6 +1179,20 @@ namespace YK {
                     cudaMemcpyHostToDevice));
             }
 
+            template<typename T>
+            void upload(const DeviceLinearBuffer<T>& dst,
+                const CpuLinearBuffer<T>& src) const
+            {
+                upload(dst, src.data(), src.count());
+            }
+
+            template<typename T>
+            void upload(const DeviceLinearBuffer<T>& dst,
+                const CpuLinearBufferBorrowed<T>& src) const
+            {
+                upload(dst, src.data(), src.count());
+            }
+
             // 异步上传，src 必须是 HostPinnedBuffer
             template<typename T>
             void uploadAsync(const DeviceLinearBuffer<T>& dst,
@@ -1053,7 +1209,10 @@ namespace YK {
                     cudaMemcpyHostToDevice, stream));
             }
 
-            // 同步下载
+            // ----------------------------------------------------------------
+            // Download  (Device → Host)
+            // ----------------------------------------------------------------
+
             template<typename T>
             void download(std::vector<T>& dst,
                 const DeviceLinearBuffer<T>& src) const
@@ -1065,6 +1224,41 @@ namespace YK {
                     dst.data(), src.data(),
                     src.count() * sizeof(T),
                     cudaMemcpyDeviceToHost));
+            }
+
+            template<typename T>
+            void download(T* dst, const DeviceLinearBuffer<T>& src, int n) const
+            {
+                if (!dst || !src)
+                    throw std::invalid_argument("PodDataController::download: null ptr");
+                if (n > src.count())
+                    throw std::invalid_argument("PodDataController::download: n > src.count()");
+                YK_CUDA_CHECK(cudaMemcpy(
+                    dst, src.data(),
+                    n * sizeof(T),
+                    cudaMemcpyDeviceToHost));
+            }
+
+            template<typename T>
+            void download(CpuLinearBuffer<T>& dst,
+                const DeviceLinearBuffer<T>& src) const
+            {
+                if (!dst || !src)
+                    throw std::invalid_argument("PodDataController::download: null ptr");
+                if (dst.count() < src.count())
+                    throw std::invalid_argument("PodDataController::download: dst too small");
+                download(dst.data(), src, src.count());
+            }
+
+            template<typename T>
+            void download(CpuLinearBufferBorrowed<T>& dst,
+                const DeviceLinearBuffer<T>& src) const
+            {
+                if (!dst || !src)
+                    throw std::invalid_argument("PodDataController::download: null ptr");
+                if (dst.count() < src.count())
+                    throw std::invalid_argument("PodDataController::download: dst too small");
+                download(dst.data(), src, src.count());
             }
 
             // 异步下载，dst 必须是 HostPinnedBuffer，调用方负责 sync

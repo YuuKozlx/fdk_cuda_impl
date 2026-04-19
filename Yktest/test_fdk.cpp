@@ -22,12 +22,12 @@ int main_fdk()
     params.iPU = 1024; params.iPV = 1024;
     params.iPAng = 480; params.iPAngTotal = 480;
     params.tiltn_angle_rad = 0;
-    params.iVX = 512 * 4; params.iVY = 512 * 4; params.iVZ = 200;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 200;
     params.bShortScan = true;
     params.scan_range_rad = (float)CUDA_PI * 4.0f / 3.0f;
     params.SID = 500.0f; params.SDD = 1000.0f;
     params.du_mm = 0.25f; params.dv_mm = 0.25f;
-    params.vox_x_mm = 0.1f / 4; params.vox_y_mm = 0.1f / 4; params.vox_z_mm = 0.1f;
+    params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
     params.offsetU_mm = 0.f;
 
     std::vector<float> angle_list(params.iPAng);
