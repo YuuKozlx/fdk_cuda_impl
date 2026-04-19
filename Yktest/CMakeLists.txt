@@ -4,8 +4,9 @@ add_executable(YKCBCT_test
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp_runner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_bp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp1.cu
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_heli.cpp
     $<TARGET_OBJECTS:YKCBCT_obj>
-)
+ )
 
 target_link_libraries(YKCBCT_test PRIVATE
     YKCBCT_obj

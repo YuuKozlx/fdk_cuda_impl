@@ -97,7 +97,7 @@ add_subdirectory(src/Filter)
 add_subdirectory(src/FDK)
 add_subdirectory(src/BP)
 add_subdirectory(src/FP)
-
+add_subdirectory(src/Heli)
 # ----------------------------------------------------------------
 # 主库 DLL：只做链接，不重复编译源文件
 #
