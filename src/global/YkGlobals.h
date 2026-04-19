@@ -187,7 +187,7 @@ namespace YK {
 
     // constant 内存，按 chunk 上传
     // 1024 角度 × 64 bytes = 64KB，刚好在限制内
-    static constexpr int kMaxChunkAng = 64;
+    static constexpr int kMaxChunkAng = 32;
     // YkFDKBackProject.cuh —— 只放 extern 声明
 
 
