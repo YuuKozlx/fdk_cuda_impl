@@ -16,13 +16,9 @@ namespace YK {
 				float* __restrict__ data,
 				int   Nu, int Nv, int K,
 				float fSDD,
-				float fSID,
 				float fDetUSize,
-				float fDetVSize,
 				float fCentralFanAngle,
-				float fScale,
-				float z0,
-				float z_half_range)
+				float fScale)
 			{
 				WarpStrideCtx<EWarpStrideAxis::RowWarp> ctx;
 				const int total_rows = K * Nv;
@@ -36,18 +32,9 @@ namespace YK {
 
 					const float beta = gC_helical_parker_angle[angle];
 
-
-					// 改后：用探测器行 v 对应的 Z 偏移
-					const float v_center = v - 0.5f * (Nv - 1);
-					const float dz_det = v_center * fDetVSize * fSID / fSDD;
-					const float t = dz_det / z_half_range;
-					const float ct = cosf(CUDA_PI * 0.5f * t);
-					const float w_cone = (fabsf(t) >= 1.f) ? 0.f : ct * ct;
-
 					for (int u = ctx.lane; u < Nu; u += 32)
 					{
-						const float u_mm =
-							(u - 0.5f * Nu + 0.5f) * fDetUSize;
+						const float u_mm = (u - 0.5f * Nu + 0.5f) * fDetUSize;
 						const float gamma = atanf(u_mm / fSDD);
 
 						const float t1 = 2.0f * (fCentralFanAngle + gamma);
@@ -72,8 +59,7 @@ namespace YK {
 						}
 						else { w_parker = 0.f; }
 
-						data[(angle * Nv + v) * Nu + u] *=
-							w_parker * w_cone * fScale;
+						data[(angle * Nv + v) * Nu + u] *= w_parker * fScale;
 					}
 				}
 			}
@@ -85,7 +71,6 @@ namespace YK {
 		// ----------------------------------------------------------------
 		void helical_parker_upload(
 			const float* h_angles,
-			const float* h_z_src,
 			int          K,
 			float        angle_base)
 		{
@@ -102,6 +87,7 @@ namespace YK {
 				K * sizeof(float), 0, cudaMemcpyHostToDevice));
 		}
 
+
 		// ----------------------------------------------------------------
 		// launch
 		// ----------------------------------------------------------------
@@ -109,28 +95,21 @@ namespace YK {
 			float* d_data,
 			int Nu, int Nv, int K,
 			float fSDD,
-			float fSID,
 			float fDetUSize,
-			float fDetVSize,
 			float fCentralFanAngle,
 			float fScale,
-			float z0,
-			float z_half_range,
 			cudaStream_t stream)
 		{
 			constexpr int kThreads = 128;
 			const int grid_x =
 				std::min((K * Nv * 32 + kThreads - 1) / kThreads, 256);
-
 			const dim3 block(kThreads, 1, 1);
 			const dim3 grid(grid_x, 1, 1);
 
 			detail::helical_parker_kernel << <grid, block, 0, stream >> > (
-				d_data,
-				Nu, Nv, K,
-				fSDD, fSID, fDetUSize, fDetVSize,
-				fCentralFanAngle, fScale,
-				z0, z_half_range);
+				d_data, Nu, Nv, K,
+				fSDD, fDetUSize,
+				fCentralFanAngle, fScale);
 
 			YK_CUDA_KERNEL_CHECK();
 		}

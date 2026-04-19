@@ -127,27 +127,29 @@ namespace YK {
         float pitch_mm,
         float start_z_mm,
         float SID, float SDD,
+        float du_mm, int Nu,
         float dv_mm, int Nv,
         const std::vector<float>& angle_list)
     {
-        // 锥角 margin
-        const float margin = (Nv * 0.5f * dv_mm) * SID / SDD;
-
-        const float z_lo = z_center - pitch_mm * 0.5f - margin;
-        const float z_hi = z_center + pitch_mm * 0.5f + margin;
-
-        // z_center 对应的螺旋角度
+        // z0 对应的螺旋中心角
         const float theta_center =
             (z_center - start_z_mm) * 2.f * CUDA_PI / pitch_mm;
+
+        // Parker 有效范围
+        const float half_fan = std::atan(Nu * 0.5f * du_mm / SDD);
+        const float parker_range = CUDA_PI + 2.f * half_fan;
+        const float parker_half = parker_range * 0.5f;
+
+        const float theta_lo = theta_center - parker_half;
+        const float theta_hi = theta_center + parker_half;
 
         HelicalViewSelection sel{};
         sel.z_center = z_center;
         sel.theta_center = theta_center;
 
         for (int i = 0; i < (int)angle_list.size(); ++i) {
-            const float z_src =
-                start_z_mm + pitch_mm * angle_list[i] / (2.f * CUDA_PI);
-            if (z_src >= z_lo && z_src <= z_hi) {
+            if (angle_list[i] >= theta_lo &&
+                angle_list[i] <= theta_hi) {
                 sel.indices.push_back(i);
                 sel.angles.push_back(angle_list[i]);
             }
@@ -168,6 +170,7 @@ namespace YK {
         float pitch_mm,
         float start_z_mm,
         float SID, float SDD,
+        float du_mm, int Nu,    // 新增
         float dv_mm, int Nv,
         const std::vector<float>& angle_list)
     {
@@ -184,21 +187,25 @@ namespace YK {
             cfg.z_count_vox = (int)roundf(z_block_mm / vox_z_mm);
             cfg.views = selectHelicalViews(
                 z0, pitch_mm, start_z_mm,
-                SID, SDD, dv_mm, Nv, angle_list);
+                SID, SDD,
+                du_mm, Nu,    // 新增
+                dv_mm, Nv,
+                angle_list);
 
             if (cfg.views.indices.empty()) {
                 YK_LOGW("[helical] no views for z0={:.2f}, skip", z0);
                 continue;
             }
 
+            const float angle_range =
+                cfg.views.angles.back() - cfg.views.angles.front();
             YK_LOGI("[helical slab] z0={:.2f}mm  views={}  "
                 "angle=[{:.1f},{:.1f}]deg  range={:.1f}deg",
                 z0,
                 (int)cfg.views.indices.size(),
                 cfg.views.angles.front() * 180.f / CUDA_PI,
                 cfg.views.angles.back() * 180.f / CUDA_PI,
-                (cfg.views.angles.back() - cfg.views.angles.front())
-                * 180.f / CUDA_PI);
+                angle_range * 180.f / CUDA_PI);
 
             slabs.push_back(cfg);
         }

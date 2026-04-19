@@ -26,9 +26,6 @@ namespace YK {
     class HelicalReconstructor {
     public:
 
-        // ================================================================
-        // 配置结构体
-        // ================================================================
         struct SHeliFpConfig {
             float pitch_mm = 3.f;
             float start_z_mm = 0.f;
@@ -41,9 +38,6 @@ namespace YK {
             ETask fp_task = ETask::FP_Joseph;
         };
 
-        // ================================================================
-        // init
-        // ================================================================
         bool init(const SCBCTParams& params,
             const SHeliFpConfig& cfg,
             cudaStream_t stream,
@@ -60,11 +54,9 @@ namespace YK {
 
             margin_ = computeMargin_();
 
-            // ---- start_z_mm ----
             if (cfg_.auto_start_z)
                 cfg_.start_z_mm = z_vol_start_ - margin_ - cfg_.pitch_mm;
 
-            // ---- n_rotations ----
             if (cfg_.n_rotations <= 0) {
                 const float z_scan_end = z_vol_end_ + margin_ + cfg_.pitch_mm;
                 const float z_total = z_scan_end - cfg_.start_z_mm;
@@ -72,13 +64,11 @@ namespace YK {
                     (int)std::ceil(z_total / cfg_.pitch_mm) + 1;
             }
 
-            // ---- 构建螺旋角度列表 ----
             const int total_views = cfg_.n_rotations * cfg_.views_per_rot;
             angle_list_.resize(total_views);
             for (int i = 0; i < total_views; ++i)
                 angle_list_[i] = i * 2.f * CUDA_PI / cfg_.views_per_rot;
 
-            // ---- 构建螺旋几何 ----
             helical_geo_.clear();
             build_helical_vec_geometry_from_theta(
                 helical_geo_, angle_list_, total_views,
@@ -87,19 +77,14 @@ namespace YK {
                 params.SID, params.SDD - params.SID,
                 cfg_.pitch_mm, cfg_.start_z_mm);
 
-            // ---- 预计算每个投影的源 Z ----
-            z_src_all_.resize(total_views);
-            for (int i = 0; i < total_views; ++i)
-                z_src_all_[i] = cfg_.start_z_mm
-                + cfg_.pitch_mm * angle_list_[i] / (2.f * CUDA_PI);
-
-            // ---- 构建分段配置 ----
+            // z_src_all_ 不再需要，删掉
             slabs_ = buildHelicalSlabs(
                 z_vol_start_, z_vol_end_,
                 cfg_.z_step_mm, cfg_.z_block_mm,
                 params.vox_z_mm,
                 cfg_.pitch_mm, cfg_.start_z_mm,
                 params.SID, params.SDD,
+                params.du_mm, params.iPU,
                 params.dv_mm, params.iPV,
                 angle_list_);
 
@@ -108,13 +93,11 @@ namespace YK {
                 return false;
             }
 
-            // ---- CPU 累积 buffer ----
             const size_t vol_elems =
                 (size_t)params.iVX * params.iVY * params.iVZ;
             h_vol_accum_.assign(vol_elems, 0.f);
             h_weight_accum_.assign(vol_elems, 0.f);
 
-            // ---- 初始化流水线 ----
             if (!initPipeline_()) return false;
 
             is_initialized_ = true;
@@ -136,7 +119,6 @@ namespace YK {
 
             angle_list_.clear();
             helical_geo_.clear();
-            z_src_all_.clear();
             slabs_.clear();
             h_vol_accum_.clear();
             h_weight_accum_.clear();
@@ -145,11 +127,6 @@ namespace YK {
             pipeline_initialized_ = false;
         }
 
-        // ================================================================
-        // forwardProject：螺旋正投影
-        // d_vol：设备端体模
-        // h_proj_out：CPU 端输出，iPU×iPV×total_views
-        // ================================================================
         bool forwardProject(const float* d_vol,
             float* h_proj_out,
             cudaStream_t stream)
@@ -194,11 +171,6 @@ namespace YK {
             return true;
         }
 
-        // ================================================================
-        // reconstruct：分段螺旋 FDK 重建
-        // h_proj：CPU 端螺旋投影，iPU×iPV×total_views
-        // h_vol_out：CPU 端输出完整体积
-        // ================================================================
         bool reconstruct(const float* h_proj,
             float* h_vol_out,
             cudaStream_t stream)
@@ -219,7 +191,6 @@ namespace YK {
             std::fill(h_vol_accum_.begin(), h_vol_accum_.end(), 0.f);
             std::fill(h_weight_accum_.begin(), h_weight_accum_.end(), 0.f);
 
-            // 分配设备端单段 vol buffer
             int max_z_count = 0;
             for (auto& s : slabs_)
                 max_z_count = std::max(max_z_count, s.z_count_vox);
@@ -228,9 +199,6 @@ namespace YK {
             YK_CUDA_CHECK(cudaMalloc(&d_vol_slab,
                 (size_t)iVX * iVY * max_z_count * sizeof(float)));
 
-            auto rad2deg = [](float r) { return r * 180.f / CUDA_PI; };
-
-            // ---- 逐段重建 ----
             for (int si = 0; si < (int)slabs_.size(); ++si) {
                 const auto& slab = slabs_[si];
                 const int   K = (int)slab.views.indices.size();
@@ -251,11 +219,6 @@ namespace YK {
                         view_elems * sizeof(float));
                 }
 
-                // ---- 提取该段源 Z ----
-                std::vector<float> z_src_slab(K);
-                for (int i = 0; i < K; ++i)
-                    z_src_slab[i] = z_src_all_[slab.views.indices[i]];
-
                 // ---- 构建该段螺旋几何 ----
                 std::vector<SConeProjGeomVec>    h_geo(K);
                 std::vector<SFDKGeoParamPerView> h_gv(K);
@@ -272,7 +235,6 @@ namespace YK {
                     slab.views.angles.back() - slab.views.angles.front(),
                     h_geo, h_gv);
 
-                // 全量上传 geo（每段独立，offset=0）
                 gpu_ctx_.uploadGeoIncremental(h_geo, h_gv, 0, K, stream);
 
                 // ---- 初始化该段 BpProcessor ----
@@ -297,15 +259,13 @@ namespace YK {
                     }
                 }
 
-                // ---- 重新初始化螺旋 Parker（每段 z0 不同）----
+                // ---- 重新初始化螺旋 Parker ----
                 if (!reinitHelicalParker_(iPU, iPV,
-                    std::min(cfg_.Kchunk, K),
-                    slab.z_center)) {
+                    std::min(cfg_.Kchunk, K))) {
                     cudaFree(d_vol_slab);
                     return false;
                 }
 
-                // 清零该段 vol
                 const size_t slab_elems =
                     (size_t)iVX * iVY * slab.z_count_vox;
                 YK_CUDA_CHECK(cudaMemsetAsync(
@@ -317,30 +277,25 @@ namespace YK {
 
                 bool filter_dirty = false;
 
-                // ---- chunk 循环 ----
                 for (int base = 0; base < K; base += cfg_.Kchunk) {
                     const int Kc = std::min(cfg_.Kchunk, K - base);
 
-                    // 尾包重建所有 processor
                     if (Kc != cfg_.Kchunk) {
-                        if (!reinitChunkProcessors_(
-                            iPU, iPV, Kc, slab.z_center, stream)) {
+                        if (!reinitChunkProcessors_(iPU, iPV, Kc, stream)) {
                             cudaFree(d_vol_slab);
                             return false;
                         }
                         filter_dirty = true;
                     }
 
-                    // 上传投影
                     gpu_ctx_.proj.uploadProjChunk(
                         h_proj_slab.data() + (size_t)base * view_elems,
                         Kc, stream);
 
-                    // 上传 coeffs
                     gpu_ctx_.geo.uploadCoeffsChunk(
                         gpu_ctx_.geo.d_coeffs() + base, Kc, stream);
 
-                    // ---- preweight ----
+                    // preweight
                     PreweightChunkContext pctx{};
                     pctx.d_geo = gpu_ctx_.geo.d_geo() + base;
                     pctx.d_gv = gpu_ctx_.geo.d_gv() + base;
@@ -348,21 +303,20 @@ namespace YK {
                     pw_.setContext(&pctx);
                     pw_.process(d_chunk_in, d_chunk_pw, stream);
 
-                    // ---- helical parker（in-place）----
+                    // helical parker
                     Helical::HelicalParkerChunkContext hpkctx{};
                     hpkctx.h_angles = slab.views.angles.data() + base;
-                    hpkctx.h_z_src = z_src_slab.data() + base;
                     hpkctx.K = Kc;
-                    hpkctx.angle_base = slab.views.angles.front();  // 段起始角度，不是chunk起始
+                    hpkctx.angle_base = slab.views.angles.front();
                     hpw_.setContext(&hpkctx);
                     hpw_.process(d_chunk_pw, stream);
 
-                    // ---- filter ----
+                    // filter
                     FdkFilterContext fctx{ h_gv.data() + base, Kc };
                     flt_.setContext(&fctx);
                     flt_.process(d_chunk_pw, d_chunk_flt, stream);
 
-                    // ---- backproject ----
+                    // backproject
                     BpChunkContext bctx{};
                     bctx.d_geo = gpu_ctx_.geo.d_geo() + base;
                     bctx.d_gv = gpu_ctx_.geo.d_gv() + base;
@@ -372,13 +326,10 @@ namespace YK {
                         d_vol_slab, stream);
                 }
 
-                // 恢复标准尺寸
-                if (filter_dirty) {
-                    reinitChunkProcessors_(
-                        iPU, iPV, cfg_.Kchunk, slab.z_center, stream);
-                }
+                if (filter_dirty)
+                    reinitChunkProcessors_(iPU, iPV, cfg_.Kchunk, stream);
 
-                // ---- 同步 + 回读 ----
+                // 同步 + 回读
                 std::vector<float> h_slab(slab_elems);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 YK_CUDA_CHECK(cudaMemcpy(
@@ -386,29 +337,11 @@ namespace YK {
                     slab_elems * sizeof(float),
                     cudaMemcpyDeviceToHost));
 
-                // ---- 诊断：中间段原始值 ----
-                if (si == (int)slabs_.size() / 2) {
-                    float maxv = 0.f, sum = 0.f;
-                    for (size_t i = 0; i < slab_elems; ++i) {
-                        maxv = std::max(maxv, h_slab[i]);
-                        sum += h_slab[i];
-                    }
-                    YK_LOGI("[debug] slab {} raw: max={:.4f} mean={:.6f}",
-                        si, maxv, sum / slab_elems);
-                }
-
-                // ---- 融合 ----
                 mergeSlabToVolume_(h_slab.data(), slab);
-
                 bp->release();
             }
 
             cudaFree(d_vol_slab);
-
-            // 归一化之前加
-            float w_max = *std::max_element(h_weight_accum_.begin(), h_weight_accum_.end());
-            float w_min = *std::min_element(h_weight_accum_.begin(), h_weight_accum_.end());
-            YK_LOGI("[debug] weight_accum: min={:.4f} max={:.4f}", w_min, w_max);
 
             // 归一化
             for (size_t i = 0; i < vol_elems; ++i) {
@@ -420,7 +353,6 @@ namespace YK {
             return true;
         }
 
-        // 访问器
         int   totalViews() const { return (int)angle_list_.size(); }
         int   totalSlabs() const { return (int)slabs_.size(); }
         float zVolStart()  const { return z_vol_start_; }
@@ -428,30 +360,22 @@ namespace YK {
 
     private:
 
-        // ----------------------------------------------------------------
-        // computeMargin_
-        // ----------------------------------------------------------------
         float computeMargin_() const {
             return (params_.iPV * 0.5f * params_.dv_mm)
                 * params_.SID / params_.SDD;
         }
 
-        // ----------------------------------------------------------------
-        // initPipeline_：按最大 K 分配 gpu_ctx_ 和 processor
-        // ----------------------------------------------------------------
         bool initPipeline_()
         {
             const int iPU = params_.iPU;
             const int iPV = params_.iPV;
 
-            // 最大单段投影数
             int max_K = 0;
             for (auto& s : slabs_)
                 max_K = std::max(max_K, (int)s.views.indices.size());
 
             const int chunk = std::min(cfg_.Kchunk, max_K);
 
-            // ---- PreweightProcessor ----
             {
                 PreweightInitContext ictx{};
                 ictx.dims = SProjDims{ iPU, iPV, chunk };
@@ -463,11 +387,9 @@ namespace YK {
                 }
             }
 
-            // ---- HelicalParkerProcessor（z0 暂用 0，重建时每段重新 init）----
-            if (!reinitHelicalParker_(iPU, iPV, chunk, 0.f))
+            if (!reinitHelicalParker_(iPU, iPV, chunk))
                 return false;
 
-            // ---- FilterProcessor ----
             {
                 FdkFilterInitContext ictx{};
                 ictx.dims = SProjDims{ iPU, iPV, chunk };
@@ -481,7 +403,6 @@ namespace YK {
                 }
             }
 
-            // ---- gpu_ctx_：geo 按最大单段投影数分配 ----
             {
                 SProjDims dims{ iPU, iPV, max_K };
                 gpu_ctx_.init(dims, max_K, stream_, device_id_);
@@ -491,35 +412,26 @@ namespace YK {
             return true;
         }
 
-        // ----------------------------------------------------------------
-        // reinitHelicalParker_：每段重建前按新的 z0 重新初始化
-        // ----------------------------------------------------------------
-        bool reinitHelicalParker_(int iPU, int iPV, int K, float z0)
+        // z0 参数删掉，Parker 不再需要
+        bool reinitHelicalParker_(int iPU, int iPV, int K)
         {
             Helical::HelicalParkerInitContext hpctx{};
             hpctx.dims = SProjDims{ iPU, iPV, K };
             hpctx.fDetUSize = params_.du_mm;
-            hpctx.fDetVSize = params_.dv_mm;
             hpctx.fSrcOrigin = params_.SID;
             hpctx.fDetOrigin = params_.SDD - params_.SID;
-            hpctx.pitch_mm = cfg_.pitch_mm;
-            hpctx.z0 = z0;
-            hpctx.margin_mm = margin_;
             hpw_.setInitContext(&hpctx);
             if (!hpw_.init()) {
-                YK_LOGE("[HelicalReconstructor] HelicalParker init failed z0={:.2f}", z0);
+                YK_LOGE("[HelicalReconstructor] HelicalParker init failed");
                 return false;
             }
             return true;
         }
 
-        // ----------------------------------------------------------------
-        // reinitChunkProcessors_：尾包时重建所有 processor
-        // ----------------------------------------------------------------
+        // z0 参数删掉
         bool reinitChunkProcessors_(int iPU, int iPV, int K,
-            float z0, cudaStream_t stream)
+            cudaStream_t stream)
         {
-            // preweight
             {
                 PreweightInitContext ictx{};
                 ictx.dims = SProjDims{ iPU, iPV, K };
@@ -531,11 +443,9 @@ namespace YK {
                 }
             }
 
-            // helical parker
-            if (!reinitHelicalParker_(iPU, iPV, K, z0))
+            if (!reinitHelicalParker_(iPU, iPV, K))
                 return false;
 
-            // filter
             {
                 FdkFilterInitContext ictx{};
                 ictx.dims = SProjDims{ iPU, iPV, K };
@@ -552,9 +462,6 @@ namespace YK {
             return true;
         }
 
-        // ----------------------------------------------------------------
-        // mergeSlabToVolume_：余弦窗加权融合
-        // ----------------------------------------------------------------
         void mergeSlabToVolume_(const float* h_slab,
             const HelicalSlabConfig& slab)
         {
@@ -586,16 +493,13 @@ namespace YK {
             }
         }
 
-        // ================================================================
-        // 成员变量
-        // ================================================================
         bool         is_initialized_ = false;
         bool         pipeline_initialized_ = false;
 
-        SCBCTParams  params_{};
+        SCBCTParams   params_{};
         SHeliFpConfig cfg_{};
-        cudaStream_t stream_ = nullptr;
-        int          device_id_ = 0;
+        cudaStream_t  stream_ = nullptr;
+        int           device_id_ = 0;
 
         float z_vol_start_ = 0.f;
         float z_vol_end_ = 0.f;
@@ -603,16 +507,13 @@ namespace YK {
 
         std::vector<float>             angle_list_;
         std::vector<SConeProjGeomVec>  helical_geo_;
-        std::vector<float>             z_src_all_;
         std::vector<HelicalSlabConfig> slabs_;
 
-        // ---- 流水线 processor ----
         Fdk::PreweightProcessor         pw_;
         Helical::HelicalParkerProcessor hpw_;
         Fdk::FilterProcessor            flt_;
         FdkGpuContext                   gpu_ctx_;
 
-        // ---- CPU 累积 buffer ----
         std::vector<float> h_vol_accum_;
         std::vector<float> h_weight_accum_;
     };
