@@ -1,35 +1,29 @@
 ﻿#pragma once
 #include <algorithm>
 #include <cstring>
-#include <functional>
 #include <memory>
 #include <vector>
 #include <vector_functions.hpp>
 #include <vector_types.h>
 
 #include "FDK/YkBackProjectProcessor.hpp"
-#include "FDK/YkFDKFilterProcessor.hpp"
-#include "FDK/YkFDKGpuContext.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
-
-#include <cuda_runtime_api.h>
-#include <driver_types.h>
+#include "FDK/YkFdkPipelineContext.hpp"
+#include "common/YkVecGeo.hpp"
 #include "global/YkCBCTParams.h"
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 #include "global/YkMacro.hpp"
-#include "util/YkVecOperation.hpp"
-#include "FDK/YkFDKParkerWeightProcessor.hpp"
-#include "FDK/YkFDKPreWeightProcessor.hpp"
-#include "FDK/YkFdkPipelineContext.hpp"
-#include "common/YkVecGeo.hpp"
-#include <util/YkCudaTimer.hpp>
+#include "YkBPGpuContext.hpp"
+
+#include <cuda_runtime_api.h>
+#include <driver_types.h>
 
 namespace YK {
 
-    class FdkZSlabReconstructor {
+    class BpZSlabReconstructor {
     public:
-        FdkZSlabReconstructor() = default;
+        BpZSlabReconstructor() = default;
 
         void reset()
         {
@@ -42,10 +36,6 @@ namespace YK {
 
         void release()
         {
-            pw_.release();
-            pkw_.release();
-            flt_.release();
-
             for (auto& bp : slab_bps_)
                 if (bp) bp->release();
             slab_bps_.clear();
@@ -56,13 +46,17 @@ namespace YK {
                 d_vol_slab_ = nullptr;
             }
 
+            if (d_flt_proj_buf_) {
+                cudaFree(d_flt_proj_buf_);
+                d_flt_proj_buf_ = nullptr;
+            }
+
             gpu_ctx_.release();
             h_vol_buffer_ = nullptr;
             h_vol_slab_buffer_.clear();
 
             reset();
             Kchunk_ = 0;
-            bParker_ = false;
             is_initialized_ = false;
         }
 
@@ -70,9 +64,9 @@ namespace YK {
             cudaStream_t stream, int z_block_size, int device_id = 0)
         {
             Kchunk_ = std::min(Kchunk, kMaxChunkAng);
-            bParker_ = params.bShortScan;
             params_ = params;
             stream_ = stream;
+            z_block_size_ = std::min(z_block_size, params.iVZ);
 
             const int iPU = params.iPU;
             const int iPV = params.iPV;
@@ -81,52 +75,7 @@ namespace YK {
             const int iVZ = params.iVZ;
             const int iPA_total = params.iPAngTotal;
 
-            z_block_size_ = std::min(z_block_size, iVZ);
-
-            // ---- PreweightProcessor ----
-            {
-                PreweightInitContext ictx{};
-                ictx.dims = SProjDims{ iPU, iPV, Kchunk_ };
-                ictx.policy = {};
-                pw_.setInitContext(&ictx);
-                if (!pw_.init()) {
-                    YK_LOGE("[FdkZSlabReconstructor] PreweightProcessor init failed");
-                    return false;
-                }
-            }
-
-            // ---- ParkerWeightProcessor ----
-            if (bParker_) {
-                ParkerWeightInitContext ictx{};
-                ictx.dims = SProjDims{ iPU, iPV, Kchunk_ };
-                ictx.fDetUSize = params.du_mm;
-                ictx.fSrcOrigin = params.SID;
-                ictx.fDetOrigin = params.SDD - params.SID;
-                ictx.iPAnglesTotal = params.iPAngTotal;
-                ictx.fScanRangeRad = params.scan_range_rad;
-                ictx.fStartAngleRad = params.scan_start_angle_rad;
-                pkw_.setInitContext(&ictx);
-                if (!pkw_.init()) {
-                    YK_LOGE("[FdkZSlabReconstructor] ParkerWeightProcessor init failed");
-                    return false;
-                }
-            }
-
-            // ---- FilterProcessor ----
-            {
-                FdkFilterInitContext ictx{};
-                ictx.dims = SProjDims{ iPU, iPV, Kchunk_ };
-                ictx.desc = params.desc;
-                ictx.policy = {};
-                ictx.stream = stream;
-                flt_.setInitContext(&ictx);
-                if (!flt_.init()) {
-                    YK_LOGE("[FdkZSlabReconstructor] FilterProcessor init failed");
-                    return false;
-                }
-            }
-
-            // ---- gpu_ctx_ ----
+            // ---- gpu_ctx_：geo 按 iPAngTotal，proj 按 Kchunk ----
             {
                 SProjDims dims{ iPU, iPV, iPA_total };
                 gpu_ctx_.init(dims, iPA_total, stream, device_id);
@@ -138,10 +87,13 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_vol_slab_, slab_elems_max * sizeof(float)));
             }
 
-            // ---- 按 z_block_size 分段 ----
-            // SlabContext 是 POD，存 vector 无问题。
-            // BpProcessor 不可拷贝也不可移动，用 unique_ptr 持有，
-            // vector 扩容时只移动指针，BpProcessor 对象原地不动。
+            // ---- CPU feed 中转 buffer（按 iPAngTotal 预分配，避免运行时分配）----
+            {
+                const size_t proj_elems_max = (size_t)iPU * iPV * iPA_total;
+                YK_CUDA_CHECK(cudaMalloc(&d_flt_proj_buf_, proj_elems_max * sizeof(float)));
+            }
+
+            // ---- 按 z_block_size 分段，每段建一个 BpProcessor ----
             {
                 const float vox_z = params.vox_z_mm;
                 const float full_center_z = params.vol_offset_z_mm;
@@ -170,14 +122,13 @@ namespace YK {
                         params.vol_offset_y_mm,
                         full_center_z + z_offset_mm);
 
-                    // unique_ptr：堆上原地构造，vector 扩容只移动指针
                     auto bp_ptr = std::make_unique<Fdk::BpProcessor>();
                     BpInitContext bctx{};
                     bctx.vol_geom = sub_geom;
                     bctx.use_precomputed = true;
                     bp_ptr->setInitContext(&bctx);
                     if (!bp_ptr->init()) {
-                        YK_LOGE("[FdkZSlabReconstructor] BpProcessor init failed for slab z={}",
+                        YK_LOGE("[BpZSlabReconstructor] BpProcessor init failed for slab z={}",
                             z_start);
                         return false;
                     }
@@ -185,39 +136,93 @@ namespace YK {
                 }
             }
 
-            // ---- CPU 完整体积累积 buffer ----
-            const size_t vol_elems = (size_t)iVX * iVY * iVZ;
-
-
             // ---- CPU 单段回读 buffer ----
-            const size_t slab_elems_max = (size_t)iVX * iVY * z_block_size_;
-            h_vol_slab_buffer_.resize(slab_elems_max);
+            {
+                const size_t slab_elems_max = (size_t)iVX * iVY * z_block_size_;
+                h_vol_slab_buffer_.resize(slab_elems_max);
+            }
 
             is_initialized_ = true;
-            YK_LOGI("[FdkZSlabReconstructor] init OK: {}x{}x{} vox, {} slabs, z_block={}",
+            YK_LOGI("[BpZSlabReconstructor] init OK: {}x{}x{} vox, {} slabs, z_block={}",
                 iVX, iVY, iVZ, (int)slabs_.size(), z_block_size_);
             return true;
         }
 
-        bool feed(const float* h_proj_batch,
+        // ----------------------------------------------------------------
+        // feed（设备端输入）
+        // d_flt_proj：已滤波投影，设备端，iPU×iPV×iPAng 连续排列
+        // ----------------------------------------------------------------
+        bool feed(const float* d_flt_proj,
             const SCBCTParams& params,
-            float* h_vol_out,
-            cudaStream_t       stream, TaskDumpCallback onDump = nullptr, void* dumpUserData = nullptr)
+            cudaStream_t       stream,
+            float* h_vol_out, TaskDumpCallback onDump = nullptr, void* dumpUserData = nullptr)
         {
             if (!is_initialized_) {
-                YK_LOGE("[FdkZSlabReconstructor] not initialized");
+                YK_LOGE("[BpZSlabReconstructor] not initialized");
                 return false;
             }
-            if (!h_proj_batch || params.iPAng <= 0) {
-                YK_LOGE("[FdkZSlabReconstructor] invalid input");
+            if (!d_flt_proj || params.iPAng <= 0) {
+                YK_LOGE("[BpZSlabReconstructor] invalid input");
                 return false;
             }
             if ((int)params.angle_list.size() != params.iPAng) {
-                YK_LOGE("[FdkZSlabReconstructor] angle_list size mismatch");
+                YK_LOGE("[BpZSlabReconstructor] angle_list size mismatch");
                 return false;
             }
 
+            return feedImpl_(d_flt_proj, params, stream, h_vol_out, onDump, dumpUserData);
+        }
+
+        // ----------------------------------------------------------------
+        // feed（主机端输入）
+        // h_flt_proj：已滤波投影，CPU 端，内部上传至 d_flt_proj_buf_ 后调用设备端版本
+        // ----------------------------------------------------------------
+        bool feedFromHost(const float* h_flt_proj,
+            const SCBCTParams& params,
+            cudaStream_t       stream,
+            float* h_vol_out, TaskDumpCallback onDump = nullptr, void* dumpUserData = nullptr)
+        {
+            if (!is_initialized_) {
+                YK_LOGE("[BpZSlabReconstructor] not initialized");
+                return false;
+            }
+            if (!h_flt_proj || params.iPAng <= 0) {
+                YK_LOGE("[BpZSlabReconstructor] invalid input");
+                return false;
+            }
+            if ((int)params.angle_list.size() != params.iPAng) {
+                YK_LOGE("[BpZSlabReconstructor] angle_list size mismatch");
+                return false;
+            }
+
+            const size_t proj_elems = (size_t)params.iPU * params.iPV * params.iPAng;
+
+            // 上传到预分配的设备端中转 buffer
+            YK_CUDA_CHECK(cudaMemcpyAsync(
+                d_flt_proj_buf_, h_flt_proj,
+                proj_elems * sizeof(float),
+                cudaMemcpyHostToDevice, stream));
+
+            return feedImpl_(d_flt_proj_buf_, params, stream, h_vol_out, onDump, dumpUserData);
+        }
+
+    private:
+
+        struct SlabContext {
+            int z_start = 0;
+            int z_count = 0;
+        };
+
+        // ----------------------------------------------------------------
+        // feedImpl_：设备端投影 → slab 反投影 → 回读 → CPU 累加
+        // ----------------------------------------------------------------
+        bool feedImpl_(const float* d_flt_proj,
+            const SCBCTParams& params,
+            cudaStream_t       stream,
+            float* h_vol_out, TaskDumpCallback onDump = nullptr, void* dumpUserData = nullptr)
+        {
             h_vol_buffer_ = h_vol_out;
+
             const int batch_count = params.iPAng;
             const int prev_total = total_received_;
             total_received_ += batch_count;
@@ -249,22 +254,10 @@ namespace YK {
             gpu_ctx_.uploadGeoIncremental(h_geo, h_gv, prev_total, batch_count, stream);
 
             const size_t view_elems = (size_t)iPU * iPV;
-            float* d_chunk_in = gpu_ctx_.proj.chunk_in.data();
-            float* d_chunk_pw = gpu_ctx_.proj.chunk_pw.data();
-            float* d_chunk_flt = gpu_ctx_.proj.chunk_flt.data();
-
-            bool filter_dirty = false;
 
             // ---- chunk 循环 ----
-
             for (int base = 0; base < batch_count; base += Kchunk_) {
                 const int K = std::min(Kchunk_, batch_count - base);
-
-                if (K != Kchunk_) {
-                    if (!reinitProcessors(params, K, stream)) return false;
-                    filter_dirty = true;
-                }
-
                 const int global_base = prev_total + base;
 
                 auto triggerDump = [&](const char* stage, float* d_base) {
@@ -280,35 +273,15 @@ namespace YK {
                     }
                     };
 
+                // 拷入 d_sino（texture 绑定在此）
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    gpu_ctx_.proj.d_sino.data(),
+                    d_flt_proj + (size_t)base * view_elems,
+                    K * view_elems * sizeof(float),
+                    cudaMemcpyDeviceToDevice, stream));
+
                 gpu_ctx_.geo.uploadCoeffsChunk(
                     gpu_ctx_.geo.d_coeffs() + global_base, K, stream);
-                gpu_ctx_.proj.uploadProjChunk(
-                    h_proj_batch + (size_t)base * view_elems, K, stream);
-
-                // preweight
-                PreweightChunkContext pctx{};
-                pctx.d_geo = gpu_ctx_.geo.d_geo() + global_base;
-                pctx.d_gv = gpu_ctx_.geo.d_gv() + global_base;
-                pctx.K = K;
-                pw_.setContext(&pctx);
-                pw_.process(d_chunk_in, d_chunk_pw, stream);
-                triggerDump("pw", d_chunk_pw);
-
-                // parker
-                if (bParker_) {
-                    ParkerWeightChunkContext pkctx{};
-                    pkctx.h_angles = params.angle_list.data() + base;
-                    pkctx.K = K;
-                    pkw_.setContext(&pkctx);
-                    pkw_.process(d_chunk_pw, d_chunk_pw, stream);
-                    triggerDump("parker", d_chunk_pw);
-                }
-
-                // filter
-                FdkFilterContext fctx{ h_gv.data() + base, K };
-                flt_.setContext(&fctx);
-                flt_.process(d_chunk_pw, d_chunk_flt, stream);
-                triggerDump("flt", d_chunk_flt);
 
                 // ---- 对每个 slab：清零 → 反投影 → 回读 → CPU 累加 ----
                 for (int si = 0; si < (int)slabs_.size(); ++si) {
@@ -336,7 +309,6 @@ namespace YK {
                         slab_elems * sizeof(float),
                         cudaMemcpyDeviceToHost));
 
-                    // dump vol_slab：slab 级别，不用 triggerDump
                     if (onDump) {
                         DumpPayload payload{
                             si, "vol_slab",
@@ -346,82 +318,14 @@ namespace YK {
                         onDump(&payload);
                     }
 
-                    // d. 累加到 h_vol_buffer_ 对应段
+                    // d. 累加到外部 h_vol_buffer_ 对应段
                     const bool is_first_chunk = (prev_total == 0 && base == 0);
                     accumulateSlab_(slab.z_start, slab.z_count, iVX, iVY, is_first_chunk);
                 }
             }
 
-            if (filter_dirty) {
-                if (!reinitProcessors(params, Kchunk_, stream)) return false;
-            }
-
             return true;
         }
-
-
-        bool reinitProcessors(const SCBCTParams& params, int K, cudaStream_t stream)
-        {
-            {
-                PreweightInitContext ictx{};
-                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
-                ictx.policy = {};
-                pw_.setInitContext(&ictx);
-                if (!pw_.init()) {
-                    YK_LOGE("[FdkZSlabReconstructor] PreweightProcessor reinit failed");
-                    return false;
-                }
-            }
-            if (bParker_) {
-                ParkerWeightInitContext ictx{};
-                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
-                ictx.fDetUSize = params.du_mm;
-                ictx.fSrcOrigin = params.SID;
-                ictx.fDetOrigin = params.SDD - params.SID;
-                ictx.iPAnglesTotal = params.iPAngTotal;
-                ictx.fScanRangeRad = params.scan_range_rad;
-                ictx.fStartAngleRad = params.scan_start_angle_rad;
-                pkw_.setInitContext(&ictx);
-                if (!pkw_.init()) {
-                    YK_LOGE("[FdkZSlabReconstructor] ParkerWeightProcessor reinit failed");
-                    return false;
-                }
-            }
-            {
-                FdkFilterInitContext ictx{};
-                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
-                ictx.desc = params.desc;
-                ictx.policy = {};
-                ictx.stream = stream;
-                flt_.setInitContext(&ictx);
-                if (!flt_.init()) {
-                    YK_LOGE("[FdkZSlabReconstructor] FilterProcessor reinit failed");
-                    return false;
-                }
-            }
-            return true;
-        }
-
-    private:
-
-        struct SlabContext {
-            int z_start = 0;
-            int z_count = 0;
-        };
-
-        //void accumulateSlab_(int z_start, int z_count, int iVX, int iVY, bool is_first)
-        //{
-        //    const size_t slab_elems = (size_t)iVX * iVY * z_count;
-        //    const size_t z_offset = (size_t)iVX * iVY * z_start;
-        //    float* dst = h_vol_buffer_ + z_offset;
-        //    const float* src = h_vol_slab_buffer_.data();
-
-        //    if (is_first)
-        //        std::memcpy(dst, src, slab_elems * sizeof(float));
-        //    else
-        //        for (size_t i = 0; i < slab_elems; ++i)
-        //            dst[i] += src[i];
-        //}
 
         void accumulateSlab_(int z_start, int z_count, int iVX, int iVY, bool is_first)
         {
@@ -451,7 +355,6 @@ namespace YK {
         }
 
         int          Kchunk_ = 0;
-        bool         bParker_ = false;
         bool         is_initialized_ = false;
         int          total_received_ = 0;
         int          z_block_size_ = 0;
@@ -459,34 +362,49 @@ namespace YK {
         SCBCTParams  params_{};
         cudaStream_t stream_ = nullptr;
 
-        Fdk::PreweightProcessor    pw_;
-        Fdk::ParkerWeightProcessor pkw_;
-        Fdk::FilterProcessor       flt_;
-        FdkGpuContext              gpu_ctx_;
+        YK::Bp::BpGpuContext gpu_ctx_;
 
         float* d_vol_slab_ = nullptr;
+        float* d_flt_proj_buf_ = nullptr;  // CPU feed 上传中转，init 时预分配
+        float* h_vol_buffer_ = nullptr;  // 不持有，指向外部
 
         std::vector<SlabContext>                        slabs_;
-        std::vector<std::unique_ptr<Fdk::BpProcessor>>  slab_bps_;  // 指针可移动，对象原地不动
-        float* h_vol_buffer_ = nullptr;  // 不持有，指向外部
+        std::vector<std::unique_ptr<Fdk::BpProcessor>> slab_bps_;
         std::vector<float>                              h_vol_slab_buffer_;
     };
 
     // ================================================================
-    // 便携函数
+    // 便携函数（设备端输入）
     // ================================================================
-    YK_INLINE bool fdk_zslab_recon(
-        const float* h_proj,
+    YK_INLINE bool bp_zslab_recon(
+        const float* d_flt_proj,
         float* h_vol_out,
         const SCBCTParams& params,
         int                Kchunk,
         cudaStream_t       stream,
         int                z_block_size, TaskDumpCallback onDump = nullptr, void* dumpUserData = nullptr)
     {
-        FdkZSlabReconstructor recon;
+        BpZSlabReconstructor recon;
         if (!recon.init(params, Kchunk, stream, z_block_size))
             return false;
-        return recon.feed(h_proj, params, h_vol_out, stream, onDump, dumpUserData);
+        return recon.feed(d_flt_proj, params, stream, h_vol_out, onDump, dumpUserData);
+    }
+
+    // ================================================================
+    // 便携函数（主机端输入）
+    // ================================================================
+    YK_INLINE bool bp_zslab_recon_from_host(
+        const float* h_flt_proj,
+        float* h_vol_out,
+        const SCBCTParams& params,
+        int                Kchunk,
+        cudaStream_t       stream,
+        int                z_block_size, TaskDumpCallback onDump = nullptr, void* dumpUserData = nullptr)
+    {
+        BpZSlabReconstructor recon;
+        if (!recon.init(params, Kchunk, stream, z_block_size))
+            return false;
+        return recon.feedFromHost(h_flt_proj, params, stream, h_vol_out, onDump, dumpUserData);
     }
 
 } // namespace YK

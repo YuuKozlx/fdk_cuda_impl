@@ -161,6 +161,19 @@ namespace YK {
                 const int K = std::min(Kchunk_, batch_count - base);
                 const int global_base = prev_total + base;
 
+                auto triggerDump = [&](const char* stage, float* d_base) {
+                    if (!onDump) return;
+                    cudaStreamSynchronize(stream);
+                    for (int i = 0; i < K; ++i) {
+                        DumpPayload payload{
+                            global_base + i, stage,
+                            static_cast<void*>(d_base + i * view_elems),
+                            view_elems, stream, dumpUserData
+                        };
+                        onDump(&payload);
+                    }
+                    };
+
                 // 外部滤波数据拷入 d_sino（texture 绑定在此）
                 YK_CUDA_CHECK(cudaMemcpyAsync(
                     gpu_ctx_.proj.d_sino.data(),
@@ -170,6 +183,8 @@ namespace YK {
 
                 gpu_ctx_.geo.uploadCoeffsChunk(
                     gpu_ctx_.geo.d_coeffs() + global_base, K, stream);
+
+                triggerDump("flt_in", gpu_ctx_.proj.d_sino.data());
 
                 BpChunkContext bctx{};
                 bctx.d_geo = gpu_ctx_.geo.d_geo() + global_base;

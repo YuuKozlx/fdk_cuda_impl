@@ -9,6 +9,7 @@ void test_fp_runner(cudaStream_t stream);
 int  main_fp();
 int main_fdk_zslab();
 int main_fdk_zslab_bigdata();
+int main_bp_zslab_verify();
 
 int main()
 {
@@ -16,6 +17,7 @@ int main()
 
     // 按需开启/注释
     main_fdk();
+    //main_bp_zslab_verify();
     //main_bp_runner();
     //main_bp_verify();
     //test_fp_runner(0);

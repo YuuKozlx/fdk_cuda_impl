@@ -11,6 +11,7 @@
 #include "global/YkMem3d.hpp"
 #include "util/YkCudaTimer.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
+#include <BP/BpZSlabRunner.hpp>
 
 using namespace YK;
 using namespace Mem;
@@ -236,5 +237,190 @@ int main_bp_verify()
     }
 
     YK_CUDA_CHECK(cudaStreamDestroy(s));
+    return 0;
+}
+
+
+int main_bp_zslab_verify()
+{
+    SCBCTParams params;
+    params.iPU = 1024; params.iPV = 1024;
+    params.iPAng = 480; params.iPAngTotal = 480;
+    params.tiltn_angle_rad = 0;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = true;
+    params.scan_range_rad = (float)CUDA_PI * 4.0f / 3.0f;
+    params.SID = 500.0f; params.SDD = 1000.0f;
+    params.du_mm = 0.25f; params.dv_mm = 0.25f;
+    params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
+    params.offsetU_mm = 0.f;
+    params.vol_offset_x_mm = 0.f;
+    params.vol_offset_y_mm = 0.f;
+    params.vol_offset_z_mm = 0.f;
+
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
+    params.scan_start_angle_rad = angle_list[0];
+    params.angle_list = angle_list;
+
+    const int    Ang = params.iPAng;
+    const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * Ang;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    std::vector<float> h_proj(proj_elems);
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_proj)) {
+        YK_LOGE("cannot read proj_1024x1024x360.raw");
+        return -1;
+    }
+    YK_LOGI("proj loaded");
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+    MemoryController ctrl;
+
+    // ---- 路径一：BpReconstructor（参考） ----
+    // 先跑一次 FDK dump 出滤波投影，再用 BpReconstructor 反投影
+    auto d_vol_bp_ref = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+    std::vector<float> h_flt_all(proj_elems, 0.f);
+
+    {
+        FdkReconstructor recon;
+        recon.init(params, 32, s);
+
+        struct DumpCtx { cudaStream_t stream; float* buf; size_t ve; };
+        DumpCtx ctx{ s, h_flt_all.data(), view_elems };
+
+        auto onDump = [](void* p) {
+            auto* payload = static_cast<DumpPayload*>(p);
+            if (std::string(payload->stage) != "flt") return;
+            auto* ctx = static_cast<DumpCtx*>(payload->userdata);
+            cudaMemcpyAsync(
+                ctx->buf + (size_t)payload->viewIdx * ctx->ve,
+                payload->buf, payload->n * sizeof(float),
+                cudaMemcpyDeviceToHost, ctx->stream);
+            };
+
+        recon.feed(h_proj.data(), params, s,
+            ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false).data(),
+            true, onDump, &ctx);
+    }
+    cudaStreamSynchronize(s);
+
+    // 上传滤波投影到设备端
+    float* d_flt_raw = nullptr;
+    YK_CUDA_CHECK(cudaMalloc(&d_flt_raw, proj_elems * sizeof(float)));
+    YK_CUDA_CHECK(cudaMemcpy(d_flt_raw, h_flt_all.data(),
+        proj_elems * sizeof(float), cudaMemcpyHostToDevice));
+
+    {
+        YK::Util::CudaTimer timer("bp_ref", s);
+        BpReconstructor recon;
+        recon.init(params, 128, s);
+        recon.feed(d_flt_raw, params, s, d_vol_bp_ref.data(), true);
+    }
+    cudaStreamSynchronize(s);
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol_bp_ref);
+        write_raw_float((test_data_dir + "verify_bp_ref.raw").c_str(),
+            h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: verify_bp_ref.raw");
+    }
+
+    // ---- 路径二：BpZSlabReconstructor（设备端输入）----
+    const int z_block_size = 100;  // 400 / 100 = 4 slabs
+    std::vector<float> h_vol_zslab(vol_elems, 0.f);
+
+    {
+        YK::Util::CudaTimer timer("bp_zslab_device", s);
+        BpZSlabReconstructor recon;
+        if (!recon.init(params, 32, s, z_block_size)) {
+            YK_LOGE("BpZSlabReconstructor init failed");
+            cudaFree(d_flt_raw);
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+        if (!recon.feed(d_flt_raw, params, s, h_vol_zslab.data())) {
+            YK_LOGE("BpZSlabReconstructor feed failed");
+            recon.release();
+            cudaFree(d_flt_raw);
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+        recon.release();
+    }
+    write_raw_float((test_data_dir + "verify_bp_zslab_device.raw").c_str(),
+        h_vol_zslab.data(), vol_elems);
+    YK_LOGI("saved: verify_bp_zslab_device.raw");
+
+    // ---- 路径三：BpZSlabReconstructor（主机端输入）----
+    std::vector<float> h_vol_zslab_host(vol_elems, 0.f);
+
+    {
+        YK::Util::CudaTimer timer("bp_zslab_host", s);
+        BpZSlabReconstructor recon;
+        if (!recon.init(params, 32, s, z_block_size)) {
+            YK_LOGE("BpZSlabReconstructor init failed");
+            cudaFree(d_flt_raw);
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+        if (!recon.feedFromHost(h_flt_all.data(), params, s, h_vol_zslab_host.data())) {
+            YK_LOGE("BpZSlabReconstructor feedFromHost failed");
+            recon.release();
+            cudaFree(d_flt_raw);
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+        recon.release();
+    }
+    write_raw_float((test_data_dir + "verify_bp_zslab_host.raw").c_str(),
+        h_vol_zslab_host.data(), vol_elems);
+    YK_LOGI("saved: verify_bp_zslab_host.raw");
+
+    cudaFree(d_flt_raw);
+
+    // ---- 对比：zslab_device vs bp_ref ----
+    {
+        auto h_vol_ref = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol_ref, d_vol_bp_ref);
+
+        double maxDiff = 0.0, mse = 0.0;
+        for (size_t i = 0; i < vol_elems; ++i) {
+            double diff = std::abs(
+                (double)h_vol_ref.cdata()[i] - (double)h_vol_zslab[i]);
+            maxDiff = std::max(maxDiff, diff);
+            mse += diff * diff;
+        }
+        mse /= (double)vol_elems;
+        YK_LOGI("[zslab_device vs bp_ref] maxDiff={:.8f}  MSE={:.8e}", maxDiff, mse);
+        if (maxDiff < 1e-4)
+            YK_LOGI("PASS: BpZSlabReconstructor(device) matches BpReconstructor");
+        else
+            YK_LOGE("FAIL: maxDiff={:.8f} exceeds threshold", maxDiff);
+    }
+
+    // ---- 对比：zslab_host vs zslab_device ----
+    {
+        double maxDiff = 0.0, mse = 0.0;
+        for (size_t i = 0; i < vol_elems; ++i) {
+            double diff = std::abs(
+                (double)h_vol_zslab[i] - (double)h_vol_zslab_host[i]);
+            maxDiff = std::max(maxDiff, diff);
+            mse += diff * diff;
+        }
+        mse /= (double)vol_elems;
+        YK_LOGI("[zslab_host vs zslab_device] maxDiff={:.8f}  MSE={:.8e}", maxDiff, mse);
+        if (maxDiff < 1e-5)
+            YK_LOGI("PASS: feedFromHost matches feed(device)");
+        else
+            YK_LOGE("FAIL: maxDiff={:.8f} exceeds threshold", maxDiff);
+    }
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    printf("Done: bp_zslab verify (z_block=%d)\n", z_block_size);
     return 0;
 }
