@@ -42,6 +42,7 @@ endif()
 # ----------------------------------------------------------------
 find_package(CUDAToolkit REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(OpenMP REQUIRED)   # 新增
 
 # ----------------------------------------------------------------
 # OBJECT 库：所有源文件编译一次，DLL 和测试共用同一批 .obj
@@ -62,7 +63,7 @@ target_compile_options(YKCBCT_obj PRIVATE
         /W3
         /Zc:__cplusplus
         /utf-8
-        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/O2 /arch:AVX2>   # 加上 /arch:AVX2
     >
 )
 
@@ -79,6 +80,7 @@ target_link_libraries(YKCBCT_obj PRIVATE
     CUDA::cudart
     CUDA::cufft
     spdlog::spdlog
+    OpenMP::OpenMP_CXX   # 新增
 )
 
 set_target_properties(YKCBCT_obj PROPERTIES
@@ -108,10 +110,11 @@ add_library(YKCBCT SHARED
 )
 
 target_link_libraries(YKCBCT PRIVATE
-    YKCBCT_obj      # 继承 PUBLIC include 路径等属性
+    YKCBCT_obj
     CUDA::cudart
     CUDA::cufft
     spdlog::spdlog
+    OpenMP::OpenMP_CXX   # 新增
 )
 
 set_target_properties(YKCBCT PROPERTIES

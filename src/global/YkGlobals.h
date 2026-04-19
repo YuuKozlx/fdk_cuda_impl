@@ -95,10 +95,29 @@ namespace YK {
 
     // ---------------------- launch policy ----------------------
     struct SKernelLaunchPolicy {
-        int block_threads = 256;   // warp-row: must be multiple of 32
-        bool bounds_check = true;  // 是否检查 a in [0, Ang)
-    };
+        int  block_threads = 256;  // must be multiple of 32
+        bool bounds_check = true;
 
+        // 从 occupancy API 自动查询最优 block_threads
+        template<typename KernelFunc>
+        static SKernelLaunchPolicy fromKernel(KernelFunc* kernel,
+            size_t dynamic_smem = 0,
+            bool   bounds_check = true)
+        {
+            int block_size, min_grid_size;
+            YK_CUDA_CHECK(cudaOccupancyMaxPotentialBlockSize(
+                &min_grid_size, &block_size, kernel, dynamic_smem, 0));
+
+            // 对齐到 32 的倍数
+            block_size = (block_size / 32) * 32;
+            block_size = std::max(block_size, 32);
+
+            SKernelLaunchPolicy policy;
+            policy.block_threads = block_size;
+            policy.bounds_check = bounds_check;
+            return policy;
+        }
+    };
 
 
 
@@ -168,7 +187,7 @@ namespace YK {
 
     // constant 内存，按 chunk 上传
     // 1024 角度 × 64 bytes = 64KB，刚好在限制内
-    static constexpr int kMaxChunkAng = 32;
+    static constexpr int kMaxChunkAng = 64;
     // YkFDKBackProject.cuh —— 只放 extern 声明
 
 

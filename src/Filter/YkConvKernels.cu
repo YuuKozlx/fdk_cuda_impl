@@ -2,6 +2,7 @@
 #include "../global/YkGlobals.h"
 #include "YkConv.hpp"
 #include <algorithm>
+#include "global/YkMacro.hpp"
 
 namespace YK {
     namespace Filter {
@@ -55,7 +56,6 @@ namespace YK {
 
 
 #define WARP_STRIDE_INIT_BATCH()                                          \
-    const int b             = blockIdx.y;                                 \
     const int lane          = threadIdx.x & 31;                           \
     const int warp_in_blk   = threadIdx.x >> 5;                           \
     const int warps_per_blk = blockDim.x  >> 5;                           \
@@ -75,23 +75,25 @@ namespace YK {
             __global__ void _kernel_pointwise_mul_v2(
                 cufftComplex* data,
                 const float* weights,
-                int            n_complex,
-                int            batch)
+                int           n_complex,
+                int           batch)
             {
                 WARP_STRIDE_INIT_BATCH()
-                    if (b >= batch) return;
 
-                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
-                {
-                    int u = base + lane;
-                    if (u < n_complex)
+                    for (int b = blockIdx.y; b < batch; b += gridDim.y)
                     {
-                        int   idx = b * n_complex + u;
-                        float w = weights[u];
-                        data[idx].x *= w;
-                        data[idx].y *= w;
+                        for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
+                        {
+                            int u = base + lane;
+                            if (u < n_complex)
+                            {
+                                int   idx = b * n_complex + u;
+                                float w = weights[u];
+                                data[idx].x *= w;
+                                data[idx].y *= w;
+                            }
+                        }
                     }
-                }
             }
 
             // -----------------------------------------------------------------------------
@@ -104,33 +106,32 @@ namespace YK {
             // 其余 stride loop 逻辑与 v2 完全相同
             // -----------------------------------------------------------------------------
             __global__ void _kernel_pointwise_mul_v3(
-                float2* data,        // 与 cufftComplex* 等价，显式用 float2 触发向量化
+                float2* data,
                 const float* weights,
-                int            n_complex,
-                int            batch)
+                int          n_complex,
+                int          batch)
             {
                 WARP_STRIDE_INIT_BATCH()
 
-                    if (b >= batch) return;
-
-
-                for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
-                {
-                    int u = base + lane;
-                    if (u < n_complex)
+                    for (int b = blockIdx.y; b < batch; b += gridDim.y)
                     {
-                        int    idx = b * n_complex + u;
-
-                        float2 c = data[idx];           // 64-bit LD：一次读取整个复数
-                        float  w = weights[u];
-
-                        c.x *= w;                       // 实部
-                        c.y *= w;                       // 虚部
-
-                        data[idx] = c;                  // 64-bit ST：一次写回整个复数
+                        for (int base = warp_global * 32; base < n_complex; base += n_warps * 32)
+                        {
+                            int u = base + lane;
+                            if (u < n_complex)
+                            {
+                                int    idx = b * n_complex + u;
+                                float2 c = data[idx];
+                                float  w = weights[u];
+                                c.x *= w;
+                                c.y *= w;
+                                data[idx] = c;
+                            }
+                        }
                     }
-                }
             }
+
+
 
             // -----------------------------------------------------------------------------
             // v4: float4 向量化版
@@ -147,36 +148,30 @@ namespace YK {
             //   → weights[u*2+1] 用于 .z .w
             // -----------------------------------------------------------------------------
             __global__ void _kernel_pointwise_mul_v4(
-                float4* data,        // 重解释后的指针，每元素覆盖2个复数
-                const float* weights,     // 仍是原始 weights[n_complex]，按需取两个
-                int            n2,          // = n_complex / 2，float4 元素总数
-                int            batch)
+                float4* data,
+                const float* weights,
+                int          n2,
+                int          batch)
             {
                 WARP_STRIDE_INIT_BATCH()
 
-                    if (b >= batch) return;
-
-
-                // stride loop 与 v2/v3 相同，只是元素单位从"1个复数"变为"2个复数"
-                for (int base = warp_global * 32; base < n2; base += n_warps * 32)
-                {
-                    int u = base + lane;                // float4 下标
-                    if (u < n2)
+                    for (int b = blockIdx.y; b < batch; b += gridDim.y)
                     {
-                        int    idx = b * n2 + u;
-
-                        float4 c = data[idx];          // 128-bit LD：一次读取 2 个复数
-
-                        // u 对应原始复数下标 u*2 和 u*2+1，各取一个权重
-                        float  w0 = weights[u * 2];     // 第一个复数的权重
-                        float  w1 = weights[u * 2 + 1]; // 第二个复数的权重
-
-                        c.x *= w0;  c.y *= w0;          // 第一个复数：实部、虚部
-                        c.z *= w1;  c.w *= w1;          // 第二个复数：实部、虚部
-
-                        data[idx] = c;                  // 128-bit ST：一次写回 2 个复数
+                        for (int base = warp_global * 32; base < n2; base += n_warps * 32)
+                        {
+                            int u = base + lane;
+                            if (u < n2)
+                            {
+                                int    idx = b * n2 + u;
+                                float4 c = data[idx];
+                                float  w0 = weights[u * 2];
+                                float  w1 = weights[u * 2 + 1];
+                                c.x *= w0; c.y *= w0;
+                                c.z *= w1; c.w *= w1;
+                                data[idx] = c;
+                            }
+                        }
                     }
-                }
             }
 
 #undef WARP_STRIDE_INIT_BATCH
@@ -198,7 +193,8 @@ namespace YK {
             const int warps_per_blk = policy.block_threads >> 5;
             const int warps_need = (n_elem + 31) / 32;
             const int grid_x = std::min((warps_need + warps_per_blk - 1) / warps_per_blk, 8);
-            dim3 grid(grid_x, batch);
+            const int grid_y = std::min(batch, 65535);
+            dim3 grid(grid_x, grid_y);
 
             if (n_complex % 2 == 0)
                 detail::_kernel_pointwise_mul_v4 << <grid, block, 0, stream >> > (
@@ -208,6 +204,7 @@ namespace YK {
                     reinterpret_cast<float2*>(data), weights, n_complex, batch);
 
             YK_CUDA_CHECK(cudaGetLastError());
+
         }
 
     }

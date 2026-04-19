@@ -15,12 +15,12 @@ int main()
     YK::Logger::instance().set_level(YK::LogLevel::Debug);
 
     // 按需开启/注释
-    //main_fdk();
+    main_fdk();
     //main_bp_runner();
     //main_bp_verify();
     //test_fp_runner(0);
     //main_fp();
     //main_fdk_zslab();
-    main_fdk_zslab_bigdata();
+    //main_fdk_zslab_bigdata();
     return 0;
 }

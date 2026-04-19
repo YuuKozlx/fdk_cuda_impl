@@ -23,6 +23,7 @@
 #include "FDK/YkFDKPreWeightProcessor.hpp"
 #include "FDK/YkFdkPipelineContext.hpp"
 #include "common/YkVecGeo.hpp"
+#include <util/YkCudaTimer.hpp>
 
 namespace YK {
 
@@ -173,7 +174,7 @@ namespace YK {
                     auto bp_ptr = std::make_unique<Fdk::BpProcessor>();
                     BpInitContext bctx{};
                     bctx.vol_geom = sub_geom;
-                    bctx.use_precomputed = false;
+                    bctx.use_precomputed = true;
                     bp_ptr->setInitContext(&bctx);
                     if (!bp_ptr->init()) {
                         YK_LOGE("[FdkZSlabReconstructor] BpProcessor init failed for slab z={}",
@@ -292,6 +293,8 @@ namespace YK {
                 flt_.setContext(&fctx);
                 flt_.process(d_chunk_pw, d_chunk_flt, stream);
 
+
+
                 // ---- 对每个 slab：清零 → 反投影 → 回读 → CPU 累加 ----
                 for (int si = 0; si < (int)slabs_.size(); ++si) {
                     const SlabContext& slab = slabs_[si];
@@ -321,6 +324,7 @@ namespace YK {
                     // d. 累加到 h_vol_buffer_ 对应段
                     const bool is_first_chunk = (prev_total == 0 && base == 0);
                     accumulateSlab_(slab.z_start, slab.z_count, iVX, iVY, is_first_chunk);
+
                 }
             }
 
@@ -381,6 +385,20 @@ namespace YK {
             int z_count = 0;
         };
 
+        //void accumulateSlab_(int z_start, int z_count, int iVX, int iVY, bool is_first)
+        //{
+        //    const size_t slab_elems = (size_t)iVX * iVY * z_count;
+        //    const size_t z_offset = (size_t)iVX * iVY * z_start;
+        //    float* dst = h_vol_buffer_ + z_offset;
+        //    const float* src = h_vol_slab_buffer_.data();
+
+        //    if (is_first)
+        //        std::memcpy(dst, src, slab_elems * sizeof(float));
+        //    else
+        //        for (size_t i = 0; i < slab_elems; ++i)
+        //            dst[i] += src[i];
+        //}
+
         void accumulateSlab_(int z_start, int z_count, int iVX, int iVY, bool is_first)
         {
             const size_t slab_elems = (size_t)iVX * iVY * z_count;
@@ -388,11 +406,24 @@ namespace YK {
             float* dst = h_vol_buffer_ + z_offset;
             const float* src = h_vol_slab_buffer_.data();
 
-            if (is_first)
+            if (is_first) {
                 std::memcpy(dst, src, slab_elems * sizeof(float));
-            else
-                for (size_t i = 0; i < slab_elems; ++i)
+                return;
+            }
+
+#ifdef NDEBUG
+            constexpr size_t kBlockSize = 1 << 14;
+#pragma omp parallel for schedule(static)
+            for (int block = 0; block < (int)slab_elems; block += (int)kBlockSize) {
+                const size_t end = std::min((size_t)block + kBlockSize, slab_elems);
+#pragma omp simd
+                for (size_t i = block; i < end; ++i)
                     dst[i] += src[i];
+            }
+#else
+            for (size_t i = 0; i < slab_elems; ++i)
+                dst[i] += src[i];
+#endif
         }
 
         int          Kchunk_ = 0;
