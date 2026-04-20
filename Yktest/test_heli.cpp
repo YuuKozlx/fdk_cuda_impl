@@ -27,9 +27,9 @@ int main_helical_from_volume()
 
     // 探测器
     p.iPU = 1024;
-    p.iPV = 32;
-    p.du_mm = 0.25f;
-    p.dv_mm = 0.25f;
+    p.iPV = 128;
+    p.du_mm = 0.417f;
+    p.dv_mm = 0.417f;
     p.offsetU_mm = 0.f;
     p.offsetV_mm = 0.f;
 
@@ -41,32 +41,21 @@ int main_helical_from_volume()
     p.iVX = 512;
     p.iVY = 512;
     p.iVZ = 400;
-    p.vox_x_mm = 0.1f;
-    p.vox_y_mm = 0.1f;
-    p.vox_z_mm = 0.1f;
+    p.vox_x_mm = 0.3f;
+    p.vox_y_mm = 0.3f;
+    p.vox_z_mm = 0.3f;
     p.vol_offset_x_mm = 0.f;
     p.vol_offset_y_mm = 0.f;
     p.vol_offset_z_mm = 0.f;
 
     // 螺旋扫描
-    p.pitch_mm = 3.0f;
-    p.start_z_mm = -25.f;  // 体积 Z 范围 [-20,20]，留 5mm 余量
-
-    // 角度列表：15 圈，每圈 720 个投影
-    {
-        const int views_per_rot = 720;
-        const int n_rotations = 15;
-        const int total_views = views_per_rot * n_rotations;
-        p.angle_list.resize(total_views);
-        for (int i = 0; i < total_views; ++i)
-            p.angle_list[i] =
-            i * 2.f * CUDA_PI / views_per_rot;
-    }
+    p.pitch_mm = 20.0f;
+    p.bShortScan = false;
+    YK::fillHelicalScanGeometry(p, 0.75f, 720, true);
 
     // 重建
-    p.bShortScan = false;
-    p.z_block_mm = 3.0f;
-    p.z_step_mm = 0.5f;
+    p.z_block_mm = 20.0f;
+    p.z_step_mm = 10.0f;
     p.Kchunk = 32;
     p.fp_task = ETask::FP_Joseph;
 

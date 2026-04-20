@@ -27,6 +27,6 @@ int main()
     //main_fdk_zslab();
     //main_helical_verify();
     //main_fdk_zslab_bigdata();
-    main_helical_from_volume();
+    //main_helical_from_volume();
     return 0;
 }

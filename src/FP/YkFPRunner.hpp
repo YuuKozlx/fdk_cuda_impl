@@ -19,7 +19,7 @@
 
 namespace YK {
 
-    // FpReconstructor 专属
+    // ConeProjector 专属
     struct FpDumpPayload {
         int          viewIdx;
         const char* stage;
@@ -32,7 +32,7 @@ namespace YK {
     using FpDumpCallback = std::function<void(void*)>;
 
     // ====================================================================
-    // FpReconstructor
+    // ConeProjector
     //
     // 职责：给定体数据指针 + CBCTParams + ETask，执行对应正投影算法，
     //       将结果写入调用方提供的 d_sino_out。
@@ -44,7 +44,7 @@ namespace YK {
     //
     // 其他 ETask（FDK / SART / OSEM）会直接报错返回 false。
     // ====================================================================
-    class FpReconstructor {
+    class ConeProjector {
     public:
         bool isInitialized() const { return is_initialized_; }
 
@@ -53,16 +53,16 @@ namespace YK {
         {
             is_initialized_ = false;
             fp_type_ = ETask::FP_Joseph;
-            YK_LOGD("[FpReconstructor] release: resources released, back to initial state\n");
+            YK_LOGD("[ConeProjector] release: resources released, back to initial state\n");
         }
 
         // reset：保留初始化状态，只清空运行时累积量
-        // FpReconstructor 目前没有跨 run 的累积状态，
+        // ConeProjector 目前没有跨 run 的累积状态，
         // 但为接口一致性保留
         void reset()
         {
             // 无累积状态需要清空
-            YK_LOGD("[FpReconstructor] reset: no internal state to reset\n");
+            YK_LOGD("[ConeProjector] reset: no internal state to reset\n");
         }
 
         bool init(const SCBCTParams& params, ETask task = ETask::FP_Joseph, int deviceId = 0)
@@ -70,7 +70,7 @@ namespace YK {
             if (params.iPU <= 0 || params.iPV <= 0
                 || params.iVX <= 0 || params.iVY <= 0 || params.iVZ <= 0)
             {
-                YK_LOGE("[FpReconstructor] init: invalid geometry params\n");
+                YK_LOGE("[ConeProjector] init: invalid geometry params\n");
                 return false;
             }
 
@@ -80,7 +80,7 @@ namespace YK {
                 task != ETask::FP_CVP)
             {
                 YK_LOGE(
-                    "[FpReconstructor] run: task %d is not a FP task\n",
+                    "[ConeProjector] run: task %d is not a FP task\n",
                     static_cast<int>(task));
                 return false;
             }
@@ -99,13 +99,13 @@ namespace YK {
 
             // ── 基本就绪检查 ─────────────────────────────────────────────
             if (!is_initialized_ || !d_vol || !d_sino_out) {
-                fprintf(stderr, "[FpReconstructor] run: not ready\n");
+                fprintf(stderr, "[ConeProjector] run: not ready\n");
                 return false;
             }
             if (params.iPAng <= 0
                 || static_cast<int>(params.angle_list.size()) != params.iPAng)
             {
-                fprintf(stderr, "[FpReconstructor] run: invalid angle params\n");
+                fprintf(stderr, "[ConeProjector] run: invalid angle params\n");
                 return false;
             }
 
@@ -238,7 +238,7 @@ namespace YK {
         TaskDumpCallback onDump = nullptr,
         void* dumpUserData = nullptr)
     {
-        FpReconstructor fp;
+        ConeProjector fp;
         if (!fp.init(params, task, deviceId)) return false;
         return fp.run(d_vol, params, d_sino_out, stream, deviceId, onDump, dumpUserData);
     }

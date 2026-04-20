@@ -15,7 +15,7 @@ const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
 
 //void test_fp_runner(cudaStream_t stream)
 //{
-//    printf("\n[FpReconstructor] test\n");
+//    printf("\n[ConeProjector] test\n");
 //
 //    constexpr int   Nx = 512, Ny = 512, Nz = 400;
 //    constexpr float vox_xy = 0.1f, vox_z = 0.1f;
@@ -59,9 +59,9 @@ const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
 //    float* d_sino = nullptr;
 //    YK_CUDA_CHECK(cudaMalloc(&d_sino, sino_elems * sizeof(float)));
 //
-//    FpReconstructor fpr;
+//    ConeProjector fpr;
 //    if (!fpr.init(params, ETask::FP_Joseph, 0)) {
-//        YK_LOGE("FpReconstructor init failed");
+//        YK_LOGE("ConeProjector init failed");
 //        cudaFree(d_vol); cudaFree(d_sino);
 //        return;
 //    }
@@ -85,7 +85,7 @@ const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
 
 void test_fp_runner(cudaStream_t stream)
 {
-    printf("\n[FpReconstructor] test\n");
+    printf("\n[ConeProjector] test\n");
 
     constexpr int   Nx = 512, Ny = 512, Nz = 400;
     constexpr float vox_xy = 0.1f, vox_z = 0.1f;
@@ -133,9 +133,9 @@ void test_fp_runner(cudaStream_t stream)
     // 原来: cudaMalloc (sino)
     auto d_sino = mc.allocateDevice3D<float>(Nu, Nv, Na, /*deviceId=*/0);
 
-    FpReconstructor fpr;
+    ConeProjector fpr;
     if (!fpr.init(params, ETask::FP_Joseph, 0)) {
-        YK_LOGE("FpReconstructor init failed");
+        YK_LOGE("ConeProjector init failed");
         return;  // RAII 自动释放，不需要 cudaFree
     }
 

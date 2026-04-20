@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include "FP/YkFpRunnerExVec.hpp"
 #include "Heli/YkHelicalGeo.hpp"
@@ -25,7 +25,7 @@ namespace YK {
 			stream_ = stream;
 			device_id_ = device_id;
 
-			// ¹¹½¨ÂİĞı¼¸ºÎ
+			// æ„å»ºèºæ—‹å‡ ä½•
 			build_helical_vec_geometry(geo_, param_);
 
 			is_initialized_ = true;
@@ -62,7 +62,7 @@ namespace YK {
 			YK_CUDA_CHECK(cudaMemset(
 				d_proj, 0, proj_elems * sizeof(float)));
 
-			// ¹¹Ôì fp_params£¬´Ó SHeliCTParam ×ª»»
+			// æ„é€  fp_paramsï¼Œä» SHeliCTParam è½¬æ¢
 			SCBCTParams fp_params{};
 			fp_params.iPU = param_.iPU;
 			fp_params.iPV = param_.iPV;
@@ -83,7 +83,7 @@ namespace YK {
 			fp_params.iPAngTotal = total_views;
 			fp_params.angle_list = param_.angle_list;
 
-			FpReconstructorEx fp;
+			ConeProjectorEx fp;
 			if (!fp.init(fp_params, param_.fp_task, device_id_)) {
 				cudaFree(d_proj);
 				return false;

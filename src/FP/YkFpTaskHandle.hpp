@@ -204,7 +204,7 @@ namespace YK {
         ETask            task_ = ETask::FP_Joseph;
         EFpStepSample    stepSS_ = EFpStepSample::x1;
         EFpDetSample     detSS_ = EFpDetSample::x1;
-        FpReconstructor  fp_;
+        ConeProjector  fp_;
         SCBCTParams      params_{};
         cudaStream_t     stream_ = nullptr;
         bool             is_initialized_ = false;

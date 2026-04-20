@@ -5,11 +5,11 @@
 namespace YK {
 
     // ====================================================================
-    // FpReconstructorEx
-    // 在 FpReconstructor 基础上扩展，支持外部传入预建几何
+    // ConeProjectorEx
+    // 在 ConeProjector 基础上扩展，支持外部传入预建几何
     // 用于螺旋正投影：几何由 build_helical_vec_geometry_from_theta 预建
     // ====================================================================
-    class FpReconstructorEx {
+    class ConeProjectorEx {
     public:
         bool isInitialized() const { return is_initialized_; }
 
@@ -21,13 +21,13 @@ namespace YK {
         {
             if (params.iPU <= 0 || params.iPV <= 0
                 || params.iVX <= 0 || params.iVY <= 0 || params.iVZ <= 0) {
-                YK_LOGE("[FpReconstructorEx] invalid params");
+                YK_LOGE("[ConeProjectorEx] invalid params");
                 return false;
             }
             if (task != ETask::FP_Joseph &&
                 task != ETask::FP_Siddon &&
                 task != ETask::FP_CVP) {
-                YK_LOGE("[FpReconstructorEx] unsupported task {}", (int)task);
+                YK_LOGE("[ConeProjectorEx] unsupported task {}", (int)task);
                 return false;
             }
             task_ = task;
@@ -48,12 +48,12 @@ namespace YK {
             void* userdata = nullptr)
         {
             if (!is_initialized_ || !d_vol || !d_sino_out) {
-                YK_LOGE("[FpReconstructorEx] not ready");
+                YK_LOGE("[ConeProjectorEx] not ready");
                 return false;
             }
             if (params.iPAng <= 0
                 || (int)h_views.size() != params.iPAng) {
-                YK_LOGE("[FpReconstructorEx] h_views size mismatch");
+                YK_LOGE("[ConeProjectorEx] h_views size mismatch");
                 return false;
             }
 

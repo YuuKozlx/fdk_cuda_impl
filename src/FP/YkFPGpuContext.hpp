@@ -65,7 +65,7 @@ namespace YK {
             FpGpuContext(const FpGpuContext&) = delete;
             FpGpuContext& operator=(const FpGpuContext&) = delete;
 
-            // ── 带纹理（Joseph / Siddon）─────────────────────────────────
+            // ── 带纹理（Joseph / CVP）─────────────────────────────────
             void init(
                 const float* d_vol,
                 const SVolGeom& vol_geom,
@@ -86,7 +86,7 @@ namespace YK {
                 geo.init(h_projgeom, vol_geom, deviceId);
             }
 
-            // ── 不建纹理（CVP / 未来迭代算法）────────────────────────────
+            // ── 不建纹理（siddon / 未来迭代算法）────────────────────────────
             void initNoTex(
                 const float* d_vol,
                 const SVolGeom& vol_geom,
