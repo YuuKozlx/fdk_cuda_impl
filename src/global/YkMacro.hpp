@@ -288,32 +288,77 @@ YK_INLINE void cuda_set_device(int device_id)
 #    define YK_LOG_TAG "YK"
 #  endif
 
-// 内部实现
-#  define _YK_CU_LOG(level_str_, stream_, fmt_, ...)                            \
+// ANSI 颜色码
+#  define _YK_COLOR_RESET   "\033[0m"
+#  define _YK_COLOR_GRAY    "\033[90m"
+#  define _YK_COLOR_CYAN    "\033[36m"
+#  define _YK_COLOR_GREEN   "\033[32m"
+#  define _YK_COLOR_YELLOW  "\033[33m"
+#  define _YK_COLOR_RED     "\033[31m"
+#  define _YK_COLOR_MAGENTA "\033[35m"
+
+#  define _YK_COLOR_T _YK_COLOR_GRAY
+#  define _YK_COLOR_D _YK_COLOR_CYAN
+#  define _YK_COLOR_I _YK_COLOR_GREEN
+#  define _YK_COLOR_W _YK_COLOR_YELLOW
+#  define _YK_COLOR_E _YK_COLOR_RED
+#  define _YK_COLOR_C _YK_COLOR_MAGENTA
+
+// host 侧文件名截断
+#  define _YK_FILENAME (strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : \
+                       (strrchr(__FILE__, '/')  ? strrchr(__FILE__, '/')  + 1 : __FILE__))
+
+// device 侧编译期文件名截断
+YK_HD constexpr const char* yk_filename_impl(const char* path) {
+    const char* file = path;
+    while (*path) {
+        if (*path == '\\' || *path == '/') file = path + 1;
+        ++path;
+    }
+    return file;
+}
+#  define _YK_DEV_FILENAME (yk_filename_impl(__FILE__))
+
+// host 侧带 TTY 检测的彩色输出
+#  ifdef _WIN32
+#    include <io.h>
+#    define _YK_IS_TTY(stream_) (_isatty(_fileno(stream_)))
+#  else
+#    include <unistd.h>
+#    define _YK_IS_TTY(stream_) (isatty(fileno(stream_)))
+#  endif
+
+#  define _YK_CU_LOG(level_str_, color_, stream_, fmt_, ...)                    \
      do {                                                                        \
-         std::fprintf((stream_), "[" level_str_ "][" YK_LOG_TAG "] "            \
-             fmt_ "\n", ##__VA_ARGS__);                                         \
+         if (_YK_IS_TTY(stream_)) {                                              \
+             std::fprintf((stream_),                                             \
+                 color_ "[" level_str_ "]" _YK_COLOR_RESET "[" YK_LOG_TAG "] " \
+                 fmt_ "\n", ##__VA_ARGS__);                                     \
+         } else {                                                                \
+             std::fprintf((stream_), "[" level_str_ "][" YK_LOG_TAG "] "        \
+                 fmt_ "\n", ##__VA_ARGS__);                                     \
+         }                                                                       \
      } while (0)
 
-#  define _YK_CU_LOG_LOC(level_str_, stream_, fmt_, ...)                        \
-     _YK_CU_LOG(level_str_, stream_, "[%s:%d] " fmt_,                           \
-         __FILE__, __LINE__, ##__VA_ARGS__)
+#  define _YK_CU_LOG_LOC(level_str_, color_, stream_, fmt_, ...)                \
+     _YK_CU_LOG(level_str_, color_, stream_, "[%s:%d] " fmt_,                   \
+         _YK_FILENAME, __LINE__, ##__VA_ARGS__)
 
-// Host side of .cu
-#  define YK_LOGT(fmt, ...) _YK_CU_LOG("T", stdout, fmt, ##__VA_ARGS__)
-#  define YK_LOGD(fmt, ...) _YK_CU_LOG("D", stdout, fmt, ##__VA_ARGS__)
-#  define YK_LOGI(fmt, ...) _YK_CU_LOG("I", stdout, fmt, ##__VA_ARGS__)
-#  define YK_LOGW(fmt, ...) _YK_CU_LOG("W", stderr, fmt, ##__VA_ARGS__)
-#  define YK_LOGE(fmt, ...) _YK_CU_LOG("E", stderr, fmt, ##__VA_ARGS__)
-#  define YK_LOGC(fmt, ...) _YK_CU_LOG("C", stderr, fmt, ##__VA_ARGS__)
+// host side of .cu
+#  define YK_LOGT(fmt, ...) _YK_CU_LOG("[Trace]", _YK_COLOR_T, stdout, fmt, ##__VA_ARGS__)
+#  define YK_LOGD(fmt, ...) _YK_CU_LOG("[Debug]", _YK_COLOR_D, stdout, fmt, ##__VA_ARGS__)
+#  define YK_LOGI(fmt, ...) _YK_CU_LOG("[Info]", _YK_COLOR_I, stdout, fmt, ##__VA_ARGS__)
+#  define YK_LOGW(fmt, ...) _YK_CU_LOG("[Warn]", _YK_COLOR_W, stderr, fmt, ##__VA_ARGS__)
+#  define YK_LOGE(fmt, ...) _YK_CU_LOG("[Error]", _YK_COLOR_E, stderr, fmt, ##__VA_ARGS__)
+#  define YK_LOGC(fmt, ...) _YK_CU_LOG("[Critical]", _YK_COLOR_C, stderr, fmt, ##__VA_ARGS__)
 
-#  define YK_LOGE_LOC(fmt, ...) _YK_CU_LOG_LOC("E", stderr, fmt, ##__VA_ARGS__)
-#  define YK_LOGC_LOC(fmt, ...) _YK_CU_LOG_LOC("C", stderr, fmt, ##__VA_ARGS__)
+#  define YK_LOGE_LOC(fmt, ...) _YK_CU_LOG_LOC("[Error]", _YK_COLOR_E, stderr, fmt, ##__VA_ARGS__)
+#  define YK_LOGC_LOC(fmt, ...) _YK_CU_LOG_LOC("[Critical]", _YK_COLOR_C, stderr, fmt, ##__VA_ARGS__)
 
-// Device kernel 内部
-#  define YK_DEV_LOGD(fmt, ...) printf("[D][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-#  define YK_DEV_LOGI(fmt, ...) printf("[I][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-#  define YK_DEV_LOGW(fmt, ...) printf("[W][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-#  define YK_DEV_LOGE(fmt, ...) printf("[E][%s:%d] " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+// device kernel 内部
+#  define YK_DEV_LOGD(fmt, ...) printf("[Debug][%s:%d] " fmt "\n", _YK_DEV_FILENAME, __LINE__, ##__VA_ARGS__)
+#  define YK_DEV_LOGI(fmt, ...) printf("[Info][%s:%d] " fmt "\n", _YK_DEV_FILENAME, __LINE__, ##__VA_ARGS__)
+#  define YK_DEV_LOGW(fmt, ...) printf("[Warn][%s:%d] " fmt "\n", _YK_DEV_FILENAME, __LINE__, ##__VA_ARGS__)
+#  define YK_DEV_LOGE(fmt, ...) printf("[Error][%s:%d] " fmt "\n", _YK_DEV_FILENAME, __LINE__, ##__VA_ARGS__)
 
 #endif // __CUDACC__
