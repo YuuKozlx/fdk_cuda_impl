@@ -4,14 +4,10 @@
   "builtin-baseline": "62159a45e18f3a9ac0548628dcaf74fcb60c6ff9",
   "dependencies": [
     {
-      "name": "spdlog",
-      "version>=": "1.12.0"
-    },
-    {
       "name": "gtest",
       "version>=": "1.14.0"
     },
-     {
+    {
       "name": "tinytiff",
       "version>=": "4.0.1.0"
     }

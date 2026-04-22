@@ -357,7 +357,7 @@ namespace YK {
 
 
 #ifndef __CUDACC__
-#include <fmt/format.h>
+#include <util/fmt/format.h>
 
     inline std::string fmt_f4(const float4& v) {
         return fmt::format("[{:.4f}, {:.4f}, {:.4f},{:.4f}]", v.x, v.y, v.z, v.w);

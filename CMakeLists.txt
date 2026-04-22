@@ -54,7 +54,8 @@ add_library(YKCBCT_obj OBJECT)
 
 target_compile_definitions(YKCBCT_obj PRIVATE
     _WINDOWS
-    $<$<CONFIG:Release>:NDEBUG YKTASK_EXPORTS>
+    YKTASK_EXPORTS
+    $<$<CONFIG:Release>:NDEBUG>
     $<$<CONFIG:Debug>:_DEBUG>
 )
 
@@ -79,7 +80,6 @@ target_include_directories(YKCBCT_obj
 target_link_libraries(YKCBCT_obj PRIVATE
     CUDA::cudart
     CUDA::cufft
-    spdlog::spdlog
     OpenMP::OpenMP_CXX   # 新增
 )
 
@@ -113,7 +113,6 @@ target_link_libraries(YKCBCT PRIVATE
     YKCBCT_obj
     CUDA::cudart
     CUDA::cufft
-    spdlog::spdlog
     OpenMP::OpenMP_CXX   # 新增
 )
 

@@ -16,9 +16,10 @@ int main_helical_from_volume();
 int main()
 {
     YK::Logger::instance().set_level(YK::LogLevel::Debug);
+    YK::Logger::instance().add_file_sink("log.txt");
 
     // 按需开启/注释
-    //main_fdk();
+    main_fdk();
     //main_bp_zslab_verify();
     //main_bp_runner();
     //main_bp_verify();
