@@ -54,7 +54,7 @@ add_library(YKCBCT_obj OBJECT)
 
 target_compile_definitions(YKCBCT_obj PRIVATE
     _WINDOWS
-    YKTASK_EXPORTS
+    YKCBCT_EXPORTS
     $<$<CONFIG:Release>:NDEBUG>
     $<$<CONFIG:Debug>:_DEBUG>
 )

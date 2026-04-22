@@ -17,7 +17,6 @@
           "value": "true",
           "type": "BOOL"
         },
-
         {
           "name": "VCPKG_INSTALLED_DIR",
           "value": "${projectDir}\\thirdparty\\vcpkg_installed",
@@ -43,11 +42,15 @@
           "value": "true",
           "type": "BOOL"
         },
-
         {
           "name": "VCPKG_INSTALLED_DIR",
           "value": "${projectDir}\\thirdparty\\vcpkg_installed",
           "type": "STRING"
+        },
+        {
+          "name": "CMAKE_INSTALL_PREFIX",
+          "value": "G:/Code/fanproj/fdk-test/install/Release/YKCBCT",
+          "type": "PATH"
         }
       ],
       "intelliSenseMode": "windows-clang-x64"
@@ -69,7 +72,6 @@
           "value": "true",
           "type": "BOOL"
         },
-
         {
           "name": "VCPKG_INSTALLED_DIR",
           "value": "${projectDir}\\thirdparty\\vcpkg_installed",
