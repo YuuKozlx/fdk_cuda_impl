@@ -4,8 +4,7 @@
     {
       "name": "x64-Debug",
       "displayName": "x64 Debug",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/x64-Debug",
       "installDir": "${sourceDir}/install/Debug/YKCBCT",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
@@ -18,8 +17,7 @@
     {
       "name": "x64-Release",
       "displayName": "x64 Release",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/x64-Release",
       "installDir": "${sourceDir}/install/Release/YKCBCT",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
@@ -33,8 +31,7 @@
     {
       "name": "x64-RelWithDebInfo",
       "displayName": "x64 RelWithDebInfo",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/x64-RelWithDebInfo",
       "installDir": "${sourceDir}/install/RelWithDebInfo/YKCBCT",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",

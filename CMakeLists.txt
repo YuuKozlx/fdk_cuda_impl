@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.26)
 project(YKCBCT LANGUAGES CXX CUDA)
 
 # ----------------------------------------------------------------
@@ -42,7 +42,7 @@ endif()
 # ----------------------------------------------------------------
 find_package(CUDAToolkit REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
-find_package(OpenMP REQUIRED)   # 新增
+find_package(OpenMP REQUIRED COMPONENTS CXX)   # 新增
 
 # ----------------------------------------------------------------
 # OBJECT 库：所有源文件编译一次，DLL 和测试共用同一批 .obj
