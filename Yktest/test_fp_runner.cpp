@@ -11,7 +11,8 @@
 
 using namespace YK;
 
-const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string test_data_dir ="/workspace/fdk-test/TestData/";
+
 
 //void test_fp_runner(cudaStream_t stream)
 //{

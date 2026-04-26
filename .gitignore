@@ -408,3 +408,4 @@ FodyWeavers.xsd
 #
 [Tt]hirdparty/
 *.ncu-rep
+/install/

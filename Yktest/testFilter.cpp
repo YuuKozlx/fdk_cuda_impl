@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cuda_runtime.h>
 
-#include "YkGlobals.h"
+#include "global/YkGlobals.h"
 #include "YkFDKFilter.hpp"              // FilterManager (for paddedN/n_complex)
 #include "YkFDKCreateFilterKernel.hpp"  // FilterKernelFFT + desc
 

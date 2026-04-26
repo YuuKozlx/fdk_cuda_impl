@@ -13,7 +13,8 @@
 using namespace YK;
 using namespace Mem;
 
-const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string test_data_dir ="/workspace/fdk-test/TestData/";
+
 
 static SCBCTParams makeBpParams()
 {

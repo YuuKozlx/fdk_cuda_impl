@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <mutex>
 #include <functional>
+#include <string>
 
 namespace YK {
 

@@ -12,16 +12,15 @@
 #include "YKCBCT/interface/IYkTask.hpp"
 #include "YKCBCT/interface/YkTaskFactory.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/common.h>
+// #include <spdlog/spdlog.h>
+// #include <spdlog/sinks/stdout_color_sinks.h>
+// #include <spdlog/common.h>
 
-#ifndef FMT_UNICODE
-#  define FMT_UNICODE 0
-#endif
+// #ifndef FMT_UNICODE
+// #  define FMT_UNICODE 0
+// #endif
 
 
-#pragma comment(lib, "YKCBCT.lib")
 
 
 
@@ -55,22 +54,22 @@ static void printStats(const std::vector<float>& v, const char* tag)
         tag, mn, mx, sum, v.size());
 }
 
-static bool createLogger()
-{
-    try {
-        auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        auto logger = std::make_shared<spdlog::logger>("default", sink);
-        spdlog::set_default_logger(logger);
-        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%P] [YK] %v");
-        spdlog::set_level(spdlog::level::debug);
-        spdlog::info("Logger initialized");
-        return true;
-    }
-    catch (const spdlog::spdlog_ex& ex) {
-        fprintf(stderr, "Log initialization failed: %s\n", ex.what());
-        return false;
-    }
-}
+// static bool createLogger()
+// {
+//     try {
+//         auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+//         auto logger = std::make_shared<spdlog::logger>("default", sink);
+//         spdlog::set_default_logger(logger);
+//         spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%P] [YK] %v");
+//         spdlog::set_level(spdlog::level::debug);
+//         spdlog::info("Logger initialized");
+//         return true;
+//     }
+//     catch (const spdlog::spdlog_ex& ex) {
+//         fprintf(stderr, "Log initialization failed: %s\n", ex.what());
+//         return false;
+//     }
+// }
 
 // ----------------------------------------------------------------
 // 公共几何参数，FDK 和 FP 共用
@@ -187,7 +186,7 @@ static void test_fp_task()
 // ----------------------------------------------------------------
 static void test_fdk_task()
 {
-    createLogger();
+    // createLogger();
     printf("\n[DLL Test2] FDK reconstruction\n");
 
     constexpr int Na = 360, Nu = 1024, Nv = 1024;
@@ -261,11 +260,13 @@ static void test_fdk_task()
                 minv = std::min(minv, v);
             }
 
-            spdlog::info("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
+            printf("  [dump][a=%d][%s] n=%zu min=%.4f max=%.4f mean=%.6f\n",
                 p->viewIdx, p->stage, p->n, minv, maxv, sum / (float)p->n);
+            // spdlog::info("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
+            //     p->viewIdx, p->stage, p->n, minv, maxv, sum / (float)p->n);
 
-            auto path = fmt::format("dump_a{}_{}.raw", p->viewIdx, p->stage);
-            //auto path = std::string("dump_") + p->stage + ".raw";
+            // auto path = fmt::format("dump_a{}_{}.raw", p->viewIdx, p->stage);
+            auto path = std::string("dump_") + p->stage + ".raw";
             std::ofstream f(path, std::ios::binary);
             if (f)
                 f.write(reinterpret_cast<const char*>(h.data()), p->n * sizeof(float));

@@ -16,7 +16,7 @@
 using namespace YK;
 using namespace Mem;
 
-const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string test_data_dir = "/workspace/fdk-test/TestData/";
 
 // ----------------------------------------------------------------
 // main_bp_runner：离线 + 在线反投影

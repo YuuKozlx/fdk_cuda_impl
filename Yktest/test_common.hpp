@@ -56,7 +56,7 @@ static void printStats(const std::vector<float>& v, const char* tag)
 
 struct datapath {
     inline static const std::string test_data_dir =
-        R"(G:\Code\fanproj\fdk-test\TestData\)";
+        "/workspace/fdk-test/TestData/";
 };
 
 static std::string dataPath(const std::string& filename)
