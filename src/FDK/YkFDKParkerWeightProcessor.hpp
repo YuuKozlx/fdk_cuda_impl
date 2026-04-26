@@ -70,8 +70,11 @@ namespace YK {
                 }
 
                 const float fSDD = fSrcOrigin_ + fDetOrigin_;
+#ifdef _WIN32
                 fCentralFanAngle_ = std::fabs(std::atanf(fDetUSize_ * (Nu_ * 0.5f) / fSDD));
-
+#elif defined(__unix__)
+                fCentralFanAngle_ = std::fabs(std::atan(fDetUSize_ * (Nu_ * 0.5f) / fSDD));
+#endif
                 // 检查扫描范围是否足够覆盖 Parker 权重范围
                 const float fRange = fScale_ * static_cast<float>(CUDA_PI);
                 if (fRange + 1e-3f < static_cast<float>(CUDA_PI) + 2.0f * fCentralFanAngle_) {

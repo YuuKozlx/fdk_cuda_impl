@@ -15,7 +15,7 @@ endif()
 # ----------------------------------------------------------------
 # 标准
 # ----------------------------------------------------------------
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
@@ -59,14 +59,29 @@ target_compile_definitions(YKCBCT_obj PRIVATE
     $<$<CONFIG:Debug>:_DEBUG>
 )
 
-target_compile_options(YKCBCT_obj PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:
-        /W3
-        /Zc:__cplusplus
-        /utf-8
-        $<$<CONFIG:Release>:/O2 /arch:AVX2>   # 加上 /arch:AVX2
-    >
-)
+# 跨平台编译选项
+# Windows 编译选项
+if(WIN32)
+    target_compile_options(YKCBCT_obj PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/W3 /Zc:__cplusplus /utf-8>
+            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2 /arch:AVX2>
+            $<$<COMPILE_LANGUAGE:CUDA>:
+            -Xcompiler="/W3"
+            $<$<CONFIG:Release>:-O3 -use_fast_math>
+            >
+    )
+    # 类 Unix 编译选项
+elseif(UNIX)
+    target_compile_options(YKCBCT_obj PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -pthread>
+            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3 -march=native -DNDEBUG>
+            $<$<COMPILE_LANGUAGE:CUDA>:
+            -Xcompiler="-Wall" -Xcompiler="-Wextra" -Xcompiler="-Wpedantic"
+            -Xcompiler="-fPIC"
+            $<$<CONFIG:Release>:-O3 -use_fast_math>
+            >
+    )
+endif()
 
 # PUBLIC  : 自身和消费者都能看到（include 路径会传递给链接 YKCBCT_obj 的目标）
 # PRIVATE : 只有自身编译时用（内部头文件路径不对外暴露）

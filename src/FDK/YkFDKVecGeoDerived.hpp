@@ -41,16 +41,16 @@ namespace YK {
     class GeoDerivedManagerVec
     {
     public:
-        struct GeoDerivedOptions
-        {
-            float dtheta_eps = 1e-8f;
-            float3 isocenter = make_float3(0.0f, 0.0f, 0.0f);
-            bool force_DSD_positive = false; // optional
-        };
+struct GeoDerivedOptions
+{
+    float dtheta_eps = 1e-8f;
+    float3 isocenter = make_float3(0.0f, 0.0f, 0.0f);
+    bool force_DSD_positive = false;
+};
 
-        explicit GeoDerivedManagerVec(GeoDerivedOptions opt = GeoDerivedOptions{})
-            : opt_(opt) {
-        }
+GeoDerivedManagerVec();
+
+    explicit GeoDerivedManagerVec(GeoDerivedOptions opt);
 
         bool build_geo_params(
             int detector_pixels_u, int detector_pixels_v, float scan_angle_rad,
@@ -293,5 +293,18 @@ namespace YK {
     private:
         GeoDerivedOptions opt_;
     };
+
+
+    inline GeoDerivedManagerVec::GeoDerivedManagerVec()
+    : opt_(GeoDerivedOptions{})
+{
+}
+
+inline GeoDerivedManagerVec::GeoDerivedManagerVec(
+    GeoDerivedOptions opt
+)
+    : opt_(opt)
+{
+}
 
 } // namespace YK

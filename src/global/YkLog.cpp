@@ -46,7 +46,11 @@ namespace YK {
                 now.time_since_epoch()).count() % 1000
             );
         std::tm tm{};
+#ifdef _WIN32
         localtime_s(&tm, &t);
+#else
+        localtime_r(&t, &tm);
+#endif
 
         int year = tm.tm_year + 1900;
         int mon = tm.tm_mon + 1;
@@ -78,7 +82,11 @@ namespace YK {
                     now.time_since_epoch()).count() % 1000
                 );
             std::tm tm{};
+#ifdef _WIN32
             localtime_s(&tm, &t);
+#else
+            localtime_r(&t, &tm);
+#endif
 
             int year = tm.tm_year + 1900;
             int mon = tm.tm_mon + 1;
