@@ -254,6 +254,91 @@ namespace YK {
     }
 
 
+    // 为每视角设置几何参数
+    YK_INLINE void build_circular_vec_geometry_perframe(
+        std::vector<SConeProjGeomVec>& geo,
+        const std::vector<float>& theta,
+        int Ang, int Nu, int Nv,
+        float du, float dv,
+        float SID, float IDD,
+        const std::vector<float3>& det_offsets,
+        const std::vector<float3>& src_offsets,
+        const std::vector<float3>& detTilt_degs,
+        const std::vector<float3>& srcCRTilt_degs
+    )
+    {
+        // size==1 退化为全局常量
+        auto get = [](const std::vector<float3>& v, int i) -> float3 {
+            return v.size() == 1 ? v[0] : v[i];
+            };
+
+        auto deg2rad = [](float deg) { return deg * CUDA_PI / 180.f; };
+
+        geo.resize(Ang);
+
+        const float3 src0 = make_float3(0.f, -SID, 0.f);
+        const float3 detC0 = make_float3(0.f, IDD, 0.f);
+        const float  cu = 0.5f * (Nu - 1);
+        const float  cv = 0.5f * (Nv - 1);
+
+        for (int a = 0; a < Ang; ++a)
+        {
+            const float  t = theta[a];
+            const float3 det_offset = get(det_offsets, a);
+            const float3 src_offset = get(src_offsets, a);
+            const float3 detTilt_deg = get(detTilt_degs, a);
+            const float3 srcCR_tilt = get(srcCRTilt_degs, a);
+
+            // ---- 探测器 U/V 方向向量（局部系，per-frame tilt）----
+            float3 detU_dir = make_float3(1.f, 0.f, 0.f);
+            float3 detV_dir = make_float3(0.f, 0.f, 1.f);
+            {
+                const float tiltu_deg = detTilt_deg.x;
+                const float tiltv_deg = detTilt_deg.z;
+                const float tiltn_deg = detTilt_deg.y;
+
+                const float3 axisU = detU_dir;
+                detU_dir = f3_rot_axis(detU_dir, axisU, deg2rad(tiltu_deg));
+                detV_dir = f3_rot_axis(detV_dir, axisU, deg2rad(tiltu_deg));
+
+                const float3 axisV = detV_dir;
+                detU_dir = f3_rot_axis(detU_dir, axisV, deg2rad(tiltv_deg));
+                detV_dir = f3_rot_axis(detV_dir, axisV, deg2rad(tiltv_deg));
+
+                const float3 normal = f3_normalize(cross(detU_dir, detV_dir));
+                detU_dir = f3_rot_axis(detU_dir, normal, deg2rad(tiltn_deg));
+                detV_dir = f3_rot_axis(detV_dir, normal, deg2rad(tiltn_deg));
+            }
+
+            // ---- 主射线方向（局部系，per-frame tilt）----
+            float3 srcCR_dir = make_float3(0.f, 1.f, 0.f);
+            {
+                srcCR_dir = f3_rot_axis(srcCR_dir, make_float3(1.f, 0.f, 0.f), deg2rad(srcCR_tilt.x));
+                srcCR_dir = f3_rot_axis(srcCR_dir, make_float3(0.f, 0.f, 1.f), deg2rad(srcCR_tilt.y));
+                srcCR_dir = f3_rot_axis(srcCR_dir, f3_normalize(srcCR_dir), deg2rad(srcCR_tilt.z));
+                srcCR_dir = f3_normalize(srcCR_dir);
+            }
+
+            // ---- 旋转到当前角度 ----
+            float3 src = f3_rotz(src0 + src_offset, t);
+            float3 detC = f3_rotz(detC0 + det_offset, t);
+            float3 srcCR = f3_rotz(srcCR_dir, t);
+            float3 U = f3_rotz(detU_dir, t) * du;
+            float3 V = f3_rotz(detV_dir, t) * dv;
+            float3 detS = detC - U * cu - V * cv;
+
+            geo[a] = SConeProjGeomVec{
+                f3_to_f4(src),
+                f3_to_f4(srcCR),
+                f3_to_f4(detS),
+                f3_to_f4(U),
+                f3_to_f4(V),
+                make_float4(t, 0.f, 0.f, 0.f)
+            };
+        }
+    }
+
+
 
 
     YK_INLINE SConeProjGeomVec build_from_rtk_single(

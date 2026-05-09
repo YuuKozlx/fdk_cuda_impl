@@ -421,3 +421,284 @@ namespace YK {
     }
 
 } // namespace YK
+
+
+namespace YK {
+
+    class FdkReconstructorEx {
+    public:
+        FdkReconstructorEx() = default;
+
+        void reset() {
+            total_received_ = 0;
+        }
+
+        int  totalReceived()  const { return total_received_; }
+        bool isInitialized()  const { return is_initialized_; }
+
+        void release()
+        {
+            pw_.release();
+            pkw_.release();
+            flt_.release();
+            bp_.release();
+            gpu_ctx_.release();
+            reset();
+            Kchunk_ = 0;
+            bParker_ = false;
+            is_initialized_ = false;
+        }
+
+        bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream, int device_id = 0)
+        {
+            // 与 FdkReconstructor::init 完全相同
+            Kchunk = std::min(Kchunk, kMaxChunkAng);
+            Kchunk_ = Kchunk;
+            bParker_ = params.bShortScan;
+
+            const int iPU = params.iPU;
+            const int iPV = params.iPV;
+            const int iVX = params.iVX;
+            const int iVY = params.iVY;
+            const int iVZ = params.iVZ;
+            const int iPA_total = params.iPAngTotal;
+
+            {
+                PreweightInitContext ictx{};
+                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
+                ictx.policy = {};
+                pw_.setInitContext(&ictx);
+                if (!pw_.init()) return false;
+            }
+            if (bParker_) {
+                ParkerWeightInitContext ictx{};
+                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
+                ictx.fDetUSize = params.du_mm;
+                ictx.fSrcOrigin = params.SID;
+                ictx.fDetOrigin = params.SDD - params.SID;
+                ictx.iPAnglesTotal = params.iPAngTotal;
+                ictx.fScanRangeRad = params.scan_range_rad;
+                ictx.fStartAngleRad = params.scan_start_angle_rad;
+                pkw_.setInitContext(&ictx);
+                if (!pkw_.init()) return false;
+            }
+            {
+                FdkFilterInitContext ictx{};
+                ictx.dims = SProjDims{ iPU, iPV, Kchunk };
+                ictx.desc = params.desc;
+                ictx.policy = {};
+                ictx.stream = stream;
+                flt_.setInitContext(&ictx);
+                if (!flt_.init()) return false;
+            }
+            {
+                SVolGeom vol_geom = SVolGeom::make_centered(
+                    iVX, iVY, iVZ, params.vox_x_mm, params.vox_z_mm);
+                vol_geom.center = make_float3(
+                    params.vol_offset_x_mm,
+                    params.vol_offset_y_mm,
+                    params.vol_offset_z_mm);
+                BpInitContext ictx{};
+                ictx.vol_geom = vol_geom;
+                ictx.use_precomputed = true;
+                bp_.setInitContext(&ictx);
+                if (!bp_.init()) return false;
+            }
+            {
+                SProjDims dims{ iPU, iPV, iPA_total };
+                gpu_ctx_.init(dims, iPA_total, stream, device_id);
+            }
+
+            is_initialized_ = true;
+            return true;
+        }
+
+        // ----------------------------------------------------------------
+        // feed：接受外部预建几何，不再内部 build_circular
+        // h_views_ext.size() == params.iPAng（当前batch）
+        // ----------------------------------------------------------------
+        bool feed(
+            const float* h_proj_batch,
+            const SCBCTParams& params,
+            const std::vector<SConeProjGeomVec>& h_views_ext,
+            cudaStream_t                         stream,
+            float* d_vol_out,
+            bool                                 clear_vol = false,
+            TaskDumpCallback                     onDump = nullptr,
+            void* userdata = nullptr)
+        {
+            if (!is_initialized_) {
+                YK_LOGE("[FdkReconstructorEx] not initialized"); return false;
+            }
+            if (!h_proj_batch || params.iPAng <= 0) {
+                YK_LOGE("[FdkReconstructorEx] invalid input"); return false;
+            }
+            if ((int)params.angle_list.size() != params.iPAng) {
+                YK_LOGE("[FdkReconstructorEx] angle_list size mismatch"); return false;
+            }
+            if ((int)h_views_ext.size() != params.iPAng) {
+                YK_LOGE("[FdkReconstructorEx] h_views_ext size {} != params.iPAng {}",
+                    h_views_ext.size(), params.iPAng);
+                return false;
+            }
+
+            const int batch_count = params.iPAng;
+            const int prev_total = total_received_;
+            total_received_ += batch_count;
+
+            const int iPU = params.iPU;
+            const int iPV = params.iPV;
+            const int iVX = params.iVX;
+            const int iVY = params.iVY;
+            const int iVZ = params.iVZ;
+
+            // ---- 唯一差别：geo 直接用外部传入 ----
+            std::vector<SFDKGeoParamPerView> h_gv(batch_count);
+            GeoDerivedManagerVec{}.build_geo_params(
+                iPU, iPV, params.scan_range_rad, h_views_ext, h_gv);
+
+            gpu_ctx_.uploadGeoIncremental(h_views_ext, h_gv, prev_total, batch_count, stream);
+
+            if (clear_vol) {
+                const size_t n = (size_t)iVX * iVY * iVZ;
+                YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0, n * sizeof(float), stream));
+            }
+
+            const size_t view_elems = (size_t)iPU * iPV;
+            float* d_chunk_in = gpu_ctx_.proj.chunk_in.data();
+            float* d_chunk_pw = gpu_ctx_.proj.chunk_pw.data();
+            float* d_chunk_flt = gpu_ctx_.proj.chunk_flt.data();
+
+            bool filter_dirty = false;
+
+            for (int base = 0; base < batch_count; base += Kchunk_) {
+                const int K = std::min(Kchunk_, batch_count - base);
+
+                if (K != Kchunk_) {
+                    if (!reinitProcessors(params, K, stream)) return false;
+                    filter_dirty = true;
+                }
+
+                const int global_base = prev_total + base;
+
+                auto triggerDump = [&](const char* stage, float* d_base) {
+                    if (!onDump) return;
+                    cudaStreamSynchronize(stream);
+                    for (int i = 0; i < K; ++i) {
+                        DumpPayload payload{
+                            global_base + i, stage,
+                            static_cast<void*>(d_base + i * view_elems),
+                            view_elems, stream, userdata
+                        };
+                        onDump(&payload);
+                    }
+                    };
+
+                gpu_ctx_.geo.uploadCoeffsChunk(
+                    gpu_ctx_.geo.d_coeffs() + global_base, K, stream);
+                gpu_ctx_.proj.uploadProjChunk(
+                    h_proj_batch + (size_t)base * view_elems, K, stream);
+
+                PreweightChunkContext pctx{};
+                pctx.d_geo = gpu_ctx_.geo.d_geo() + global_base;
+                pctx.d_gv = gpu_ctx_.geo.d_gv() + global_base;
+                pctx.K = K;
+                pw_.setContext(&pctx);
+                pw_.process(d_chunk_in, d_chunk_pw, stream);
+                triggerDump("pw", d_chunk_pw);
+
+                if (bParker_) {
+                    ParkerWeightChunkContext pkctx{};
+                    pkctx.h_angles = params.angle_list.data() + base;
+                    pkctx.K = K;
+                    pkw_.setContext(&pkctx);
+                    pkw_.process(d_chunk_pw, d_chunk_pw, stream);
+                    triggerDump("parker", d_chunk_pw);
+                }
+
+                FdkFilterContext fctx{ h_gv.data() + base, K };
+                flt_.setContext(&fctx);
+                flt_.process(d_chunk_pw, d_chunk_flt, stream);
+                triggerDump("flt", d_chunk_flt);
+
+                BpChunkContext bctx{};
+                bctx.d_geo = gpu_ctx_.geo.d_geo() + global_base;
+                bctx.d_gv = gpu_ctx_.geo.d_gv() + global_base;
+                bctx.K = K;
+                bp_.setContext(&bctx);
+                bp_.process(gpu_ctx_.proj.d_texObjs(), d_vol_out, stream);
+            }
+
+            if (filter_dirty) {
+                if (!reinitProcessors(params, Kchunk_, stream)) return false;
+            }
+
+            return true;
+        }
+
+    private:
+        int  Kchunk_ = 0;
+        bool bParker_ = false;
+        bool is_initialized_ = false;
+        int  total_received_ = 0;
+
+        Fdk::PreweightProcessor    pw_;
+        Fdk::ParkerWeightProcessor pkw_;
+        Fdk::FilterProcessor       flt_;
+        Fdk::BpProcessor           bp_;
+        FdkGpuContext              gpu_ctx_;
+
+        bool reinitProcessors(const SCBCTParams& params, int K, cudaStream_t stream)
+        {
+            {
+                PreweightInitContext ictx{};
+                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
+                ictx.policy = {};
+                pw_.setInitContext(&ictx);
+                if (!pw_.init()) return false;
+            }
+            if (bParker_) {
+                ParkerWeightInitContext ictx{};
+                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
+                ictx.fDetUSize = params.du_mm;
+                ictx.fSrcOrigin = params.SID;
+                ictx.fDetOrigin = params.SDD - params.SID;
+                ictx.iPAnglesTotal = params.iPAngTotal;
+                ictx.fScanRangeRad = params.scan_range_rad;
+                ictx.fStartAngleRad = params.scan_start_angle_rad;
+                pkw_.setInitContext(&ictx);
+                if (!pkw_.init()) return false;
+            }
+            {
+                FdkFilterInitContext ictx{};
+                ictx.dims = SProjDims{ params.iPU, params.iPV, K };
+                ictx.desc = params.desc;
+                ictx.policy = {};
+                ictx.stream = stream;
+                flt_.setInitContext(&ictx);
+                if (!flt_.init()) return false;
+            }
+            return true;
+        }
+    };
+
+    // 全局便捷函数
+    YK_INLINE bool fdk_recon_ex(
+        const float* h_proj,
+        float* d_vol_out,
+        const SCBCTParams& params,
+        const std::vector<SConeProjGeomVec>& h_views_ext,
+        int                                  Kchunk,
+        cudaStream_t                         stream,
+        bool                                 clear_vol = true,
+        TaskDumpCallback                     onDump = nullptr,
+        void* userdata = nullptr)
+    {
+        FdkReconstructorEx recon;
+        if (!recon.init(params, Kchunk, stream))
+            return false;
+        return recon.feed(h_proj, params, h_views_ext, stream,
+            d_vol_out, clear_vol, onDump, userdata);
+    }
+
+};

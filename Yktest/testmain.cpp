@@ -10,8 +10,17 @@ int  main_fp();
 int main_fdk_zslab();
 int main_fdk_zslab_bigdata();
 int main_bp_zslab_verify();
-int main_helical_verify();
+//int main_helical_verify();
 int main_helical_from_volume();
+void test_fp_runner_fixed_offset(cudaStream_t stream);
+
+void test_fp_runner_random_offset(cudaStream_t stream);
+void test_stdrecon_with_random_offset(cudaStream_t stream);
+void test_recon_with_random_offset(cudaStream_t stream);
+
+void test_fp_runner_periodic_offset(cudaStream_t stream);
+void test_stdrecon_with_periodic_offset(cudaStream_t stream);
+void test_recon_with_periodic_offset(cudaStream_t stream);
 
 int main()
 {
@@ -19,7 +28,7 @@ int main()
     YK::Logger::instance().add_file_sink("log.txt");
 
     // 按需开启/注释
-    main_fdk();
+    //main_fdk();
     //main_bp_zslab_verify();
     //main_bp_runner();
     //main_bp_verify();
@@ -29,5 +38,13 @@ int main()
     //main_helical_verify();
     //main_fdk_zslab_bigdata();
     //main_helical_from_volume();
+    //test_fp_runner_random_offset(0);
+    //test_fp_runner_fixed_offset(0);
+    //test_recon_with_offset(0);
+    //test_recon_with_random_offset(0);
+
+    test_fp_runner_periodic_offset(0);
+    test_stdrecon_with_periodic_offset(0);
+    test_recon_with_periodic_offset(0);
     return 0;
 }
