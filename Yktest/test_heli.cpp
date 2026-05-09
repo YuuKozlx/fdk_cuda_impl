@@ -50,12 +50,13 @@ int main_helical_from_volume()
 
     // 螺旋扫描
     p.pitch_mm = 20.0f;
-    p.bShortScan = false;
-    YK::fillHelicalScanGeometry(p, 0.75f, 720, true);
+    p.bShortScan = true;
 
     // 重建
     p.z_block_mm = 20.0f;
     p.z_step_mm = 10.0f;
+    YK::fillHelicalScanGeometry(p, 0.75f, 720, true);
+
     p.Kchunk = 32;
     p.fp_task = ETask::FP_Joseph;
 

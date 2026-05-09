@@ -82,22 +82,52 @@ namespace YK {
     // ════════════════════════════════════════════════════════════════
 
     /**
-     * @brief 探测器在等中心处的 Z 方向总覆盖宽度
+     * @brief 探测器在等中心轴线（r=0）处的 Z 方向总覆盖宽度
      *
      * 公式：
-     *   dZ_det = iPV * dv_mm / M
+     *   dZ_axis = iPV * dv_mm / M
      *
      * 物理含义：iPV 排探测器投影到等中心平面后所张开的 Z 范围。
-     * 它决定了一圈旋转内可无遗漏覆盖的最大 Z 区段。
+     * 仅在旋转轴上成立，用于 pitch 合法性校验和扫描圈数估算。
      *
      * @param iPV    探测器排数
      * @param dv_mm  探测器排间距 (mm)
      * @param M      放大比（由 magnification() 获得）
-     * @return       等中心处 Z 覆盖 (mm)
+     * @return       轴线处 Z 覆盖 (mm)
      */
-    inline float detectorZCoverage(int iPV, float dv_mm, float M)
+    inline float detectorZCoverageAxis(int iPV, float dv_mm, float M)
     {
         return static_cast<float>(iPV) * dv_mm / M;
+    }
+
+    /**
+     * @brief 重建半径 R 处的有效 Z 覆盖宽度
+     *
+     * 由于锥束几何，距旋转轴 r=R 处的体素，其可用投影排数
+     * 相比轴线处被压缩，有效 Z 覆盖随 R 增大而减小：
+     *
+     *   dZ_eff(R) = dZ_axis * (SID - R) / SID
+     *             = iPV * dv_mm * (SID - R) / SDD
+     *
+     * 推导：源点到 r=R 体素的射线在探测器面上的 V 方向张角，
+     * 等效回等中心平面时需乘以几何压缩因子 (SID - R) / SID。
+     *
+     * 此值应作为 z_block_mm 的上限，保证每个 slab 内所有
+     * 横断面（包括 r=R 边缘）均有完整的锥束投影覆盖。
+     * 超出此范围的 slab 端部落入锥体盲区，重建质量劣化。
+     *
+     * @param iPV    探测器排数
+     * @param dv_mm  探测器排间距 (mm)
+     * @param SID    源–等中心距 (mm)
+     * @param SDD    源–探测器距 (mm)
+     * @param R      重建半径 (mm)，须满足 0 <= R < SID
+     * @return       r=R 处有效 Z 覆盖 (mm)
+     */
+    inline float detectorZCoverageAtR(int iPV, float dv_mm,
+        float SID, float SDD, float R)
+    {
+        assert(R >= 0.f && R < SID);
+        return static_cast<float>(iPV) * dv_mm * (SID - R) / SDD;
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -378,20 +408,28 @@ namespace YK {
         int   views_per_rot = 720,
         bool  verbose = true)
     {
+        // ── 基础几何 ──────────────────────────────────────────────
         const float M = magnification(p.SID, p.SDD);
-        const float dZ_det = detectorZCoverage(p.iPV, p.dv_mm, M);
+        const float R = p.iVX * p.vox_x_mm * 0.5f;
+        const float dZ_axis = detectorZCoverageAxis(p.iPV, p.dv_mm, M);
+        const float dZ_eff = detectorZCoverageAtR(p.iPV, p.dv_mm, p.SID, p.SDD, R);
         const float Z_vol = volumeZRange(p.iVZ, p.vox_z_mm);
 
-        if (p.pitch_mm > dZ_det * 1.5f)
+        // ── 参数校验 ──────────────────────────────────────────────
+        if (p.pitch_mm > dZ_eff)
             throw std::invalid_argument(
-                "pitch_mm 超过 1.5 * dZ_det，将产生严重漏采样");
+                "pitch_mm 超过 dZ_eff(R)，r=R 处将产生漏采样");
+        if (p.z_block_mm > dZ_eff)
+            throw std::invalid_argument(
+                "z_block_mm 超过 dZ_eff(R)，slab 端部将落入锥体盲区");
+        if (p.z_step_mm > p.z_block_mm)
+            throw std::invalid_argument(
+                "z_step_mm > z_block_mm，相邻 slab 之间存在空洞");
 
-        p.start_z_mm = scanStartZ(Z_vol, dZ_det, p.pitch_mm);
+        // ── 填充扫描几何 ──────────────────────────────────────────
+        p.start_z_mm = scanStartZ(Z_vol, dZ_eff, p.pitch_mm);
 
-        const int n_rot = numRotations(Z_vol, dZ_det, p.pitch_mm);
-        //const int n_views = (views_per_rot > 0)
-        //    ? views_per_rot
-        //    : minViewsPerRotation(p.iPU, p.du_mm, M, p.SID, p.bShortScan);
+        const int n_rot = numRotations(Z_vol, dZ_eff, p.pitch_mm);
         const int n_views = views_per_rot;
 
         p.angle_list.resize(static_cast<size_t>(n_rot) * n_views);
@@ -399,20 +437,30 @@ namespace YK {
         for (int i = 0; i < static_cast<int>(p.angle_list.size()); ++i)
             p.angle_list[i] = i * d_angle;
 
+        // ── verbose 输出 ──────────────────────────────────────────
         if (verbose) {
-            const float alpha = maxConeAngle(dZ_det, p.SID);
+            const float alpha = maxConeAngle(dZ_axis, p.SID);
             const float alpha_deg = alpha * 180.f / static_cast<float>(M_PI);
+            const float overlap = (1.f - p.z_step_mm / p.z_block_mm) * 100.f;
+
             printf("--- Helical CT Param Summary ------------------------\n");
             printf("  M            = %.4f\n", M);
-            printf("  dZ_det       = %.2f mm\n", dZ_det);
-            printf("  pitch_ratio  = %.3f  %s\n",
-                p.pitch_mm / dZ_det,
-                p.pitch_mm / dZ_det <= 1.0f ? "(OK)" : "(WARNING: >1)");
+            printf("  R_recon      = %.1f mm\n", R);
+            printf("  dZ_axis      = %.2f mm  (r=0)\n", dZ_axis);
+            printf("  dZ_eff(R)    = %.2f mm  (r=R)\n", dZ_eff);
+            printf("  pitch_mm     = %.2f mm  ratio=%.3f  %s\n",
+                p.pitch_mm,
+                p.pitch_mm / dZ_eff,
+                p.pitch_mm / dZ_eff <= 1.f ? "(OK)" : "(WARNING: >1)");
+            printf("  z_block_mm   = %.2f mm  %s\n",
+                p.z_block_mm,
+                p.z_block_mm <= dZ_eff ? "(OK)" : "(WARNING: >dZ_eff)");
+            printf("  z_step_mm    = %.2f mm  overlap=%.0f%%\n",
+                p.z_step_mm, overlap);
             printf("  Z_vol        = %.1f mm\n", Z_vol);
             printf("  z_start      = %.2f mm\n", p.start_z_mm);
             printf("  n_rotations  = %d\n", n_rot);
-            printf("  views/rot    = %d  %s\n", n_views,
-                views_per_rot > 0 ? "(specified)" : "(Nyquist)");
+            printf("  views/rot    = %d\n", n_views);
             printf("  total_views  = %d\n", (int)p.angle_list.size());
             printf("  alpha_max    = %.3f deg  %s\n",
                 alpha_deg,
@@ -463,7 +511,7 @@ namespace YK {
     {
         assert(step > 0);
         for (int iPV = step; iPV <= 1024; iPV += step) {
-            const float dZ = detectorZCoverage(iPV, dv_mm, M);
+            const float dZ = detectorZCoverageAxis(iPV, dv_mm, M);
             const float pitch = maxPitch(dZ, pitch_ratio);
             const int   nr = numRotations(Z_vol, dZ, pitch);
             if (nr <= Nr_max) {
@@ -515,7 +563,7 @@ namespace YK {
 
         const int show_until = (min_iPV > 0) ? min_iPV + step * 2 : step * 10;
         for (int iPV = step; iPV <= show_until && iPV <= 512; iPV += step) {
-            const float dZ = detectorZCoverage(iPV, dv_mm, M);
+            const float dZ = detectorZCoverageAxis(iPV, dv_mm, M);
             const float pitch = maxPitch(dZ, pf);
             const int   nr = numRotations(Z_vol, dZ, pitch);
             const float alpha_deg = maxConeAngle(dZ, SID) * 180.f
