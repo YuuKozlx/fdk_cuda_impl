@@ -202,6 +202,11 @@ if(BUILD_TESTS)
     add_subdirectory(Yktest)
 endif()
 
+#option(NEW_TEST "Build integration test executable" ON)
+#if(NEW_TEST)
+#    add_subdirectory(SimultaneousTest)
+#endif()
+
 # ----------------------------------------------------------------
 # 单元测试（GoogleTest）
 # ----------------------------------------------------------------

@@ -2,19 +2,6 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "x64-Debug",
-      "displayName": "x64 Debug",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/out/build/x64-Debug",
-      "installDir": "${sourceDir}/install/Debug/YKCBCT",
-      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-      "cacheVariables": {
-        "CMAKE_CONFIGURATION_TYPES": "Debug",
-        "VCPKG_MANIFEST_MODE": "true",
-        "VCPKG_INSTALLED_DIR": "${sourceDir}/thirdparty/vcpkg_installed"
-      }
-    },
-    {
       "name": "x64-Release",
       "displayName": "x64 Release",
       "generator": "Ninja",
@@ -37,6 +24,19 @@
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo",
+        "VCPKG_MANIFEST_MODE": "true",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/thirdparty/vcpkg_installed"
+      }
+    },
+    {
+      "name": "x64-Debug",
+      "displayName": "x64 Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/x64-Debug",
+      "installDir": "${sourceDir}/install/Debug/YKCBCT",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug",
         "VCPKG_MANIFEST_MODE": "true",
         "VCPKG_INSTALLED_DIR": "${sourceDir}/thirdparty/vcpkg_installed"
       }

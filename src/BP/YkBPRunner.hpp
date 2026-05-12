@@ -236,3 +236,182 @@ namespace YK {
 
 
 };// namespace YK
+
+
+namespace YK {
+    class BpReconstructorEx {
+    public:
+        BpReconstructorEx() = default;
+
+        bool isInitialized() const { return is_initialized_; }
+        int  totalReceived() const { return total_received_; }
+
+        void reset() { total_received_ = 0; }
+
+        void release()
+        {
+            bp_.release();
+            gpu_ctx_.release();
+            reset();
+            Kchunk_ = 0;
+            is_initialized_ = false;
+        }
+
+        bool init(const SCBCTParams& params, int Kchunk, cudaStream_t stream,
+            int device_id = 0)
+        {
+            Kchunk_ = std::min(Kchunk, kMaxChunkAng);
+
+            const int iVX = params.iVX;
+            const int iVY = params.iVY;
+            const int iVZ = params.iVZ;
+            const int iPA_total = params.iPAngTotal;
+
+            {
+                SVolGeom vol_geom = SVolGeom::make_centered(
+                    iVX, iVY, iVZ, params.vox_x_mm, params.vox_z_mm);
+                vol_geom.center = make_float3(
+                    params.vol_offset_x_mm,
+                    params.vol_offset_y_mm,
+                    params.vol_offset_z_mm);
+
+                BpInitContext ictx{};
+                ictx.vol_geom = vol_geom;
+                ictx.use_precomputed = false;
+                bp_.setInitContext(&ictx);
+                if (!bp_.init()) {
+                    YK_LOGE("[BpReconstructorEx] BpProcessor init failed");
+                    return false;
+                }
+            }
+
+            {
+                SProjDims dims{ params.iPU, params.iPV, iPA_total };
+                gpu_ctx_.init(dims, iPA_total, stream, device_id);
+            }
+
+            is_initialized_ = true;
+            return true;
+        }
+
+        // ----------------------------------------------------------------
+        // feed：外部预建几何，跳过 build_circular
+        // d_flt_proj：已滤波投影，GPU 指针
+        // h_views_ext.size() == params.iPAng
+        // ----------------------------------------------------------------
+        bool feed(
+            const float* d_flt_proj,
+            const SCBCTParams& params,
+            const std::vector<SConeProjGeomVec>& h_views_ext,
+            cudaStream_t                         stream,
+            float* d_vol_out,
+            bool                                 clear_vol = false,
+            TaskDumpCallback                     onDump = nullptr,
+            void* userdata = nullptr)
+        {
+            if (!is_initialized_) {
+                YK_LOGE("[BpReconstructorEx] not initialized"); return false;
+            }
+            if (!d_flt_proj || params.iPAng <= 0) {
+                YK_LOGE("[BpReconstructorEx] invalid input"); return false;
+            }
+            if ((int)params.angle_list.size() != params.iPAng) {
+                YK_LOGE("[BpReconstructorEx] angle_list size mismatch"); return false;
+            }
+            if ((int)h_views_ext.size() != params.iPAng) {
+                YK_LOGE("[BpReconstructorEx] h_views_ext size {} != params.iPAng {}",
+                    h_views_ext.size(), params.iPAng);
+                return false;
+            }
+
+            const int batch_count = params.iPAng;
+            const int prev_total = total_received_;
+            total_received_ += batch_count;
+
+            const int iPU = params.iPU;
+            const int iPV = params.iPV;
+            const int iVX = params.iVX;
+            const int iVY = params.iVY;
+            const int iVZ = params.iVZ;
+
+            // ---- 唯一差别：geo 直接用外部传入 ----
+            std::vector<SFDKGeoParamPerView> h_gv(batch_count);
+            GeoDerivedManagerVec{}.build_geo_params(
+                iPU, iPV, params.scan_range_rad, h_views_ext, h_gv);
+
+            gpu_ctx_.uploadGeoIncremental(h_views_ext, h_gv, prev_total, batch_count, stream);
+
+            if (clear_vol) {
+                YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0,
+                    (size_t)iVX * iVY * iVZ * sizeof(float), stream));
+            }
+
+            const size_t view_elems = (size_t)iPU * iPV;
+
+            for (int base = 0; base < batch_count; base += Kchunk_) {
+                const int K = std::min(Kchunk_, batch_count - base);
+                const int global_base = prev_total + base;
+
+                auto triggerDump = [&](const char* stage, float* d_base) {
+                    if (!onDump) return;
+                    cudaStreamSynchronize(stream);
+                    for (int i = 0; i < K; ++i) {
+                        DumpPayload payload{
+                            global_base + i, stage,
+                            static_cast<void*>(d_base + i * view_elems),
+                            view_elems, stream, userdata
+                        };
+                        onDump(&payload);
+                    }
+                    };
+
+                YK_CUDA_CHECK(cudaMemcpyAsync(
+                    gpu_ctx_.proj.d_sino.data(),
+                    d_flt_proj + (size_t)base * view_elems,
+                    K * view_elems * sizeof(float),
+                    cudaMemcpyDeviceToDevice, stream));
+
+                gpu_ctx_.geo.uploadCoeffsChunk(
+                    gpu_ctx_.geo.d_coeffs() + global_base, K, stream);
+
+                triggerDump("flt_in", gpu_ctx_.proj.d_sino.data());
+
+                BpChunkContext bctx{};
+                bctx.d_geo = gpu_ctx_.geo.d_geo() + global_base;
+                bctx.d_gv = gpu_ctx_.geo.d_gv() + global_base;
+                bctx.K = K;
+                bp_.setContext(&bctx);
+                bp_.process(gpu_ctx_.proj.d_texObjs(), d_vol_out, stream);
+            }
+
+            return true;
+        }
+
+    private:
+        int  Kchunk_ = 0;
+        bool is_initialized_ = false;
+        int  total_received_ = 0;
+
+        YK::Fdk::BpProcessor    bp_;
+        YK::Bp::BpGpuContext    gpu_ctx_;
+    };
+
+    // 便捷函数
+    YK_INLINE bool bp_recon_ex(
+        const float* d_flt_proj,
+        float* d_vol_out,
+        const SCBCTParams& params,
+        const std::vector<SConeProjGeomVec>& h_views_ext,
+        int                                  Kchunk,
+        cudaStream_t                         stream,
+        bool                                 clear_vol = true,
+        TaskDumpCallback                     onDump = nullptr,
+        void* userdata = nullptr)
+    {
+        BpReconstructorEx recon;
+        if (!recon.init(params, Kchunk, stream))
+            return false;
+        return recon.feed(d_flt_proj, params, h_views_ext, stream,
+            d_vol_out, clear_vol, onDump, userdata);
+    }
+};

@@ -134,13 +134,13 @@ namespace YK {
 
     YK_INLINE void build_circular_vec_geometry_from_theta(
         std::vector<SConeProjGeomVec>& geo,
-        const std::vector<float>& theta,
+        const std::vector<float>& theta, // rad
         int Ang, int Nu, int Nv,
         float du, float dv,
         float SID, float IDD,
-        float3 det_offset = make_float3(0.f, 0.f, 0.f),
+        float3 det_offset = make_float3(0.f, 0.f, 0.f),   // u(x) offset ; idd(y) offset ; v(z) offset
         float3 detTilt_deg = make_float3(0.f, 0.f, 0.f),   // outOfPlane(x), lateral(y), inPlane(z)
-        float3 src_offset = make_float3(0.f, 0.f, 0.f),
+        float3 src_offset = make_float3(0.f, 0.f, 0.f),   // x/y/z offset of source position
         float3 srcCRTilt_deg = make_float3(0.f, 0.f, 0.f)    // pitch(x), yaw(y), roll(z)
     )
     {
@@ -221,10 +221,12 @@ namespace YK {
         int Ang, int Nu, int Nv,
         float du, float dv,
         float SID, float IDD,
-        float3 det_offset = make_float3(0.0f, 0.0f, 0.0f),
-        float3 detTiltEuler = make_float3(0.0f, 0.0f, 0.0f),
-        float3 src_offset = make_float3(0.0f, 0.0f, 0.0f),
-        float3 srcCRTiltEuler = make_float3(0.0f, 0.0f, 0.0f))
+        float3 det_offset = make_float3(0.0f, 0.0f, 0.0f), // u(x) offset ; idd(y) offset ; v(z) offset
+        float3 detTiltEuler = make_float3(0.0f, 0.0f, 0.0f), // outOfPlane(x), lateral(y), inPlane(z)
+        float3 src_offset = make_float3(0.0f, 0.0f, 0.0f), // x/y/z offset of source position
+        float3 srcCRTiltEuler = make_float3(0.0f, 0.0f, 0.0f) // pitch(x), yaw(y), roll(z)
+    
+    )
     {
         if (Ang <= 0) throw std::runtime_error("Ang must > 0");
 
@@ -261,10 +263,10 @@ namespace YK {
         int Ang, int Nu, int Nv,
         float du, float dv,
         float SID, float IDD,
-        const std::vector<float3>& det_offsets,
-        const std::vector<float3>& src_offsets,
-        const std::vector<float3>& detTilt_degs,
-        const std::vector<float3>& srcCRTilt_degs
+        const std::vector<float3>& det_offsets, // u(x) offset ; idd(y) offset ; v(z) offset
+        const std::vector<float3>& src_offsets, // x/y/z offset of source position
+        const std::vector<float3>& detTiltEuler_degs, // outOfPlane(x), lateral(y), inPlane(z)
+        const std::vector<float3>& srcCRTiltEuler_degs // pitch(x), yaw(y), roll(z)
     )
     {
         // size==1 退化为全局常量
@@ -286,8 +288,8 @@ namespace YK {
             const float  t = theta[a];
             const float3 det_offset = get(det_offsets, a);
             const float3 src_offset = get(src_offsets, a);
-            const float3 detTilt_deg = get(detTilt_degs, a);
-            const float3 srcCR_tilt = get(srcCRTilt_degs, a);
+            const float3 detTilt_deg = get(detTiltEuler_degs, a);
+            const float3 srcCR_tilt = get(srcCRTiltEuler_degs, a);
 
             // ---- 探测器 U/V 方向向量（局部系，per-frame tilt）----
             float3 detU_dir = make_float3(1.f, 0.f, 0.f);
@@ -479,3 +481,51 @@ namespace YK {
 #endif // __CUDACC__
 
 } // namespace YK
+
+
+namespace YK {
+    // planar CT
+    YK_INLINE void build_planar_ct_vec_geometry(
+        std::vector<SConeProjGeomVec>& geo,
+        const std::vector<float>& theta,
+        int Ang, int Nu, int Nv,
+        float du, float dv,
+        float SID, float IDD,
+        float R)  // 源偏离Y轴的距离
+    {
+        geo.resize(Ang);
+
+        const float3 detU_dir = make_float3(1.f, 0.f, 0.f);
+        const float3 detV_dir = make_float3(0.f, 0.f, 1.f);
+        const float3 detC0 = make_float3(0.f, IDD, 0.f);
+        const float3 U = detU_dir * du;
+        const float3 V = detV_dir * dv;
+        const float  cu = 0.5f * (Nu - 1);
+        const float  cv = 0.5f * (Nv - 1);
+        const float3 detS = detC0 - U * cu - V * cv;
+
+        // 初始源位置 (R, -SID, 0)，绕Y轴旋转
+        const float3 src0 = make_float3(R, -SID, 0.f);
+
+        for (int a = 0; a < Ang; ++a)
+        {
+            const float t = theta[a];
+
+            // 绕Y轴旋转 src0
+            const float3 src = f3_roty(src0, t);
+
+            // 主射线方向：从源指向探测器中心
+            const float3 srcCR = f3(0, 1, 0);
+
+            geo[a] = SConeProjGeomVec{
+                f3_to_f4(src),
+                f3_to_f4(srcCR),
+                f3_to_f4(detS),
+                f3_to_f4(U),
+                f3_to_f4(V),
+                make_float4(t, 0.f, 0.f, 0.f)
+            };
+        }
+    }
+
+}

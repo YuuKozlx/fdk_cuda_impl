@@ -418,3 +418,123 @@ void test_fp_runner_periodic_offset(cudaStream_t stream)
 }
 
 
+void test_periodic_fp_ideal_recon(cudaStream_t stream)
+{
+    auto params = make_default_params();
+    auto fp_cfg = make_periodic_config(params, 0.f, 30.f, 0.f, 0.f,0.f,0.f, 360.f);
+    auto recon_cfg = make_ideal_config(params);
+    run_fp(params, fp_cfg, "fp_periodic_sino.raw", "recon_raw_save.raw", stream);
+    run_recon(params, recon_cfg, "fp_periodic_sino.raw", "recon_periodic_ideal.raw", stream);
+}
+
+void test_periodic_fp_corrected_recon(cudaStream_t stream)
+{
+    auto params = make_default_params();
+    auto fp_cfg = make_periodic_config(params, 0.f, 0.f, 0.f, 0.f, 30.f, 0.f, 360.f);
+    // sino 已经存在，直接用同样的几何重建，不需要重新投影
+    run_recon(params, fp_cfg, "fp_periodic_sino.raw", "recon_periodic_corrected.raw", stream);
+}
+
+void test_random_fp_ideal_recon(cudaStream_t stream)
+{
+    auto params = make_default_params();
+    auto fp_cfg = make_random_config(params, 0.25f, 0.1f, 42);
+    auto recon_cfg = make_ideal_config(params);
+    run_fp(params, fp_cfg, "fp_random_sino.raw", "recon_raw_save.raw", stream);
+    run_recon(params, recon_cfg, "fp_random_sino.raw", "recon_random_ideal.raw", stream);
+}
+
+void test_fixed_fp_ideal_recon(cudaStream_t stream)
+{
+    auto params = make_default_params();
+    auto fp_cfg = make_fixed_offset_config(params, make_float3(0.f, 30.f, 0.f), make_float3(0.f, 0.f, 0.f));
+    auto recon_cfg = make_ideal_config(params);
+    run_fp(params, fp_cfg, "fp_fixed_sino.raw", "recon_raw_save.raw", stream);
+    run_recon(params, recon_cfg, "fp_fixed_sino.raw", "recon_fixed_ideal.raw", stream);
+}
+
+void test_fixed_fp_corrected_recon(cudaStream_t stream)
+{
+    auto params = make_default_params();
+    auto fp_cfg = make_fixed_offset_config(params, make_float3(0.f, 30.f, 0.f), make_float3(0.f, 0.f, 0.f));
+    // sino 已经存在，直接用相同的几何重建，不需要重新投影
+    run_recon(params, fp_cfg, "fp_fixed_sino.raw", "recon_fixed_corrected.raw", stream);
+}
+
+void test_insufficient_angle_fp_recon(cudaStream_t stream)
+{
+    auto params = make_default_params();
+
+    // 实际扫描只有238°，但重建时按240°处理
+    constexpr float actual_range_deg  = 238.f;
+    constexpr float assumed_range_deg = 240.f;
+
+    const float actual_range_rad  = actual_range_deg  * CUDA_PI / 180.f;
+    const float assumed_range_rad = assumed_range_deg * CUDA_PI / 180.f;
+
+    // 正投影：按实际238°生成angle_list
+    params.angle_list.resize(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        params.angle_list[i] = i * actual_range_rad / (params.iPAng - 1);
+
+    // 重建params：角度列表和scan_range都认为是240°
+    SCBCTParams recon_params = params;
+    recon_params.scan_range_rad = assumed_range_rad;
+    for (int i = 0; i < recon_params.iPAng; ++i)
+        recon_params.angle_list[i] = i * assumed_range_rad / (recon_params.iPAng - 1);
+
+    auto fp_cfg    = make_ideal_config(params);       // 用实际238°几何投影
+    auto recon_cfg = make_ideal_config(recon_params); // 用假设240°几何重建
+
+    run_fp   (params,       fp_cfg,    "fp_insufficient_angle_sino.raw", "recon_raw_save.raw",stream);
+    run_recon(recon_params, recon_cfg, "fp_insufficient_angle_sino.raw", "recon_insufficient_angle.raw", stream);
+}
+
+
+
+void test_flat_detector_roty_fp(cudaStream_t stream)
+{
+    auto params = make_default_params();
+    params.SDD = 300; params.SID = 200;
+    params.iPAng = 180; params.iPAngTotal = 180;
+    params.iVY = 100; params.iVZ = 512;
+    params.vox_x_mm = params.vox_y_mm = params.vox_z_mm = 0.2f;
+    params.bShortScan = false;
+    params.scan_range_rad = 2.f * CUDA_PI;
+    params.angle_list.resize(180);
+    for (int i = 0; i < 180; ++i)
+        params.angle_list[i] = i * 2.f * CUDA_PI / 180;
+    params.scan_start_angle_rad = params.angle_list[0];
+
+    constexpr float R = 125.f;
+    std::vector<SConeProjGeomVec> h_views;
+    build_planar_ct_vec_geometry(
+        h_views, params.angle_list,
+        params.iPAng, params.iPU, params.iPV,
+        params.du_mm, params.dv_mm,
+        params.SID, params.SDD - params.SID, R);
+
+
+
+
+    run_fp(params, h_views, "fp_flat_det_roty_sino.raw", "pcb_phantom.raw",stream);
+    params.iVX = 512;
+    params.iVY = 100;
+    params.iVZ = 512;
+    params.vox_x_mm = 0.2f;
+    params.vox_y_mm = 0.04f;
+    params.vox_z_mm = 0.2f;
+    // 重建用理想圆轨迹几何，但所有角度都设为0
+    // 等效于：所有帧都认为是从同一个0°位置投影的
+    SCBCTParams recon_params = params;
+    std::fill(recon_params.angle_list.begin(), recon_params.angle_list.end(), 0.f);
+    recon_params.scan_start_angle_rad = 0.f;
+    run_recon(params, h_views, "fp_flat_det_roty_sino.raw",
+        "recon_flat_det_roty.raw", stream);
+}
+
+
+void test_generate_pcb_phantom()
+{
+    generate_pcb_phantom(test_data_dir + "pcb_phantom.raw");
+}

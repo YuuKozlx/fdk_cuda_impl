@@ -22,6 +22,19 @@ void test_fp_runner_periodic_offset(cudaStream_t stream);
 void test_stdrecon_with_periodic_offset(cudaStream_t stream);
 void test_recon_with_periodic_offset(cudaStream_t stream);
 
+void test_periodic_fp_ideal_recon(cudaStream_t stream);
+void test_periodic_fp_corrected_recon(cudaStream_t stream);
+void test_random_fp_ideal_recon(cudaStream_t stream);
+void test_fixed_fp_ideal_recon(cudaStream_t stream);
+void test_fixed_fp_corrected_recon(cudaStream_t stream);
+void test_insufficient_angle_fp_recon(cudaStream_t stream);
+
+void test_flat_detector_roty_fp(cudaStream_t stream);
+
+
+
+void test_generate_pcb_phantom();
+
 int main()
 {
     YK::Logger::instance().set_level(YK::LogLevel::Debug);
@@ -43,8 +56,25 @@ int main()
     //test_recon_with_offset(0);
     //test_recon_with_random_offset(0);
 
-    test_fp_runner_periodic_offset(0);
-    test_stdrecon_with_periodic_offset(0);
-    test_recon_with_periodic_offset(0);
+    //test_fp_runner_periodic_offset(0);
+    //test_stdrecon_with_periodic_offset(0);
+    //test_recon_with_periodic_offset(0);
+
+
+    //test_periodic_fp_ideal_recon(0);
+    //test_periodic_fp_corrected_recon(0);
+
+    //test_fixed_fp_ideal_recon(0);
+    //test_fixed_fp_corrected_recon(0);
+
+
+    //test_random_fp_ideal_recon(0);
+
+
+    //test_insufficient_angle_fp_recon(0);
+
+    test_flat_detector_roty_fp(0);
+
+    //test_generate_pcb_phantom();
     return 0;
 }
