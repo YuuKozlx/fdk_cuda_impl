@@ -14,7 +14,7 @@
 
 using namespace YK;
 
-const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string test_data_dir = R"(H:\Code\fanproj\fdk-test\TestData\)";
 
 //void test_fp_runner(cudaStream_t stream)
 //{
@@ -531,6 +531,93 @@ void test_flat_detector_roty_fp(cudaStream_t stream)
     recon_params.scan_start_angle_rad = 0.f;
     run_recon(params, h_views, "fp_flat_det_roty_sino.raw",
         "recon_flat_det_roty.raw", stream);
+}
+
+
+void test_flat_detector_roty_fp_ellipse(cudaStream_t stream)
+{
+    auto params = make_default_params();
+    params.SDD = 300; params.SID = 200;
+    params.iPAng = 720; params.iPAngTotal = 720;
+    params.scan_range_rad = 2.f * CUDA_PI;
+    params.bShortScan = false;
+
+    // 探测器参数
+    params.iPU = 1024; params.iPV = 1024;
+    params.du_mm = 0.1f; params.dv_mm = 0.1f;
+
+    // 体素网格（正投影与重建共用同一套体素参数）
+    params.iVX = 512; params.iVY = 100; params.iVZ = 512;
+    params.vox_x_mm = 0.05f; params.vox_y_mm = 0.05f; params.vox_z_mm = 0.05f;
+
+    // 角度列表（0 ~ 2π，720个角度）
+    params.angle_list.resize(720);
+    for (int i = 0; i < 720; ++i)
+        params.angle_list[i] = i * 2.f * CUDA_PI / 720;
+    params.scan_start_angle_rad = params.angle_list[0];
+
+    // ========= 椭圆轨迹正投影 =========
+    constexpr float a = 55.f;   // X轴半长
+    constexpr float b = 54.9f;   // Z轴半长（接近圆形，但不等）
+    std::vector<SConeProjGeomVec> h_views_ellipse;
+    build_planar_ct_vec_geometry_ellipse(
+        h_views_ellipse, params.angle_list,
+        params.iPAng, params.iPU, params.iPV,
+        params.du_mm, params.dv_mm,
+        params.SID, params.SDD - params.SID,
+        a, b);
+
+    // 执行正投影（使用椭圆几何）
+    run_fp(params, h_views_ellipse, "fp_ellipse_sino.raw", "pcb_phantom.raw", stream);
+
+    // ========= 圆形轨迹重建 =========
+    constexpr float R = a;   // 圆形半径（取椭圆的X半轴）
+    std::vector<SConeProjGeomVec> h_views_circle;
+    build_planar_ct_vec_geometry(
+        h_views_circle, params.angle_list,
+        params.iPAng, params.iPU, params.iPV,
+        params.du_mm, params.dv_mm,
+        params.SID, params.SDD - params.SID, R);
+
+
+    // 重建参数（沿用正投影的体素网格和角度列表）
+    SCBCTParams recon_params = params;  // 拷贝所有参数
+    // 注意：recon_params.angle_list 已经正确，无需修改
+
+    // 使用圆形几何重建椭圆正弦图
+    run_recon(params, h_views_circle, "fp_ellipse_sino.raw",
+        "recon_ellipse2circle.raw", stream);
+
+    // （可选）使用椭圆几何重建椭圆正弦图（自洽重建，作为对比）
+    run_recon(params, h_views_ellipse, "fp_ellipse_sino.raw",
+        "recon_ellipse2ellipse.raw", stream);
+
+    // 比较 h_views_circle 和 h_views_ellipse 的差异，验证几何构建函数的正确性
+    //struct alignas(16) SConeProjGeomVec {
+    //    float4 src;     // xyz = source position, w = unused
+    //    float4 srcCR;   // xyz = center ray direction, w = unused
+    //    float4 detS;    // xyz = detector (0,0) position, w = unused
+    //    float4 detU;    // xyz = per-pixel U vector, w = unused
+    //    float4 detV;    // xyz = per-pixel V vector, w = unused
+    //    float4 angle;   // x = gantry angle, y/z = reserved, w = unused
+    //};
+
+    for(int i = 0; i < params.iPAng; ++i) {
+        const auto& v_circle = h_views_circle[i];
+        const auto& v_ellipse = h_views_ellipse[i];
+        // 比较 src_pos
+
+        float src_diff = length(make_float3(v_circle.src) - make_float3(v_ellipse.src));
+        float det_diff = length(make_float3(v_circle.detS) - make_float3(v_ellipse.detS));
+        float u_diff = length(make_float3(v_circle.detU) - make_float3(v_ellipse.detU));
+        float v_diff = length(make_float3(v_circle.detV) - make_float3(v_ellipse.detV));
+        float angle_diff = std::abs(v_circle.angle.x - v_ellipse.angle.x);
+        float srcCR_diff = length(make_float3(v_circle.srcCR) - make_float3(v_ellipse.srcCR));
+
+        printf("View %3d: src_diff=%.3fmm, det_diff=%.3fmm, u_diff=%.3fmm, v_diff=%.3fmm, angle_diff=%.3fdeg, srcCR_diff=%.6f\n",
+            i, src_diff, det_diff, u_diff, v_diff, angle_diff * 180.f / CUDA_PI, srcCR_diff);
+
+    }
 }
 
 

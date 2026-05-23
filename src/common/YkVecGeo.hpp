@@ -529,3 +529,70 @@ namespace YK {
     }
 
 }
+
+namespace YK {
+
+    // 通用平面CT几何构建函数，支持自定义源轨迹
+    // src_pos_func : 给定角度（弧度），返回源点的世界坐标 (x, y, z)
+    // 其他参数与原函数含义相同：
+    //   theta : 各视角角度（弧度），长度 = Ang
+    //   Ang, Nu, Nv, du, dv, SID, IDD
+    // 探测器中心固定于 (0, IDD, 0)，探测器U、V方向沿世界坐标轴，不随角度旋转
+    YK_INLINE void build_planar_ct_vec_geometry_custom(
+        std::vector<SConeProjGeomVec>& geo,
+        const std::vector<float>& theta,
+        int Ang, int Nu, int Nv,
+        float du, float dv,
+        float SID, float IDD,
+        const std::function<float3(float angle_rad)>& src_pos_func)
+    {
+        geo.resize(Ang);
+
+        // 探测器固定参数
+        const float3 detU_dir = make_float3(1.f, 0.f, 0.f);
+        const float3 detV_dir = make_float3(0.f, 0.f, 1.f);
+        const float3 detC0 = make_float3(0.f, IDD, 0.f);
+        const float3 U = detU_dir * du;
+        const float3 V = detV_dir * dv;
+        const float  cu = 0.5f * (Nu - 1);
+        const float  cv = 0.5f * (Nv - 1);
+        const float3 detS = detC0 - U * cu - V * cv;
+
+        for (int a = 0; a < Ang; ++a)
+        {
+            const float t = theta[a];
+            const float3 src = src_pos_func(t);
+
+            // 主射线方向：从源指向探测器中心
+            // 主射线方向：从源指向探测器中心
+            const float3 srcCR = f3(0, 1, 0);
+
+            geo[a] = SConeProjGeomVec{
+                f3_to_f4(src),
+                f3_to_f4(srcCR),
+                f3_to_f4(detS),
+                f3_to_f4(U),
+                f3_to_f4(V),
+                make_float4(t, 0.f, 0.f, 0.f)
+            };
+        }
+    }
+
+    // 便捷版本：椭圆轨迹（参数与圆形兼容：theta=0时源在 (a, -SID, 0)）
+    // a : X轴半长（对应 cos(theta) 系数）
+    // b : Z轴半长（对应 -sin(theta) 系数，保持与原圆形轨迹相同的旋转方向）
+    YK_INLINE void build_planar_ct_vec_geometry_ellipse(
+        std::vector<SConeProjGeomVec>& geo,
+        const std::vector<float>& theta,
+        int Ang, int Nu, int Nv,
+        float du, float dv,
+        float SID, float IDD,
+        float a, float b)
+    {
+        auto src_pos = [=](float t) -> float3 {
+            return make_float3(a * cos(t), -SID, -b * sin(t));
+        };
+        build_planar_ct_vec_geometry_custom(geo, theta, Ang, Nu, Nv, du, dv, SID, IDD, src_pos);
+    }
+
+} // namespace YK
