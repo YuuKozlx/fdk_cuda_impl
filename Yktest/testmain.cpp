@@ -11,7 +11,11 @@ int main_fdk_zslab();
 int main_fdk_zslab_bigdata();
 int main_bp_zslab_verify();
 //int main_helical_verify();
+
 int main_helical_from_volume();
+int main_helical_online_from_volume();
+
+
 void test_fp_runner_fixed_offset(cudaStream_t stream);
 
 void test_fp_runner_random_offset(cudaStream_t stream);
@@ -30,6 +34,7 @@ void test_fixed_fp_corrected_recon(cudaStream_t stream);
 void test_insufficient_angle_fp_recon(cudaStream_t stream);
 
 void test_flat_detector_roty_fp(cudaStream_t stream);
+void test_flat_detector_roty_fp_ellipse(cudaStream_t stream);
 
 
 
@@ -51,6 +56,7 @@ int main()
     //main_helical_verify();
     //main_fdk_zslab_bigdata();
     //main_helical_from_volume();
+    //main_helical_online_from_volume();
     //test_fp_runner_random_offset(0);
     //test_fp_runner_fixed_offset(0);
     //test_recon_with_offset(0);
@@ -73,8 +79,9 @@ int main()
 
     //test_insufficient_angle_fp_recon(0);
 
-    test_flat_detector_roty_fp(0);
+    //test_flat_detector_roty_fp(0);
 
     //test_generate_pcb_phantom();
+    test_flat_detector_roty_fp_ellipse(0);
     return 0;
 }

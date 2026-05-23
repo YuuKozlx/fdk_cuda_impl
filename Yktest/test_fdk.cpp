@@ -15,7 +15,7 @@
 using namespace YK;
 using namespace Mem;
 
-const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string test_data_dir = R"(H:\Code\fanproj\fdk-test\TestData\)";
 
 int main_fdk()
 {

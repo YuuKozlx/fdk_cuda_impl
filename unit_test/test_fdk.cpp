@@ -16,7 +16,7 @@
 using namespace YK;
 using namespace Mem;
 
-const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string test_data_dir = R"(H:\Code\fanproj\fdk-test\TestData\)";
 const std::string PROJ_FILE = test_data_dir + "proj_1024x1024x360.raw";
 
 // ----------------------------------------------------------------

@@ -477,7 +477,7 @@
 #include <FP/YkFPCommon.cuh>
 
 
-const std::string test_data_dir = R"(G:\Code\fanproj\fdk-test\TestData\)";
+const std::string test_data_dir = R"(H:\Code\fanproj\fdk-test\TestData\)";
 
 
 namespace YK {
