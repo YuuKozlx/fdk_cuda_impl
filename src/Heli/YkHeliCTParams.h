@@ -39,6 +39,7 @@ struct SHeliCTParam {
     // ---- 螺旋扫描 ----
     float              pitch_mm = 3.f;
     float              start_z_mm = 0.f;
+    int               views_per_rot = 720;
     std::vector<float> angle_list;  // 新增：外部传入，仿真或真实数据均用此
 
     // ---- 重建 ----
