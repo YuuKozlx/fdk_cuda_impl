@@ -61,26 +61,30 @@ target_compile_definitions(YKCBCT_obj PRIVATE
 
 # 跨平台编译选项
 # Windows 编译选项
+# 跨平台编译选项
 if(WIN32)
     target_compile_options(YKCBCT_obj PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:/W3 /Zc:__cplusplus /utf-8>
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2 /arch:AVX2>
-            $<$<COMPILE_LANGUAGE:CUDA>:
+        $<$<COMPILE_LANGUAGE:CXX>:/W3 /Zc:__cplusplus /utf-8>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2 /arch:AVX2>
+        $<$<COMPILE_LANGUAGE:CUDA>:
+            --extended-lambda
             -Xcompiler="/W3"
             $<$<CONFIG:Release>:-O3 -use_fast_math>
-            >
+        >
     )
-    # 类 Unix 编译选项
+
 elseif(UNIX)
     target_compile_options(YKCBCT_obj PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -pthread>
-            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3 -march=native -DNDEBUG>
-            $<$<COMPILE_LANGUAGE:CUDA>:
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -pthread>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3 -march=native -DNDEBUG>
+        $<$<COMPILE_LANGUAGE:CUDA>:
             -Xcompiler="-Wall" -Xcompiler="-Wextra" -Xcompiler="-Wpedantic"
             -Xcompiler="-fPIC"
+             --extended-lambda
             $<$<CONFIG:Release>:-O3 -use_fast_math>
-            >
+        >
     )
+    
 endif()
 
 # PUBLIC  : 自身和消费者都能看到（include 路径会传递给链接 YKCBCT_obj 的目标）
@@ -113,6 +117,7 @@ add_subdirectory(src/FDK)
 add_subdirectory(src/BP)
 add_subdirectory(src/FP)
 add_subdirectory(src/Heli)
+add_subdirectory(src/Iter)
 # ----------------------------------------------------------------
 # 主库 DLL：只做链接，不重复编译源文件
 #

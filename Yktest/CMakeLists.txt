@@ -5,6 +5,7 @@ add_executable(YKCBCT_test
     ${CMAKE_CURRENT_SOURCE_DIR}/test_bp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_heli.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_sart.cpp
     $<TARGET_OBJECTS:YKCBCT_obj>
  )
 

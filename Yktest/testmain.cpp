@@ -47,6 +47,10 @@ void test_flat_detector_roty_fp_ellipse(cudaStream_t stream);
 
 void test_generate_pcb_phantom();
 
+
+int main_ossart_test();
+int main_iter_sirt_recon_sim();
+
 int main()
 {
     YK::Logger::instance().set_level(YK::LogLevel::Debug);
@@ -98,5 +102,7 @@ int main()
     //test_generate_pcb_phantom();
     //test_flat_detector_roty_fp_ellipse(0);
 
+    //main_ossart_test();
+    //main_iter_sirt_recon_sim();
     return 0;
 }
