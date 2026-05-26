@@ -93,12 +93,13 @@ namespace YK {
             case ETask::FP_Joseph:
                 Fp::fp_joseph_launch(
                     gpuctx.volTex.tex,
-                    h_src_dirs,
+                    gpuctx.geo.h_views_vec(),
                     gpuctx.geo.d_views_vox(),
                     d_sino_out,
                     vol_geom,
                     Na, params.iPU, params.iPV,
-                    false, stream);
+                    false,
+                    stream);
                 break;
 
             case ETask::FP_Siddon:

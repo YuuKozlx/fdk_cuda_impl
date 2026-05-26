@@ -9,6 +9,7 @@
 #include "global/YkCudaTextureController.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
+#include "util/YkCudaTimer.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"      // ETask 定义，按实际路径调整
 
 #include <cuda_runtime_api.h>
@@ -84,6 +85,9 @@ namespace YK {
                     static_cast<int>(task));
                 return false;
             }
+
+            fp_type_ = task;
+
             is_initialized_ = true;
             return true;
         }
@@ -135,7 +139,7 @@ namespace YK {
             //   Joseph / Siddon：三线性插值，必须走纹理路径
             //   CVP            ：直接操作体素指针，不建纹理节省显存和时间
             ETask task = fp_type_;
-            const bool needTex = (task == ETask::FP_Joseph || task == ETask::FP_CVP);
+            const bool needTex = (task == ETask::FP_Joseph || task == ETask::FP_CVP || task == ETask::FP_Siddon);
 
             Fp::FpGpuContext gpuctx;
             if (needTex)
@@ -164,9 +168,11 @@ namespace YK {
             switch (task)
             {
             case ETask::FP_Joseph:
+            {
+                //Util::CudaTimer timer{ "FP_Joseph", stream };
                 Fp::fp_joseph_launch(
                     gpuctx.volTex.tex,
-                    h_src_dirs,
+                    gpuctx.geo.h_views_vec(),
                     gpuctx.geo.d_views_vox(),
                     d_sino_out,
                     vol_geom,
@@ -174,10 +180,12 @@ namespace YK {
                     false,
                     stream);
                 break;
-
+            }
             case ETask::FP_Siddon:
+            {
+                //Util::CudaTimer timer{ "FP_Siddon", stream };
                 Fp::fp_siddon_launch(
-                    gpuctx.d_vol_raw,
+                    gpuctx.volTex.tex,
                     d_sino_out,
                     gpuctx.geo.d_views(),
                     vol_geom,
@@ -186,6 +194,8 @@ namespace YK {
                     stream
                 );
                 break;
+            }
+                
 
             case ETask::FP_CVP:
                 Fp::fp_cvp_launch(

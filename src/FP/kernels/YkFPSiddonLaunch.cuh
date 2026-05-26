@@ -14,5 +14,13 @@ namespace YK {
             int Nu, int Nv, int K,
             bool accumulate,
             cudaStream_t stream);
+        void fp_siddon_launch(
+            cudaTextureObject_t     tex,
+            float* d_sino,
+            const SConeProjGeomVec* d_views,
+            const SVolGeom& g,
+            int Nu, int Nv, int K,
+            bool accumulate,
+            cudaStream_t stream);
     } // namespace Fp
 } // namespace YK

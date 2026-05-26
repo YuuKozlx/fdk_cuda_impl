@@ -48,6 +48,8 @@ namespace YK {
             SConeProjGeomVec* d_views_vox() const { return d_projgeom_vox_.data(); }  // 体素坐标，Joseph
             const SConeProjGeomVec* h_views()     const { return h_projgeom_.data(); }
             const SConeProjGeomVec* h_views_vox() const { return h_projgeom_vox_.data(); }
+            const std::vector<SConeProjGeomVec> h_views_vec() const { return h_projgeom_; }
+            const std::vector<SConeProjGeomVec> h_views_vox_vec() const { return h_projgeom_vox_; }
             const SVolGeom& h_volgeom() const { return h_volgeom_; }
         };
 
