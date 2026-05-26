@@ -5,7 +5,14 @@
 int  main_fdk();
 int  main_bp_runner();
 int  main_bp_verify();
+//int main_siddon_bp_runner();
+int main_siddon_ray_adjoint_verify();
+int main_siddon_voxel_adjoint_verify();
+int main_joseph_adjoint_verify();
+int main_siddon_bp_verify();
+int main_siddon_zslab_verify();
 void test_fp_runner(cudaStream_t stream);
+void test_fp_runner_siddon_vs_joseph(cudaStream_t stream);
 int  main_fp();
 int main_fdk_zslab();
 int main_fdk_zslab_bigdata();
@@ -50,7 +57,14 @@ int main()
     //main_bp_zslab_verify();
     //main_bp_runner();
     //main_bp_verify();
+    //main_siddon_bp_runner();
+    //main_siddon_ray_adjoint_verify();
+    //main_joseph_adjoint_verify();
+    //main_siddon_voxel_adjoint_verify();
+    //main_siddon_bp_verify();
+    //main_siddon_zslab_verify();
     //test_fp_runner(0);
+    test_fp_runner_siddon_vs_joseph(0);
     //main_fp();
     //main_fdk_zslab();
     //main_helical_verify();
@@ -82,6 +96,7 @@ int main()
     //test_flat_detector_roty_fp(0);
 
     //test_generate_pcb_phantom();
-    test_flat_detector_roty_fp_ellipse(0);
+    //test_flat_detector_roty_fp_ellipse(0);
+
     return 0;
 }

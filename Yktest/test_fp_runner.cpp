@@ -160,6 +160,136 @@ void test_fp_runner(cudaStream_t stream)
     // d_vol, d_sino 析构自动 cudaFree
 }
 
+void test_fp_runner_siddon_vs_joseph(cudaStream_t stream)
+{
+    printf("\n[ConeProjector] test\n");
+    constexpr int   Nx = 512, Ny = 512, Nz = 400;
+    constexpr float vox_xy = 0.1f, vox_z = 0.1f;
+    constexpr int   Na = 480, Nu = 1024, Nv = 1024;
+    constexpr float du = 0.25f, dv = 0.25f;
+    constexpr float SID = 500.f, SDD = 1000.f;
+
+    SCBCTParams params;
+    params.iVX = Nx; params.iVY = Ny; params.iVZ = Nz;
+    params.vox_x_mm = vox_xy; params.vox_z_mm = vox_z;
+    params.vol_offset_x_mm = 0.f;
+    params.vol_offset_y_mm = 0.f;
+    params.vol_offset_z_mm = 0.f;
+    params.iPAng = Na;
+    params.iPU = Nu; params.iPV = Nv;
+    params.du_mm = du; params.dv_mm = dv;
+    params.SID = SID; params.SDD = SDD;
+    params.offsetU_mm = 0.f; params.offsetV_mm = 0.f;
+    params.tiltu_angle_rad = 0.f;
+    params.tiltn_angle_rad = 0.f;
+    params.tiltv_angle_rad = 0.f;
+    params.angle_list.resize(Na);
+    for (int i = 0; i < Na; ++i)
+        params.angle_list[i] = 2.f * CUDA_PI * i / 720;
+
+    Mem::MemoryController mc;
+    auto h_vol = mc.allocateCpu3D<float>(Nx, Ny, Nz);
+    if (!read_raw_float((test_data_dir + "fdk_vec_vol_offline.raw").c_str(),
+        h_vol.data(), 1LL * Nx * Ny * Nz)) {
+        printf("  fdk_vec_vol_offline.raw not found, skip\n");
+        return;
+    }
+    printf("  volume loaded\n");
+
+    auto d_vol = mc.allocateDevice3D<float>(Nx, Ny, Nz, 0);
+    {
+        auto borrowed = mc.borrowCpu3D(h_vol.data(), Nx, Ny, Nz);
+        mc.upload3D(d_vol, borrowed);
+    }
+    h_vol.reset();
+
+    auto d_sino_joseph = mc.allocateDevice3D<float>(Nu, Nv, Na, 0);
+    auto d_sino_siddon = mc.allocateDevice3D<float>(Nu, Nv, Na, 0);
+
+    // ---- Joseph FP ──────────────────────────────────────────────
+    {
+        ConeProjector fp;
+        if (!fp.init(params, ETask::FP_Joseph, 0)) {
+            YK_LOGE("ConeProjector(Joseph) init failed");
+            return;
+        }
+        YK::Util::CudaTimer timer("joseph_fp", stream);
+        bool ok = fp.run(d_vol.data(), params, d_sino_joseph.data(), stream);
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+        YK_LOGI("  joseph_fp: {}", ok ? "OK" : "FAILED");
+    }
+    {
+        std::vector<float> h_sino((size_t)Na * Nv * Nu);
+        auto borrowed = mc.borrowCpu3D(h_sino.data(), Nu, Nv, Na);
+        mc.download3D(borrowed, d_sino_joseph);
+        printStats(h_sino, "sino_joseph");
+        write_raw_float((test_data_dir + "fp_joseph_sino.raw").c_str(),
+            h_sino.data(), h_sino.size());
+        printf("  saved: fp_joseph_sino.raw\n");
+    }
+
+    // ---- Siddon FP ──────────────────────────────────────────────
+    {
+        ConeProjector fp;
+        if (!fp.init(params, ETask::FP_Siddon, 0)) {
+            YK_LOGE("ConeProjector(Siddon) init failed");
+            return;
+        }
+        YK::Util::CudaTimer timer("siddon_fp", stream);
+        bool ok = fp.run(d_vol.data(), params, d_sino_siddon.data(), stream);
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+        YK_LOGI("  siddon_fp: {}", ok ? "OK" : "FAILED");
+    }
+    {
+        std::vector<float> h_sino((size_t)Na * Nv * Nu);
+        auto borrowed = mc.borrowCpu3D(h_sino.data(), Nu, Nv, Na);
+        mc.download3D(borrowed, d_sino_siddon);
+        printStats(h_sino, "sino_siddon");
+        write_raw_float((test_data_dir + "fp_siddon_sino.raw").c_str(),
+            h_sino.data(), h_sino.size());
+        printf("  saved: fp_siddon_sino.raw\n");
+    }
+
+    // ---- 对比两者 ───────────────────────────────────────────────
+    {
+        std::vector<float> h_joseph((size_t)Na * Nv * Nu);
+        std::vector<float> h_siddon((size_t)Na * Nv * Nu);
+        {
+            auto b1 = mc.borrowCpu3D(h_joseph.data(), Nu, Nv, Na);
+            mc.download3D(b1, d_sino_joseph);
+        }
+        {
+            auto b2 = mc.borrowCpu3D(h_siddon.data(), Nu, Nv, Na);
+            mc.download3D(b2, d_sino_siddon);
+        }
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        double maxDiff = 0.0, mse = 0.0;
+        double sum_joseph = 0.0, sum_siddon = 0.0;
+        for (size_t i = 0; i < h_joseph.size(); ++i) {
+            double diff = std::abs((double)h_joseph[i] - (double)h_siddon[i]);
+            maxDiff = std::max(maxDiff, diff);
+            mse += diff * diff;
+            sum_joseph += h_joseph[i];
+            sum_siddon += h_siddon[i];
+        }
+        mse /= (double)h_joseph.size();
+
+        YK_LOGI("joseph sum = {:.6e}", sum_joseph);
+        YK_LOGI("siddon sum = {:.6e}", sum_siddon);
+        YK_LOGI("maxDiff    = {:.8f}", maxDiff);
+        YK_LOGI("MSE        = {:.8e}", mse);
+
+        double max_val = 0.0;
+        for (size_t i = 0; i < h_joseph.size(); ++i)
+            max_val = std::max(max_val, (double)std::abs(h_joseph[i]));
+
+        YK_LOGI("max proj value   = {:.6f}", max_val);
+        YK_LOGI("relative maxDiff = {:.4f}%", maxDiff / max_val * 100.0);
+        YK_LOGI("sum ratio        = {:.6f}", sum_siddon / sum_joseph);
+    }
+}
+
 
 // 测试每个视角有相同的geo offset
 void test_fp_runner_fixed_offset(cudaStream_t stream)

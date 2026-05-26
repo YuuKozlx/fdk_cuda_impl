@@ -17,6 +17,11 @@ namespace YK {
         FP_Joseph = 1,
         FP_Siddon = 2,
         FP_CVP = 3,
+        BP_Siddon_RayDriven = 4,
+        BP_Siddon_VoxDriven = 5,
+        BP_FDK = 6,
+        Bp_Joseph = 7,   // Joseph 射线驱动，手动双线性，atomicAdd
+        Bp_Joseph_Tex = 8,   // Joseph 射线驱动，纹理双线性，atomicAdd
         SART = 10,
         OSEM = 11,
     };
