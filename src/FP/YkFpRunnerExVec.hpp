@@ -30,7 +30,7 @@ namespace YK {
                 YK_LOGE("[ConeProjectorEx] unsupported task {}", (int)task);
                 return false;
             }
-            task_ = task;
+            fp_type_ = task;
             deviceId_ = deviceId;
             is_initialized_ = true;
             return true;
@@ -64,9 +64,8 @@ namespace YK {
                 params.vol_offset_x_mm,
                 params.vol_offset_y_mm,
                 params.vol_offset_z_mm);
-
-            const bool needTex =
-                (task_ == ETask::FP_Joseph || task_ == ETask::FP_CVP);
+            ETask task = fp_type_;
+            const bool needTex = (task == ETask::FP_Joseph || task == ETask::FP_CVP || task == ETask::FP_Siddon);
 
             Fp::FpGpuContext gpuctx;
             if (needTex)
@@ -89,7 +88,7 @@ namespace YK {
                     h_src_dirs[i] = gpuctx.geo.h_views_vox()[i].src;
             }
 
-            switch (task_) {
+            switch (fp_type_) {
             case ETask::FP_Joseph:
                 Fp::fp_joseph_launch(
                     gpuctx.volTex.tex,
@@ -143,7 +142,7 @@ namespace YK {
 
     private:
         bool  is_initialized_ = false;
-        ETask task_ = ETask::FP_Joseph;
+        ETask fp_type_ = ETask::FP_Joseph;
         int   deviceId_ = 0;
     };
 

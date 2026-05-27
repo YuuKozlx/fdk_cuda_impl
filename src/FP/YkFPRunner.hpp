@@ -170,7 +170,7 @@ namespace YK {
             case ETask::FP_Joseph:
             {
                 //Util::CudaTimer timer{ "FP_Joseph", stream };
-                Fp::fp_joseph_launch(
+                Fp::fp_joseph_ss_launch(
                     gpuctx.volTex.tex,
                     gpuctx.geo.h_views_vec(),
                     gpuctx.geo.d_views_vox(),
@@ -178,7 +178,8 @@ namespace YK {
                     vol_geom,
                     Na, params.iPU, params.iPV,
                     false,
-                    stream);
+                    stream,Fp::FpStepSuperSample::x1,
+                    Fp::FpDetSuperSample::x1);
                 break;
             }
             case ETask::FP_Siddon:
