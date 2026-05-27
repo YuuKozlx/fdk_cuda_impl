@@ -9,27 +9,47 @@
 namespace YK {
     namespace Bp {
 
-        void joseph_bp_launch(
-            const float* d_sino,
-            const std::vector<SConeProjGeomVec>& h_views,
-            const SConeProjGeomVec* d_views,
-            float* d_vol,
-            const SVolGeom& g,
-            int Na, int Nu, int Nv,
-            bool accumulate,
-            cudaStream_t stream,
-            BpStepSuperSample ss = BpStepSuperSample::x1);  // ← 默认 x1，与 FP 一致
+        //void joseph_bp_launch(
+        //    const float* d_sino,
+        //    const std::vector<SConeProjGeomVec>& h_views,
+        //    const SConeProjGeomVec* d_views,
+        //    float* d_vol,
+        //    const SVolGeom& g,
+        //    int Na, int Nu, int Nv,
+        //    bool accumulate,
+        //    cudaStream_t stream,
+        //    BpStepSuperSample ss = BpStepSuperSample::x1);  // ← 默认 x1，与 FP 一致
 
-        void joseph_bp_launch(
-            cudaTextureObject_t                  sinoTex,
-            const std::vector<SConeProjGeomVec>& h_views,
-            const SConeProjGeomVec* d_views,
+        //void joseph_bp_launch(
+        //    cudaTextureObject_t                  sinoTex,
+        //    const std::vector<SConeProjGeomVec>& h_views,
+        //    const SConeProjGeomVec* d_views,
+        //    float* d_vol,
+        //    const SVolGeom& g,
+        //    int Na, int Nu, int Nv,
+        //    bool accumulate,
+        //    cudaStream_t stream,
+        //    BpStepSuperSample ss = BpStepSuperSample::x1);
+        //void joseph_bp_v2_launch(
+        //    cudaTextureObject_t                  sinoTex,
+        //    const std::vector<SConeProjGeomVec>& h_views,
+        //    const SConeProjGeomVec* d_views_vox,
+        //    float* d_vol,
+        //    const SVolGeom& vg,
+        //    int Na, int Nu, int Nv,
+        //    bool accumulate,
+        //    cudaStream_t stream);
+
+        void joseph_bp_v2_launch(
+            cudaTextureObject_t     sinoTex,
+            const SConeProjGeomVec* d_views_world,   // 世界坐标
             float* d_vol,
-            const SVolGeom& g,
+            const SVolGeom& vg,
             int Na, int Nu, int Nv,
             bool accumulate,
-            cudaStream_t stream,
-            BpStepSuperSample ss = BpStepSuperSample::x1);
+            cudaStream_t stream);
+
+
 
     }; // namespace Bp
 }; // namespace YK

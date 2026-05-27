@@ -67,8 +67,9 @@ namespace YK {
         // ============================================================
         constexpr int kAnglesPerBlock = 4;
         constexpr int kBlockSlices = 256;
-        constexpr int kDetBlockU = 32;
-        constexpr int kDetBlockV = 32;
+        constexpr int kDetBlockU = 256;
+        //constexpr int kDetBlockV = 32;   // grid 分块粒度，保持不变
+        constexpr int kDetBlockV = 1;    // threadIdx.z 并行粒度，32×4×8=1024
 
 
 

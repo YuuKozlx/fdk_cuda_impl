@@ -22,6 +22,15 @@ namespace YK {
             const SVolGeom& g,
             int Nu, int Nv, int K,
             cudaStream_t            stream);
+
+        void bp_siddon_voxel_v2_launch(
+            cudaTextureObject_t              sinoTex,
+            float* d_vol,
+            const SConeProjGeomVec* d_views,
+            const SVolGeom& g,
+            int Nu, int Nv, int K,
+            bool accumulate,
+            cudaStream_t stream);
     };
 
 

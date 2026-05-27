@@ -55,8 +55,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::Bp_Joseph &&
-                task != ETask::Bp_Joseph_Tex)
+                task != ETask::Bp_Joseph)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -148,38 +147,34 @@ namespace YK {
                     stream);
                 break;
 
-            case ETask::BP_Siddon_VoxDriven:
-                Bp::bp_siddon_voxel_launch(
-                    gpuctx.d_sino_raw, d_vol_out,
-                    gpuctx.geo.d_views_world(),
-                    vol_geom,
-                    params.iPU, params.iPV, Na,
-                    stream);
-                break;
-            case ETask::Bp_Joseph:
-                Bp::joseph_bp_launch(
-                    gpuctx.d_sino_raw,
-                    gpuctx.geo.h_views_vox_vec(),   // ← 体素坐标系
-                    gpuctx.geo.d_views_vox(),       // ← 体素坐标系
-                    d_vol_out, vol_geom,
-                    Na, params.iPU, params.iPV,
-                    false, stream);
-                break;
-
-            case ETask::Bp_Joseph_Tex:
-            {
+            case ETask::BP_Siddon_VoxDriven: {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
-                Bp::joseph_bp_launch(
+                Bp::bp_siddon_voxel_v2_launch(
+                    sinoTex.tex, d_vol_out,
+                    gpuctx.geo.d_views_world(),
+                    vol_geom,
+                    params.iPU, params.iPV, Na,
+                    false, stream);
+                break;
+            }
+
+            case ETask::Bp_Joseph:
+            {
+
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::joseph_bp_v2_launch(
                     sinoTex.tex,
-                    gpuctx.geo.h_views_vox_vec(),   // ← 体素坐标系
-                    gpuctx.geo.d_views_vox(),       // ← 体素坐标系
+                    gpuctx.geo.d_views_world(),   // 世界坐标
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
                     false, stream);
+                break;
             }
-            break;
+                
             default:
                 return false;
             }
@@ -251,8 +246,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::Bp_Joseph &&
-                task != ETask::Bp_Joseph_Tex)
+                task != ETask::Bp_Joseph )
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -331,30 +325,19 @@ namespace YK {
                     gpuctx.geo.d_views_world(),
                     vol_geom, params.iPU, params.iPV, Na, stream);
                 break;
-            case ETask::Bp_Joseph:
-                Bp::joseph_bp_launch(
-                    gpuctx.d_sino_raw,
-                    gpuctx.geo.h_views_vox_vec(),   // ← 体素坐标系
-                    gpuctx.geo.d_views_vox(),       // ← 体素坐标系
-                    d_vol_out, vol_geom,
-                    Na, params.iPU, params.iPV,
-                    false, stream);
-                break;
-
-            case ETask::Bp_Joseph_Tex:
+            case ETask::Bp_Joseph: 
             {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
-                Bp::joseph_bp_launch(
+                Bp::joseph_bp_v2_launch(
                     sinoTex.tex,
-                    gpuctx.geo.h_views_vox_vec(),   // ← 体素坐标系
-                    gpuctx.geo.d_views_vox(),       // ← 体素坐标系
+                    gpuctx.geo.d_views_world(),   // 世界坐标
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
                     false, stream);
+                break;
             }
-            break;
             default:
                 return false;
             }
