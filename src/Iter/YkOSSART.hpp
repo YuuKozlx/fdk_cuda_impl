@@ -652,7 +652,6 @@ namespace YK {
                 fp_.run(d_ones_vol_, ps, d_row_w_, stream);
 
                 // ── 现算本子集 C 列权重: d_col_w_ = A_s^T · 1_proj ──
-                //   用 d_residual_ 暂存全 1 正弦图 (随后会被残差覆盖)
                 YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
                 bp_.run(d_residual_, ps, d_col_w_, stream, /*clear_vol=*/true);
 
@@ -695,7 +694,64 @@ namespace YK {
                 if (cfg_.use_max)
                     YK::Iter::clamp_max_launch(d_vol, vol_n, cfg_.max_constraint, stream);
 
-                if (iteration_ == 0) diagnose_(d_vol, sino_n, vol_n, stream);
+                //// ── 诊断：每轮第一个子集打印一次 ────────────────────────
+                //const bool is_first_of_round = (iteration_ % cfg_.n_subset == 0);
+                //if (is_first_of_round)
+                //{
+                //    cudaStreamSynchronize(stream);
+                //    const int round = iteration_ / cfg_.n_subset;
+
+                //    std::vector<float> h_sino(sino_n), h_vol(vol_n);
+
+                //    cudaMemcpy(h_sino.data(), d_row_w_,
+                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
+                //    YK_LOGI("[diag round={}] row_w      : min={:.4e} max={:.4e}",
+                //        round,
+                //        *std::min_element(h_sino.begin(), h_sino.end()),
+                //        *std::max_element(h_sino.begin(), h_sino.end()));
+
+                //    cudaMemcpy(h_vol.data(), d_col_w_,
+                //        vol_n * sizeof(float), cudaMemcpyDeviceToHost);
+                //    YK_LOGI("[diag round={}] col_w      : min={:.4e} max={:.4e}",
+                //        round,
+                //        *std::min_element(h_vol.begin(), h_vol.end()),
+                //        *std::max_element(h_vol.begin(), h_vol.end()));
+
+                //    cudaMemcpy(h_sino.data(), d_sino_meas_sub_,
+                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
+                //    YK_LOGI("[diag round={}] sino_meas  : min={:.4e} max={:.4e}",
+                //        round,
+                //        *std::min_element(h_sino.begin(), h_sino.end()),
+                //        *std::max_element(h_sino.begin(), h_sino.end()));
+
+                //    cudaMemcpy(h_sino.data(), d_sino_fwd_,
+                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
+                //    YK_LOGI("[diag round={}] sino_fwd   : min={:.4e} max={:.4e}",
+                //        round,
+                //        *std::min_element(h_sino.begin(), h_sino.end()),
+                //        *std::max_element(h_sino.begin(), h_sino.end()));
+
+                //    cudaMemcpy(h_sino.data(), d_residual_,
+                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
+                //    YK_LOGI("[diag round={}] residual   : min={:.4e} max={:.4e}",
+                //        round,
+                //        *std::min_element(h_sino.begin(), h_sino.end()),
+                //        *std::max_element(h_sino.begin(), h_sino.end()));
+
+                //    cudaMemcpy(h_vol.data(), d_bp_,
+                //        vol_n * sizeof(float), cudaMemcpyDeviceToHost);
+                //    YK_LOGI("[diag round={}] bp         : min={:.4e} max={:.4e}",
+                //        round,
+                //        *std::min_element(h_vol.begin(), h_vol.end()),
+                //        *std::max_element(h_vol.begin(), h_vol.end()));
+
+                //    cudaMemcpy(h_vol.data(), d_vol,
+                //        vol_n * sizeof(float), cudaMemcpyDeviceToHost);
+                //    YK_LOGI("[diag round={}] vol        : min={:.4e} max={:.4e}",
+                //        round,
+                //        *std::min_element(h_vol.begin(), h_vol.end()),
+                //        *std::max_element(h_vol.begin(), h_vol.end()));
+                //}
 
                 iteration_++;
                 YK_LOGD("[OSSART] iter={} subset={}/{} K={} lambda={:.4e}",
@@ -816,4 +872,237 @@ namespace YK {
         return recon.run(d_sino_meas, d_vol, params, stream);
     }
 
+} // namespace YK
+
+namespace YK {
+
+    class OSSARTEx {
+    public:
+        struct Config {
+            int   n_iter = 10;
+            int   n_subset = 20;
+            float lambda = 1.0f;
+            float lambda_red = 1.0f;
+            float eps = 1e-6f;
+            bool  use_min = false;
+            float min_constraint = 0.f;
+            bool  use_max = false;
+            float max_constraint = 1e30f;
+            ETask fp_task = ETask::FP_Joseph;
+            ETask bp_task = ETask::Bp_Joseph_v2;
+        };
+
+        bool init(const SCBCTParams& params,
+            const Config& cfg,
+            const std::vector<SConeProjGeomVec>& h_views,
+            cudaStream_t stream,
+            int deviceId = 0)
+        {
+            params_ = params;
+            cfg_ = cfg;
+            h_views_ = h_views;
+            iteration_ = 0;
+            lambda_cur_ = cfg.lambda;
+            deviceId_ = deviceId;
+
+            if ((int)h_views.size() != params.iPAng) {
+                YK_LOGE("[OSSARTEx] h_views size mismatch");
+                return false;
+            }
+
+            const int    Na = params.iPAng;
+            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
+            const size_t view_n = (size_t)params.iPU * params.iPV;
+
+            // 构建子集
+            subsets_.resize(cfg.n_subset);
+            subset_params_.resize(cfg.n_subset);
+            subset_views_.resize(cfg.n_subset);
+
+            size_t max_K = 0;
+            for (int s = 0; s < cfg.n_subset; ++s) {
+                auto& idx = subsets_[s];
+                for (int i = s; i < Na; i += cfg.n_subset)
+                    idx.push_back(i);
+                max_K = std::max(max_K, idx.size());
+
+                // 子集参数
+                auto& ps = subset_params_[s];
+                ps = params;
+                ps.iPAng = (int)idx.size();
+                ps.angle_list.resize(idx.size());
+                for (int i = 0; i < (int)idx.size(); ++i)
+                    ps.angle_list[i] = params.angle_list[idx[i]];
+
+                // 子集几何
+                auto& sv = subset_views_[s];
+                sv.resize(idx.size());
+                for (int i = 0; i < (int)idx.size(); ++i)
+                    sv[i] = h_views[idx[i]];
+            }
+
+            const size_t max_subset_sino = max_K * view_n;
+
+            YK_CUDA_CHECK(cudaMalloc(&d_sino_meas_sub_, max_subset_sino * sizeof(float)));
+            YK_CUDA_CHECK(cudaMalloc(&d_sino_fwd_, max_subset_sino * sizeof(float)));
+            YK_CUDA_CHECK(cudaMalloc(&d_residual_, max_subset_sino * sizeof(float)));
+            YK_CUDA_CHECK(cudaMalloc(&d_row_w_, max_subset_sino * sizeof(float)));
+            YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
+            YK_CUDA_CHECK(cudaMalloc(&d_ones_vol_, vol_n * sizeof(float)));
+            YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
+
+            fp_.init(params, cfg.fp_task, deviceId);
+            bp_.init(params, cfg.bp_task, deviceId);
+
+            YK::Iter::fill_ones_launch(d_ones_vol_, vol_n, stream);
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+
+            is_initialized_ = true;
+            YK_LOGI("[OSSARTEx] init OK: {} angles, {} subsets, max {}/subset",
+                Na, cfg.n_subset, max_K);
+            return true;
+        }
+
+        bool iterate(
+            const float* d_sino_meas,
+            float* d_vol,
+            cudaStream_t stream,
+            unsigned int iterations)
+        {
+            if (!is_initialized_) return false;
+
+            const size_t vol_n = (size_t)params_.iVX * params_.iVY * params_.iVZ;
+            const size_t view_n = (size_t)params_.iPU * params_.iPV;
+
+            for (unsigned int iter = 0; iter < iterations; ++iter)
+            {
+                const int subset_idx = iteration_ % cfg_.n_subset;
+                const auto& idx = subsets_[subset_idx];
+                const int   K = (int)idx.size();
+                const size_t sino_n = (size_t)K * view_n;
+
+                const SCBCTParams& ps = subset_params_[subset_idx];
+                const std::vector<SConeProjGeomVec>& sv = subset_views_[subset_idx];
+
+                // 行权重：A_s · 1_vol
+                YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_, 0, sino_n * sizeof(float), stream));
+                fp_.run(d_ones_vol_, ps, sv, d_row_w_, stream);
+
+                // 列权重：A_s^T · 1_proj
+                YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
+                bp_.run(d_residual_, ps, sv, stream, d_col_w_, true, deviceId_);
+
+                // 收集子集正弦图
+                for (int i = 0; i < K; ++i)
+                    YK_CUDA_CHECK(cudaMemcpyAsync(
+                        d_sino_meas_sub_ + i * view_n,
+                        d_sino_meas + idx[i] * view_n,
+                        view_n * sizeof(float),
+                        cudaMemcpyDeviceToDevice, stream));
+
+                // 正投影
+                YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd_, 0, sino_n * sizeof(float), stream));
+                fp_.run(d_vol, ps, sv, d_sino_fwd_, stream);
+
+                // 残差
+                YK::Iter::residual_launch(
+                    d_sino_meas_sub_, d_sino_fwd_, d_residual_, sino_n, stream);
+
+                // R行归一化
+                YK::Iter::divide_launch(d_residual_, d_row_w_, cfg_.eps, sino_n, stream);
+
+                // 反投影
+                bp_.run(d_residual_, ps, sv, stream, d_bp_, true, deviceId_);
+
+                // 更新
+                YK::Iter::update_launch(
+                    d_vol, d_bp_, d_col_w_,
+                    lambda_cur_, cfg_.eps, vol_n, stream);
+
+                lambda_cur_ *= cfg_.lambda_red;
+
+                if (cfg_.use_min)
+                    YK::Iter::clamp_min_launch(d_vol, vol_n, cfg_.min_constraint, stream);
+                if (cfg_.use_max)
+                    YK::Iter::clamp_max_launch(d_vol, vol_n, cfg_.max_constraint, stream);
+
+                iteration_++;
+                YK_LOGD("[OSSARTEx] iter={} subset={}/{} K={} lambda={:.4e}",
+                    iteration_, subset_idx + 1, cfg_.n_subset, K, lambda_cur_);
+            }
+            return true;
+        }
+
+        bool run(const float* d_sino_meas,
+            float* d_vol,
+            cudaStream_t stream)
+        {
+            if (!is_initialized_) return false;
+            return iterate(d_sino_meas, d_vol, stream,
+                cfg_.n_iter * cfg_.n_subset);
+        }
+
+        unsigned int totalIterations() const { return iteration_; }
+        void reset() { iteration_ = 0; lambda_cur_ = cfg_.lambda; }
+
+        void release()
+        {
+            if (d_sino_meas_sub_) { cudaFree(d_sino_meas_sub_); d_sino_meas_sub_ = nullptr; }
+            if (d_sino_fwd_) { cudaFree(d_sino_fwd_);      d_sino_fwd_ = nullptr; }
+            if (d_residual_) { cudaFree(d_residual_);      d_residual_ = nullptr; }
+            if (d_row_w_) { cudaFree(d_row_w_);         d_row_w_ = nullptr; }
+            if (d_bp_) { cudaFree(d_bp_);            d_bp_ = nullptr; }
+            if (d_ones_vol_) { cudaFree(d_ones_vol_);      d_ones_vol_ = nullptr; }
+            if (d_col_w_) { cudaFree(d_col_w_);         d_col_w_ = nullptr; }
+
+            subsets_.clear();
+            subset_params_.clear();
+            subset_views_.clear();
+
+            fp_.release();
+            bp_.release();
+            is_initialized_ = false;
+            iteration_ = 0;
+            lambda_cur_ = 1.0f;
+        }
+
+        ~OSSARTEx() { release(); }
+
+    private:
+        bool         is_initialized_ = false;
+        unsigned int iteration_ = 0;
+        float        lambda_cur_ = 1.0f;
+        int          deviceId_ = 0;
+        SCBCTParams  params_;
+        Config       cfg_;
+
+        std::vector<SConeProjGeomVec>        h_views_;
+        std::vector<std::vector<int>>        subsets_;
+        std::vector<SCBCTParams>             subset_params_;
+        std::vector<std::vector<SConeProjGeomVec>> subset_views_;
+
+        ConeProjectorEx     fp_;
+        ConeBackprojectorEx bp_;
+
+        float* d_sino_meas_sub_ = nullptr;
+        float* d_sino_fwd_ = nullptr;
+        float* d_residual_ = nullptr;
+        float* d_row_w_ = nullptr;
+        float* d_bp_ = nullptr;
+        float* d_ones_vol_ = nullptr;
+        float* d_col_w_ = nullptr;
+    };
+
+    YK_INLINE bool ossart_reconstruct_ex(
+        const float* d_sino_meas,
+        float* d_vol,
+        const SCBCTParams& params,
+        const std::vector<SConeProjGeomVec>& h_views,
+        cudaStream_t                         stream,
+        OSSARTEx::Config                     cfg = {})
+    {
+        OSSARTEx recon;
+        if (!recon.init(params, cfg, h_views, stream)) return false;
+        return recon.run(d_sino_meas, d_vol, stream);
+    }
 } // namespace YK
