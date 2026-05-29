@@ -54,6 +54,8 @@ namespace YK {
         // 体素大小（mm）
         float vox_x = 1.f, vox_y = 1.f, vox_z = 1.f;
 
+        float tmp_rcp_vox_x = 1.f, tmp_rcp_vox_y = 1.f, tmp_rcp_vox_z = 1.f; // 体素大小的倒数，预计算加速
+
         // volume 中心的世界坐标（mm），默认原点
         float3 center = make_float3(0.f, 0.f, 0.f);
 
@@ -63,6 +65,10 @@ namespace YK {
             g.Nx = Nx; g.Ny = Ny; g.Nz = Nz;
             g.vox_x = g.vox_y = g.vox_z = vox;
             g.center = make_float3(0.f, 0.f, 0.f);
+
+
+            g.tmp_rcp_vox_x = g.tmp_rcp_vox_y = 1.f / vox;
+            g.tmp_rcp_vox_z = 1.f / vox;
             return g;
         }
 
@@ -71,6 +77,10 @@ namespace YK {
             g.Nx = Nx; g.Ny = Ny; g.Nz = Nz;
             g.vox_x = g.vox_y = vox_xy; g.vox_z = vox_z;
             g.center = make_float3(0.f, 0.f, 0.f);
+
+
+            g.tmp_rcp_vox_x = g.tmp_rcp_vox_y = 1.f / vox_xy;
+            g.tmp_rcp_vox_z = 1.f / vox_z;
             return g;
         }
 
@@ -181,7 +191,7 @@ namespace YK {
         float dtheta;
         float SID2;
         float fScaleDTheta;
-        float fReserved;
+        float SDD2;
 
     };
 
