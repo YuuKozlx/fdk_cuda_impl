@@ -82,6 +82,7 @@ namespace YK {
                 c.dtheta = gv.dtheta;
                 c.SID2 = (float)(gv.SOD_mm * gv.SOD_mm);
                 c.fScaleDTheta = gv.fScaleDTheta;
+                c.SDD2 = (float)(SDD * SDD);
 
                 d_coeffs[a] = c;
 #ifdef YK_DEBUG

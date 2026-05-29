@@ -101,8 +101,8 @@ namespace YK {
                     rel[i] = f;
                 }
 
-                YK_DEV_LOGI("\n[pk_upload] K=%d base=%.6f angles[0]=%.6f angles[K-1]=%.6f\n\n",
-                    K, fAngleBase, h_angles[0], h_angles[K - 1]);
+                //YK_DEV_LOGI("\n[pk_upload] K=%d base=%.6f angles[0]=%.6f angles[K-1]=%.6f\n\n",
+                //    K, fAngleBase, h_angles[0], h_angles[K - 1]);
                 YK_CUDA_CHECK(cudaMemcpyToSymbol(
 
                     gC_parker_angle,

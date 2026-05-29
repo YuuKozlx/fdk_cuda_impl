@@ -15,6 +15,7 @@
 #include "YkBPGpuContext_Siddon.hpp"
 #include "BP/kernels/YkBPSiddonLaunch.cuh"
 #include "BP/kernels/YkBpJosephLaunch.cuh"
+#include "BP/kernels/YkBpFdkLaunch.cuh"
 
 namespace YK {
 
@@ -55,7 +56,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::Bp_Joseph)
+                task != ETask::Bp_Joseph && task != ETask::BP_FDK && task != ETask::Bp_Joseph_v2 && task != ETask::Bp_Joseph_v3)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -100,6 +101,7 @@ namespace YK {
 
             const int Na = params.iPAng;
             std::vector<SConeProjGeomVec> h_views(Na);
+            std::vector<SFDKGeoParamPerView> h_gv(Na);
             build_circular_vec_geometry_from_theta(
                 h_views, params.angle_list, Na,
                 params.iPU, params.iPV,
@@ -110,9 +112,14 @@ namespace YK {
                     rad2deg(params.tiltn_angle_rad),
                     rad2deg(params.tiltv_angle_rad)));
 
+
+
+            GeoDerivedManagerVec{}.build_geo_params(
+                params.iPU, params.iPV, params.scan_range_rad, h_views, h_gv);
+
             // ── GPU context（两种 BP 都不建纹理）────────────────────────
             Bp::BpSiddonGpuContext gpuctx;
-            gpuctx.initNoTex(d_sino, vol_geom, h_views, deviceId);
+            gpuctx.initNoTex(d_sino, vol_geom, h_views, h_gv, stream, deviceId);
 
             // ── 清零 ─────────────────────────────────────────────────────
             if (clear_vol) {
@@ -166,15 +173,52 @@ namespace YK {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
-                Bp::joseph_bp_v2_launch(
+                Bp::joseph_bp_launch(
                     sinoTex.tex,
-                    gpuctx.geo.d_views_world(),   // 世界坐标
+                    gpuctx.geo.h_views_world_vec(),
+                    gpuctx.geo.d_views_vox(),   // 世界坐标
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
                     false, stream);
                 break;
             }
-                
+            case ETask::BP_FDK:
+            {
+
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+
+                Bp::fdk_bp_launch(sinoTex.tex, gpuctx.geo.d_views_world(),
+                    gpuctx.geo.d_coeffs_data(), d_vol_out, vol_geom,
+                    Na, false, stream);
+
+                break;
+            }
+            case ETask::Bp_Joseph_v2: {
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::joseph_bp_v2_launch(
+                    sinoTex.tex,
+                    gpuctx.geo.d_views_vox(),   // 世界坐标
+                    d_vol_out, vol_geom,
+                    Na, params.iPU, params.iPV,
+                    false, stream);
+                break;
+            }
+            case ETask::Bp_Joseph_v3: {
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::joseph_bp_v3_launch(sinoTex.tex,
+                    gpuctx.geo.d_views_world(),   // 世界坐标
+                    gpuctx.geo.d_coeffs_data(),
+                    d_vol_out, vol_geom,
+                    Na,
+                    false, stream);
+            }
+
             default:
                 return false;
             }
@@ -246,7 +290,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::Bp_Joseph )
+                task != ETask::Bp_Joseph && task != ETask::BP_FDK && task != ETask::Bp_Joseph_v2 && task != ETask::Bp_Joseph_v3)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -264,6 +308,7 @@ namespace YK {
             cudaStream_t                          stream,
             float* d_vol_out,
             bool                                  clear_vol = true,
+            int                deviceId = 0,
             TaskDumpCallback                      onDump = nullptr,
             void* userdata = nullptr)
         {
@@ -278,6 +323,7 @@ namespace YK {
             if ((int)h_views_ext.size() != params.iPAng) {
                 YK_LOGE("[ConeBackprojectorEx] run: h_views_ext size mismatch\n"); return false;
             }
+            deviceId = 0;
 
             const int Na = params.iPAng;
 
@@ -289,8 +335,15 @@ namespace YK {
                 params.vol_offset_y_mm,
                 params.vol_offset_z_mm);
 
+
+            std::vector<SFDKGeoParamPerView> h_gv(h_views_ext.size());
+
+            GeoDerivedManagerVec{}.build_geo_params(
+                params.iPU, params.iPV, params.scan_range_rad, h_views_ext, h_gv);
+
+
             Bp::BpSiddonGpuContext gpuctx;
-            gpuctx.initNoTex(d_sino, vol_geom, h_views_ext);
+            gpuctx.initNoTex(d_sino, vol_geom, h_views_ext, h_gv, stream, deviceId);
 
             if (clear_vol) {
                 YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0,
@@ -311,33 +364,83 @@ namespace YK {
                 }
             }
 
+            // ── Dispatch ─────────────────────────────────────────────────
             switch (bp_type_)
             {
             case ETask::BP_Siddon_RayDriven:
                 Bp::bp_siddon_launch(
                     gpuctx.d_sino_raw, d_vol_out,
                     gpuctx.geo.d_views_world(),
-                    vol_geom, params.iPU, params.iPV, Na, stream);
+                    vol_geom,
+                    params.iPU, params.iPV, Na,
+                    stream);
                 break;
-            case ETask::BP_Siddon_VoxDriven:
-                Bp::bp_siddon_voxel_launch(
-                    gpuctx.d_sino_raw, d_vol_out,
-                    gpuctx.geo.d_views_world(),
-                    vol_geom, params.iPU, params.iPV, Na, stream);
-                break;
-            case ETask::Bp_Joseph: 
-            {
+
+            case ETask::BP_Siddon_VoxDriven: {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
-                Bp::joseph_bp_v2_launch(
+                Bp::bp_siddon_voxel_v2_launch(
+                    sinoTex.tex, d_vol_out,
+                    gpuctx.geo.d_views_world(),
+                    vol_geom,
+                    params.iPU, params.iPV, Na,
+                    false, stream);
+                break;
+            }
+
+            case ETask::Bp_Joseph:
+            {
+
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::joseph_bp_launch(
                     sinoTex.tex,
-                    gpuctx.geo.d_views_world(),   // 世界坐标
+                    gpuctx.geo.h_views_world_vec(),
+                    gpuctx.geo.d_views_vox(),   // 世界坐标
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
                     false, stream);
                 break;
             }
+            case ETask::BP_FDK:
+            {
+
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+
+                Bp::fdk_bp_launch(sinoTex.tex, gpuctx.geo.d_views_world(),
+                    gpuctx.geo.d_coeffs_data(), d_vol_out, vol_geom,
+                    Na, false, stream);
+
+                break;
+            }
+            case ETask::Bp_Joseph_v2: {
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::joseph_bp_v2_launch(
+                    sinoTex.tex,
+                    gpuctx.geo.d_views_vox(),   // 世界坐标
+                    d_vol_out, vol_geom,
+                    Na, params.iPU, params.iPV,
+                    false, stream);
+                break;
+            }
+            case ETask::Bp_Joseph_v3: {
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::joseph_bp_v3_launch(sinoTex.tex,
+                    gpuctx.geo.d_views_world(),   // 世界坐标
+                    gpuctx.geo.d_coeffs_data(),
+                    d_vol_out, vol_geom,
+                    Na,
+                    false, stream);
+            }
+
             default:
                 return false;
             }
@@ -373,12 +476,13 @@ namespace YK {
         ETask                                 task,
         cudaStream_t                          stream,
         bool                                  clear_vol = true,
+        int                                   deviceId = 0,
         TaskDumpCallback                      onDump = nullptr,
         void* userdata = nullptr)
     {
         ConeBackprojectorEx bp;
         if (!bp.init(params, task)) return false;
         return bp.run(d_sino, params, h_views_ext, stream,
-            d_vol_out, clear_vol, onDump, userdata);
+            d_vol_out, clear_vol, deviceId, onDump, userdata);
     }
 } // namespace YK
