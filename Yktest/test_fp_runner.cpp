@@ -11,6 +11,8 @@
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 #include <FP/YkFpRunnerExVec.hpp>
+#include <BP/YkSiddonBPRunner.hpp>
+#include <iter/YkOSSART.hpp>
 
 using namespace YK;
 
@@ -336,7 +338,7 @@ void test_fp_runner_fixed_offset(cudaStream_t stream)
     build_circular_vec_geometry_perframe(
         h_views,
         params.angle_list,
-        Na, Nu, Nv, du, dv, SID, SDD-SID,
+        Na, Nu, Nv, du, dv, SID, SDD - SID,
         det_offsets, src_offsets,
         detTilt_degs, srcCRTilt_degs);
 
@@ -423,7 +425,7 @@ void test_fp_runner_random_offset(cudaStream_t stream)
     build_circular_vec_geometry_perframe(
         h_views,
         params.angle_list,
-        Na, Nu, Nv, du, dv, SID, SDD-SID,
+        Na, Nu, Nv, du, dv, SID, SDD - SID,
         det_offsets, src_offsets,
         detTilt_degs, srcCRTilt_degs);
 
@@ -509,7 +511,7 @@ void test_fp_runner_periodic_offset(cudaStream_t stream)
         h_views, angle_list,
         Na, params.iPU, params.iPV,
         params.du_mm, params.dv_mm,
-        params.SID, params.SDD- params.SID,
+        params.SID, params.SDD - params.SID,
         det_offsets, src_offsets,
         detTilt_degs, srcCRTilt_degs);
 
@@ -551,7 +553,7 @@ void test_fp_runner_periodic_offset(cudaStream_t stream)
 void test_periodic_fp_ideal_recon(cudaStream_t stream)
 {
     auto params = make_default_params();
-    auto fp_cfg = make_periodic_config(params, 0.f, 30.f, 0.f, 0.f,0.f,0.f, 360.f);
+    auto fp_cfg = make_periodic_config(params, 0.f, 30.f, 0.f, 0.f, 0.f, 0.f, 360.f);
     auto recon_cfg = make_ideal_config(params);
     run_fp(params, fp_cfg, "fp_periodic_sino.raw", "recon_raw_save.raw", stream);
     run_recon(params, recon_cfg, "fp_periodic_sino.raw", "recon_periodic_ideal.raw", stream);
@@ -596,10 +598,10 @@ void test_insufficient_angle_fp_recon(cudaStream_t stream)
     auto params = make_default_params();
 
     // 实际扫描只有238°，但重建时按240°处理
-    constexpr float actual_range_deg  = 238.f;
+    constexpr float actual_range_deg = 238.f;
     constexpr float assumed_range_deg = 240.f;
 
-    const float actual_range_rad  = actual_range_deg  * CUDA_PI / 180.f;
+    const float actual_range_rad = actual_range_deg * CUDA_PI / 180.f;
     const float assumed_range_rad = assumed_range_deg * CUDA_PI / 180.f;
 
     // 正投影：按实际238°生成angle_list
@@ -613,10 +615,10 @@ void test_insufficient_angle_fp_recon(cudaStream_t stream)
     for (int i = 0; i < recon_params.iPAng; ++i)
         recon_params.angle_list[i] = i * assumed_range_rad / (recon_params.iPAng - 1);
 
-    auto fp_cfg    = make_ideal_config(params);       // 用实际238°几何投影
+    auto fp_cfg = make_ideal_config(params);       // 用实际238°几何投影
     auto recon_cfg = make_ideal_config(recon_params); // 用假设240°几何重建
 
-    run_fp   (params,       fp_cfg,    "fp_insufficient_angle_sino.raw", "recon_raw_save.raw",stream);
+    run_fp(params, fp_cfg, "fp_insufficient_angle_sino.raw", "recon_raw_save.raw", stream);
     run_recon(recon_params, recon_cfg, "fp_insufficient_angle_sino.raw", "recon_insufficient_angle.raw", stream);
 }
 
@@ -647,7 +649,7 @@ void test_flat_detector_roty_fp(cudaStream_t stream)
 
 
 
-    run_fp(params, h_views, "fp_flat_det_roty_sino.raw", "pcb_phantom.raw",stream);
+    run_fp(params, h_views, "fp_flat_det_roty_sino.raw", "pcb_phantom.raw", stream);
     params.iVX = 512;
     params.iVY = 100;
     params.iVZ = 512;
@@ -732,7 +734,7 @@ void test_flat_detector_roty_fp_ellipse(cudaStream_t stream)
     //    float4 angle;   // x = gantry angle, y/z = reserved, w = unused
     //};
 
-    for(int i = 0; i < params.iPAng; ++i) {
+    for (int i = 0; i < params.iPAng; ++i) {
         const auto& v_circle = h_views_circle[i];
         const auto& v_ellipse = h_views_ellipse[i];
         // 比较 src_pos
@@ -755,3 +757,6 @@ void test_generate_pcb_phantom()
 {
     generate_pcb_phantom(test_data_dir + "pcb_phantom.raw");
 }
+
+
+

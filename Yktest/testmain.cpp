@@ -4,16 +4,21 @@
 // 各模块测试函数声明
 int  main_fdk();
 int  main_bp_runner();
+int main_fdkbp_vs_onlybp_verify();
 int  main_bp_verify();
-//int main_siddon_bp_runner();
+int main_siddon_bp_runner();
 int main_siddon_ray_adjoint_verify();
 int main_siddon_voxel_adjoint_verify();
 int main_joseph_adjoint_verify();
+int main_joseph_v2_v3_adjoint_verify();
 int main_siddon_bp_verify();
 int main_siddon_zslab_verify();
+
+int main_fp_bp_geometry_verify();
 void test_fp_runner(cudaStream_t stream);
 void test_fp_runner_siddon_vs_joseph(cudaStream_t stream);
 int  main_fp();
+
 int main_fdk_zslab();
 int main_fdk_zslab_bigdata();
 int main_bp_zslab_verify();
@@ -41,13 +46,14 @@ void test_fixed_fp_corrected_recon(cudaStream_t stream);
 void test_insufficient_angle_fp_recon(cudaStream_t stream);
 
 void test_flat_detector_roty_fp(cudaStream_t stream);
+void test_flat_detector_roty_fp_ossart(cudaStream_t stream);
 void test_flat_detector_roty_fp_ellipse(cudaStream_t stream);
 
 
 
 void test_generate_pcb_phantom();
 
-
+int main_ossart_ex_test();
 int main_ossart_test();
 int main_iter_sirt_recon_sim();
 
@@ -60,15 +66,19 @@ int main()
     //main_fdk();
     //main_bp_zslab_verify();
     //main_bp_runner();
+    //main_fdkbp_vs_onlybp_verify();
     //main_bp_verify();
     //main_siddon_bp_runner();
     //main_siddon_ray_adjoint_verify();
     //main_joseph_adjoint_verify();
+    //main_joseph_v2_v3_adjoint_verify();
     //main_siddon_voxel_adjoint_verify();
     //main_siddon_bp_verify();
     //main_siddon_zslab_verify();
+    // 
+     //main_fp_bp_geometry_verify();
     //test_fp_runner(0);
-    test_fp_runner_siddon_vs_joseph(0);
+    //test_fp_runner_siddon_vs_joseph(0);
     //main_fp();
     //main_fdk_zslab();
     //main_helical_verify();
@@ -98,10 +108,11 @@ int main()
     //test_insufficient_angle_fp_recon(0);
 
     //test_flat_detector_roty_fp(0);
+    test_flat_detector_roty_fp_ossart(0);
 
     //test_generate_pcb_phantom();
     //test_flat_detector_roty_fp_ellipse(0);
-
+    //main_ossart_ex_test();
     //main_ossart_test();
     //main_iter_sirt_recon_sim();
     return 0;
