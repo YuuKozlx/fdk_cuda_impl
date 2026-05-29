@@ -25,7 +25,8 @@ namespace YK {
                 cudaEventSynchronize(stop);
                 float ms = 0.f;
                 cudaEventElapsedTime(&ms, start, stop);
-                printf("[%s] %.3f ms\n", tag, ms);
+                //printf("[%s] %.3f ms\n", tag, ms);
+                YK_LOGD("[CUDA] {}: {:.3f} ms\n", tag, ms);
                 cudaEventDestroy(start);
                 cudaEventDestroy(stop);
             }
