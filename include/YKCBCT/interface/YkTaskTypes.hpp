@@ -20,7 +20,9 @@ namespace YK {
         BP_Siddon_RayDriven = 4,
         BP_Siddon_VoxDriven = 5,
         BP_FDK = 6,
-        Bp_Joseph = 7,   // Joseph 射线驱动，手动双线性，atomicAdd
+        Bp_Joseph = 7,   //
+        Bp_Joseph_v2 = 8, // 
+        Bp_Joseph_v3 = 9, // 
         SART = 10,
         OSEM = 11,
     };
