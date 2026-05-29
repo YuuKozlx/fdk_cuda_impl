@@ -318,6 +318,7 @@ namespace YK {
             }
 
             T* data()  const noexcept { return ptr_; }
+            const T* cdata()  const noexcept { return ptr_; }
             int      count() const noexcept { return n_; }
             explicit operator bool() const noexcept { return ptr_ != nullptr; }
 
@@ -371,6 +372,7 @@ namespace YK {
             }
 
             T* data()  const noexcept { return ptr_; }
+            const T* cdata()  const noexcept { return ptr_; }
             Shape3D  shape() const noexcept { return sh_; }
             uint64_t size()  const noexcept { return uint64_t(sh_.nx) * sh_.ny * sh_.nz; }
             explicit operator bool() const noexcept { return ptr_ != nullptr; }
