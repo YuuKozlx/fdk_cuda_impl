@@ -20,14 +20,25 @@
 namespace YK {
 
     // ====================================================================
-    // ConeBackprojector
-    //
-    // 支持的 ETask：
-    //   BP_Siddon_RayDriven —— 射线驱动，严格伴随，慢
-    //   BP_Siddon_VoxDriven —— 体素驱动，近似伴随，快
-    //
-    // 其他 ETask 直接报错返回 false。
-    // ====================================================================
+        // ConeBackprojector
+        //
+        // 修复 (2 处 run 同样的 bug)：
+        //   原各 dispatch 分支 accumulate 硬编码为 false → 每次 BP 强制清零，
+        //   无法跨 batch 累加。SIRT 的 C 预计算 / 每轮 d_bp_ 只保留最后一批，
+        //   产生方向性(对角渐变)伪影。
+        //   改为 accumulate = !clear_vol：
+        //     clear_vol=true  → accumulate=false → launch 内 memset 后写入(覆盖)
+        //     clear_vol=false → accumulate=true  → launch 不 memset，kernel += 累加
+        //   并删除 run 内部独立 memset（清零统一由 launch 按 accumulate 处理）。
+        //   BP_Siddon_RayDriven 分支 launch 无 accumulate 参数(kernel 用 atomicAdd
+        //   累加、无覆盖能力)，单独保留 if(clear_vol) memset。
+        //   另补 Bp_Joseph_v3 分支遗漏的 break;
+        //
+        // 支持的 ETask：
+        //   BP_Siddon_RayDriven —— 射线驱动，严格伴随，慢 (atomicAdd，无 accumulate 参数)
+        //   BP_Siddon_VoxDriven —— 体素驱动，近似伴随，快
+        //   Bp_Joseph / Bp_Joseph_v2 / Bp_Joseph_v3 / BP_FDK
+        // ====================================================================
     class ConeBackprojector {
     public:
         bool isInitialized() const { return is_initialized_; }
@@ -121,12 +132,8 @@ namespace YK {
             Bp::BpSiddonGpuContext gpuctx;
             gpuctx.initNoTex(d_sino, vol_geom, h_views, h_gv, stream, deviceId);
 
-            // ── 清零 ─────────────────────────────────────────────────────
-            if (clear_vol) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0,
-                    (size_t)params.iVX * params.iVY * params.iVZ * sizeof(float),
-                    stream));
-            }
+            // ── 累加标志：清零交给各 launch 按 accumulate 统一处理 ──
+            const bool accumulate = !clear_vol;
 
             // ── dump 输入正弦图 ───────────────────────────────────────────
             if (onDump) {
@@ -146,6 +153,13 @@ namespace YK {
             switch (bp_type_)
             {
             case ETask::BP_Siddon_RayDriven:
+                // launch 无 accumulate 参数，kernel 用 atomicAdd 累加、无覆盖能力。
+                // clear_vol=true 时此处手动清零；false 时直接累加。
+                if (clear_vol) {
+                    YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0,
+                        (size_t)params.iVX * params.iVY * params.iVZ * sizeof(float),
+                        stream));
+                }
                 Bp::bp_siddon_launch(
                     gpuctx.d_sino_raw, d_vol_out,
                     gpuctx.geo.d_views_world(),
@@ -163,36 +177,32 @@ namespace YK {
                     gpuctx.geo.d_views_world(),
                     vol_geom,
                     params.iPU, params.iPV, Na,
-                    false, stream);
+                    accumulate, stream);
                 break;
             }
 
             case ETask::Bp_Joseph:
             {
-
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
                 Bp::joseph_bp_launch(
                     sinoTex.tex,
                     gpuctx.geo.h_views_world_vec(),
-                    gpuctx.geo.d_views_vox(),   // 世界坐标
+                    gpuctx.geo.d_views_vox(),
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
-                    false, stream);
+                    accumulate, stream);
                 break;
             }
             case ETask::BP_FDK:
             {
-
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
-
                 Bp::fdk_bp_launch(sinoTex.tex, gpuctx.geo.d_views_world(),
                     gpuctx.geo.d_coeffs_data(), d_vol_out, vol_geom,
-                    Na, false, stream);
-
+                    Na, accumulate, stream);
                 break;
             }
             case ETask::Bp_Joseph_v2: {
@@ -201,7 +211,7 @@ namespace YK {
                     params.iPU, params.iPV, Na);
                 Bp::joseph_bp_v2_launch(
                     sinoTex.tex,
-                    gpuctx.geo.d_views_vox(),   // 世界坐标
+                    gpuctx.geo.d_views_world(),
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
                     false, stream);
@@ -212,11 +222,12 @@ namespace YK {
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
                 Bp::joseph_bp_v3_launch(sinoTex.tex,
-                    gpuctx.geo.d_views_world(),   // 世界坐标
+                    gpuctx.geo.d_views_world(),
                     gpuctx.geo.d_coeffs_data(),
                     d_vol_out, vol_geom,
                     Na,
-                    false, stream);
+                    accumulate, stream);
+                break;   // ← 原代码遗漏，已补
             }
 
             default:
@@ -264,12 +275,9 @@ namespace YK {
     }
 
 
-
-
     // ====================================================================
-// SiddonBpReconstructor  →  整合后用 ConeBackprojector
-// SiddonBpReconstructorEx →  ConeBackprojectorEx（外部几何）
-// ====================================================================
+    // ConeBackprojectorEx（外部几何）—— 同样的修复
+    // ====================================================================
     class ConeBackprojectorEx {
     public:
         bool isInitialized() const { return is_initialized_; }
@@ -335,21 +343,16 @@ namespace YK {
                 params.vol_offset_y_mm,
                 params.vol_offset_z_mm);
 
-
             std::vector<SFDKGeoParamPerView> h_gv(h_views_ext.size());
 
             GeoDerivedManagerVec{}.build_geo_params(
                 params.iPU, params.iPV, params.scan_range_rad, h_views_ext, h_gv);
 
-
             Bp::BpSiddonGpuContext gpuctx;
             gpuctx.initNoTex(d_sino, vol_geom, h_views_ext, h_gv, stream, deviceId);
 
-            if (clear_vol) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0,
-                    (size_t)params.iVX * params.iVY * params.iVZ * sizeof(float),
-                    stream));
-            }
+            // ── 累加标志：清零交给各 launch 按 accumulate 统一处理 ──
+            const bool accumulate = !clear_vol;
 
             if (onDump) {
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -368,6 +371,11 @@ namespace YK {
             switch (bp_type_)
             {
             case ETask::BP_Siddon_RayDriven:
+                if (clear_vol) {
+                    YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0,
+                        (size_t)params.iVX * params.iVY * params.iVZ * sizeof(float),
+                        stream));
+                }
                 Bp::bp_siddon_launch(
                     gpuctx.d_sino_raw, d_vol_out,
                     gpuctx.geo.d_views_world(),
@@ -385,36 +393,32 @@ namespace YK {
                     gpuctx.geo.d_views_world(),
                     vol_geom,
                     params.iPU, params.iPV, Na,
-                    false, stream);
+                    accumulate, stream);
                 break;
             }
 
             case ETask::Bp_Joseph:
             {
-
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
                 Bp::joseph_bp_launch(
                     sinoTex.tex,
                     gpuctx.geo.h_views_world_vec(),
-                    gpuctx.geo.d_views_vox(),   // 世界坐标
+                    gpuctx.geo.d_views_vox(),
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
-                    false, stream);
+                    accumulate, stream);
                 break;
             }
             case ETask::BP_FDK:
             {
-
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
-
                 Bp::fdk_bp_launch(sinoTex.tex, gpuctx.geo.d_views_world(),
                     gpuctx.geo.d_coeffs_data(), d_vol_out, vol_geom,
-                    Na, false, stream);
-
+                    Na, accumulate, stream);
                 break;
             }
             case ETask::Bp_Joseph_v2: {
@@ -423,10 +427,10 @@ namespace YK {
                     params.iPU, params.iPV, Na);
                 Bp::joseph_bp_v2_launch(
                     sinoTex.tex,
-                    gpuctx.geo.d_views_vox(),   // 世界坐标
+                    gpuctx.geo.d_views_vox(),
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
-                    false, stream);
+                    accumulate, stream);
                 break;
             }
             case ETask::Bp_Joseph_v3: {
@@ -434,11 +438,12 @@ namespace YK {
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
                 Bp::joseph_bp_v3_launch(sinoTex.tex,
-                    gpuctx.geo.d_views_world(),   // 世界坐标
+                    gpuctx.geo.d_views_world(),
                     gpuctx.geo.d_coeffs_data(),
                     d_vol_out, vol_geom,
                     Na,
-                    false, stream);
+                    accumulate, stream);
+                break;   // ← 原代码遗漏，已补
             }
 
             default:

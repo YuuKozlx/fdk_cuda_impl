@@ -51,6 +51,7 @@ void test_flat_detector_roty_fp_ellipse(cudaStream_t stream);
 
 
 
+
 void test_generate_pcb_phantom();
 
 int main_ossart_ex_test();
@@ -108,12 +109,12 @@ int main()
     //test_insufficient_angle_fp_recon(0);
 
     //test_flat_detector_roty_fp(0);
-    test_flat_detector_roty_fp_ossart(0);
+    //test_flat_detector_roty_fp_ossart(0);
 
     //test_generate_pcb_phantom();
     //test_flat_detector_roty_fp_ellipse(0);
     //main_ossart_ex_test();
-    //main_ossart_test();
+    main_ossart_test();
     //main_iter_sirt_recon_sim();
     return 0;
 }

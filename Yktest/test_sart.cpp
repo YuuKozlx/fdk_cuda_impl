@@ -30,11 +30,11 @@ int main_ossart_test()
 {
     SCBCTParams params;
     params.iPU = 1024; params.iPV = 1024;
-    params.iPAng = 480; params.iPAngTotal = 480;
+    params.iPAng = 360; params.iPAngTotal = 360;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
-    params.scan_range_rad = (float)CUDA_PI * 4.0f / 3.0f;
+    params.scan_range_rad = (float)CUDA_PI * 3.0f / 3.0f;
     params.SID = 500.0f; params.SDD = 1000.0f;
     params.du_mm = 0.25f; params.dv_mm = 0.25f;
     params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
@@ -81,14 +81,14 @@ int main_ossart_test()
     // ---- OS-SART 配置 ───────────────────────────────────────────
     OSSART::Config cfg;
     cfg.n_iter = 10;
-    cfg.n_subset = 20;
+    cfg.n_subset = 10;
     cfg.lambda = 1.f;
     cfg.lambda_red = 1.f;
     cfg.eps = 1e-6f;
     cfg.use_min = false;
     cfg.min_constraint = 0.f;     // CT 值非负约束
-    cfg.fp_task = ETask::FP_Siddon;
-    cfg.bp_task = ETask::BP_FDK;
+    cfg.fp_task = ETask::FP_Joseph;       // Joseph 正投影
+    cfg.bp_task = ETask::Bp_Joseph_v2;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ──────────────────────────────────────────
 
@@ -123,7 +123,7 @@ int main_ossart_test()
         float maxv = *std::max_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
         YK_LOGI("vol stats: min={:.6f} max={:.6f}", minv, maxv);
 
-        write_raw_float((test_data_dir + "ossart_vol.raw").c_str(),
+        write_raw_float((test_data_dir + "ossart_vol_v2.raw").c_str(),
             h_vol.cdata(), vol_elems);
         YK_LOGI("saved: ossart_vol.raw ({}x{}x{})", Nx, Ny, Nz);
     }
@@ -495,11 +495,11 @@ int main_iter_sirt_recon_sim()
 {
     SCBCTParams params;
     params.iPU = 1024; params.iPV = 1024;
-    params.iPAng = 480; params.iPAngTotal = 480;
+    params.iPAng = 360; params.iPAngTotal = 360;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
-    params.scan_range_rad = (float)CUDA_PI * 4.0f / 3.0f;
+    params.scan_range_rad = (float)CUDA_PI * 3.0f / 3.0f;
     params.SID = 500.0f; params.SDD = 1000.0f;
     params.du_mm = 0.25f; params.dv_mm = 0.25f;
     params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
@@ -519,76 +519,42 @@ int main_iter_sirt_recon_sim()
     const size_t proj_elems = view_elems * params.iPAng;
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
+    // ---- 读测量正弦图 ────────────────────────────────────────────
+    std::vector<float> h_sino(proj_elems);
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_sino)) {
+        YK_LOGE("cannot read proj file");
+        return -1;
+    }
+    YK_LOGI("sino loaded");
+
     cudaStream_t s = nullptr;
     YK_CUDA_CHECK(cudaStreamCreate(&s));
     MemoryController ctrl;
 
-    // d_sino 和 d_vol_rec 需要跨作用域，在外层声明
     auto d_sino = ctrl.allocateDevice3D<float>(view_elems, params.iPAng, 1, 0);
-    auto d_vol_rec = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
-
-    // ---- Step1：读 phantom，FP 生成正弦图，用完释放 d_vol_gt ────
-    std::vector<float> h_vol_gt(vol_elems);  // CPU 副本，保留到最后做对比
     {
-        if (!read_raw_float((test_data_dir + "fdk_vec_vol_online.raw").c_str(), h_vol_gt)) {
-            YK_LOGE("cannot read fdk_vec_vol_online.raw");
-            YK_CUDA_CHECK(cudaStreamDestroy(s));
-            return -1;
-        }
-        YK_LOGI("ground truth loaded");
-
-        float minv = *std::min_element(h_vol_gt.begin(), h_vol_gt.end());
-        float maxv = *std::max_element(h_vol_gt.begin(), h_vol_gt.end());
-        YK_LOGI("gt stats: min={:.6f} max={:.6f}", minv, maxv);
-
-        // d_vol_gt 在此作用域内，结束时自动释放 400MB
-        auto d_vol_gt = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
-        {
-            auto h_buf = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
-            std::memcpy(h_buf.data(), h_vol_gt.data(), vol_elems * sizeof(float));
-            ctrl.upload3D(d_vol_gt, h_buf);
-        }
-
-        // FP 生成正弦图
-        {
-            ConeProjector fp;
-            fp.init(params, ETask::FP_Joseph);
-            YK_CUDA_CHECK(cudaMemsetAsync(d_sino.data(), 0,
-                proj_elems * sizeof(float), s));
-            YK::Util::CudaTimer timer("fp_generate_sino", s);
-            fp.run(d_vol_gt.data(), params, d_sino.data(), s);
-        }
-        cudaStreamSynchronize(s);
-    }   // ← d_vol_gt 在这里析构，释放 400MB
-    {
-        auto h_sino = ctrl.allocateCpu3D<float>(view_elems, params.iPAng, 1, false);
-        ctrl.download3D(h_sino, d_sino);
-        float minv = *std::min_element(h_sino.cdata(), h_sino.cdata() + proj_elems);
-        float maxv = *std::max_element(h_sino.cdata(), h_sino.cdata() + proj_elems);
-        YK_LOGI("sino stats: min={:.6f} max={:.6f}", minv, maxv);
-        write_raw_float((test_data_dir + "sim_sino.raw").c_str(),
-            h_sino.cdata(), proj_elems);
-        YK_LOGI("saved: sim_sino.raw");
+        auto h_buf = ctrl.allocateCpu3D<float>(view_elems, params.iPAng, 1, false);
+        std::memcpy(h_buf.data(), h_sino.data(), proj_elems * sizeof(float));
+        ctrl.upload3D(d_sino, h_buf);
     }
 
-    // ---- Step2：SIRT 重建 ───────────────────────────────────────
-    // 此时显存：d_sino(2GB) + d_vol_rec(400MB) = 2.4GB
-    // SIRT 额外占：d_sino_fwd_(2GB) + d_bp_(400MB) + d_weight_(400MB) = 2.8GB
-    // iterate 时临时 d_residual(2GB)，峰值约 7.2GB
-    YK_CUDA_CHECK(cudaMemsetAsync(d_vol_rec.data(), 0,
-        vol_elems * sizeof(float), s));
+    auto d_vol = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+    YK_CUDA_CHECK(cudaMemsetAsync(d_vol.data(), 0, vol_elems * sizeof(float), s));
+
+    // ---- SIRT配置 ───────────────────────────────────────────────
     {
         SIRT::Config cfg;
-        cfg.n_iter = 5;
+        cfg.n_iter = 40;
         cfg.n_batch = 10;
         cfg.lambda = 1.f;
+        cfg.lambda_red = 0.99f;
         cfg.eps = 1e-6f;
         cfg.use_min = false;
         cfg.min_constraint = 0.f;
-        cfg.use_max = false;
-        cfg.max_constraint = 1e30f;
-        cfg.fp_task = ETask::FP_Siddon;
-        cfg.bp_task = ETask::Bp_Joseph;
+        cfg.dump_debug = false;
+        cfg.row_w_down = 8;
+        cfg.fp_task = ETask::FP_Joseph;
+        cfg.bp_task = ETask::Bp_Joseph_v3;
 
         SIRT recon;
         if (!recon.init(params, cfg, s)) {
@@ -597,49 +563,54 @@ int main_iter_sirt_recon_sim()
             return -1;
         }
 
-        YK_LOGI("SIRT start: {} iters", cfg.n_iter);
+        YK_LOGI("SIRT start: {} iters x {} batches",
+            cfg.n_iter, cfg.n_batch);
 
-        YK::Util::CudaTimer timer("sirt_recon", s);
-        recon.run(d_sino.data(), d_vol_rec.data(), params, s);
+        YK::Util::CudaTimer timer("sirt_total", s);
+        recon.run(d_sino.data(), d_vol.data(), params, s);
         YK_CUDA_CHECK(cudaStreamSynchronize(s));
 
         YK_LOGI("SIRT done");
         recon.release();
     }
+
+    // ---- 保存结果 ───────────────────────────────────────────────
     {
-        auto h_vol_rec = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
-        ctrl.download3D(h_vol_rec, d_vol_rec);
-        float minv = *std::min_element(h_vol_rec.cdata(), h_vol_rec.cdata() + vol_elems);
-        float maxv = *std::max_element(h_vol_rec.cdata(), h_vol_rec.cdata() + vol_elems);
-        YK_LOGI("sirt vol stats: min={:.6f} max={:.6f}", minv, maxv);
-        write_raw_float((test_data_dir + "sim_sirt_vol.raw").c_str(),
-            h_vol_rec.cdata(), vol_elems);
-        YK_LOGI("saved: sim_sirt_vol.raw ({}x{}x{})", Nx, Ny, Nz);
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol);
+
+        float minv = *std::min_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
+        float maxv = *std::max_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
+        YK_LOGI("vol stats: min={:.6f} max={:.6f}", minv, maxv);
+
+        write_raw_float((test_data_dir + "sirt_vol.raw").c_str(),
+            h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: sirt_vol.raw ({}x{}x{})", Nx, Ny, Nz);
     }
 
-    // ---- Step3：对比 GT（h_vol_gt 是 FP 输入，即 phantom）────────
+    // ---- 与FDK结果对比 ──────────────────────────────────────────
     {
-        std::vector<float> h_rec(vol_elems);
-        read_raw_float((test_data_dir + "sim_sirt_vol.raw").c_str(), h_rec);
+        std::vector<float> h_fdk(vol_elems);
+        if (read_raw_float((test_data_dir + "fdk_vec_vol_online.raw").c_str(), h_fdk)) {
+            auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+            ctrl.download3D(h_vol, d_vol);
 
-        double mse = 0.0, sum_rec = 0.0, sum_gt = 0.0;
-        for (size_t i = 0; i < vol_elems; ++i) {
-            double diff = (double)h_rec[i] - (double)h_vol_gt[i];
-            mse += diff * diff;
-            sum_rec += h_rec[i];
-            sum_gt += h_vol_gt[i];
+            double mse = 0.0, sum_sirt = 0.0, sum_fdk = 0.0;
+            for (size_t i = 0; i < vol_elems; ++i) {
+                double diff = (double)h_vol.cdata()[i] - (double)h_fdk[i];
+                mse += diff * diff;
+                sum_sirt += h_vol.cdata()[i];
+                sum_fdk += h_fdk[i];
+            }
+            mse /= (double)vol_elems;
+            YK_LOGI("FDK  sum = {:.6e}", sum_fdk);
+            YK_LOGI("SIRT sum = {:.6e}", sum_sirt);
+            YK_LOGI("ratio    = {:.4f}", sum_fdk > 0 ? sum_sirt / sum_fdk : 0.0);
+            YK_LOGI("MSE(SIRT vs FDK) = {:.6e}", mse);
         }
-        mse /= (double)vol_elems;
-
-        YK_LOGI("phantom sum  = {:.6e}", sum_gt);
-        YK_LOGI("SIRT    sum  = {:.6e}", sum_rec);
-        YK_LOGI("ratio        = {:.4f}", sum_gt > 0 ? sum_rec / sum_gt : 0.0);
-        YK_LOGI("MSE(SIRT vs phantom) = {:.6e}", mse);
-
-        if (mse < 1e-4)
-            YK_LOGI("PASS: SIRT converged close to phantom");
-        else
-            YK_LOGI("INFO: MSE={:.6e}, may need more iterations or lambda tuning", mse);
+        else {
+            YK_LOGI("fdk_vec_vol_online.raw not found, skip comparison");
+        }
     }
 
     YK_CUDA_CHECK(cudaStreamDestroy(s));

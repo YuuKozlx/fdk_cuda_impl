@@ -551,22 +551,34 @@ namespace YK {
     // 与 TIGRE 的 OS-SART 一致: FP/BP 即使非精确伴随,
     // 只要 R/C 都用算子真实算出, 迭代仍能干净收敛。
     // ================================================================
+   // ================================================================
+// OS-SART，含 R 行归一化 + C 列归一化 + 黄金角子集遍历顺序。
+//
+// 子集内：交错采样（角度均匀散布全程）。
+// 子集间：黄金角顺序遍历，相邻迭代角度尽量正交，收敛更快更稳。
+//
+// 更新公式 (对每个子集 s):
+//   r   = b_s - A_s x
+//   r  /= (A_s · 1_vol  + eps)                  <-- R 行归一化
+//   bp  = A_s^T r
+//   x  += lambda * bp / (A_s^T · 1_proj + eps)  <-- C 列归一化
+// ================================================================
     class OSSART {
     public:
         struct Config {
             int   n_iter = 10;
-            int   n_subset = 20;
+            int   n_subset = 5;
             float lambda = 1.0f;
-            float lambda_red = 1.0f;   // 1.0=不衰减; 想衰减用 0.99
+            float lambda_red = 1.0f;
             float eps = 1e-6f;
             bool  use_min = false;
             float min_constraint = 0.f;
             bool  use_max = false;
             float max_constraint = 1e30f;
+            // FP/BP 应为匹配对：Joseph FP ↔ Joseph_v2 BP（推荐）。
+            // 不要用 BP_FDK（仅适合单遍 FDK，进迭代会产生棋盘格/星状伪影）。
             ETask fp_task = ETask::FP_Joseph;
-            // 快的 voxel-driven (BP_Siddon_VoxDriven) 或精确伴随的 Bp_Joseph。
-            // 配了正确 R/C 后, unmatched 的快 BP 通常也能收敛。
-            ETask bp_task = ETask::BP_Siddon_VoxDriven;
+            ETask bp_task = ETask::Bp_Joseph_v2;
         };
 
         bool init(const SCBCTParams& params, const Config& cfg,
@@ -600,28 +612,51 @@ namespace YK {
                     ps.angle_list[i] = params.angle_list[idx[i]];
             }
 
+            // ── 生成子集遍历顺序：黄金角步进，相邻迭代角度尽量正交 ──
+            subset_order_.resize(cfg.n_subset);
+            {
+                const int n = cfg.n_subset;
+                if (n <= 1) {
+                    subset_order_[0] = 0;
+                }
+                else {
+                    int step = (int)std::round((double)n / 1.6180339887498949);
+                    if (step < 1) step = 1;
+                    while (std::gcd(step, n) != 1) {   // 与 n 互质才能遍历全部子集
+                        ++step;
+                        if (step >= n) { step = 1; break; }
+                    }
+                    int cur = 0;
+                    for (int k = 0; k < n; ++k) {
+                        subset_order_[k] = cur;
+                        cur = (cur + step) % n;
+                    }
+                }
+                std::string ord;
+                for (int k = 0; k < cfg.n_subset; ++k)
+                    ord += std::to_string(subset_order_[k]) + " ";
+                YK_LOGI("[OSSART] subset order (golden-angle): {}", ord);
+            }
+
             const size_t max_subset_sino = max_K * view_n;
 
-            // ── 常驻缓冲 (约 2GB @512^3) ──────────────────────────────
-            //   sino 类 3 个 + row 权重 1 个 = 4 * max_subset_sino  (~400MB)
-            //   vol  类: d_bp_ / d_ones_vol_ / d_col_w_ = 3 * vol_n   (~1.26GB)
+            // ── 常驻缓冲 ──────────────────────────────────────────────
             YK_CUDA_CHECK(cudaMalloc(&d_sino_meas_sub_, max_subset_sino * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_sino_fwd_, max_subset_sino * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_residual_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_row_w_, max_subset_sino * sizeof(float))); // 现算 R
+            YK_CUDA_CHECK(cudaMalloc(&d_row_w_, max_subset_sino * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_ones_vol_, vol_n * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));          // 现算 C
+            YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
 
             fp_.init(params, cfg.fp_task, deviceId);
             bp_.init(params, cfg.bp_task, deviceId);
 
-            // 全 1 体只需一次, 反复用于算每子集的行权重
             YK::Iter::fill_ones_launch(d_ones_vol_, vol_n, stream);
             YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
             is_initialized_ = true;
-            YK_LOGI("[OSSART] init OK: {} angles, {} subsets, max {}/subset; weights computed on-the-fly",
+            YK_LOGI("[OSSART] init OK: {} angles, {} subsets, max {}/subset",
                 Na, cfg.n_subset, max_K);
             return true;
         }
@@ -640,22 +675,25 @@ namespace YK {
 
             for (unsigned int iter = 0; iter < iterations; ++iter)
             {
-                const int subset_idx = iteration_ % cfg_.n_subset;
+                // ── 按黄金角顺序取子集 ──
+                const int order_pos = iteration_ % cfg_.n_subset;
+                const int subset_idx = subset_order_[order_pos];
+
                 const std::vector<int>& subset = subsets_[subset_idx];
                 const int    K = (int)subset.size();
                 const size_t sino_n = (size_t)K * view_n;
 
                 const SCBCTParams& ps = subset_params_[subset_idx];
 
-                // ── 现算本子集 R 行权重: d_row_w_ = A_s · 1_vol ─────
+                // ── 现算 R: d_row_w_ = A_s · 1_vol ──
                 YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_, 0, sino_n * sizeof(float), stream));
                 fp_.run(d_ones_vol_, ps, d_row_w_, stream);
 
-                // ── 现算本子集 C 列权重: d_col_w_ = A_s^T · 1_proj ──
+                // ── 现算 C: d_col_w_ = A_s^T · 1_proj ──
                 YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
                 bp_.run(d_residual_, ps, d_col_w_, stream, /*clear_vol=*/true);
 
-                // ── 收集子集测量正弦图 ────────────────────────────────
+                // ── 收集子集测量 ──
                 for (int i = 0; i < K; ++i) {
                     YK_CUDA_CHECK(cudaMemcpyAsync(
                         d_sino_meas_sub_ + i * view_n,
@@ -664,23 +702,23 @@ namespace YK {
                         cudaMemcpyDeviceToDevice, stream));
                 }
 
-                // ── Step1: 正投影 A_s * x ─────────────────────────────
+                // Step1: A_s x
                 YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd_, 0, sino_n * sizeof(float), stream));
                 fp_.run(d_vol, ps, d_sino_fwd_, stream);
 
-                // ── Step2: 残差 r = b_s - A_s x ──────────────────────
+                // Step2: r = b_s - A_s x
                 YK::Iter::residual_launch(
                     d_sino_meas_sub_, d_sino_fwd_,
                     d_residual_, sino_n, stream);
 
-                // ── Step2.5: R 行归一化  r /= (A_s·1_vol + eps) ─────
+                // Step2.5: R 行归一化
                 YK::Iter::divide_launch(
                     d_residual_, d_row_w_, cfg_.eps, sino_n, stream);
 
-                // ── Step3: 反投影 bp = A_s^T * r ─────────────────────
+                // Step3: bp = A_s^T r
                 bp_.run(d_residual_, ps, d_bp_, stream, /*clear_vol=*/true);
 
-                // ── Step4: 更新 x += lambda * bp / (A_s^T·1 + eps) ──
+                // Step4: x += lambda * bp / (C + eps)
                 YK::Iter::update_launch(
                     d_vol, d_bp_, d_col_w_,
                     lambda_cur_, cfg_.eps,
@@ -688,74 +726,15 @@ namespace YK {
 
                 lambda_cur_ *= cfg_.lambda_red;
 
-                // ── Step5: 约束 ───────────────────────────────────────
+                // Step5: 约束
                 if (cfg_.use_min)
                     YK::Iter::clamp_min_launch(d_vol, vol_n, cfg_.min_constraint, stream);
                 if (cfg_.use_max)
                     YK::Iter::clamp_max_launch(d_vol, vol_n, cfg_.max_constraint, stream);
 
-                //// ── 诊断：每轮第一个子集打印一次 ────────────────────────
-                //const bool is_first_of_round = (iteration_ % cfg_.n_subset == 0);
-                //if (is_first_of_round)
-                //{
-                //    cudaStreamSynchronize(stream);
-                //    const int round = iteration_ / cfg_.n_subset;
-
-                //    std::vector<float> h_sino(sino_n), h_vol(vol_n);
-
-                //    cudaMemcpy(h_sino.data(), d_row_w_,
-                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-                //    YK_LOGI("[diag round={}] row_w      : min={:.4e} max={:.4e}",
-                //        round,
-                //        *std::min_element(h_sino.begin(), h_sino.end()),
-                //        *std::max_element(h_sino.begin(), h_sino.end()));
-
-                //    cudaMemcpy(h_vol.data(), d_col_w_,
-                //        vol_n * sizeof(float), cudaMemcpyDeviceToHost);
-                //    YK_LOGI("[diag round={}] col_w      : min={:.4e} max={:.4e}",
-                //        round,
-                //        *std::min_element(h_vol.begin(), h_vol.end()),
-                //        *std::max_element(h_vol.begin(), h_vol.end()));
-
-                //    cudaMemcpy(h_sino.data(), d_sino_meas_sub_,
-                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-                //    YK_LOGI("[diag round={}] sino_meas  : min={:.4e} max={:.4e}",
-                //        round,
-                //        *std::min_element(h_sino.begin(), h_sino.end()),
-                //        *std::max_element(h_sino.begin(), h_sino.end()));
-
-                //    cudaMemcpy(h_sino.data(), d_sino_fwd_,
-                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-                //    YK_LOGI("[diag round={}] sino_fwd   : min={:.4e} max={:.4e}",
-                //        round,
-                //        *std::min_element(h_sino.begin(), h_sino.end()),
-                //        *std::max_element(h_sino.begin(), h_sino.end()));
-
-                //    cudaMemcpy(h_sino.data(), d_residual_,
-                //        sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-                //    YK_LOGI("[diag round={}] residual   : min={:.4e} max={:.4e}",
-                //        round,
-                //        *std::min_element(h_sino.begin(), h_sino.end()),
-                //        *std::max_element(h_sino.begin(), h_sino.end()));
-
-                //    cudaMemcpy(h_vol.data(), d_bp_,
-                //        vol_n * sizeof(float), cudaMemcpyDeviceToHost);
-                //    YK_LOGI("[diag round={}] bp         : min={:.4e} max={:.4e}",
-                //        round,
-                //        *std::min_element(h_vol.begin(), h_vol.end()),
-                //        *std::max_element(h_vol.begin(), h_vol.end()));
-
-                //    cudaMemcpy(h_vol.data(), d_vol,
-                //        vol_n * sizeof(float), cudaMemcpyDeviceToHost);
-                //    YK_LOGI("[diag round={}] vol        : min={:.4e} max={:.4e}",
-                //        round,
-                //        *std::min_element(h_vol.begin(), h_vol.end()),
-                //        *std::max_element(h_vol.begin(), h_vol.end()));
-                //}
-
                 iteration_++;
-                YK_LOGD("[OSSART] iter={} subset={}/{} K={} lambda={:.4e}",
-                    iteration_, subset_idx + 1, cfg_.n_subset, K, lambda_cur_);
+                YK_LOGD("[OSSART] iter={} order_pos={} subset={} K={} lambda={:.4e}",
+                    iteration_, order_pos, subset_idx, K, lambda_cur_);
             }
             return true;
         }
@@ -786,6 +765,7 @@ namespace YK {
 
             subsets_.clear();
             subset_params_.clear();
+            subset_order_.clear();
 
             fp_.release();
             bp_.release();
@@ -797,47 +777,6 @@ namespace YK {
         ~OSSART() { release(); }
 
     private:
-        void diagnose_(const float* d_vol, size_t sino_n, size_t vol_n, cudaStream_t stream)
-        {
-            cudaStreamSynchronize(stream);
-            std::vector<float> h_tmp(sino_n), h_vol(vol_n);
-
-            cudaMemcpy(h_tmp.data(), d_row_w_, sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-            YK_LOGI("[diag] row_w (A_s.1_vol): min={:.4e} max={:.4e}",
-                *std::min_element(h_tmp.begin(), h_tmp.end()),
-                *std::max_element(h_tmp.begin(), h_tmp.end()));
-
-            cudaMemcpy(h_vol.data(), d_col_w_, vol_n * sizeof(float), cudaMemcpyDeviceToHost);
-            YK_LOGI("[diag] col_w (A_s^T.1_proj): min={:.4e} max={:.4e}",
-                *std::min_element(h_vol.begin(), h_vol.end()),
-                *std::max_element(h_vol.begin(), h_vol.end()));
-
-            cudaMemcpy(h_tmp.data(), d_sino_meas_sub_, sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-            YK_LOGI("[diag] sino_meas_sub: min={:.4e} max={:.4e}",
-                *std::min_element(h_tmp.begin(), h_tmp.end()),
-                *std::max_element(h_tmp.begin(), h_tmp.end()));
-
-            cudaMemcpy(h_tmp.data(), d_sino_fwd_, sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-            YK_LOGI("[diag] sino_fwd: min={:.4e} max={:.4e}",
-                *std::min_element(h_tmp.begin(), h_tmp.end()),
-                *std::max_element(h_tmp.begin(), h_tmp.end()));
-
-            cudaMemcpy(h_tmp.data(), d_residual_, sino_n * sizeof(float), cudaMemcpyDeviceToHost);
-            YK_LOGI("[diag] residual (after R-norm): min={:.4e} max={:.4e}",
-                *std::min_element(h_tmp.begin(), h_tmp.end()),
-                *std::max_element(h_tmp.begin(), h_tmp.end()));
-
-            cudaMemcpy(h_vol.data(), d_bp_, vol_n * sizeof(float), cudaMemcpyDeviceToHost);
-            YK_LOGI("[diag] bp: min={:.4e} max={:.4e}",
-                *std::min_element(h_vol.begin(), h_vol.end()),
-                *std::max_element(h_vol.begin(), h_vol.end()));
-
-            cudaMemcpy(h_vol.data(), d_vol, vol_n * sizeof(float), cudaMemcpyDeviceToHost);
-            YK_LOGI("[diag] vol after 1st update: min={:.4e} max={:.4e}",
-                *std::min_element(h_vol.begin(), h_vol.end()),
-                *std::max_element(h_vol.begin(), h_vol.end()));
-        }
-
         bool         is_initialized_ = false;
         unsigned int iteration_ = 0;
         float        lambda_cur_ = 1.0f;
@@ -849,15 +788,17 @@ namespace YK {
 
         std::vector<std::vector<int>> subsets_;
         std::vector<SCBCTParams>      subset_params_;
+        std::vector<int>              subset_order_;   // 黄金角遍历顺序
 
         float* d_sino_meas_sub_ = nullptr;
         float* d_sino_fwd_ = nullptr;
         float* d_residual_ = nullptr;
-        float* d_row_w_ = nullptr;     // 现算: A_s · 1_vol
+        float* d_row_w_ = nullptr;
         float* d_bp_ = nullptr;
-        float* d_ones_vol_ = nullptr;  // 常驻全 1 体
-        float* d_col_w_ = nullptr;     // 现算: A_s^T · 1_proj
+        float* d_ones_vol_ = nullptr;
+        float* d_col_w_ = nullptr;
     };
+
 
     // ── 便捷函数 ────────────────────────────────────────────────────
     YK_INLINE bool ossart_reconstruct(

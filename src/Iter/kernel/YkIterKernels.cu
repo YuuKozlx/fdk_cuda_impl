@@ -252,6 +252,47 @@ namespace YK
                 x = (denom[i] > thresh) ? (x / denom[i]) : 0.f;
             });
         }
+
+        // 1. threshold_invert：小于阈值置0，其余取倒数
+        void threshold_invert_launch(float* x, float threshold, size_t n, cudaStream_t stream)
+        {
+            YK::elemwise(x, n, stream, [threshold] __device__(float& v, size_t i) {
+                v = (v <= threshold) ? 0.f : 1.f / v;
+            });
+        }
+
+        // 2. reduce_mean_z：[Nz,Ny,Nx] → [Ny,Nx] 沿Z均值
+        // elemwise作用在输出vol2d上，大小Nx*Ny
+        void reduce_mean_z_launch(
+            const float* vol3d, float* vol2d,
+            int Nx, int Ny, int Nz, cudaStream_t stream)
+        {
+            const size_t vol_xy = (size_t)Nx * Ny;
+            YK::elemwise(vol2d, vol_xy, stream,
+                [vol3d, Nx, Ny, Nz] __device__(float& v, size_t i) {
+                int x = (int)(i % Nx);
+                int y = (int)(i / Nx);
+                float sum = 0.f;
+                for (int z = 0; z < Nz; ++z)
+                    sum += vol3d[(size_t)z * Ny * Nx + y * Nx + x];
+                v = sum / (float)Nz;
+            });
+        }
+
+        // 3. addmul_2d：x[z,y,x] += lambda * bp[z,y,x] * pw2d[y,x]
+        //    pw2d 为 1/V，lambda 作为标量逐轮传入（支持 lambda_red）
+        void addmul_2d_launch(
+            float* vol, const float* bp, const float* pw2d, float lambda,
+            int Nx, int Ny, int Nz, cudaStream_t stream)
+        {
+            const size_t vol_n = (size_t)Nx * Ny * Nz;
+            YK::elemwise(vol, vol_n, stream,
+                [bp, pw2d, lambda, Nx, Ny] __device__(float& x, size_t i) {
+                int xy = (int)(i % ((size_t)Nx * Ny));
+                x += lambda * bp[i] * pw2d[xy];
+            });
+        }
+
     };
 
 };
