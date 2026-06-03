@@ -205,6 +205,10 @@ namespace YK {
         float SID2;
         float fScaleDTheta;
         float SDD2;
+        float du_mm;
+        float dv_mm;
+        float nReserved1;
+        float nReserved2;
 
     };
 

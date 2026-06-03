@@ -169,11 +169,8 @@ namespace YK {
                 break;
 
             case ETask::BP_Siddon_VoxDriven: {
-                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
-                    gpuctx.d_sino_raw,
-                    params.iPU, params.iPV, Na);
-                Bp::bp_siddon_voxel_v2_launch(
-                    sinoTex.tex, d_vol_out,
+                Bp::bp_siddon_voxel_launch(
+                    d_sino, d_vol_out,
                     gpuctx.geo.d_views_world(),
                     vol_geom,
                     params.iPU, params.iPV, Na,
@@ -201,6 +198,16 @@ namespace YK {
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
                 Bp::fdk_bp_launch(sinoTex.tex, gpuctx.geo.d_views_world(),
+                    gpuctx.geo.d_coeffs_data(), d_vol_out, vol_geom,
+                    Na, accumulate, stream);
+                break;
+            }
+            case ETask::BP_FDK_matched:
+            {
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::fdk_matched_bp_launch(sinoTex.tex, gpuctx.geo.d_views_world(),
                     gpuctx.geo.d_coeffs_data(), d_vol_out, vol_geom,
                     Na, accumulate, stream);
                 break;

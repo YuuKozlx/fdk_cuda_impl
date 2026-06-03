@@ -2,6 +2,7 @@
 #include "YkIterLaunch.cuh"
 #include <cuda_runtime.h>
 #include "YkArith.cuh"
+#include <global/YkMacro.hpp>
 namespace YK
 {
     namespace Iter
@@ -292,6 +293,135 @@ namespace YK
                 x += lambda * bp[i] * pw2d[xy];
             });
         }
+
+
+        __global__ void threshold_inf_kernel(float* d, size_t n, float thresh)
+        {
+            const size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i >= n) return;
+            if (d[i] <= thresh) d[i] = 1e30f;  // 或 CUDART_INF_F
+        }
+
+        void threshold_inf_launch(float* d, size_t n, float thresh, cudaStream_t stream)
+        {
+            const int block = 256;
+            const int grid = (int)((n + block - 1) / block);
+            threshold_inf_kernel << <grid, block, 0, stream >> > (d, n, thresh);
+        }
+
+
+        __global__ void multiply_kernel(float* a, const float* b, size_t n)
+        {
+            const size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i >= n) return;
+            a[i] *= b[i];
+        }
+
+        void multiply_launch(float* a, const float* b, size_t n, cudaStream_t stream)
+        {
+            const int block = 256;
+            const int grid = (int)((n + block - 1) / block);
+            multiply_kernel << <grid, block, 0, stream >> > (a, b, n);
+        }
+
+        __global__ void rcp_kernel(float* d, size_t n)
+        {
+            const size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i >= n) return;
+            d[i] = __frcp_rn(d[i]);
+        }
+
+        void rcp_launch(float* d, size_t n, cudaStream_t stream)
+        {
+            const int block = 256;
+            const int grid = (int)((n + block - 1) / block);
+            rcp_kernel << <grid, block, 0, stream >> > (d, n);
+        }
+
+
+        // ── axpy：x += alpha * y ──────────────────────────────────────────
+        void axpy_launch(float* x, const float* y, float alpha,
+            size_t n, cudaStream_t stream)
+        {
+            YK::elemwise(x, n, stream, [y, alpha] __device__(float& xi, size_t i) {
+                xi += alpha * y[i];
+            });
+        }
+
+        // ── scale：x *= alpha ─────────────────────────────────────────────
+        void scale_launch(float* x, float alpha, size_t n, cudaStream_t stream)
+        {
+            YK::elemwise(x, n, stream, [alpha] __device__(float& xi, size_t) {
+                xi *= alpha;
+            });
+        }
+
+
+
+        // dot_reduce_kernel 放在文件作用域
+        __global__ void dot_reduce_kernel(const float* a, const float* b,
+            float* block_results, size_t n)
+        {
+            extern __shared__ float sdata[];
+            const size_t tid = threadIdx.x;
+            size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+
+            float val = 0.f;
+            while (i < n) {
+                val += a[i] * b[i];
+                i += gridDim.x * blockDim.x;
+            }
+            sdata[tid] = val;
+            __syncthreads();
+
+            for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+                if (tid < (size_t)s)
+                    sdata[tid] += sdata[tid + s];
+                __syncthreads();
+            }
+
+            if (tid == 0)
+                block_results[blockIdx.x] = sdata[0];
+        }
+
+        // ── dot product：result = sum(a * b) ─────────────────────────────
+        // 用两阶段 reduce，无需 cuBLAS
+        void dot_launch(const float* a, const float* b,
+            size_t n, float* h_result, cudaStream_t stream)
+        {
+            const int block = 256;
+            const int max_blocks = 1024;
+            const int grid = (int)std::min(
+                (size_t)max_blocks, (n + block - 1) / block);
+
+            float* d_block = nullptr;
+            YK_CUDA_CHECK(cudaMalloc(&d_block, grid * sizeof(float)));
+
+            // block 内 reduce kernel，无法用 elemwise 实现，保留原始 kernel
+            auto dot_kernel = [] __device__(
+                const float* a, const float* b,
+                float* block_results, size_t n)
+            {
+                // 不能直接用 lambda 作 __global__，此处用独立 kernel
+            };
+
+            // 实际 kernel 定义需放在文件作用域
+            dot_reduce_kernel << <grid, block, block * sizeof(float), stream >> > (
+                a, b, d_block, n);
+
+            std::vector<float> h_block(grid);
+            YK_CUDA_CHECK(cudaMemcpyAsync(h_block.data(), d_block,
+                grid * sizeof(float), cudaMemcpyDeviceToHost, stream));
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+            cudaFree(d_block);
+
+            float sum = 0.f;
+            for (int i = 0; i < grid; ++i)
+                sum += h_block[i];
+            *h_result = sum;
+        }
+
+
 
     };
 

@@ -15,6 +15,7 @@
 #include "global/YkLog.h"
 #include "global/YkCBCTParams.h"
 #include "global/YkMacro.hpp"
+#include <Iter/YkCGLS.hpp>
 
 
 using namespace YK::Mem;
@@ -30,11 +31,11 @@ int main_ossart_test()
 {
     SCBCTParams params;
     params.iPU = 1024; params.iPV = 1024;
-    params.iPAng = 360; params.iPAngTotal = 360;
+    params.iPAng = 180; params.iPAngTotal = 180;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
-    params.scan_range_rad = (float)CUDA_PI * 3.0f / 3.0f;
+    params.scan_range_rad = (float)CUDA_PI * 6.0f / 3.0f;
     params.SID = 500.0f; params.SDD = 1000.0f;
     params.du_mm = 0.25f; params.dv_mm = 0.25f;
     params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
@@ -45,7 +46,7 @@ int main_ossart_test()
 
     std::vector<float> angle_list(params.iPAng);
     for (int i = 0; i < params.iPAng; ++i)
-        angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;  // ← 720 不是 480
+        angle_list[i] = i * 2.0f * (float)CUDA_PI / 180;  // ← 720 不是 480
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
 
@@ -56,8 +57,8 @@ int main_ossart_test()
 
     // ---- 读测量正弦图 ────────────────────────────────────────────
     std::vector<float> h_sino(proj_elems);
-    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_sino)) {
-        YK_LOGE("cannot read proj_1024x1024x480.raw");
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x180.raw").c_str(), h_sino)) {
+        YK_LOGE("cannot read proj_1024x1024x180.raw");
         return -1;
     }
     YK_LOGI("sino loaded");
@@ -87,8 +88,8 @@ int main_ossart_test()
     cfg.eps = 1e-6f;
     cfg.use_min = true;
     cfg.min_constraint = 0.f;     // CT 值非负约束
-    cfg.fp_task = ETask::FP_Joseph;       // Joseph 正投影
-    cfg.bp_task = ETask::BP_Joseph_v3;    // Joseph 反投影（接近 FP_Joseph 的伴随）
+    cfg.fp_task = ETask::FP_Siddon;       // Joseph 正投影
+    cfg.bp_task = ETask::BP_FDK;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ──────────────────────────────────────────
 
@@ -492,11 +493,11 @@ int main_iter_sirt_recon_sim()
 {
     SCBCTParams params;
     params.iPU = 1024; params.iPV = 1024;
-    params.iPAng = 360; params.iPAngTotal = 360;
+    params.iPAng = 180; params.iPAngTotal = 180;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
-    params.scan_range_rad = (float)CUDA_PI * 3.0f / 3.0f;
+    params.scan_range_rad = (float)CUDA_PI * 6.0f / 3.0f;
     params.SID = 500.0f; params.SDD = 1000.0f;
     params.du_mm = 0.25f; params.dv_mm = 0.25f;
     params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
@@ -507,7 +508,7 @@ int main_iter_sirt_recon_sim()
 
     std::vector<float> angle_list(params.iPAng);
     for (int i = 0; i < params.iPAng; ++i)
-        angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
+        angle_list[i] = i * 2.0f * (float)CUDA_PI / 180;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
 
@@ -518,7 +519,7 @@ int main_iter_sirt_recon_sim()
 
     // ---- 读测量正弦图 ────────────────────────────────────────────
     std::vector<float> h_sino(proj_elems);
-    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_sino)) {
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x180.raw").c_str(), h_sino)) {
         YK_LOGE("cannot read proj file");
         return -1;
     }
@@ -905,4 +906,130 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
     cudaFree(d_sino_sub); cudaFree(d_sino_fwd);
     cudaFree(d_residual); cudaFree(d_row_w);
     cudaFree(d_bp);       cudaFree(d_ones_vol); cudaFree(d_col_w);
+}
+
+
+
+
+
+int main_cgls_test()
+{
+    SCBCTParams params;
+    params.iPU = 1024; params.iPV = 1024;
+    params.iPAng = 180; params.iPAngTotal = 180;
+    params.tiltn_angle_rad = 0;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = true;
+    params.scan_range_rad = (float)CUDA_PI * 6.0f / 3.0f;
+    params.SID = 500.0f; params.SDD = 1000.0f;
+    params.du_mm = 0.25f; params.dv_mm = 0.25f;
+    params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
+    params.offsetU_mm = 0.f;
+    params.vol_offset_x_mm = 0.f;
+    params.vol_offset_y_mm = 0.f;
+    params.vol_offset_z_mm = 0.f;
+
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)CUDA_PI / 180;
+    params.scan_start_angle_rad = angle_list[0];
+    params.angle_list = angle_list;
+
+    const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * params.iPAng;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    // ── 读测量正弦图 ─────────────────────────────────────────────
+    std::vector<float> h_sino(proj_elems);
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x180.raw").c_str(), h_sino)) {
+        YK_LOGE("cannot read proj_1024x1024x180.raw");
+        return -1;
+    }
+    YK_LOGI("sino loaded");
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+    MemoryController ctrl;
+
+    // 上传正弦图
+    auto d_sino = ctrl.allocateDevice3D<float>(view_elems, params.iPAng, 1, 0);
+    {
+        auto h_buf = ctrl.allocateCpu3D<float>(view_elems, params.iPAng, 1, false);
+        std::memcpy(h_buf.data(), h_sino.data(), proj_elems * sizeof(float));
+        ctrl.upload3D(d_sino, h_buf);
+    }
+
+    // 分配输出体积（初始全零）
+    auto d_vol = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+    YK_CUDA_CHECK(cudaMemsetAsync(d_vol.data(), 0, vol_elems * sizeof(float), s));
+
+    // ── CGLS 配置 ────────────────────────────────────────────────
+    CGLS::Config cfg;
+    cfg.n_iter = 30;
+    cfg.eps = 1e-8f;
+    cfg.use_min = true;
+    cfg.min_constraint = 0.f;
+    cfg.fp_task = ETask::FP_Siddon;
+    cfg.bp_task = ETask::BP_FDK;
+
+    // ── 运行 CGLS ────────────────────────────────────────────────
+    {
+        CGLS recon;
+        if (!recon.init(params, cfg, s)) {
+            YK_LOGE("CGLS init failed");
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+
+        YK_LOGI("CGLS start: {} iters", cfg.n_iter);
+
+        YK::Util::CudaTimer timer("cgls_total", s);
+        recon.run(d_sino.data(), d_vol.data(), params, s);
+        YK_CUDA_CHECK(cudaStreamSynchronize(s));
+
+        YK_LOGI("CGLS done");
+        recon.release();
+    }
+
+    // ── 保存结果 ─────────────────────────────────────────────────
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol);
+
+        float minv = *std::min_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
+        float maxv = *std::max_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
+        YK_LOGI("vol stats: min={:.6f} max={:.6f}", minv, maxv);
+
+        write_raw_float((test_data_dir + "cgls_vol.raw").c_str(),
+            h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: cgls_vol.raw ({}x{}x{})", Nx, Ny, Nz);
+    }
+
+    // ── 与 FDK 结果对比（可选）──────────────────────────────────
+    {
+        std::vector<float> h_fdk(vol_elems);
+        if (read_raw_float((test_data_dir + "fdk_vec_vol_online.raw").c_str(), h_fdk)) {
+            auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+            ctrl.download3D(h_vol, d_vol);
+
+            double mse = 0.0, sum_cgls = 0.0, sum_fdk = 0.0;
+            for (size_t i = 0; i < vol_elems; ++i) {
+                double diff = (double)h_vol.cdata()[i] - (double)h_fdk[i];
+                mse += diff * diff;
+                sum_cgls += h_vol.cdata()[i];
+                sum_fdk += h_fdk[i];
+            }
+            mse /= (double)vol_elems;
+            YK_LOGI("FDK  sum  = {:.6e}", sum_fdk);
+            YK_LOGI("CGLS sum  = {:.6e}", sum_cgls);
+            YK_LOGI("MSE(CGLS vs FDK) = {:.6e}", mse);
+        }
+        else {
+            YK_LOGI("fdk_vec_vol_online.raw not found, skip FDK comparison");
+        }
+    }
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    return 0;
 }

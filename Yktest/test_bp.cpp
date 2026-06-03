@@ -891,7 +891,7 @@ int main_siddon_voxel_adjoint_verify()
     // ---- A^T y：体素驱动 Siddon BP（被测）──────────────────────
     {
         ConeBackprojector bp;
-        bp.init(params, ETask::BP_Siddon_VoxDriven);
+        bp.init(params, ETask::BP_FDK);
         YK::Util::CudaTimer timer("siddon_bp_voxel", s);
         bp.run(d_y.data(), params, d_ATy.data(), s, /*clear_vol=*/true);
     }

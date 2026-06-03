@@ -30,5 +30,22 @@ namespace YK {
             float* vol, const float* bp, const float* pw2d, float lambda,
             int Nx, int Ny, int Nz, cudaStream_t stream);
 
+        void threshold_inf_launch(float* d, size_t n, float thresh, cudaStream_t stream);
+        void multiply_launch(float* a, const float* b, size_t n, cudaStream_t stream);
+        void rcp_launch(float* d, size_t n, cudaStream_t stream);
+
+
+        // ── axpy：x += alpha * y ──────────────────────────────────────────
+        void axpy_launch(float* x, const float* y, float alpha,
+            size_t n, cudaStream_t stream);
+
+
+        // ── scale：x *= alpha ─────────────────────────────────────────────
+        void scale_launch(float* x, float alpha, size_t n, cudaStream_t stream);
+
+        void dot_launch(const float* a, const float* b,
+            size_t n, float* h_result, cudaStream_t stream);
+
+
     } // namespace Iter
 } // namespace YK

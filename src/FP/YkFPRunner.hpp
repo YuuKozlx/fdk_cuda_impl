@@ -81,7 +81,7 @@ namespace YK {
                 task != ETask::FP_CVP)
             {
                 YK_LOGE(
-                    "[ConeProjector] run: task %d is not a FP task\n",
+                    "[ConeProjector] run: task {:2d} is not a FP task\n",
                     static_cast<int>(task));
                 return false;
             }

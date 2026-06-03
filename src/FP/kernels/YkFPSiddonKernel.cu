@@ -159,7 +159,6 @@ namespace YK {
                 const float rcp_ry = ay_valid ? __frcp_rn(ray.y) : 0.f;
                 const float rcp_rz = az_valid ? __frcp_rn(ray.z) : 0.f;
 
-                // [F5] volume AABB
                 const float x0 = AABB_LO(vol_origin.x, vox_x);
                 const float x1 = AABB_HI(vol_origin.x, Nx, vox_x);
                 const float y0 = AABB_LO(vol_origin.y, vox_y);
@@ -167,7 +166,6 @@ namespace YK {
                 const float z0 = AABB_LO(vol_origin.z, vox_z);
                 const float z1 = AABB_HI(vol_origin.z, Nz, vox_z);
 
-                // [F2]
                 float tmin = 0.f, tmax = FLT_MAX;
 
 #define SLAB(valid, rcp_r, s, b0, b1)                           \
@@ -184,10 +182,9 @@ namespace YK {
                     SLAB(az_valid, rcp_rz, v.src.z, z0, z1)
 #undef SLAB
 
-                    tmax = fminf(tmax, 1.f);  // [F2]
+                    tmax = fminf(tmax, 1.f);
                 if (tmin >= tmax) return;
 
-                // [F5] 入射点 → 最近体素索引
                 const float ex = v.src.x + tmin * ray.x;
                 const float ey = v.src.y + tmin * ray.y;
                 const float ez = v.src.z + tmin * ray.z;
@@ -199,10 +196,9 @@ namespace YK {
                 const int stepY = (ray.y >= 0.f) ? 1 : -1;
                 const int stepZ = (ray.z >= 0.f) ? 1 : -1;
 
-                // [F5] 下一体素边界
-                float bx = VOX_HI(vol_origin.x, ix, vox_x);  if (stepX < 0) bx = VOX_LO(vol_origin.x, ix, vox_x);
-                float by = VOX_HI(vol_origin.y, iy, vox_y);  if (stepY < 0) by = VOX_LO(vol_origin.y, iy, vox_y);
-                float bz = VOX_HI(vol_origin.z, iz, vox_z);  if (stepZ < 0) bz = VOX_LO(vol_origin.z, iz, vox_z);
+                float bx = VOX_HI(vol_origin.x, ix, vox_x); if (stepX < 0) bx = VOX_LO(vol_origin.x, ix, vox_x);
+                float by = VOX_HI(vol_origin.y, iy, vox_y); if (stepY < 0) by = VOX_LO(vol_origin.y, iy, vox_y);
+                float bz = VOX_HI(vol_origin.z, iz, vox_z); if (stepZ < 0) bz = VOX_LO(vol_origin.z, iz, vox_z);
 
                 float tX = ax_valid ? (bx - v.src.x) * rcp_rx : 1e30f;
                 float tY = ay_valid ? (by - v.src.y) * rcp_ry : 1e30f;
@@ -214,20 +210,22 @@ namespace YK {
 
                 const float ray_len = __fsqrt_rn(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
 
-                // [F5] tex3D unnormalized 坐标：体素 ix 的中心对应坐标 ix+0.5
-                //      但 vol_origin 是第0体素中心，tex 坐标 0.5 = 第0体素中心
-                //      → tex 坐标 = ix + 0.5  （不变，tex 坐标系以左边界为0）
+                const int maxSteps = Nx + Ny + Nz;
                 float fVal = 0.f;
                 float t_cur = tmin;
-                while (t_cur < tmax)
-                {
-                    if (ix < 0 || ix >= Nx || iy < 0 || iy >= Ny || iz < 0 || iz >= Nz)
-                        break;
 
+                for (int step = 0; step < maxSteps && t_cur < tmax; ++step)
+                {
                     const float t_next = fminf(fminf(tX, tY), fminf(tZ, tmax));
+
+                    /*const float t_mid = 0.5f * (t_cur + t_next);
+                    const float fx = (v.src.x + t_mid * ray.x - vol_origin.x) * rcp_vox_x + 0.5f;
+                    const float fy = (v.src.y + t_mid * ray.y - vol_origin.y) * rcp_vox_y + 0.5f;
+                    const float fz = (v.src.z + t_mid * ray.z - vol_origin.z) * rcp_vox_z + 0.5f;
+
+                    fVal += tex3D<float>(tex, fx, fy, fz) * (t_next - t_cur) * ray_len;*/
                     fVal += tex3D<float>(tex, ix + 0.5f, iy + 0.5f, iz + 0.5f)
                         * (t_next - t_cur) * ray_len;
-
                     t_cur = t_next;
 
                     if (tX <= tY && tX <= tZ) { ix += stepX; tX += dtX; }
@@ -240,228 +238,227 @@ namespace YK {
                 else            d_sino[idx] = fVal;
             }
 
+            //            __global__ void siddon_fp_tex_kernel(
+            //                cudaTextureObject_t     tex,
+            //                float* d_sino,
+            //                const SConeProjGeomVec* d_views,
+            //                float3 vol_origin,
+            //                float  vox_x, float  vox_y, float  vox_z,
+            //                float  rcp_vox_x, float  rcp_vox_y, float  rcp_vox_z,
+            //                int    Nx, int Ny, int Nz,
+            //                int    Nu, int Nv, int K,
+            //                bool   accumulate)
+            //            {
+            //                const int iu = blockIdx.x * blockDim.x + threadIdx.x;
+            //                const int iv = blockIdx.y * blockDim.y + threadIdx.y;
+            //                const int ia = blockIdx.z;
+            //                if (iu >= Nu || iv >= Nv || ia >= K) return;
+            //
+            //                const SConeProjGeomVec& v = d_views[ia];
+            //
+            //                const float3 detC = {
+            //                    v.detS.x + (iu + 0.5f) * v.detU.x + (iv + 0.5f) * v.detV.x,
+            //                    v.detS.y + (iu + 0.5f) * v.detU.y + (iv + 0.5f) * v.detV.y,
+            //                    v.detS.z + (iu + 0.5f) * v.detU.z + (iv + 0.5f) * v.detV.z
+            //                };
+            //
+            //                const float3 ray = {
+            //                    detC.x - v.src.x,
+            //                    detC.y - v.src.y,
+            //                    detC.z - v.src.z
+            //                };
+            //
+            //                // 射线方向倒数
+            //                const bool  ax_valid = fabsf(ray.x) > 1e-8f;
+            //                const bool  ay_valid = fabsf(ray.y) > 1e-8f;
+            //                const bool  az_valid = fabsf(ray.z) > 1e-8f;
+            //                const float rcp_rx = ax_valid ? __frcp_rn(ray.x) : 0.f;
+            //                const float rcp_ry = ay_valid ? __frcp_rn(ray.y) : 0.f;
+            //                const float rcp_rz = az_valid ? __frcp_rn(ray.z) : 0.f;
+            //
+            //                const float x0 = vol_origin.x, x1 = x0 + Nx * vox_x;
+            //                const float y0 = vol_origin.y, y1 = y0 + Ny * vox_y;
+            //                const float z0 = vol_origin.z, z1 = z0 + Nz * vox_z;
+            //
+            //                float tmin = 0.f, tmax = 1.f;
+            //
+            //#define SLAB(valid, rcp_r, s, b0, b1)                           \
+            //    if (valid) {                                                 \
+            //        float ta = (b0 - s) * rcp_r;                            \
+            //        float tb = (b1 - s) * rcp_r;                            \
+            //        if (ta > tb) { float _t = ta; ta = tb; tb = _t; }      \
+            //        tmin = fmaxf(tmin, ta);                                 \
+            //        tmax = fminf(tmax, tb);                                 \
+            //    } else if (s < b0 || s > b1) return;
+            //
+            //                SLAB(ax_valid, rcp_rx, v.src.x, x0, x1)
+            //                    SLAB(ay_valid, rcp_ry, v.src.y, y0, y1)
+            //                    SLAB(az_valid, rcp_rz, v.src.z, z0, z1)
+            //#undef SLAB
+            //
+            //                    if (tmin >= tmax) return;
+            //
+            //                const float ex = v.src.x + tmin * ray.x;
+            //                const float ey = v.src.y + tmin * ray.y;
+            //                const float ez = v.src.z + tmin * ray.z;
+            //
+            //                int ix = max(0, min(Nx - 1, (int)floorf((ex - vol_origin.x) * rcp_vox_x)));
+            //                int iy = max(0, min(Ny - 1, (int)floorf((ey - vol_origin.y) * rcp_vox_y)));
+            //                int iz = max(0, min(Nz - 1, (int)floorf((ez - vol_origin.z) * rcp_vox_z)));
+            //
+            //                const int stepX = (ray.x >= 0.f) ? 1 : -1;
+            //                const int stepY = (ray.y >= 0.f) ? 1 : -1;
+            //                const int stepZ = (ray.z >= 0.f) ? 1 : -1;
+            //
+            //                const float bx = vol_origin.x + (ix + (stepX > 0 ? 1 : 0)) * vox_x;
+            //                const float by = vol_origin.y + (iy + (stepY > 0 ? 1 : 0)) * vox_y;
+            //                const float bz = vol_origin.z + (iz + (stepZ > 0 ? 1 : 0)) * vox_z;
+            //
+            //                float tX = ax_valid ? (bx - v.src.x) * rcp_rx : 1e30f;
+            //                float tY = ay_valid ? (by - v.src.y) * rcp_ry : 1e30f;
+            //                float tZ = az_valid ? (bz - v.src.z) * rcp_rz : 1e30f;
+            //
+            //                const float dtX = ax_valid ? fabsf(vox_x * rcp_rx) : 1e30f;
+            //                const float dtY = ay_valid ? fabsf(vox_y * rcp_ry) : 1e30f;
+            //                const float dtZ = az_valid ? fabsf(vox_z * rcp_rz) : 1e30f;
+            //
+            //                const float ray_len = __fsqrt_rn(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
+            //
+            //                float fVal = 0.f;
+            //                float t_cur = tmin;
+            //
+            //                while (t_cur < tmax)
+            //                {
+            //                    if (ix < 0 || ix >= Nx || iy < 0 || iy >= Ny || iz < 0 || iz >= Nz)
+            //                        break;
+            //
+            //                    const float t_next = fminf(fminf(tX, tY), fminf(tZ, tmax));
+            //
+            //                    fVal += tex3D<float>(tex, ix + 0.5f, iy + 0.5f, iz + 0.5f)
+            //                        * (t_next - t_cur) * ray_len;
+            //
+            //                    t_cur = t_next;
+            //
+            //                    if (tX <= tY && tX <= tZ) { ix += stepX; tX += dtX; }
+            //                    else if (tY <= tZ) { iy += stepY; tY += dtY; }
+            //                    else { iz += stepZ; tZ += dtZ; }
+            //                }
+            //
+            //                const size_t idx = ((size_t)ia * Nv + iv) * Nu + iu;
+            //                if (accumulate) d_sino[idx] += fVal;
+            //                else            d_sino[idx] = fVal;
+            //            }
 
-//            __global__ void siddon_fp_tex_kernel(
-//                cudaTextureObject_t     tex,
-//                float* d_sino,
-//                const SConeProjGeomVec* d_views,
-//                float3 vol_origin,
-//                float  vox_x, float  vox_y, float  vox_z,
-//                float  rcp_vox_x, float  rcp_vox_y, float  rcp_vox_z,
-//                int    Nx, int Ny, int Nz,
-//                int    Nu, int Nv, int K,
-//                bool   accumulate)
-//            {
-//                const int iu = blockIdx.x * blockDim.x + threadIdx.x;
-//                const int iv = blockIdx.y * blockDim.y + threadIdx.y;
-//                const int ia = blockIdx.z;
-//                if (iu >= Nu || iv >= Nv || ia >= K) return;
-//
-//                const SConeProjGeomVec& v = d_views[ia];
-//
-//                const float3 detC = {
-//                    v.detS.x + (iu + 0.5f) * v.detU.x + (iv + 0.5f) * v.detV.x,
-//                    v.detS.y + (iu + 0.5f) * v.detU.y + (iv + 0.5f) * v.detV.y,
-//                    v.detS.z + (iu + 0.5f) * v.detU.z + (iv + 0.5f) * v.detV.z
-//                };
-//
-//                const float3 ray = {
-//                    detC.x - v.src.x,
-//                    detC.y - v.src.y,
-//                    detC.z - v.src.z
-//                };
-//
-//                // 射线方向倒数
-//                const bool  ax_valid = fabsf(ray.x) > 1e-8f;
-//                const bool  ay_valid = fabsf(ray.y) > 1e-8f;
-//                const bool  az_valid = fabsf(ray.z) > 1e-8f;
-//                const float rcp_rx = ax_valid ? __frcp_rn(ray.x) : 0.f;
-//                const float rcp_ry = ay_valid ? __frcp_rn(ray.y) : 0.f;
-//                const float rcp_rz = az_valid ? __frcp_rn(ray.z) : 0.f;
-//
-//                const float x0 = vol_origin.x, x1 = x0 + Nx * vox_x;
-//                const float y0 = vol_origin.y, y1 = y0 + Ny * vox_y;
-//                const float z0 = vol_origin.z, z1 = z0 + Nz * vox_z;
-//
-//                float tmin = 0.f, tmax = 1.f;
-//
-//#define SLAB(valid, rcp_r, s, b0, b1)                           \
-//    if (valid) {                                                 \
-//        float ta = (b0 - s) * rcp_r;                            \
-//        float tb = (b1 - s) * rcp_r;                            \
-//        if (ta > tb) { float _t = ta; ta = tb; tb = _t; }      \
-//        tmin = fmaxf(tmin, ta);                                 \
-//        tmax = fminf(tmax, tb);                                 \
-//    } else if (s < b0 || s > b1) return;
-//
-//                SLAB(ax_valid, rcp_rx, v.src.x, x0, x1)
-//                    SLAB(ay_valid, rcp_ry, v.src.y, y0, y1)
-//                    SLAB(az_valid, rcp_rz, v.src.z, z0, z1)
-//#undef SLAB
-//
-//                    if (tmin >= tmax) return;
-//
-//                const float ex = v.src.x + tmin * ray.x;
-//                const float ey = v.src.y + tmin * ray.y;
-//                const float ez = v.src.z + tmin * ray.z;
-//
-//                int ix = max(0, min(Nx - 1, (int)floorf((ex - vol_origin.x) * rcp_vox_x)));
-//                int iy = max(0, min(Ny - 1, (int)floorf((ey - vol_origin.y) * rcp_vox_y)));
-//                int iz = max(0, min(Nz - 1, (int)floorf((ez - vol_origin.z) * rcp_vox_z)));
-//
-//                const int stepX = (ray.x >= 0.f) ? 1 : -1;
-//                const int stepY = (ray.y >= 0.f) ? 1 : -1;
-//                const int stepZ = (ray.z >= 0.f) ? 1 : -1;
-//
-//                const float bx = vol_origin.x + (ix + (stepX > 0 ? 1 : 0)) * vox_x;
-//                const float by = vol_origin.y + (iy + (stepY > 0 ? 1 : 0)) * vox_y;
-//                const float bz = vol_origin.z + (iz + (stepZ > 0 ? 1 : 0)) * vox_z;
-//
-//                float tX = ax_valid ? (bx - v.src.x) * rcp_rx : 1e30f;
-//                float tY = ay_valid ? (by - v.src.y) * rcp_ry : 1e30f;
-//                float tZ = az_valid ? (bz - v.src.z) * rcp_rz : 1e30f;
-//
-//                const float dtX = ax_valid ? fabsf(vox_x * rcp_rx) : 1e30f;
-//                const float dtY = ay_valid ? fabsf(vox_y * rcp_ry) : 1e30f;
-//                const float dtZ = az_valid ? fabsf(vox_z * rcp_rz) : 1e30f;
-//
-//                const float ray_len = __fsqrt_rn(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
-//
-//                float fVal = 0.f;
-//                float t_cur = tmin;
-//
-//                while (t_cur < tmax)
-//                {
-//                    if (ix < 0 || ix >= Nx || iy < 0 || iy >= Ny || iz < 0 || iz >= Nz)
-//                        break;
-//
-//                    const float t_next = fminf(fminf(tX, tY), fminf(tZ, tmax));
-//
-//                    fVal += tex3D<float>(tex, ix + 0.5f, iy + 0.5f, iz + 0.5f)
-//                        * (t_next - t_cur) * ray_len;
-//
-//                    t_cur = t_next;
-//
-//                    if (tX <= tY && tX <= tZ) { ix += stepX; tX += dtX; }
-//                    else if (tY <= tZ) { iy += stepY; tY += dtY; }
-//                    else { iz += stepZ; tZ += dtZ; }
-//                }
-//
-//                const size_t idx = ((size_t)ia * Nv + iv) * Nu + iu;
-//                if (accumulate) d_sino[idx] += fVal;
-//                else            d_sino[idx] = fVal;
-//            }
-
-//__global__ void siddon_fp_tex_kernel(
-//    cudaTextureObject_t     tex,
-//    float* d_sino,
-//    const SConeProjGeomVec* d_views,
-//    float3 vol_origin,
-//    float  vox_x, float  vox_y, float  vox_z,
-//    float  rcp_vox_x, float  rcp_vox_y, float  rcp_vox_z,
-//    int    Nx, int Ny, int Nz,
-//    int    Nu, int Nv, int K,
-//    bool   accumulate)
-//{
-//    const int iu = blockIdx.x * blockDim.x + threadIdx.x;
-//    const int iv = blockIdx.y * blockDim.y + threadIdx.y;
-//    const int ia = blockIdx.z;
-//    if (iu >= Nu || iv >= Nv || ia >= K) return;
-//
-//    const SConeProjGeomVec& v = d_views[ia];
-//
-//    const float3 detC = {
-//        v.detS.x + (iu + 0.5f) * v.detU.x + (iv + 0.5f) * v.detV.x,
-//        v.detS.y + (iu + 0.5f) * v.detU.y + (iv + 0.5f) * v.detV.y,
-//        v.detS.z + (iu + 0.5f) * v.detU.z + (iv + 0.5f) * v.detV.z
-//    };
-//
-//    const float3 ray = {
-//        detC.x - v.src.x,
-//        detC.y - v.src.y,
-//        detC.z - v.src.z
-//    };
-//
-//    // 射线方向倒数
-//    const bool  ax_valid = fabsf(ray.x) > 1e-8f;
-//    const bool  ay_valid = fabsf(ray.y) > 1e-8f;
-//    const bool  az_valid = fabsf(ray.z) > 1e-8f;
-//    const float rcp_rx = ax_valid ? __frcp_rn(ray.x) : 0.f;
-//    const float rcp_ry = ay_valid ? __frcp_rn(ray.y) : 0.f;
-//    const float rcp_rz = az_valid ? __frcp_rn(ray.z) : 0.f;
-//
-//    const float x0 = vol_origin.x, x1 = x0 + Nx * vox_x;
-//    const float y0 = vol_origin.y, y1 = y0 + Ny * vox_y;
-//    const float z0 = vol_origin.z, z1 = z0 + Nz * vox_z;
-//
-//    float tmin = 0.f, tmax = 1.f;
-//
-//#define SLAB(valid, rcp_r, s, b0, b1)                           \
-//    if (valid) {                                                 \
-//        float ta = (b0 - s) * rcp_r;                            \
-//        float tb = (b1 - s) * rcp_r;                            \
-//        if (ta > tb) { float _t = ta; ta = tb; tb = _t; }      \
-//        tmin = fmaxf(tmin, ta);                                 \
-//        tmax = fminf(tmax, tb);                                 \
-//    } else if (s < b0 || s > b1) return;
-//
-//    SLAB(ax_valid, rcp_rx, v.src.x, x0, x1)
-//        SLAB(ay_valid, rcp_ry, v.src.y, y0, y1)
-//        SLAB(az_valid, rcp_rz, v.src.z, z0, z1)
-//#undef SLAB
-//
-//        if (tmin >= tmax) return;
-//
-//    const float ex = v.src.x + tmin * ray.x;
-//    const float ey = v.src.y + tmin * ray.y;
-//    const float ez = v.src.z + tmin * ray.z;
-//
-//    int ix = max(0, min(Nx - 1, (int)floorf((ex - vol_origin.x) * rcp_vox_x)));
-//    int iy = max(0, min(Ny - 1, (int)floorf((ey - vol_origin.y) * rcp_vox_y)));
-//    int iz = max(0, min(Nz - 1, (int)floorf((ez - vol_origin.z) * rcp_vox_z)));
-//
-//    const int stepX = (ray.x >= 0.f) ? 1 : -1;
-//    const int stepY = (ray.y >= 0.f) ? 1 : -1;
-//    const int stepZ = (ray.z >= 0.f) ? 1 : -1;
-//
-//    const float bx = vol_origin.x + (ix + (stepX > 0 ? 1 : 0)) * vox_x;
-//    const float by = vol_origin.y + (iy + (stepY > 0 ? 1 : 0)) * vox_y;
-//    const float bz = vol_origin.z + (iz + (stepZ > 0 ? 1 : 0)) * vox_z;
-//
-//    float tX = ax_valid ? (bx - v.src.x) * rcp_rx : 1e30f;
-//    float tY = ay_valid ? (by - v.src.y) * rcp_ry : 1e30f;
-//    float tZ = az_valid ? (bz - v.src.z) * rcp_rz : 1e30f;
-//
-//    const float dtX = ax_valid ? fabsf(vox_x * rcp_rx) : 1e30f;
-//    const float dtY = ay_valid ? fabsf(vox_y * rcp_ry) : 1e30f;
-//    const float dtZ = az_valid ? fabsf(vox_z * rcp_rz) : 1e30f;
-//
-//    const float ray_len = __fsqrt_rn(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
-//
-//    float fVal = 0.f;
-//    float t_cur = tmin;
-//
-//    while (t_cur < tmax)
-//    {
-//        if (ix < 0 || ix >= Nx || iy < 0 || iy >= Ny || iz < 0 || iz >= Nz)
-//            break;
-//
-//        const float t_next = fminf(fminf(tX, tY), fminf(tZ, tmax));
-//
-//        fVal += tex3D<float>(tex, ix + 0.5f, iy + 0.5f, iz + 0.5f)
-//            * (t_next - t_cur) * ray_len;
-//
-//        t_cur = t_next;
-//
-//        if (tX <= tY && tX <= tZ) { ix += stepX; tX += dtX; }
-//        else if (tY <= tZ) { iy += stepY; tY += dtY; }
-//        else { iz += stepZ; tZ += dtZ; }
-//    }
-//
-//    const size_t idx = ((size_t)ia * Nv + iv) * Nu + iu;
-//    if (accumulate) d_sino[idx] += fVal;
-//    else            d_sino[idx] = fVal;
-//}
+            //__global__ void siddon_fp_tex_kernel(
+            //    cudaTextureObject_t     tex,
+            //    float* d_sino,
+            //    const SConeProjGeomVec* d_views,
+            //    float3 vol_origin,
+            //    float  vox_x, float  vox_y, float  vox_z,
+            //    float  rcp_vox_x, float  rcp_vox_y, float  rcp_vox_z,
+            //    int    Nx, int Ny, int Nz,
+            //    int    Nu, int Nv, int K,
+            //    bool   accumulate)
+            //{
+            //    const int iu = blockIdx.x * blockDim.x + threadIdx.x;
+            //    const int iv = blockIdx.y * blockDim.y + threadIdx.y;
+            //    const int ia = blockIdx.z;
+            //    if (iu >= Nu || iv >= Nv || ia >= K) return;
+            //
+            //    const SConeProjGeomVec& v = d_views[ia];
+            //
+            //    const float3 detC = {
+            //        v.detS.x + (iu + 0.5f) * v.detU.x + (iv + 0.5f) * v.detV.x,
+            //        v.detS.y + (iu + 0.5f) * v.detU.y + (iv + 0.5f) * v.detV.y,
+            //        v.detS.z + (iu + 0.5f) * v.detU.z + (iv + 0.5f) * v.detV.z
+            //    };
+            //
+            //    const float3 ray = {
+            //        detC.x - v.src.x,
+            //        detC.y - v.src.y,
+            //        detC.z - v.src.z
+            //    };
+            //
+            //    // 射线方向倒数
+            //    const bool  ax_valid = fabsf(ray.x) > 1e-8f;
+            //    const bool  ay_valid = fabsf(ray.y) > 1e-8f;
+            //    const bool  az_valid = fabsf(ray.z) > 1e-8f;
+            //    const float rcp_rx = ax_valid ? __frcp_rn(ray.x) : 0.f;
+            //    const float rcp_ry = ay_valid ? __frcp_rn(ray.y) : 0.f;
+            //    const float rcp_rz = az_valid ? __frcp_rn(ray.z) : 0.f;
+            //
+            //    const float x0 = vol_origin.x, x1 = x0 + Nx * vox_x;
+            //    const float y0 = vol_origin.y, y1 = y0 + Ny * vox_y;
+            //    const float z0 = vol_origin.z, z1 = z0 + Nz * vox_z;
+            //
+            //    float tmin = 0.f, tmax = 1.f;
+            //
+            //#define SLAB(valid, rcp_r, s, b0, b1)                           \
+            //    if (valid) {                                                 \
+            //        float ta = (b0 - s) * rcp_r;                            \
+            //        float tb = (b1 - s) * rcp_r;                            \
+            //        if (ta > tb) { float _t = ta; ta = tb; tb = _t; }      \
+            //        tmin = fmaxf(tmin, ta);                                 \
+            //        tmax = fminf(tmax, tb);                                 \
+            //    } else if (s < b0 || s > b1) return;
+            //
+            //    SLAB(ax_valid, rcp_rx, v.src.x, x0, x1)
+            //        SLAB(ay_valid, rcp_ry, v.src.y, y0, y1)
+            //        SLAB(az_valid, rcp_rz, v.src.z, z0, z1)
+            //#undef SLAB
+            //
+            //        if (tmin >= tmax) return;
+            //
+            //    const float ex = v.src.x + tmin * ray.x;
+            //    const float ey = v.src.y + tmin * ray.y;
+            //    const float ez = v.src.z + tmin * ray.z;
+            //
+            //    int ix = max(0, min(Nx - 1, (int)floorf((ex - vol_origin.x) * rcp_vox_x)));
+            //    int iy = max(0, min(Ny - 1, (int)floorf((ey - vol_origin.y) * rcp_vox_y)));
+            //    int iz = max(0, min(Nz - 1, (int)floorf((ez - vol_origin.z) * rcp_vox_z)));
+            //
+            //    const int stepX = (ray.x >= 0.f) ? 1 : -1;
+            //    const int stepY = (ray.y >= 0.f) ? 1 : -1;
+            //    const int stepZ = (ray.z >= 0.f) ? 1 : -1;
+            //
+            //    const float bx = vol_origin.x + (ix + (stepX > 0 ? 1 : 0)) * vox_x;
+            //    const float by = vol_origin.y + (iy + (stepY > 0 ? 1 : 0)) * vox_y;
+            //    const float bz = vol_origin.z + (iz + (stepZ > 0 ? 1 : 0)) * vox_z;
+            //
+            //    float tX = ax_valid ? (bx - v.src.x) * rcp_rx : 1e30f;
+            //    float tY = ay_valid ? (by - v.src.y) * rcp_ry : 1e30f;
+            //    float tZ = az_valid ? (bz - v.src.z) * rcp_rz : 1e30f;
+            //
+            //    const float dtX = ax_valid ? fabsf(vox_x * rcp_rx) : 1e30f;
+            //    const float dtY = ay_valid ? fabsf(vox_y * rcp_ry) : 1e30f;
+            //    const float dtZ = az_valid ? fabsf(vox_z * rcp_rz) : 1e30f;
+            //
+            //    const float ray_len = __fsqrt_rn(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
+            //
+            //    float fVal = 0.f;
+            //    float t_cur = tmin;
+            //
+            //    while (t_cur < tmax)
+            //    {
+            //        if (ix < 0 || ix >= Nx || iy < 0 || iy >= Ny || iz < 0 || iz >= Nz)
+            //            break;
+            //
+            //        const float t_next = fminf(fminf(tX, tY), fminf(tZ, tmax));
+            //
+            //        fVal += tex3D<float>(tex, ix + 0.5f, iy + 0.5f, iz + 0.5f)
+            //            * (t_next - t_cur) * ray_len;
+            //
+            //        t_cur = t_next;
+            //
+            //        if (tX <= tY && tX <= tZ) { ix += stepX; tX += dtX; }
+            //        else if (tY <= tZ) { iy += stepY; tY += dtY; }
+            //        else { iz += stepZ; tZ += dtZ; }
+            //    }
+            //
+            //    const size_t idx = ((size_t)ia * Nv + iv) * Nu + iu;
+            //    if (accumulate) d_sino[idx] += fVal;
+            //    else            d_sino[idx] = fVal;
+            //}
 
 
         } // namespace detail

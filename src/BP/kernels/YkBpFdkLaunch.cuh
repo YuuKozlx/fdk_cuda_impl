@@ -19,6 +19,15 @@ namespace YK {
             bool accumulate,
             cudaStream_t stream);
 
+        void fdk_matched_bp_launch(
+            cudaTextureObject_t     sinoTex,
+            const SConeProjGeomVec* d_views_world,
+            const FdkAffineCoeff* d_coeffs,
+            float* d_vol,
+            const SVolGeom& vg,
+            int Na,
+            bool accumulate,
+            cudaStream_t stream);
 
 
 

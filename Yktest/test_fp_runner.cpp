@@ -94,13 +94,15 @@ void test_fp_runner(cudaStream_t stream)
 
     constexpr int   Nx = 512, Ny = 512, Nz = 400;
     constexpr float vox_xy = 0.1f, vox_z = 0.1f;
-    constexpr int   Na = 480, Nu = 1024, Nv = 1024;
+    constexpr int   Na = 180, Nu = 1024, Nv = 1024;
     constexpr float du = 0.25f, dv = 0.25f;
     constexpr float SID = 500.f, SDD = 1000.f;
 
     SCBCTParams params;
     params.iVX = Nx; params.iVY = Ny; params.iVZ = Nz;
-    params.vox_x_mm = vox_xy; params.vox_z_mm = vox_z;
+    params.vox_x_mm = vox_xy;
+    params.vox_y_mm = vox_xy;
+    params.vox_z_mm = vox_z;
     params.vol_offset_x_mm = 0.f;
     params.vol_offset_y_mm = 0.f;
     params.vol_offset_z_mm = 0.f;
@@ -115,7 +117,7 @@ void test_fp_runner(cudaStream_t stream)
 
     params.angle_list.resize(Na);
     for (int i = 0; i < Na; ++i)
-        params.angle_list[i] = 2.f * CUDA_PI * i / 720;
+        params.angle_list[i] = 2.f * CUDA_PI * i / 180;
 
     Mem::MemoryController mc;
     auto h_vol = mc.allocateCpu3D<float>(Nx, Ny, Nz);
@@ -139,7 +141,7 @@ void test_fp_runner(cudaStream_t stream)
     auto d_sino = mc.allocateDevice3D<float>(Nu, Nv, Na, /*deviceId=*/0);
 
     ConeProjector fpr;
-    if (!fpr.init(params, ETask::FP_Joseph, 0)) {
+    if (!fpr.init(params, ETask::FP_Siddon, 0)) {
         YK_LOGE("ConeProjector init failed");
         return;  // RAII 自动释放，不需要 cudaFree
     }
@@ -167,13 +169,15 @@ void test_fp_runner_siddon_vs_joseph(cudaStream_t stream)
     printf("\n[ConeProjector] test\n");
     constexpr int   Nx = 512, Ny = 512, Nz = 400;
     constexpr float vox_xy = 0.1f, vox_z = 0.1f;
-    constexpr int   Na = 480, Nu = 1024, Nv = 1024;
+    constexpr int   Na = 360, Nu = 1024, Nv = 1024;
     constexpr float du = 0.25f, dv = 0.25f;
     constexpr float SID = 500.f, SDD = 1000.f;
 
     SCBCTParams params;
     params.iVX = Nx; params.iVY = Ny; params.iVZ = Nz;
-    params.vox_x_mm = vox_xy; params.vox_z_mm = vox_z;
+    params.vox_x_mm = vox_xy;
+    params.vox_y_mm = vox_xy;
+    params.vox_z_mm = vox_z;
     params.vol_offset_x_mm = 0.f;
     params.vol_offset_y_mm = 0.f;
     params.vol_offset_z_mm = 0.f;
@@ -187,7 +191,7 @@ void test_fp_runner_siddon_vs_joseph(cudaStream_t stream)
     params.tiltv_angle_rad = 0.f;
     params.angle_list.resize(Na);
     for (int i = 0; i < Na; ++i)
-        params.angle_list[i] = 2.f * CUDA_PI * i / 720;
+        params.angle_list[i] = 2.f * CUDA_PI * i / 360;
 
     Mem::MemoryController mc;
     auto h_vol = mc.allocateCpu3D<float>(Nx, Ny, Nz);

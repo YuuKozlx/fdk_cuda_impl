@@ -60,6 +60,7 @@ void test_generate_pcb_phantom();
 int main_ossart_ex_test();
 int main_ossart_test();
 int main_iter_sirt_recon_sim();
+int main_cgls_test();
 
 int main()
 {
@@ -119,7 +120,8 @@ int main()
     //test_generate_pcb_phantom();
     //test_flat_detector_roty_fp_ellipse(0);
     //main_ossart_ex_test();
-    main_ossart_test();
+    //main_ossart_test();
     //main_iter_sirt_recon_sim();
+    main_cgls_test();
     return 0;
 }

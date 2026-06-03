@@ -75,7 +75,7 @@ namespace YK {
                     SLAB(ray.z, v.src.z, z0, z1)
 #undef SLAB
 
-                tmax = fminf(tmax, 1.f);
+                    tmax = fminf(tmax, 1.f);
                 if (tmin >= tmax) return;
 
                 // [F5] 入射点 → 最近体素索引（四舍五入）
@@ -298,17 +298,14 @@ namespace YK {
                 const int startZ = blockIdx.z * ZSIZE;
                 if (startZ >= Nz) return;
 
-                // 体素中心世界坐标 XY（Z 循环外）
                 const float cx = VOX_CTR(vol_origin.x, ix, vox_x);
                 const float cy = VOX_CTR(vol_origin.y, iy, vox_y);
 
-                // 体素 AABB XY（Z 循环外）
                 const float vx0 = VOX_LO(vol_origin.x, ix, vox_x);
                 const float vx1 = VOX_HI(vol_origin.x, ix, vox_x);
                 const float vy0 = VOX_LO(vol_origin.y, iy, vox_y);
                 const float vy1 = VOX_HI(vol_origin.y, iy, vox_y);
 
-                // 寄存器缓存
                 float Z[ZSIZE];
 #pragma unroll
                 for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
@@ -318,24 +315,20 @@ namespace YK {
                     const SConeProjGeomVec& v = d_views[ia];
                     const float ia_tex = (float)ia + 0.5f;
 
-                    // 探测器法向量（角度循环外）
                     const float nx = v.detU.y * v.detV.z - v.detU.z * v.detV.y;
                     const float ny = v.detU.z * v.detV.x - v.detU.x * v.detV.z;
                     const float nz = v.detU.x * v.detV.y - v.detU.y * v.detV.x;
 
-                    // (detS - src) · n（角度循环外）
                     const float SDD_plane =
                         (v.detS.x - v.src.x) * nx +
                         (v.detS.y - v.src.y) * ny +
                         (v.detS.z - v.src.z) * nz;
 
-                    // detU/detV 长度平方倒数（角度循环外）
                     const float rcp_U2 = __frcp_rn(
                         v.detU.x * v.detU.x + v.detU.y * v.detU.y + v.detU.z * v.detU.z);
                     const float rcp_V2 = __frcp_rn(
                         v.detV.x * v.detV.x + v.detV.y * v.detV.y + v.detV.z * v.detV.z);
 
-                    // 体素中心 XY 到源的方向（角度循环外）
                     const float dx_xy = cx - v.src.x;
                     const float dy_xy = cy - v.src.y;
 
@@ -351,7 +344,7 @@ namespace YK {
 
                         const float dz = cz_ - v.src.z;
 
-                        // ── Step 1：体素中心投影到探测器 ─────────────────────────
+                        // ── Step 1：体素中心投影到探测器
                         const float denom_n = dx_xy * nx + dy_xy * ny + dz * nz;
                         if (fabsf(denom_n) < 1e-8f) continue;
 
@@ -368,17 +361,14 @@ namespace YK {
                         if (fu < -0.5f || fu >= (float)Nu - 0.5f ||
                             fv < -0.5f || fv >= (float)Nv - 0.5f) continue;
 
-                        // ── Step 2：用最近像素重建射线（源→探测器，和 FP 方向一致）
-                        const int iu_c = max(0, min(Nu - 1, (int)floorf(fu + 0.5f)));
-                        const int iv_c = max(0, min(Nv - 1, (int)floorf(fv + 0.5f)));
-
-                        const float rx = v.detS.x + iu_c * v.detU.x + iv_c * v.detV.x - v.src.x;
-                        const float ry = v.detS.y + iu_c * v.detU.y + iv_c * v.detV.y - v.src.y;
-                        const float rz = v.detS.z + iu_c * v.detU.z + iv_c * v.detV.z - v.src.z;
+                        // ── Step 2：用浮点坐标重建射线
+                        const float rx = v.detS.x + fu * v.detU.x + fv * v.detV.x - v.src.x;
+                        const float ry = v.detS.y + fu * v.detU.y + fv * v.detV.y - v.src.y;
+                        const float rz = v.detS.z + fu * v.detU.z + fv * v.detV.z - v.src.z;
                         const float ray_len = __fsqrt_rn(rx * rx + ry * ry + rz * rz);
                         if (ray_len < 1e-8f) continue;
 
-                        // ── Step 3：射线与体素 AABB 求交 ─────────────────────────
+                        // ── Step 3：射线与体素 AABB 求交
                         float tmin = 0.f, tmax = 1.f;
 
 #define VSLAB(r, s, b0, b1)                                     \
@@ -399,15 +389,139 @@ namespace YK {
 
                         const float seg_len = (tmax - tmin) * ray_len;
 
-                        // ── Step 4：双线性插值读正弦图 ────────────────────────────
-                        const float sino_val = tex3D<float>(sinoTex,
-                            fu + 0.5f, fv + 0.5f, ia_tex);
-
-                        Z[iz] += sino_val * seg_len;
+                        // ── Step 4：双线性插值读正弦图
+                        Z[iz] += tex3D<float>(sinoTex, fu + 0.5f, fv + 0.5f, ia_tex) * seg_len;
                     }
                 }
 
-                // 一次性写回，无 atomicAdd
+#pragma unroll
+                for (int iz = 0; iz < ZSIZE; ++iz)
+                {
+                    const int zIdx = startZ + iz;
+                    if (zIdx >= Nz) break;
+                    const size_t idx = (size_t)zIdx * Ny * Nx
+                        + (size_t)iy * Nx
+                        + (size_t)ix;
+                    d_vol[idx] += Z[iz];
+                }
+            }
+
+
+            template<int ZSIZE>
+            __global__ void siddon_bp_voxel_v3_kernel(
+                cudaTextureObject_t                  sinoTex,
+                const SConeProjGeomVec* __restrict__ d_views,
+                float* __restrict__                  d_vol,
+                float3                               vol_origin,
+                float                                vox_x, float vox_y, float vox_z,
+                int                                  Nx, int Ny, int Nz,
+                int                                  Nu, int Nv, int K)
+            {
+                const int ix = blockIdx.x * blockDim.x + threadIdx.x;
+                const int iy = blockIdx.y * blockDim.y + threadIdx.y;
+                if (ix >= Nx || iy >= Ny) return;
+
+                const int startZ = blockIdx.z * ZSIZE;
+                if (startZ >= Nz) return;
+
+                const float cx = VOX_CTR(vol_origin.x, ix, vox_x);
+                const float cy = VOX_CTR(vol_origin.y, iy, vox_y);
+
+                const float vx0 = VOX_LO(vol_origin.x, ix, vox_x);
+                const float vx1 = VOX_HI(vol_origin.x, ix, vox_x);
+                const float vy0 = VOX_LO(vol_origin.y, iy, vox_y);
+                const float vy1 = VOX_HI(vol_origin.y, iy, vox_y);
+
+                float Z[ZSIZE];
+#pragma unroll
+                for (int iz = 0; iz < ZSIZE; ++iz) Z[iz] = 0.f;
+
+                for (int ia = 0; ia < K; ++ia)
+                {
+                    const SConeProjGeomVec& v = d_views[ia];
+                    const float ia_tex = (float)ia + 0.5f;
+
+                    const float nx = v.detU.y * v.detV.z - v.detU.z * v.detV.y;
+                    const float ny = v.detU.z * v.detV.x - v.detU.x * v.detV.z;
+                    const float nz = v.detU.x * v.detV.y - v.detU.y * v.detV.x;
+
+                    const float SDD_plane =
+                        (v.detS.x - v.src.x) * nx +
+                        (v.detS.y - v.src.y) * ny +
+                        (v.detS.z - v.src.z) * nz;
+
+                    const float rcp_U2 = __frcp_rn(
+                        v.detU.x * v.detU.x + v.detU.y * v.detU.y + v.detU.z * v.detU.z);
+                    const float rcp_V2 = __frcp_rn(
+                        v.detV.x * v.detV.x + v.detV.y * v.detV.y + v.detV.z * v.detV.z);
+
+                    const float dx_xy = cx - v.src.x;
+                    const float dy_xy = cy - v.src.y;
+
+#pragma unroll
+                    for (int iz = 0; iz < ZSIZE; ++iz)
+                    {
+                        const int zIdx = startZ + iz;
+                        if (zIdx >= Nz) break;
+
+                        const float cz_ = VOX_CTR(vol_origin.z, zIdx, vox_z);
+                        const float vz0 = VOX_LO(vol_origin.z, zIdx, vox_z);
+                        const float vz1 = VOX_HI(vol_origin.z, zIdx, vox_z);
+
+                        const float dz = cz_ - v.src.z;
+
+                        // ── Step 1：体素中心投影到探测器 ─────────────────────
+                        const float denom_n = dx_xy * nx + dy_xy * ny + dz * nz;
+                        if (fabsf(denom_n) < 1e-8f) continue;
+
+                        const float t_det = __fdividef(SDD_plane, denom_n);
+                        if (t_det <= 0.f) continue;
+
+                        const float px = v.src.x + t_det * dx_xy - v.detS.x;
+                        const float py = v.src.y + t_det * dy_xy - v.detS.y;
+                        const float pz = v.src.z + t_det * dz - v.detS.z;
+
+                        const float fu = (px * v.detU.x + py * v.detU.y + pz * v.detU.z) * rcp_U2;
+                        const float fv = (px * v.detV.x + py * v.detV.y + pz * v.detV.z) * rcp_V2;
+
+                        // ── Step 2：取整到最近像素（和 v1 一致）──────────────
+                        const int iu = (int)floorf(fu + 0.5f);
+                        const int iv = (int)floorf(fv + 0.5f);
+                        if (iu < 0 || iu >= Nu || iv < 0 || iv >= Nv) continue;
+
+                        const float rx = v.detS.x + iu * v.detU.x + iv * v.detV.x - v.src.x;
+                        const float ry = v.detS.y + iu * v.detU.y + iv * v.detV.y - v.src.y;
+                        const float rz = v.detS.z + iu * v.detU.z + iv * v.detV.z - v.src.z;
+                        const float ray_len = __fsqrt_rn(rx * rx + ry * ry + rz * rz);
+                        if (ray_len < 1e-8f) continue;
+
+                        // ── Step 3：射线与体素 AABB 求交 ─────────────────────
+                        float tmin = 0.f, tmax = 1.f;
+
+#define VSLAB(r, s, b0, b1)                                     \
+    if (fabsf(r) > 1e-8f) {                                     \
+        float ta = (b0 - s) / r;                                \
+        float tb = (b1 - s) / r;                                \
+        if (ta > tb) { float _t = ta; ta = tb; tb = _t; }       \
+        tmin = fmaxf(tmin, ta);                                 \
+        tmax = fminf(tmax, tb);                                 \
+    } else if (s < b0 || s > b1) { tmin = 1.f; tmax = 0.f; }
+
+                        VSLAB(rx, v.src.x, vx0, vx1)
+                            VSLAB(ry, v.src.y, vy0, vy1)
+                            VSLAB(rz, v.src.z, vz0, vz1)
+#undef VSLAB
+
+                            if (tmin >= tmax) continue;
+
+                        const float seg_len = (tmax - tmin) * ray_len;
+
+                        // ── Step 4：整数坐标采样，退化为最近邻 ───────────────
+                        Z[iz] += tex3D<float>(sinoTex,
+                            iu + 0.5f, iv + 0.5f, ia_tex) * seg_len;
+                    }
+                }
+
 #pragma unroll
                 for (int iz = 0; iz < ZSIZE; ++iz)
                 {
@@ -429,9 +543,14 @@ namespace YK {
             const SConeProjGeomVec* d_views,
             const SVolGeom& g,
             int Nu, int Nv, int K,
+            bool accumulate,
             cudaStream_t            stream)
         {
             if (K <= 0) return;
+            if (!accumulate) {
+                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
+                    (size_t)g.Nx * g.Ny * g.Nz * sizeof(float), stream));
+            }
 
             // 三维 block，每个线程对应一个体素
             dim3 block(8, 8, 4);
@@ -447,6 +566,8 @@ namespace YK {
                 g.Nx, g.Ny, g.Nz,
                 Nu, Nv, K);
         }
+
+
 
 
         void bp_siddon_voxel_v2_launch(
