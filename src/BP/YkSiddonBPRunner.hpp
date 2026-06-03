@@ -32,12 +32,12 @@ namespace YK {
         //   并删除 run 内部独立 memset（清零统一由 launch 按 accumulate 处理）。
         //   BP_Siddon_RayDriven 分支 launch 无 accumulate 参数(kernel 用 atomicAdd
         //   累加、无覆盖能力)，单独保留 if(clear_vol) memset。
-        //   另补 Bp_Joseph_v3 分支遗漏的 break;
+        //   另补 BP_Joseph_v3 分支遗漏的 break;
         //
         // 支持的 ETask：
         //   BP_Siddon_RayDriven —— 射线驱动，严格伴随，慢 (atomicAdd，无 accumulate 参数)
         //   BP_Siddon_VoxDriven —— 体素驱动，近似伴随，快
-        //   Bp_Joseph / Bp_Joseph_v2 / Bp_Joseph_v3 / BP_FDK
+        //   BP_Joseph / BP_Joseph_v2 / BP_Joseph_v3 / BP_FDK
         // ====================================================================
     class ConeBackprojector {
     public:
@@ -67,7 +67,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::Bp_Joseph && task != ETask::BP_FDK && task != ETask::Bp_Joseph_v2 && task != ETask::Bp_Joseph_v3)
+                task != ETask::BP_Joseph && task != ETask::BP_FDK && task != ETask::BP_Joseph_v2 && task != ETask::BP_Joseph_v3)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -181,7 +181,7 @@ namespace YK {
                 break;
             }
 
-            case ETask::Bp_Joseph:
+            case ETask::BP_Joseph:
             {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
@@ -205,7 +205,7 @@ namespace YK {
                     Na, accumulate, stream);
                 break;
             }
-            case ETask::Bp_Joseph_v2: {
+            case ETask::BP_Joseph_v2: {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
@@ -217,7 +217,7 @@ namespace YK {
                     false, stream);
                 break;
             }
-            case ETask::Bp_Joseph_v3: {
+            case ETask::BP_Joseph_v3: {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
@@ -298,7 +298,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::Bp_Joseph && task != ETask::BP_FDK && task != ETask::Bp_Joseph_v2 && task != ETask::Bp_Joseph_v3)
+                task != ETask::BP_Joseph && task != ETask::BP_FDK && task != ETask::BP_Joseph_v2 && task != ETask::BP_Joseph_v3)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -397,7 +397,7 @@ namespace YK {
                 break;
             }
 
-            case ETask::Bp_Joseph:
+            case ETask::BP_Joseph:
             {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
@@ -421,7 +421,7 @@ namespace YK {
                     Na, accumulate, stream);
                 break;
             }
-            case ETask::Bp_Joseph_v2: {
+            case ETask::BP_Joseph_v2: {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
@@ -433,7 +433,7 @@ namespace YK {
                     accumulate, stream);
                 break;
             }
-            case ETask::Bp_Joseph_v3: {
+            case ETask::BP_Joseph_v3: {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);

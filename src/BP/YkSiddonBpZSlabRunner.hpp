@@ -54,7 +54,7 @@ namespace YK {
         {
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::Bp_Joseph && task != ETask::BP_FDK)
+                task != ETask::BP_Joseph && task != ETask::BP_FDK)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));

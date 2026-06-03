@@ -479,7 +479,7 @@ namespace YK {
             int   row_w_down = 2;       // R 体降采样倍数 (FOV 不变)
             bool  dump_debug = false;   // ← 打开导出权重 raw
             ETask fp_task = ETask::FP_Joseph;
-            ETask bp_task = ETask::Bp_Joseph_v3;
+            ETask bp_task = ETask::BP_Joseph_v3;
         };
 
         bool init(const SCBCTParams& params, const Config& cfg,

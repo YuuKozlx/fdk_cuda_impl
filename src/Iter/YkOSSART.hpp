@@ -578,7 +578,7 @@ namespace YK {
             // FP/BP 应为匹配对：Joseph FP ↔ Joseph_v2 BP（推荐）。
             // 不要用 BP_FDK（仅适合单遍 FDK，进迭代会产生棋盘格/星状伪影）。
             ETask fp_task = ETask::FP_Joseph;
-            ETask bp_task = ETask::Bp_Joseph_v2;
+            ETask bp_task = ETask::BP_Joseph_v2;
         };
 
         bool init(const SCBCTParams& params, const Config& cfg,
@@ -830,7 +830,7 @@ namespace YK {
             bool  use_max = false;
             float max_constraint = 1e30f;
             ETask fp_task = ETask::FP_Joseph;
-            ETask bp_task = ETask::Bp_Joseph_v2;
+            ETask bp_task = ETask::BP_Joseph_v2;
         };
 
         bool init(const SCBCTParams& params,

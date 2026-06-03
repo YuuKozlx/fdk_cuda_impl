@@ -85,10 +85,10 @@ int main_ossart_test()
     cfg.lambda = 1.f;
     cfg.lambda_red = 0.999f;
     cfg.eps = 1e-6f;
-    cfg.use_min = false;
+    cfg.use_min = true;
     cfg.min_constraint = 0.f;     // CT 值非负约束
     cfg.fp_task = ETask::FP_Joseph;       // Joseph 正投影
-    cfg.bp_task = ETask::BP_FDK;    // Joseph 反投影（接近 FP_Joseph 的伴随）
+    cfg.bp_task = ETask::BP_Joseph_v3;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ──────────────────────────────────────────
 
@@ -120,7 +120,7 @@ int main_ossart_test()
         float maxv = *std::max_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
         YK_LOGI("vol stats: min={:.6f} max={:.6f}", minv, maxv);
 
-        write_raw_float((test_data_dir + "ossart_vol_v2.raw").c_str(),
+        write_raw_float((test_data_dir + "ossart_vol_joseph_v3.raw").c_str(),
             h_vol.cdata(), vol_elems);
         YK_LOGI("saved: ossart_vol.raw ({}x{}x{})", Nx, Ny, Nz);
     }
@@ -227,8 +227,8 @@ int main_ossart_ex_test()
     cfg.eps = 1e-6f;
     cfg.use_min = false;
     cfg.min_constraint = 0.f;
-    cfg.fp_task = ETask::FP_Siddon;
-    cfg.bp_task = ETask::BP_FDK;
+    cfg.fp_task = ETask::FP_Joseph;       // Joseph 正投影
+    cfg.bp_task = ETask::BP_FDK;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ───────────────────────────────────────────
     {
@@ -544,14 +544,14 @@ int main_iter_sirt_recon_sim()
         cfg.n_iter = 40;
         cfg.n_batch = 10;
         cfg.lambda = 1.f;
-        cfg.lambda_red = 0.99f;
+        cfg.lambda_red = 0.999f;
         cfg.eps = 1e-6f;
-        cfg.use_min = false;
+        cfg.use_min = true;
         cfg.min_constraint = 0.f;
         cfg.dump_debug = false;
-        cfg.row_w_down = 8;
+        cfg.row_w_down = 2;
         cfg.fp_task = ETask::FP_Joseph;
-        cfg.bp_task = ETask::Bp_Joseph_v3;
+        cfg.bp_task = ETask::BP_FDK;
 
         SIRT recon;
         if (!recon.init(params, cfg, s)) {
@@ -693,7 +693,7 @@ void test_flat_detector_roty_fp_ossart(cudaStream_t stream)
     cfg.eps = 1e-6f;
     cfg.use_min = false;
     cfg.fp_task = ETask::FP_Joseph;
-    cfg.bp_task = ETask::Bp_Joseph_v3;
+    cfg.bp_task = ETask::BP_Joseph_v3;
 
     {
         OSSARTEx recon;

@@ -1006,8 +1006,8 @@ int main_joseph_adjoint_verify()
     // ---- A^T y：Joseph BP 手动双线性 ───────────────────────────
     {
         ConeBackprojector bp;
-        bp.init(params, ETask::Bp_Joseph);
-        YK::Util::CudaTimer timer("Bp_Joseph", s);
+        bp.init(params, ETask::BP_Joseph);
+        YK::Util::CudaTimer timer("BP_Joseph", s);
         bp.run(d_y.data(), params, d_ATy_bilinear.data(), s, /*clear_vol=*/true);
     }
     cudaStreamSynchronize(s);
@@ -1167,8 +1167,8 @@ int main_joseph_v2_v3_adjoint_verify()
     // ---- A^T y：Joseph BP 手动双线性 ───────────────────────────
     {
         ConeBackprojector bp;
-        bp.init(params, ETask::Bp_Joseph_v2);
-        YK::Util::CudaTimer timer("Bp_Joseph_v2", s);
+        bp.init(params, ETask::BP_Joseph_v2);
+        YK::Util::CudaTimer timer("BP_Joseph_v2", s);
         bp.run(d_y.data(), params, d_ATy_v2.data(), s, /*clear_vol=*/true);
     }
     cudaStreamSynchronize(s);
@@ -1183,8 +1183,8 @@ int main_joseph_v2_v3_adjoint_verify()
     // ---- A^T y：Joseph BP 纹理双线性 ───────────────────────────
     {
         ConeBackprojector bp;
-        bp.init(params, ETask::Bp_Joseph_v3);
-        YK::Util::CudaTimer timer("Bp_Joseph_v3", s);
+        bp.init(params, ETask::BP_Joseph_v3);
+        YK::Util::CudaTimer timer("BP_Joseph_v3", s);
         bp.run(d_y.data(), params, d_ATy_v3.data(), s, /*clear_vol=*/true);
     }
     cudaStreamSynchronize(s);
@@ -1690,8 +1690,8 @@ int main_fp_bp_geometry_verify()
     // ── BP：改成 OSSART 里实际用的 bp_task ───────────────────────
     {
         ConeBackprojector bp;
-        bp.init(params, ETask::Bp_Joseph);
-        YK::Util::CudaTimer timer("Bp_Joseph", s);
+        bp.init(params, ETask::BP_Joseph);
+        YK::Util::CudaTimer timer("BP_Joseph", s);
         bp.run(d_sino.data(), params, d_bp.data(), s, /*clear_vol=*/true);
     }
     cudaStreamSynchronize(s);

@@ -236,14 +236,9 @@ namespace YK {
                 //    + 0.5*nDim1：体积中心 → 0-based 体素索引
                 //    + 0.5      ：0-based  → CUDA 纹理中心
                 float f1 = a1 * (startSlice * step - 0.5f * nSlicesOrig + 0.5f * step)
-                    + b1
-                    + 0.5f * nDim1   // 体积中心坐标 → 0-based 体素索引
-                    + 0.5f;           // 0-based 体素索引 → CUDA 纹理中心
-
+                    + b1 + (nDim1 - 1) * 0.5f + 0.5f;
                 float f2 = a2 * (startSlice * step - 0.5f * nSlicesOrig + 0.5f * step)
-                    + b2
-                    + 0.5f * nDim2   // 同 f1
-                    + 0.5f;
+                    + b2 + (nDim2 - 1) * 0.5f + 0.5f;
                 float fVal = 0.f;
                 const int endSlice = min(startSlice + kBlockSlices, nSlices);
                 for (int s = startSlice; s < endSlice; ++s)

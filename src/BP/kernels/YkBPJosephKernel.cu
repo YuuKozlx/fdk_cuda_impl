@@ -646,17 +646,17 @@ namespace YK {
                         const float p = tex3D<float>(sinoTex, fu + 0.5f, fv + 0.5f, ia_rel);
                         Z[iz] += p * fPhysLen;   // 原: p * fMainAxisVox * fDistCorr
                     }
+                }
 
 #pragma unroll
-                    for (int iz = 0; iz < ZSIZE; ++iz)
-                    {
-                        const int zIdx = startZ + iz;
-                        if (zIdx >= vg.Nz) continue;
-                        const size_t idx = (size_t)zIdx * vg.Ny * vg.Nx
-                            + (size_t)y * vg.Nx
-                            + (size_t)x;
-                        d_vol[idx] += Z[iz];
-                    }
+                for (int iz = 0; iz < ZSIZE; ++iz)
+                {
+                    const int zIdx = startZ + iz;
+                    if (zIdx >= vg.Nz) continue;
+                    const size_t idx = (size_t)zIdx * vg.Ny * vg.Nx
+                        + (size_t)y * vg.Nx
+                        + (size_t)x;
+                    d_vol[idx] += Z[iz];
                 }
             }
 

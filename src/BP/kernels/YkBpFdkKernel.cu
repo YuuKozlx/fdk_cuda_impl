@@ -351,7 +351,7 @@ namespace YK {
                     (vg.Nx + block.x - 1) / block.x,
                     (vg.Ny + block.y - 1) / block.y,
                     (vg.Nz + ZSIZE - 1) / ZSIZE);
-                fdk_bp_kernel_fdk_weight_v2<ZSIZE, PROJ_PER_KERNEL> << <grid, block, 0, stream >> > (
+                fdk_bp_kernel_no_weight<ZSIZE, PROJ_PER_KERNEL> << <grid, block, 0, stream >> > (
                     sinoTex, d_views, d_coeffs, d_vol, vg,
                     startAngle, endAngle);
             }
