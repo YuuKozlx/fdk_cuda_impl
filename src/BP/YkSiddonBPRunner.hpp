@@ -104,7 +104,7 @@ namespace YK {
 
             SVolGeom vol_geom = SVolGeom::make_centered(
                 params.iVX, params.iVY, params.iVZ,
-                params.vox_x_mm, params.vox_z_mm);
+                params.vox_x_mm, params.vox_y_mm, params.vox_z_mm);
             vol_geom.center = make_float3(
                 params.vol_offset_x_mm,
                 params.vol_offset_y_mm,
@@ -337,7 +337,7 @@ namespace YK {
 
             SVolGeom vol_geom = SVolGeom::make_centered(
                 params.iVX, params.iVY, params.iVZ,
-                params.vox_x_mm, params.vox_z_mm);
+                params.vox_x_mm, params.vox_y_mm, params.vox_z_mm);
             vol_geom.center = make_float3(
                 params.vol_offset_x_mm,
                 params.vol_offset_y_mm,

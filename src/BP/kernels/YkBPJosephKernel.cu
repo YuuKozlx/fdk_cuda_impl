@@ -383,7 +383,7 @@ namespace YK {
                 for (int angle = startAngle; angle < endAngle; ++angle)
                 {
                     const SConeProjGeomVec& v = d_views[angle];
-                    const float ia_rel = (float)(angle - startAngle);
+                    const float ia_rel = (float)(angle - startAngle) + 0.5f;
 
                     // 探测器法向量（Z 循环外）
                     const float nx = v.detU.y * v.detV.z - v.detU.z * v.detV.y;
@@ -438,37 +438,37 @@ namespace YK {
                         const float dz_vox = dz * rcp_vox_z;
                         const float absDZ_vox = fabsf(dz_vox);
 
-                        // 主轴判断（体素坐标系下）
-                        float main_comp_vox, fMainAxisVox;
+
+                        // ── 主轴判断 + a1/a2 + 物理弦长（一体，替换原来三段）──────────
+                        float v0, v1, v2, a1, a2;
+
                         if (absDX_vox >= absDY_vox && absDX_vox >= absDZ_vox) {
-                            main_comp_vox = absDX_vox;
-                            fMainAxisVox = vg.vox_x;
+                            // 主轴 X：a1↔Y, a2↔Z
+                            v0 = vg.vox_x; v1 = vg.vox_y; v2 = vg.vox_z;
+                            a1 = dy_vox / dx_vox;
+                            a2 = dz_vox / dx_vox;
                         }
                         else if (absDY_vox >= absDZ_vox) {
-                            main_comp_vox = absDY_vox;
-                            fMainAxisVox = vg.vox_y;
+                            // 主轴 Y：a1↔X, a2↔Z
+                            v0 = vg.vox_y; v1 = vg.vox_x; v2 = vg.vox_z;
+                            a1 = dx_vox / dy_vox;
+                            a2 = dz_vox / dy_vox;
                         }
                         else {
-                            main_comp_vox = absDZ_vox;
-                            fMainAxisVox = vg.vox_z;
+                            // 主轴 Z：a1↔X, a2↔Y
+                            v0 = vg.vox_z; v1 = vg.vox_x; v2 = vg.vox_y;
+                            a1 = dx_vox / dz_vox;
+                            a2 = dy_vox / dz_vox;
                         }
 
-                        // a1/a2（体素坐标系下的斜率，和 Joseph FP 完全对称）
-                        const float a1 = (absDX_vox >= absDY_vox && absDX_vox >= absDZ_vox)
-                            ? dy_vox / dx_vox
-                            : (absDY_vox >= absDZ_vox)
-                            ? dx_vox / dy_vox
-                            : dx_vox / dz_vox;
-                        const float a2 = (absDX_vox >= absDY_vox && absDX_vox >= absDZ_vox)
-                            ? dz_vox / dx_vox
-                            : (absDY_vox >= absDZ_vox)
-                            ? dz_vox / dy_vox
-                            : dy_vox / dz_vox;
-
-                        const float fDistCorr = __fsqrt_rn(a1 * a1 + a2 * a2 + 1.f);
+                        // 物理弦长：各方向用各自的物理体素尺寸
+                        // 各向同性时 v0=v1=v2=vox → fPhysLen = vox·sqrt(a1²+a2²+1) = 原值 ✓
+                        const float a1v1 = a1 * v1;
+                        const float a2v2 = a2 * v2;
+                        const float fPhysLen = __fsqrt_rn(v0 * v0 + a1v1 * a1v1 + a2v2 * a2v2);
 
                         const float p = tex3D<float>(sinoTex, fu + 0.5f, fv + 0.5f, ia_rel);
-                        Z[iz] += p * fMainAxisVox * fDistCorr;
+                        Z[iz] += p * fPhysLen;
                     }
                 }
 
@@ -574,7 +574,7 @@ namespace YK {
                 {
                     const SConeProjGeomVec& v = d_views[angle];
                     const FdkAffineCoeff& c = d_coeffs[angle];
-                    const float ia_rel = (float)(angle - startAngle);
+                    const float ia_rel = (float)(angle - startAngle) + 0.5f;
 
                     // Z循环外：XY部分预计算
                     const float denXY = c.Cd_w + c.Cd_x * fX + c.Cd_y * fY;
@@ -617,38 +617,46 @@ namespace YK {
                         const float dz_vox = (worldZ - v.src.z) * rcp_vox_z;
                         const float absDZ_vox = fabsf(dz_vox);
 
-                        float fMainAxisVox, a1, a2;
+                        // ── 主轴判断 + 物理体素尺寸 + a1/a2 ──────────────────────
+                        float v0, v1, v2, a1, a2;
                         if (absDX_vox >= absDY_vox && absDX_vox >= absDZ_vox) {
-                            fMainAxisVox = vg.vox_x;
+                            v0 = vg.vox_x; v1 = vg.vox_y; v2 = vg.vox_z;
                             a1 = dy_vox / dx_vox;
                             a2 = dz_vox / dx_vox;
                         }
                         else if (absDY_vox >= absDZ_vox) {
-                            fMainAxisVox = vg.vox_y;
+                            v0 = vg.vox_y; v1 = vg.vox_x; v2 = vg.vox_z;
                             a1 = dx_vox / dy_vox;
                             a2 = dz_vox / dy_vox;
                         }
                         else {
-                            fMainAxisVox = vg.vox_z;
+                            v0 = vg.vox_z; v1 = vg.vox_x; v2 = vg.vox_y;
                             a1 = dx_vox / dz_vox;
                             a2 = dy_vox / dz_vox;
                         }
 
-                        const float fDistCorr = __fsqrt_rn(a1 * a1 + a2 * a2 + 1.f);
+                        // ── 物理弦长（各向异性精确）──────────────────────────────
+                        // fPhysLen = sqrt(v0² + (a1·v1)² + (a2·v2)²)
+                        // 各向同性时 v0=v1=v2=vox：fPhysLen = vox·sqrt(a1²+a2²+1)
+                        //   = fMainAxisVox·fDistCorr  ← 与原来完全等价 ✓
+                        const float a1v1 = a1 * v1;
+                        const float a2v2 = a2 * v2;
+                        const float fPhysLen = __fsqrt_rn(v0 * v0 + a1v1 * a1v1 + a2v2 * a2v2);
+
                         const float p = tex3D<float>(sinoTex, fu + 0.5f, fv + 0.5f, ia_rel);
-                        Z[iz] += p * fMainAxisVox * fDistCorr;
+                        Z[iz] += p * fPhysLen;   // 原: p * fMainAxisVox * fDistCorr
                     }
-                }
 
 #pragma unroll
-                for (int iz = 0; iz < ZSIZE; ++iz)
-                {
-                    const int zIdx = startZ + iz;
-                    if (zIdx >= vg.Nz) continue;
-                    const size_t idx = (size_t)zIdx * vg.Ny * vg.Nx
-                        + (size_t)y * vg.Nx
-                        + (size_t)x;
-                    d_vol[idx] += Z[iz];
+                    for (int iz = 0; iz < ZSIZE; ++iz)
+                    {
+                        const int zIdx = startZ + iz;
+                        if (zIdx >= vg.Nz) continue;
+                        const size_t idx = (size_t)zIdx * vg.Ny * vg.Nx
+                            + (size_t)y * vg.Nx
+                            + (size_t)x;
+                        d_vol[idx] += Z[iz];
+                    }
                 }
             }
 
@@ -675,7 +683,7 @@ namespace YK {
                     startAngle, endAngle);
             }
 
-        } // namespace detail
+        }; // namespace detail
 
         void joseph_bp_v3_launch(
             cudaTextureObject_t      sinoTex,

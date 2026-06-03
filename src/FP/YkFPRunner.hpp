@@ -118,7 +118,7 @@ namespace YK {
 
             SVolGeom vol_geom = SVolGeom::make_centered(
                 params.iVX, params.iVY, params.iVZ,
-                params.vox_x_mm, params.vox_z_mm);
+                params.vox_x_mm, params.vox_y_mm, params.vox_z_mm);
             vol_geom.center = make_float3(
                 params.vol_offset_x_mm,
                 params.vol_offset_y_mm,
@@ -170,7 +170,7 @@ namespace YK {
             case ETask::FP_Joseph:
             {
                 //Util::CudaTimer timer{ "FP_Joseph", stream };
-                Fp::fp_joseph_ss_launch(
+                Fp::fp_joseph_launch(
                     gpuctx.volTex.tex,
                     gpuctx.geo.h_views_vec(),
                     gpuctx.geo.d_views_vox(),
@@ -178,8 +178,7 @@ namespace YK {
                     vol_geom,
                     Na, params.iPU, params.iPV,
                     false,
-                    stream,Fp::FpStepSuperSample::x1,
-                    Fp::FpDetSuperSample::x1);
+                    stream, Fp::FpStepSuperSample::x1);
                 break;
             }
             case ETask::FP_Siddon:
@@ -196,7 +195,7 @@ namespace YK {
                 );
                 break;
             }
-                
+
 
             case ETask::FP_CVP:
                 Fp::fp_cvp_launch(

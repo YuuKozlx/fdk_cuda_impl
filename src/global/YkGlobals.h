@@ -84,6 +84,19 @@ namespace YK {
             return g;
         }
 
+        static SVolGeom make_centered(int Nx, int Ny, int Nz, float vox_x, float vox_y, float vox_z) {
+            SVolGeom g;
+            g.Nx = Nx; g.Ny = Ny; g.Nz = Nz;
+            g.vox_x = vox_x; g.vox_y = vox_y; g.vox_z = vox_z;
+            g.center = make_float3(0.f, 0.f, 0.f);
+
+
+            g.tmp_rcp_vox_x = 1.f / vox_x;
+            g.tmp_rcp_vox_y = 1.f / vox_y;
+            g.tmp_rcp_vox_z = 1.f / vox_z;
+            return g;
+        }
+
         // 推导 volume (0,0,0) 体素的世界坐标
         __host__ __device__  float3 origin() const {
             return make_float3(

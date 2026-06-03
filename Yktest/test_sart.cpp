@@ -81,19 +81,16 @@ int main_ossart_test()
     // ---- OS-SART 配置 ───────────────────────────────────────────
     OSSART::Config cfg;
     cfg.n_iter = 10;
-    cfg.n_subset = 10;
+    cfg.n_subset = 20;
     cfg.lambda = 1.f;
-    cfg.lambda_red = 1.f;
+    cfg.lambda_red = 0.999f;
     cfg.eps = 1e-6f;
     cfg.use_min = false;
     cfg.min_constraint = 0.f;     // CT 值非负约束
     cfg.fp_task = ETask::FP_Joseph;       // Joseph 正投影
-    cfg.bp_task = ETask::Bp_Joseph_v2;    // Joseph 反投影（接近 FP_Joseph 的伴随）
+    cfg.bp_task = ETask::BP_FDK;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ──────────────────────────────────────────
-
-
-
 
     {
         OSSART recon;
@@ -161,7 +158,7 @@ int main_ossart_ex_test()
 {
     SCBCTParams params;
     params.iPU = 1024; params.iPV = 1024;
-    params.iPAng = 480; params.iPAngTotal = 480;
+    params.iPAng = 360; params.iPAngTotal = 360;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;

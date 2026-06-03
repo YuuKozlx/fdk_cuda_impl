@@ -6,6 +6,7 @@ int  main_fdk();
 int  main_bp_runner();
 int main_fdkbp_vs_onlybp_verify();
 int  main_bp_verify();
+void test_fdk_cylinder();
 int main_siddon_bp_runner();
 int main_siddon_ray_adjoint_verify();
 int main_siddon_voxel_adjoint_verify();
@@ -17,6 +18,8 @@ int main_siddon_zslab_verify();
 int main_fp_bp_geometry_verify();
 void test_fp_runner(cudaStream_t stream);
 void test_fp_runner_siddon_vs_joseph(cudaStream_t stream);
+
+void test_fp_cylinder_siddon_joseph(cudaStream_t stream);
 int  main_fp();
 
 int main_fdk_zslab();
@@ -69,6 +72,7 @@ int main()
     //main_bp_runner();
     //main_fdkbp_vs_onlybp_verify();
     //main_bp_verify();
+    //test_fdk_cylinder();
     //main_siddon_bp_runner();
     //main_siddon_ray_adjoint_verify();
     //main_joseph_adjoint_verify();
@@ -80,6 +84,7 @@ int main()
      //main_fp_bp_geometry_verify();
     //test_fp_runner(0);
     //test_fp_runner_siddon_vs_joseph(0);
+    //test_fp_cylinder_siddon_joseph(0);
     //main_fp();
     //main_fdk_zslab();
     //main_helical_verify();

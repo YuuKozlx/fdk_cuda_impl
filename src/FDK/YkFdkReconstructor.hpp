@@ -141,7 +141,7 @@ namespace YK {
             // BpProcessor
             {
                 SVolGeom vol_geom = SVolGeom::make_centered(
-                    iVX, iVY, iVZ, params.vox_x_mm, params.vox_z_mm);
+                    iVX, iVY, iVZ, params.vox_x_mm, params.vox_y_mm, params.vox_z_mm);
                 vol_geom.center = make_float3(
                     params.vol_offset_x_mm,
                     params.vol_offset_y_mm,
