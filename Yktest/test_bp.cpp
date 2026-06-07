@@ -42,6 +42,7 @@ int main_bp_runner()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / params.iPAng;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -138,6 +139,7 @@ int main_fdkbp_vs_onlybp_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -290,6 +292,7 @@ int main_bp_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -415,6 +418,7 @@ int main_bp_zslab_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -601,6 +605,7 @@ int main_siddon_bp_runner()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / params.iPAng;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -705,6 +710,7 @@ int main_siddon_ray_adjoint_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / params.iPAng;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -840,6 +846,7 @@ int main_siddon_voxel_adjoint_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / params.iPAng;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -953,6 +960,7 @@ int main_joseph_adjoint_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / params.iPAng;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -1114,6 +1122,7 @@ int main_joseph_v2_v3_adjoint_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / params.iPAng;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -1280,6 +1289,7 @@ int main_siddon_bp_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -1446,6 +1456,7 @@ int main_siddon_zslab_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -1630,6 +1641,7 @@ int main_fp_bp_geometry_verify()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / params.iPAng;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
     const size_t view_elems = (size_t)params.iPU * params.iPV;

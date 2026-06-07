@@ -17,6 +17,304 @@ using namespace Mem;
 
 const std::string test_data_dir = R"(H:\Code\fanproj\fdk-test\TestData\)";
 
+
+
+
+int main_fdk_custom_filter()
+{
+    SCBCTParams params;
+    params.iPU = 1024; params.iPV = 1024;
+    params.iPAng = 480; params.iPAngTotal = 480;
+    params.tiltn_angle_rad = 0;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = true;
+    params.scan_range_rad = (float)CUDA_PI * 4.0f / 3.0f;
+    params.SID = 500.0f; params.SDD = 1000.0f;
+    params.du_mm = 0.25f; params.dv_mm = 0.25f;
+    params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
+    params.offsetU_mm = 0.f;
+
+
+    auto next_pow2 = [](int x) {
+        int p = 1;
+        while (p <= x) p <<= 1;
+        return p;
+        };
+
+    int paddedN = next_pow2(params.iPU);
+
+    int n_complex = paddedN / 2 + 1;
+
+    std::vector<float> rl_weights(n_complex);
+
+    // 不含 bake_invN（由 build_weights 处理），不含 du
+    for (int k = 0; k < n_complex; ++k)
+        rl_weights[k] = (float)k / (float)paddedN;
+
+
+
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
+    params.scan_start_angle_rad = angle_list[0];
+    params.angle_list = angle_list;
+    params.desc = YK::SFilterKernelDesc::Custom(rl_weights, /*gain=*/1.f);
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
+
+    const int    Ang = params.iPAng;
+    const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * Ang;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    std::vector<float> h_proj(proj_elems);
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_proj)) {
+        YK_LOGE("cannot read proj_1024x1024x360.raw");
+        return -1;
+    }
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+
+    auto dump = [](void* p) {
+        auto* payload = static_cast<DumpPayload*>(p);
+        if (payload->viewIdx != 0) return;
+        float* d_buf = static_cast<float*>(payload->buf);
+        const size_t n = payload->n;
+
+        std::vector<float> h(n);
+        cudaMemcpy(h.data(), d_buf, n * sizeof(float), cudaMemcpyDeviceToHost);
+
+        float sum = 0.f, maxv = -1e30f, minv = 1e30f;
+        for (auto v : h) { sum += v; maxv = std::max(maxv, v); minv = std::min(minv, v); }
+        YK_LOGI("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
+            payload->viewIdx, payload->stage, n, minv, maxv, sum / (float)n);
+
+        auto path = fmt::format("dump_a{}_{}.raw", payload->viewIdx, payload->stage);
+        std::ofstream f(path, std::ios::binary);
+        if (f) f.write(reinterpret_cast<const char*>(h.data()), n * sizeof(float));
+        else   YK_LOGE("[dump] cannot save {}", path);
+        };
+
+    MemoryController ctrl;
+    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+
+    // ---- 离线重建 ----
+    {
+        YK::Util::CudaTimer timer("offline", s);
+        YK::fdk_recon(h_proj.data(), d_vol_buf.data(), params,
+            /*Kchunk=*/64, s, /*clear_vol=*/true, nullptr, nullptr);
+    }
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol_buf);
+        write_raw_float((test_data_dir + "fdk_vec_vol_offline_custom_rl.raw").c_str(), h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: fdk_vec_vol_offline.raw");
+    }
+
+    // ---- 在线重建 ----
+    const int batch_size = 32 * 2;
+    const int batch_num = (Ang + batch_size - 1) / batch_size;
+
+    FdkReconstructor recon;
+    recon.init(params, /*Kchunk=*/64, s);
+    {
+        YK::Util::CudaTimer timer("online", s);
+        for (int i = 0; i < batch_num; ++i) {
+            const int base = i * batch_size;
+            const int count = std::min(batch_size, Ang - base);
+
+            SCBCTParams bp = params;
+            bp.iPAng = count;
+            bp.angle_list = std::vector<float>(
+                angle_list.begin() + base, angle_list.begin() + base + count);
+
+            recon.feed(h_proj.data() + base * view_elems, bp, s,
+                d_vol_buf.data(), (i == 0));
+        }
+    }
+    recon.reset();
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol_buf);
+        write_raw_float((test_data_dir + "fdk_vec_vol_online_custom_rl.raw").c_str(), h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: fdk_vec_vol_online.raw");
+    }
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    printf("Done: fdk offline + online (%d x %d x %d)\n", Nx, Ny, Nz);
+    return 0;
+}
+
+int main_fdk_realdata()
+{
+    SCBCTParams params;
+    params.iPU = 1024; params.iPV = 1024;
+    params.iPAng = 420; params.iPAngTotal = 420;
+    params.tiltn_angle_rad = 0;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = true;
+
+    params.SID = 430.f; params.SDD = 769.579468f;
+    params.du_mm = 0.417f; params.dv_mm = 0.417f;
+    params.vox_x_mm = 0.35f; params.vox_y_mm = 0.35f; params.vox_z_mm = 0.35f;
+    params.offsetU_mm = -1.403f;
+    params.offsetV_mm = 40.f;
+
+    float scan_range_deg = 210.f;
+    params.scan_range_rad = (float)CUDA_PI * scan_range_deg / 180.f;
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i) {
+        angle_list[i] = 18.f + scan_range_deg * i / (params.iPAng - 1);
+        angle_list[i] = angle_list[i] / 180.f * (float)CUDA_PI;
+    }
+
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
+
+
+    params.scan_start_angle_rad = angle_list[0];
+    params.angle_list = angle_list;
+    params.tiltn_angle_rad = 0.f / 180.f * (float)CUDA_PI;
+
+    const int    Ang = params.iPAng;
+    const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * Ang;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    std::vector<float> h_proj(proj_elems);
+    std::string path = test_data_dir + fmt::format("Dump_Data_BeamHCed_1024_1024.raw", scan_range_deg);
+    if (!read_raw_float(path.c_str(), h_proj)) {
+        YK_LOGE("cannot read {}", path);
+        return -1;
+    }
+
+
+
+    // 定义旋转 Lambda（原地旋转单张投影，顺时针旋转 90° * n）
+    auto rotate_proj = [](float* data, int width, int height, int n) {
+        n = ((n % 4) + 4) % 4;  // 归一化到 0~3
+        if (n == 0) return;
+
+        int total = width * height;
+        std::vector<float> tmp(total);
+
+        if (n == 1) {  // 90°
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    int src = y * width + x;
+                    int dst = x * height + (height - 1 - y);
+                    tmp[dst] = data[src];
+                }
+            }
+        }
+        else if (n == 2) {  // 180°
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    int src = y * width + x;
+                    int dst = (height - 1 - y) * width + (width - 1 - x);
+                    tmp[dst] = data[src];
+                }
+            }
+        }
+        else if (n == 3) {  // 270° (或 -90°)
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    int src = y * width + x;
+                    int dst = (width - 1 - x) * height + y;
+                    tmp[dst] = data[src];
+                }
+            }
+        }
+
+        memcpy(data, tmp.data(), total * sizeof(float));
+        };
+
+    // 对每个角度的投影独立旋转 180°（n=2），只旋转一次
+    for (int i = 0; i < Ang; ++i) {
+        float* start = h_proj.data() + i * view_elems;
+        rotate_proj(start, params.iPU, params.iPV, 0);
+    }
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+
+    auto dump = [](void* p) {
+        auto* payload = static_cast<DumpPayload*>(p);
+        if (payload->viewIdx != 0) return;
+        float* d_buf = static_cast<float*>(payload->buf);
+        const size_t n = payload->n;
+
+        std::vector<float> h(n);
+        cudaMemcpy(h.data(), d_buf, n * sizeof(float), cudaMemcpyDeviceToHost);
+
+        float sum = 0.f, maxv = -1e30f, minv = 1e30f;
+        for (auto v : h) { sum += v; maxv = std::max(maxv, v); minv = std::min(minv, v); }
+        YK_LOGI("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
+            payload->viewIdx, payload->stage, n, minv, maxv, sum / (float)n);
+
+        auto path = fmt::format("dump_a{}_{}.raw", payload->viewIdx, payload->stage);
+        std::ofstream f(path, std::ios::binary);
+        if (f) f.write(reinterpret_cast<const char*>(h.data()), n * sizeof(float));
+        else   YK_LOGE("[dump] cannot save {}", path);
+        };
+
+    MemoryController ctrl;
+    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+
+    // ---- 离线重建 ----
+    {
+        YK::Util::CudaTimer timer("offline", s);
+        YK::fdk_recon(h_proj.data(), d_vol_buf.data(), params,
+            /*Kchunk=*/64, s, /*clear_vol=*/true, nullptr, nullptr);
+    }
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol_buf);
+
+        std::string rpath = test_data_dir + fmt::format("fdk_vec_vol_offline_realdata_1024_{}.raw", scan_range_deg);
+        write_raw_float(rpath.c_str(), h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: {}", rpath);
+    }
+
+    // ---- 在线重建 ----
+    const int batch_size = 32 * 2;
+    const int batch_num = (Ang + batch_size - 1) / batch_size;
+
+    FdkReconstructor recon;
+    recon.init(params, /*Kchunk=*/64, s);
+    {
+        YK::Util::CudaTimer timer("online", s);
+        for (int i = 0; i < batch_num; ++i) {
+            const int base = i * batch_size;
+            const int count = std::min(batch_size, Ang - base);
+
+            SCBCTParams bp = params;
+            bp.iPAng = count;
+            bp.angle_list = std::vector<float>(
+                angle_list.begin() + base, angle_list.begin() + base + count);
+
+            recon.feed(h_proj.data() + base * view_elems, bp, s,
+                d_vol_buf.data(), (i == 0));
+        }
+    }
+    recon.reset();
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol_buf);
+
+        std::string rpath = test_data_dir + fmt::format("fdk_vec_vol_online_realdata_1024_{}.raw", scan_range_deg);
+        write_raw_float(rpath.c_str(), h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: {}", rpath);
+    }
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    printf("Done: fdk offline + online (%d x %d x %d)\n", Nx, Ny, Nz);
+    return 0;
+}
+
+
+
 int main_fdk()
 {
     SCBCTParams params;
@@ -33,9 +331,10 @@ int main_fdk()
 
     std::vector<float> angle_list(params.iPAng);
     for (int i = 0; i < params.iPAng; ++i)
-        angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
+        angle_list[i] = 0 - (i + 1) * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -44,7 +343,7 @@ int main_fdk()
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_proj)) {
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360_flip.raw").c_str(), h_proj)) {
         YK_LOGE("cannot read proj_1024x1024x360.raw");
         return -1;
     }
@@ -145,6 +444,7 @@ int main_fdk_zslab_bigdata()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -261,6 +561,7 @@ int main_fdk_zslab()
         angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     const int    Ang = params.iPAng;
     const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
@@ -372,6 +673,7 @@ void test_stdrecon_with_random_offset(cudaStream_t stream)
     params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
     params.offsetU_mm = params.offsetV_mm = 0.f;
 
+
     const int Na = params.iPAng;
     const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
     const size_t view_elems = (size_t)params.iPU * params.iPV;
@@ -382,6 +684,7 @@ void test_stdrecon_with_random_offset(cudaStream_t stream)
         angle_list[i] = i * 2.f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     // 直接读之前正投影存下来的 sino
     std::vector<float> h_sino(view_elems * Na);
@@ -435,6 +738,7 @@ void test_recon_with_random_offset(cudaStream_t stream)
         angle_list[i] = i * 2.f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     // 与投影时完全相同的随机数种子和分布
     std::mt19937 rng(42);
@@ -511,6 +815,7 @@ void test_stdrecon_with_periodic_offset(cudaStream_t stream)
         angle_list[i] = i * 2.f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     // 直接读之前正投影存下来的 sino
     std::vector<float> h_sino(view_elems * Na);
@@ -564,6 +869,7 @@ void test_recon_with_periodic_offset(cudaStream_t stream)
         angle_list[i] = i * 2.f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
     // 与投影时完全相同的周期抖动
     std::vector<float3> src_offsets(Na), det_offsets(Na);
@@ -658,9 +964,12 @@ void test_fdk_cylinder()
     params.bShortScan = false;
     params.scan_range_rad = 2.f * CUDA_PI;
     params.angle_list.resize(Na);
-    for (int i = 0; i < Na; ++i)
+    for (int i = 0; i < Na; ++i) {
         params.angle_list[i] = 2.f * CUDA_PI * i / Na;
+    }
+
     params.scan_start_angle_rad = params.angle_list[0];
+    params.nDirSign = (params.angle_list.size() >= 2 && params.angle_list[1] < params.angle_list[0]) ? -1 : 1;
 
     Mem::MemoryController mc;
 

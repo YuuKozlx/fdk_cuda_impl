@@ -26,6 +26,7 @@ struct SCBCTParams {
     float scan_range_rad = 2 * PI; // total scan range in radians (e.g. 2*PI for full scan, PI for short scan)
     float scan_start_angle_rad = 0.0f; // start angle of the scan in radians (e.g. 0 for full scan, -PI/2 for short scan)
     bool bShortScan = false; // whether it's a short scan (if true, Parker weighting will be applied)
+    int nDirSign = +1; // scanning direction sign, +1 for angle increasing, -1 for angle decreasing
 
     // geometry params
     float SID; // source-to-isocenter distance in mm 

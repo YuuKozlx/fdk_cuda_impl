@@ -48,6 +48,7 @@ namespace YK {
         int          iPAnglesTotal = 0; // 整个扫描的总视角数（非 chunk 内），用于计算相对角度
         float        fScanRangeRad = 2.f * CUDA_PI; // 扫描范围（弧度），短扫描时 < 2Pi
         float        fStartAngleRad;     // 全局起始角度
+        int          nDirSign = 1;          // 方向符号，1 或 -1，取决于角度增减方向，影响冗余区域定义
     };
 
     struct ParkerWeightChunkContext {

@@ -117,6 +117,7 @@ namespace YK {
                 ictx.iPAnglesTotal = params.iPAngTotal;
                 ictx.fScanRangeRad = params.scan_range_rad;
                 ictx.fStartAngleRad = params.scan_start_angle_rad;
+                ictx.nDirSign = params.nDirSign;
                 pkw_.setInitContext(&ictx);
                 if (!pkw_.init()) {
                     fprintf(stderr, "[FdkReconstructor] ParkerWeightProcessor init failed\n");
@@ -193,6 +194,7 @@ namespace YK {
                 ictx.iPAnglesTotal = params.iPAngTotal;
                 ictx.fScanRangeRad = params.scan_range_rad;
                 ictx.fStartAngleRad = params.scan_start_angle_rad;
+                ictx.nDirSign = params.nDirSign;
                 pkw_.setInitContext(&ictx);
                 if (!pkw_.init()) {
                     fprintf(stderr, "[FdkReconstructor] ParkerWeightProcessor reinit failed\n");
@@ -479,6 +481,7 @@ namespace YK {
                 ictx.iPAnglesTotal = params.iPAngTotal;
                 ictx.fScanRangeRad = params.scan_range_rad;
                 ictx.fStartAngleRad = params.scan_start_angle_rad;
+                ictx.nDirSign = params.nDirSign;
                 pkw_.setInitContext(&ictx);
                 if (!pkw_.init()) return false;
             }
@@ -666,6 +669,7 @@ namespace YK {
                 ictx.iPAnglesTotal = params.iPAngTotal;
                 ictx.fScanRangeRad = params.scan_range_rad;
                 ictx.fStartAngleRad = params.scan_start_angle_rad;
+                ictx.nDirSign = params.nDirSign;
                 pkw_.setInitContext(&ictx);
                 if (!pkw_.init()) return false;
             }

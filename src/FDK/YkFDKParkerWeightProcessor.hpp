@@ -52,6 +52,7 @@ namespace YK {
                 fScale_ = ic->fScanRangeRad / static_cast<float>(CUDA_PI);
                 fAngleBase_ = ic->fStartAngleRad;
                 cfg_ready_ = true;
+                nDirSign_ = ic->nDirSign;
             }
 
             // ----------------------------------------------------------------
@@ -105,7 +106,7 @@ namespace YK {
                 }
 
                 // 角度归一化 + 上传至 constant memory
-                detail::pk_uploadAngles(cc->h_angles, cc->K, fAngleBase_);
+                detail::pk_uploadAngles(cc->h_angles, cc->K, fAngleBase_, nDirSign_);
                 chunk_ = *cc;
             }
 
@@ -136,6 +137,7 @@ namespace YK {
                     fDetUSize_,
                     fCentralFanAngle_,
                     fScale_,
+                    nDirSign_,
                     stream);
             }
 
@@ -168,6 +170,7 @@ namespace YK {
             float fDetOrigin_ = 0.f;
             float fCentralFanAngle_ = 0.f;
             float fScale_ = 1.f;
+            int nDirSign_ = +1; // 方向符号，+1 或 -1，影响权重函数的正负号
             /// 基准角度：相对角 = 绝对角 - fAngleBase_
             float fAngleBase_ = 0.f;
 

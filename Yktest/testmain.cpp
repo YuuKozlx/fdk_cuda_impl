@@ -3,6 +3,8 @@
 
 // 各模块测试函数声明
 int  main_fdk();
+int main_fdk_realdata();
+int main_fdk_custom_filter();
 int  main_bp_runner();
 int main_fdkbp_vs_onlybp_verify();
 int  main_bp_verify();
@@ -69,6 +71,8 @@ int main()
 
     // 按需开启/注释
     //main_fdk();
+    //main_fdk_custom_filter();
+    main_fdk_realdata();
     //main_bp_zslab_verify();
     //main_bp_runner();
     //main_fdkbp_vs_onlybp_verify();
@@ -122,6 +126,6 @@ int main()
     //main_ossart_ex_test();
     //main_ossart_test();
     //main_iter_sirt_recon_sim();
-    main_cgls_test();
+    //main_cgls_test();
     return 0;
 }

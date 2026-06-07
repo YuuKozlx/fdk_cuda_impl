@@ -22,7 +22,8 @@ namespace YK {
             void pk_uploadAngles(
                 const float* h_angles,
                 int          K,
-                float        fAngleBase);
+                float        fAngleBase,
+                int          nDirSign);
 
 
             // ----------------------------------------------------------------
@@ -31,11 +32,10 @@ namespace YK {
             // ----------------------------------------------------------------
             void pk_launchParker(
                 float* d_data,
-                int    Nu, int Nv, int K,
-                float  fSDD,
-                float  fDetUSize,
-                float  fCentralFanAngle,
-                float  fScale,
+                int Nu, int Nv, int K,
+                float fSDD, float fDetUSize,
+                float fCentralFanAngle, float fScale,
+                int nDirSign,
                 cudaStream_t stream);
 
 

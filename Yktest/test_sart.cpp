@@ -966,12 +966,12 @@ int main_cgls_test()
 
     // ── CGLS 配置 ────────────────────────────────────────────────
     CGLS::Config cfg;
-    cfg.n_iter = 30;
+    cfg.n_iter = 50;
     cfg.eps = 1e-8f;
     cfg.use_min = true;
     cfg.min_constraint = 0.f;
     cfg.fp_task = ETask::FP_Siddon;
-    cfg.bp_task = ETask::BP_FDK;
+    cfg.bp_task = ETask::BP_FDK_matched;
 
     // ── 运行 CGLS ────────────────────────────────────────────────
     {

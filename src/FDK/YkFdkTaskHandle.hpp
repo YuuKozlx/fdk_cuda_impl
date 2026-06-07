@@ -249,6 +249,7 @@ namespace YK {
             cp.vol_offset_x_mm = p.volume.offsetX_mm;
             cp.vol_offset_y_mm = p.volume.offsetY_mm;
             cp.vol_offset_z_mm = p.volume.offsetZ_mm;
+            cp.nDirSign = p.scan.nDirSign;
             return cp;
         }
 
