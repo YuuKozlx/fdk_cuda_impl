@@ -67,7 +67,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::BP_Joseph && task != ETask::BP_FDK && task != ETask::BP_Joseph_v2 && task != ETask::BP_Joseph_v3)
+                task != ETask::BP_Joseph && task != ETask::BP_FDK && task != ETask::BP_Joseph_v2 && task != ETask::BP_Joseph_v3 && task != ETask::BP_FDK_matched)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -305,7 +305,7 @@ namespace YK {
             }
             if (task != ETask::BP_Siddon_RayDriven &&
                 task != ETask::BP_Siddon_VoxDriven &&
-                task != ETask::BP_Joseph && task != ETask::BP_FDK && task != ETask::BP_Joseph_v2 && task != ETask::BP_Joseph_v3)
+                task != ETask::BP_Joseph && task != ETask::BP_FDK && task != ETask::BP_Joseph_v2 && task != ETask::BP_Joseph_v3 && task != ETask::BP_FDK_matched)
             {
                 YK_LOGE("[ConeBackprojector] init: task %d is not a BP task\n",
                     static_cast<int>(task));
@@ -378,6 +378,8 @@ namespace YK {
             switch (bp_type_)
             {
             case ETask::BP_Siddon_RayDriven:
+                // launch 无 accumulate 参数，kernel 用 atomicAdd 累加、无覆盖能力。
+                // clear_vol=true 时此处手动清零；false 时直接累加。
                 if (clear_vol) {
                     YK_CUDA_CHECK(cudaMemsetAsync(d_vol_out, 0,
                         (size_t)params.iVX * params.iVY * params.iVZ * sizeof(float),
@@ -392,11 +394,8 @@ namespace YK {
                 break;
 
             case ETask::BP_Siddon_VoxDriven: {
-                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
-                    gpuctx.d_sino_raw,
-                    params.iPU, params.iPV, Na);
-                Bp::bp_siddon_voxel_v2_launch(
-                    sinoTex.tex, d_vol_out,
+                Bp::bp_siddon_voxel_launch(
+                    d_sino, d_vol_out,
                     gpuctx.geo.d_views_world(),
                     vol_geom,
                     params.iPU, params.iPV, Na,
@@ -428,16 +427,26 @@ namespace YK {
                     Na, accumulate, stream);
                 break;
             }
+            case ETask::BP_FDK_matched:
+            {
+                auto sinoTex = Mem::TextureController::createTex3DFromDevice(
+                    gpuctx.d_sino_raw,
+                    params.iPU, params.iPV, Na);
+                Bp::fdk_matched_bp_launch(sinoTex.tex, gpuctx.geo.d_views_world(),
+                    gpuctx.geo.d_coeffs_data(), d_vol_out, vol_geom,
+                    Na, accumulate, stream);
+                break;
+            }
             case ETask::BP_Joseph_v2: {
                 auto sinoTex = Mem::TextureController::createTex3DFromDevice(
                     gpuctx.d_sino_raw,
                     params.iPU, params.iPV, Na);
                 Bp::joseph_bp_v2_launch(
                     sinoTex.tex,
-                    gpuctx.geo.d_views_vox(),
+                    gpuctx.geo.d_views_world(),
                     d_vol_out, vol_geom,
                     Na, params.iPU, params.iPV,
-                    accumulate, stream);
+                    false, stream);
                 break;
             }
             case ETask::BP_Joseph_v3: {
