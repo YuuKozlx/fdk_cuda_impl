@@ -4,9 +4,10 @@
 #include <utility>
 
 
+#include <limits>
+#include "../Filter/YkFFT.hpp"
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
-#include "../Filter/YkFFT.hpp"
 #include "YkCreateFilterKernelLaunch.cuh"
 
 namespace YK {
@@ -122,6 +123,47 @@ namespace YK {
                 YK_ASSERT(d_weights_fft);
                 YK_ASSERT(du_real > 0.f);
 
+                // ── Custom 路径 ───────────────────────────────────────
+                if (desc.kind == EFilterKernel::Custom) {
+                    YK_ASSERT(!desc.custom_weights.empty());
+                    YK_ASSERT((int)desc.custom_weights.size() == n_complex_);
+
+                    YK_CUDA_CHECK(cudaMemcpyAsync(
+                        d_weights_fft,
+                        desc.custom_weights.data(),
+                        (size_t)n_complex_ * sizeof(float),
+                        cudaMemcpyHostToDevice, stream_));
+
+                    // gain 缩放
+                    if (desc.gain != 1.0f) {
+                        flt_launch_kernel_scale_inplace(
+                            d_weights_fft, n_complex_, desc.gain, stream_);
+
+                        YK_CUDA_KERNEL_CHECK();
+                    }
+
+                    YK_CUDA_KERNEL_CHECK();
+                    // bake_invN
+                    if (bake_invN && paddedN_ > 0) {
+                        flt_launch_kernel_scale_inplace(
+                            d_weights_fft, n_complex_, 1.f / (float)paddedN_, stream_);
+
+                        YK_CUDA_KERNEL_CHECK();
+                    }
+
+
+                    // Custom 路径补 du 缩放，和 DiscreteRLFFT 路径保持一致
+                    if (fabs(du_real) > std::numeric_limits<float>::epsilon()) {
+                        flt_launch_kernel_scale_inplace(
+                            d_weights_fft, n_complex_, 1.0f / du_real, stream_);
+
+                        YK_CUDA_KERNEL_CHECK();
+                    }
+
+
+                    return;
+                }
+
                 using namespace detail;
 
                 dim3 block(256, 1);
@@ -135,6 +177,10 @@ namespace YK {
                 if (desc.source == EWeightsBuildSource::AnalyticFreq) {
                     flt_launch_kernel_build_weights_analytic_freq(
                         d_weights_fft, n_complex_, paddedN_, desc, bake_invN, stream_);
+                    YK_CUDA_KERNEL_CHECK();
+                    // 补 du 缩放，和 DiscreteRLFFT 路径保持一致
+                    flt_launch_kernel_scale_inplace(
+                        d_weights_fft, n_complex_, 1.0f / du_real, stream_);
                     YK_CUDA_KERNEL_CHECK();
                     return;
                 }
@@ -203,6 +249,7 @@ namespace YK {
                 YK_CUDA_KERNEL_CHECK();
 
             }
+
 
         private:
             void move_from(CreateFilterKernelFromFFT& o) noexcept

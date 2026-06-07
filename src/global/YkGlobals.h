@@ -229,7 +229,8 @@ namespace YK {
         Cosine,
         Hann,        // Hann == Hanning
         Hamming,
-        Blackman
+        Blackman,
+        Custom
     };
 
     // 权重构建来源（保留两条路径）
@@ -245,27 +246,67 @@ namespace YK {
     };
 
     struct SFilterKernelDesc {
-        EFilterKernel kind = EFilterKernel::RamLak;
+        EFilterKernel        kind = EFilterKernel::RamLak;
+        EWeightsBuildSource  source = EWeightsBuildSource::AnalyticFreq;
+        ERampExtractMode     extract_mode = ERampExtractMode::RealPart;
+        float                gain = 1.0f;
+        float                cutoff = 0.5f;
+        bool                 force_dc_zero = false;
 
-        // cutoff in DFT-normalized frequency:
-        // f = k/N in [0,0.5], Nyquist=0.5
-        float cutoff = 0.5f;
 
-        float gain = 1.0f;
+        // Custom 路径专用，长度 = n_complex = paddedN/2+1  单边频域核
+        std::vector<float>   custom_weights;
 
+        static SFilterKernelDesc Custom(
+            std::vector<float> weights, float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::Custom;
+            d.custom_weights = std::move(weights);
+            d.gain = gain;
+            return d;
+        }
 
-        // DC 处理（让离散/解析对齐）
-        bool force_dc_zero = false;
+        // ── 工厂函数 ─────────────────────────────────────────
+        static SFilterKernelDesc RamLak(
+            EWeightsBuildSource src = EWeightsBuildSource::DiscreteRLFFT,
+            float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::RamLak;
+            d.source = src;
+            d.gain = gain;
+            return d;
+        }
 
-        // 选择构建来源：保留两条路
-        EWeightsBuildSource source = EWeightsBuildSource::DiscreteRLFFT;
+        static SFilterKernelDesc Hamming(float cutoff = 0.5f, float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::Hamming;
+            d.source = EWeightsBuildSource::DiscreteRLFFT;
+            d.cutoff = cutoff;
+            d.gain = gain;
+            return d;
+        }
 
-        ERampExtractMode extract_mode = ERampExtractMode::RealPart; // 仅对 DiscreteRLFFT 有效
+        static SFilterKernelDesc Hann(float cutoff = 0.5f, float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::Hann;
+            d.source = EWeightsBuildSource::DiscreteRLFFT;
+            d.cutoff = cutoff;
+            d.gain = gain;
+            return d;
+        }
 
-        SFilterKernelDesc() {}
-        SFilterKernelDesc(EFilterKernel fkenel) :kind(fkenel) {}
+        static SFilterKernelDesc Identity(float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::None;
+            d.gain = gain;
+            return d;
+        }
     };
-
 
 
 }
