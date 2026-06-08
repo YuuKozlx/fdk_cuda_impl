@@ -225,7 +225,7 @@ namespace YK {
         float3 detTiltEuler = make_float3(0.0f, 0.0f, 0.0f), // outOfPlane(x), lateral(y), inPlane(z)
         float3 src_offset = make_float3(0.0f, 0.0f, 0.0f), // x/y/z offset of source position
         float3 srcCRTiltEuler = make_float3(0.0f, 0.0f, 0.0f) // pitch(x), yaw(y), roll(z)
-    
+
     )
     {
         if (Ang <= 0) throw std::runtime_error("Ang must > 0");
@@ -374,7 +374,7 @@ namespace YK {
         float3 src_offset = make_float3(srcOffsetX, srcOffsetY, 0.f);
 
         // det_offset: RTK ProjectionOffsetX/Y
-        float3 det_offset = make_float3(projOffsetX, projOffsetY, 0.f);
+        float3 det_offset = make_float3(projOffsetX, 0.f, projOffsetY);
 
         // detTiltEuler:
         //   x = OutOfPlaneAngle（绕局部X轴）
@@ -591,7 +591,7 @@ namespace YK {
     {
         auto src_pos = [=](float t) -> float3 {
             return make_float3(a * cos(t), -SID, -b * sin(t));
-        };
+            };
         build_planar_ct_vec_geometry_custom(geo, theta, Ang, Nu, Nv, du, dv, SID, IDD, src_pos);
     }
 

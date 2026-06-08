@@ -187,7 +187,7 @@ int main_ossart_ex_test()
         params.iPU, params.iPV,
         params.du_mm, params.dv_mm,
         params.SID, params.SDD - params.SID,
-        f3(params.offsetU_mm, params.offsetV_mm, 0.f),
+        f3(params.offsetU_mm, 0.f, params.offsetV_mm),
         f3(rad2deg(params.tiltu_angle_rad),
             rad2deg(params.tiltn_angle_rad),
             rad2deg(params.tiltv_angle_rad)));

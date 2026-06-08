@@ -157,15 +157,15 @@ int main_fdk_realdata()
 
     params.SID = 430.f; params.SDD = 769.579468f;
     params.du_mm = 0.417f; params.dv_mm = 0.417f;
-    params.vox_x_mm = 0.35f; params.vox_y_mm = 0.35f; params.vox_z_mm = 0.35f;
-    params.offsetU_mm = -1.403f;
+    params.vox_x_mm = 0.30f; params.vox_y_mm = 0.30f; params.vox_z_mm = 0.30f;
+    params.offsetU_mm = 1.52205f;
     params.offsetV_mm = 40.f;
 
     float scan_range_deg = 210.f;
     params.scan_range_rad = (float)CUDA_PI * scan_range_deg / 180.f;
     std::vector<float> angle_list(params.iPAng);
     for (int i = 0; i < params.iPAng; ++i) {
-        angle_list[i] = 18.f + scan_range_deg * i / (params.iPAng - 1);
+        angle_list[i] = 48.f + scan_range_deg * i / (params.iPAng - 1);
         angle_list[i] = angle_list[i] / 180.f * (float)CUDA_PI;
     }
 
@@ -189,52 +189,6 @@ int main_fdk_realdata()
         return -1;
     }
 
-
-
-    // 定义旋转 Lambda（原地旋转单张投影，顺时针旋转 90° * n）
-    auto rotate_proj = [](float* data, int width, int height, int n) {
-        n = ((n % 4) + 4) % 4;  // 归一化到 0~3
-        if (n == 0) return;
-
-        int total = width * height;
-        std::vector<float> tmp(total);
-
-        if (n == 1) {  // 90°
-            for (int y = 0; y < height; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    int src = y * width + x;
-                    int dst = x * height + (height - 1 - y);
-                    tmp[dst] = data[src];
-                }
-            }
-        }
-        else if (n == 2) {  // 180°
-            for (int y = 0; y < height; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    int src = y * width + x;
-                    int dst = (height - 1 - y) * width + (width - 1 - x);
-                    tmp[dst] = data[src];
-                }
-            }
-        }
-        else if (n == 3) {  // 270° (或 -90°)
-            for (int y = 0; y < height; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    int src = y * width + x;
-                    int dst = (width - 1 - x) * height + y;
-                    tmp[dst] = data[src];
-                }
-            }
-        }
-
-        memcpy(data, tmp.data(), total * sizeof(float));
-        };
-
-    // 对每个角度的投影独立旋转 180°（n=2），只旋转一次
-    for (int i = 0; i < Ang; ++i) {
-        float* start = h_proj.data() + i * view_elems;
-        rotate_proj(start, params.iPU, params.iPV, 0);
-    }
 
     cudaStream_t s = nullptr;
     YK_CUDA_CHECK(cudaStreamCreate(&s));
@@ -272,7 +226,7 @@ int main_fdk_realdata()
         auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
         ctrl.download3D(h_vol, d_vol_buf);
 
-        std::string rpath = test_data_dir + fmt::format("fdk_vec_vol_offline_realdata_1024_{}.raw", scan_range_deg);
+        std::string rpath = test_data_dir + fmt::format("fdk_vec_vol_offline_realdata_1024_{}.raw", params.offsetU_mm);
         write_raw_float(rpath.c_str(), h_vol.cdata(), vol_elems);
         YK_LOGI("saved: {}", rpath);
     }
@@ -315,6 +269,7 @@ int main_fdk_realdata()
 
 
 
+
 int main_fdk()
 {
     SCBCTParams params;
@@ -322,16 +277,17 @@ int main_fdk()
     params.iPAng = 480; params.iPAngTotal = 480;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
-    params.bShortScan = true;
+    params.bShortScan = false;
     params.scan_range_rad = (float)CUDA_PI * 4.0f / 3.0f;
     params.SID = 500.0f; params.SDD = 1000.0f;
     params.du_mm = 0.25f; params.dv_mm = 0.25f;
     params.vox_x_mm = 0.1f; params.vox_y_mm = 0.1f; params.vox_z_mm = 0.1f;
-    params.offsetU_mm = 0.f;
+    params.offsetU_mm = 0.0f;
+    params.offsetV_mm = 0.f;
 
     std::vector<float> angle_list(params.iPAng);
     for (int i = 0; i < params.iPAng; ++i)
-        angle_list[i] = 0 - (i + 1) * 2.0f * (float)CUDA_PI / 720;
+        angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
     params.scan_start_angle_rad = angle_list[0];
     params.angle_list = angle_list;
     params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
@@ -343,7 +299,7 @@ int main_fdk()
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
     std::vector<float> h_proj(proj_elems);
-    if (!read_raw_float((test_data_dir + "proj_1024x1024x360_flip.raw").c_str(), h_proj)) {
+    if (!read_raw_float((test_data_dir + "proj_1024x1024x360.raw").c_str(), h_proj)) {
         YK_LOGE("cannot read proj_1024x1024x360.raw");
         return -1;
     }
@@ -749,7 +705,7 @@ void test_recon_with_random_offset(cudaStream_t stream)
     std::vector<float3> detTilt_degs(Na), srcCRTilt_degs(Na);
     for (int i = 0; i < Na; ++i) {
         src_offsets[i] = make_float3(0.f, 0.f, 0.f);
-        det_offsets[i] = make_float3(dist_t(rng), dist_t(rng), 0.f);
+        det_offsets[i] = make_float3(dist_t(rng), 0.f, dist_t(rng));
         detTilt_degs[i] = make_float3(0.f, 0.f, dist_r(rng));
         srcCRTilt_degs[i] = make_float3(0.f, 0.f, 0.f);
     }

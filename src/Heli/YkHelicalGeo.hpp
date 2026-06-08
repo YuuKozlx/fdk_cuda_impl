@@ -80,7 +80,7 @@ namespace YK {
 
         // det_offset 包含 U/V 偏移
         const float3 det_offset = make_float3(
-            param.offsetU_mm, param.offsetV_mm, 0.f);
+            param.offsetU_mm, 0.f, param.offsetV_mm);
 
         for (int a = 0; a < Ang; ++a) {
             const float  t = theta[a];
