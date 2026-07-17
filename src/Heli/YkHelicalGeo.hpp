@@ -236,11 +236,10 @@ namespace YK {
         {
             HelicalSlabConfig cfg{};
             cfg.z_center = z0;
+            cfg.z_count_vox = (int)roundf(param.z_block_mm / param.vox_z_mm);
+            const float z_block_actual = cfg.z_count_vox * param.vox_z_mm;  // 局部变量,不存
             cfg.z_start_vox = (int)roundf(
-                (z0 - param.z_block_mm * 0.5f - z_vol_start)
-                / param.vox_z_mm);
-            cfg.z_count_vox = (int)roundf(
-                param.z_block_mm / param.vox_z_mm);
+                (z0 - z_block_actual * 0.5f - z_vol_start) / param.vox_z_mm);
             cfg.views = selectHelicalViews(z0, view_half, geo);
 
             if (cfg.views.indices.empty()) {

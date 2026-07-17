@@ -147,7 +147,7 @@ namespace YK {
                 // BpProcessor
                 SVolGeom sub_geom = SVolGeom::make_centered(
                     iVX, iVY, slab.z_count_vox,
-                    param_.vox_x_mm, param_.vox_z_mm);
+                    param_.vox_x_mm, param_.vox_y_mm, param_.vox_z_mm);
                 sub_geom.center = make_float3(
                     param_.vol_offset_x_mm,
                     param_.vol_offset_y_mm,
@@ -380,10 +380,10 @@ namespace YK {
             const int iVX = param_.iVX;
             const int iVY = param_.iVY;
 
-            const float z_slab_start =
-                slab.z_center - param_.z_block_mm * 0.5f;
-            const float z_slab_end =
-                slab.z_center + param_.z_block_mm * 0.5f;
+            // 用体素数反推实际厚度,和 z_count_vox 严格对齐
+            const float z_block_actual = slab.z_count_vox * param_.vox_z_mm;
+            const float z_slab_start = slab.z_center - z_block_actual * 0.5f;
+            const float z_slab_end = slab.z_center + z_block_actual * 0.5f;
 
             for (int iz = 0; iz < slab.z_count_vox; ++iz) {
                 const int vol_iz = slab.z_start_vox + iz;
@@ -392,8 +392,9 @@ namespace YK {
                 const float z_world = z_vol_start_
                     + (vol_iz + 0.5f) * param_.vox_z_mm;
 
-                const float t = (z_world - z_slab_start)
+                float t = (z_world - z_slab_start)
                     / (z_slab_end - z_slab_start);
+                t = std::max(0.f, std::min(1.f, t));   // 浮点舍入也不怕
                 const float cw = cosf(CUDA_PI * (t - 0.5f));
                 const float w2 = cw * cw;
 
@@ -744,7 +745,7 @@ namespace YK {
             // --- 构造子体积几何 ---
             SVolGeom sub_geom = SVolGeom::make_centered(
                 param_.iVX, param_.iVY, slab.z_count_vox,
-                param_.vox_x_mm, param_.vox_z_mm);
+                param_.vox_x_mm, param_.vox_y_mm, param_.vox_z_mm);
             sub_geom.center = make_float3(
                 param_.vol_offset_x_mm,
                 param_.vol_offset_y_mm,
@@ -890,10 +891,10 @@ namespace YK {
             const int iVX = param_.iVX;
             const int iVY = param_.iVY;
 
-            const float z_slab_start =
-                slab.z_center - param_.z_block_mm * 0.5f;
-            const float z_slab_end =
-                slab.z_center + param_.z_block_mm * 0.5f;
+            // 用体素数反推实际厚度,和 z_count_vox 严格对齐
+            const float z_block_actual = slab.z_count_vox * param_.vox_z_mm;
+            const float z_slab_start = slab.z_center - z_block_actual * 0.5f;
+            const float z_slab_end = slab.z_center + z_block_actual * 0.5f;
 
             for (int iz = 0; iz < slab.z_count_vox; ++iz) {
                 const int vol_iz = slab.z_start_vox + iz;
@@ -902,8 +903,9 @@ namespace YK {
                 const float z_world = z_vol_start_
                     + (vol_iz + 0.5f) * param_.vox_z_mm;
 
-                const float t = (z_world - z_slab_start)
+                float t = (z_world - z_slab_start)
                     / (z_slab_end - z_slab_start);
+                t = std::max(0.f, std::min(1.f, t));   // 浮点舍入也不怕
                 const float cw = cosf(CUDA_PI * (t - 0.5f));
                 const float w2 = cw * cw;
 

@@ -55,7 +55,7 @@ int main_helical_from_volume()
     // 重建
     p.z_block_mm = 20.0f;
     p.z_step_mm = 10.0f;
-    YK::fillHelicalScanGeometry(p, 0.75f, 720, true);
+    YK::fillHelicalScanGeometry(p, 0.75f, 720, -1, true);
 
     p.Kchunk = 32;
     p.fp_task = ETask::FP_Joseph;
@@ -224,7 +224,7 @@ int main_helical_online_from_volume()
     // 重建
     p.z_block_mm = 20.0f;
     p.z_step_mm = 10.0f;
-    YK::fillHelicalScanGeometry(p, 0.75f, p.views_per_rot, true);
+    YK::fillHelicalScanGeometry(p, 0.75f, p.views_per_rot, -1, true);
 
     p.Kchunk = 32;
     p.fp_task = ETask::FP_Joseph;

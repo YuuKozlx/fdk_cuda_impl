@@ -407,11 +407,15 @@ namespace YK {
     inline void fillHelicalScanGeometry(TParam& p,
         float pf = 0.75f,
         int   views_per_rot = 720,
+        float R_check = -1.f,   // 新增：校验用半径，-1 表示用全 FOV
         bool  verbose = true)
     {
         // ── 基础几何 ──────────────────────────────────────────────
         const float M = magnification(p.SID, p.SDD);
-        const float R = p.iVX * p.vox_x_mm * 0.5f;
+        // R 取传入值，或退回全 FOV 半径
+        const float R = (R_check > 0.f)
+            ? R_check
+            : p.iVX * p.vox_x_mm * 0.5f;
         const float dZ_axis = detectorZCoverageAxis(p.iPV, p.dv_mm, M);
         const float dZ_eff = detectorZCoverageAtR(p.iPV, p.dv_mm, p.SID, p.SDD, R);
         const float Z_vol = volumeZRange(p.iVZ, p.vox_z_mm);
@@ -447,6 +451,8 @@ namespace YK {
             printf("--- Helical CT Param Summary ------------------------\n");
             printf("  M            = %.4f\n", M);
             printf("  R_recon      = %.1f mm\n", R);
+            printf("  R_check      = %.1f mm  %s\n",
+                R, (R_check > 0.f) ? "(user)" : "(full FOV)");
             printf("  dZ_axis      = %.2f mm  (r=0)\n", dZ_axis);
             printf("  dZ_eff(R)    = %.2f mm  (r=R)\n", dZ_eff);
             printf("  pitch_mm     = %.2f mm  ratio=%.3f  %s\n",
