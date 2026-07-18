@@ -92,7 +92,7 @@ namespace YK {
             static cudaTextureObject_t createTex2DLinear(
                 T* devPtr, int Nu, int Nv,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp)
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 check_filter_type<T>(filter);
 
@@ -114,7 +114,7 @@ namespace YK {
             static std::vector<cudaTextureObject_t> createTex2DLinearBatch(
                 T* basePtr, int Nu, int Nv, int K,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp)
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 check_filter_type<T>(filter);
 
@@ -135,7 +135,7 @@ namespace YK {
             static cudaTextureObject_t createTex2DFromSlice(
                 const DevicePitchedBuffer3D<T>& buf, int sliceIdx,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp)
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 check_filter_type<T>(filter);
 
@@ -164,7 +164,7 @@ namespace YK {
             static std::vector<cudaTextureObject_t> createTex2DBatch(
                 const DevicePitchedBuffer3D<T>& buf,
                 cudaTextureFilterMode  filter = cudaFilterModeLinear,
-                cudaTextureAddressMode addr = cudaAddressModeClamp)
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
             {
                 check_filter_type<T>(filter);
 

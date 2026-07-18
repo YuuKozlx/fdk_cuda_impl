@@ -125,9 +125,11 @@ namespace YK {
                 current_K_ = fc->K;
 
                 host_startu_.resize(current_K_);
-                for (int i = 0; i < current_K_; ++i)
+                for (int i = 0; i < current_K_; ++i) {
                     host_startu_[i] = detail::fp_computeStartU(
                         Nu_, paddedN_, fc->h_gv[i].offsetU_pix);
+                }
+
 
                 YK_CUDA_CHECK(cudaMemcpyAsync(
                     d_startu_, host_startu_.data(),

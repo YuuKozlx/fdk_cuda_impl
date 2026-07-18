@@ -3,9 +3,12 @@
 
 // 各模块测试函数声明
 int  main_fdk();
+int  main_fdk_v2();
+int main_mcgpu_watercylinder_fdk();
 int main_fdk_realdata();
 int main_fdk_custom_filter();
 int  main_bp_runner();
+int main_bp_realdata_runner();
 int main_fdkbp_vs_onlybp_verify();
 int  main_bp_verify();
 void test_fdk_cylinder();
@@ -63,6 +66,8 @@ int main_ossart_ex_test();
 int main_ossart_test();
 int main_iter_sirt_recon_sim();
 int main_cgls_test();
+int main_ossart_realdata_test();
+int main_ossart_mcgpu_cylinder_test();
 
 int main()
 {
@@ -73,10 +78,13 @@ int main()
     //main_fdk();
     //main_fdk_custom_filter();
     main_fdk_realdata();
+    //main_fdk_v2();
+    //main_mcgpu_watercylinder_fdk();
     //main_bp_zslab_verify();
     //main_bp_runner();
     //main_fdkbp_vs_onlybp_verify();
     //main_bp_verify();
+    //main_bp_realdata_runner();
     //test_fdk_cylinder();
     //main_siddon_bp_runner();
     //main_siddon_ray_adjoint_verify();
@@ -127,5 +135,7 @@ int main()
     //main_ossart_test();
     //main_iter_sirt_recon_sim();
     //main_cgls_test();
+    //main_ossart_realdata_test();
+    //main_ossart_mcgpu_cylinder_test();
     return 0;
 }

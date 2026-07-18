@@ -120,6 +120,82 @@ int main_bp_runner()
 }
 
 
+int main_bp_realdata_runner()
+{
+    SCBCTParams params;
+    params.iPU = 1024; params.iPV = 1024;
+    params.iPAng = 420; params.iPAngTotal = 420;
+    params.tiltn_angle_rad = 0;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = false;
+
+    params.SID = 430.f; params.SDD = 769.579468f;
+    params.du_mm = 0.417f; params.dv_mm = 0.417f;
+    params.vox_x_mm = 0.40f; params.vox_y_mm = 0.40f; params.vox_z_mm = 0.40f;
+    params.offsetU_mm = 1.52205f;
+    params.offsetV_mm = 40.32f;
+    params.vol_offset_z_mm = 0.0f; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
+
+    params.desc = YK::SFilterKernelDesc::RamLak();
+
+    float scan_range_deg = 210.f;
+    params.scan_range_rad = (float)CUDA_PI * scan_range_deg / 180.f;
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i) {
+        angle_list[i] = 48.f + scan_range_deg * i / (params.iPAng - 1);
+        angle_list[i] = angle_list[i] / 180.f * (float)CUDA_PI;
+    }
+
+    params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
+
+    const int    Ang = params.iPAng;
+    const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * Ang;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    std::vector<float> h_flt(proj_elems);
+    if (!read_raw_float((test_data_dir + "flt_realdata.raw").c_str(), h_flt)) {
+        YK_LOGE("cannot read flt_realdata.raw");
+        return -1;
+    }
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+
+    MemoryController ctrl;
+
+    auto d_flt_buf = ctrl.allocateDevice3D<float>(
+        (size_t)params.iPU * params.iPV, Ang, 1, 0);
+    {
+        auto h_view = ctrl.allocateCpu3D<float>(
+            (size_t)params.iPU * params.iPV, Ang, 1, false);
+        std::memcpy(h_view.data(), h_flt.data(), proj_elems * sizeof(float));
+        ctrl.upload3D(d_flt_buf, h_view);
+    }
+
+    auto d_vol_buf = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+
+    // ---- 离线反投影 ----
+    {
+        BpReconstructor recon;
+        recon.init(params, /*Kchunk=*/32, s);
+        YK::Util::CudaTimer timer("bp_offline", s);
+        recon.feed(d_flt_buf.data(), params, s, d_vol_buf.data(), true);
+    }
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol_buf);
+        write_raw_float((test_data_dir + "bp_vol_offline_realdata.raw").c_str(), h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: bp_vol_offline_realdata.raw ({}x{}x{})", Nx, Ny, Nz);
+    }
+
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    return 0;
+}
+
+
 int main_fdkbp_vs_onlybp_verify()
 {
     SCBCTParams params;

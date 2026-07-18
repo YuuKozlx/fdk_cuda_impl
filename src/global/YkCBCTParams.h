@@ -38,7 +38,7 @@ struct SCBCTParams {
     int iVY; // number of voxels in the Y direction
     int iVZ; // number of voxels in the Z direction
     float vox_x_mm = 1.0f; // voxel size in mm
-    float vox_y_mm = 1.0;
+    float vox_y_mm = 1.0f;
     float vox_z_mm = 1.0f;; // voxel size in Z direction in mm
     float vol_offset_x_mm = 0.0f; // volume center offset in X direction in mm (relative to isocenter)
     float vol_offset_y_mm = 0.0f; // volume center offset in Y direction in mm (relative to isocenter)
