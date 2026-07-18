@@ -153,11 +153,11 @@ int main_fdk_realdata()
     params.iPAng = 420; params.iPAngTotal = 720;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
-    params.bShortScan = true;
+    params.bShortScan = false;
 
     params.SID = 430.f; params.SDD = 769.579468f;
     params.du_mm = 0.417f; params.dv_mm = 0.417f;
-    params.vox_x_mm = 0.5f; params.vox_y_mm = 0.5f; params.vox_z_mm = 0.5f;
+    params.vox_x_mm = 0.4492f; params.vox_y_mm = 0.4492f; params.vox_z_mm = 0.4492f;
     params.offsetU_mm = 1.52205f;
     params.offsetV_mm = 40.32f;
     params.vol_offset_z_mm = 0.0f; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
