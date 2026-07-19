@@ -46,6 +46,13 @@ namespace YK {
         void dot_launch(const float* a, const float* b,
             size_t n, float* h_result, cudaStream_t stream);
 
-
+        // ============================================================================
+        // 需并入 Iter kernels 的两个新 kernel(声明加到 Iter 头文件):
+        //
+        void mean_z_to_2d_launch(const float* d_vol3d, float* d_out2d,
+            int nx, int ny, int nz, cudaStream_t stream);
+        void update_v2d_launch(float* d_vol, const float* d_bp,
+            const float* d_v2d, float lambda, float eps,
+            int nx, int ny, int nz, cudaStream_t stream);
     } // namespace Iter
 } // namespace YK

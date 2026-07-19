@@ -423,6 +423,51 @@ namespace YK
 
 
 
+
+        __global__ void mean_z_to_2d_kernel(
+            const float* __restrict__ vol3d, float* __restrict__ out2d,
+            int nx, int ny, int nz)
+        {
+            int x = blockIdx.x * blockDim.x + threadIdx.x;
+            int y = blockIdx.y * blockDim.y + threadIdx.y;
+            if (x >= nx || y >= ny) return;
+            const size_t stride = (size_t)nx * ny;
+            const size_t xy = (size_t)y * nx + x;
+            float sum = 0.f;
+            for (int z = 0; z < nz; ++z) sum += vol3d[(size_t)z * stride + xy];
+            out2d[xy] = sum / (float)nz;
+        }
+
+        __global__ void update_v2d_kernel(
+            float* __restrict__ vol, const float* __restrict__ bp,
+            const float* __restrict__ v2d,
+            float lambda, float eps, int nx, int ny, int nz)
+        {
+            size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+            const size_t n = (size_t)nx * ny * nz;
+            if (i >= n) return;
+            const size_t xy = i % ((size_t)nx * ny);
+            vol[i] += lambda * bp[i] / (v2d[xy] + eps);
+        }
+
+        void mean_z_to_2d_launch(const float* d_vol3d, float* d_out2d,   // ← const float*
+            int nx, int ny, int nz, cudaStream_t stream)
+        {
+            dim3 blk(16, 16);
+            dim3 grd((nx + 15) / 16, (ny + 15) / 16);
+            mean_z_to_2d_kernel << <grd, blk, 0, stream >> > (d_vol3d, d_out2d, nx, ny, nz);
+        }
+
+        void update_v2d_launch(float* d_vol, const float* d_bp,
+            const float* d_v2d, float lambda, float eps,                 // ← 带 eps
+            int nx, int ny, int nz, cudaStream_t stream)
+        {
+            const size_t n = (size_t)nx * ny * nz;
+            const int blk = 256;
+            const size_t grd = (n + blk - 1) / blk;
+            update_v2d_kernel << <(unsigned)grd, blk, 0, stream >> > (
+                d_vol, d_bp, d_v2d, lambda, eps, nx, ny, nz);
+        }
     };
 
 };

@@ -16,12 +16,12 @@ namespace YK {
         FDK = 0,
         FP_Joseph = 1,
         FP_Siddon = 2,
-        FP_CVP = 3,
-        BP_Siddon_RayDriven = 4,
-        BP_Siddon_VoxDriven = 5,
+        FP_CVP = 3, // [!!desprate]
+        BP_Siddon_RayDriven = 4, // 最好别用它，慢且重建效果差// [!!desprate]
+        BP_Siddon_VoxDriven = 5, // 最好别用它，有摩尔纹样的伪影// [!!desprate]
         BP_FDK = 6,
-        BP_FDK_matched = 7,
-        BP_Joseph = 8,   //
+        BP_FDK_matched = 7, // 不可用于ossart_tigre
+        BP_Joseph = 8,   // 一样比较慢 且 有缺陷，建议用 BP_Joseph_v2和v3 // [!!desprate]
         BP_Joseph_v2 = 9, // 
         BP_Joseph_v3 = 10, // 
         SART = 11,

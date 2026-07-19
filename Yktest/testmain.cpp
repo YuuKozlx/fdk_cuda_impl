@@ -65,6 +65,7 @@ void test_generate_pcb_phantom();
 
 int main_ossart_ex_test();
 int main_ossart_test();
+int main_cgls_realdata_test();
 int main_iter_sirt_recon_sim();
 int main_cgls_test();
 int main_ossart_realdata_test();
@@ -144,9 +145,10 @@ int main()
     //main_iter_sirt_recon_sim();
     //main_cgls_test();
     //main_ossart_realdata_test();
+    main_cgls_realdata_test();
     //main_ossart_mcgpu_cylinder_test();
-    main_helical_from_volume_cylinder_ossart_independent();
-    main_helical_from_volume_cylinder_ossart();
-    main_helical_from_volume_cylinder_cgls();
+    //main_helical_from_volume_cylinder_ossart_independent();
+    //main_helical_from_volume_cylinder_ossart();
+    //main_helical_from_volume_cylinder_cgls();
     return 0;
 }
