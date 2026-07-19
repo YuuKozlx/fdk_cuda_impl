@@ -150,10 +150,10 @@ int main_fdk_realdata()
 {
     SCBCTParams params;
     params.iPU = 1024; params.iPV = 1024;
-    params.iPAng = 420; params.iPAngTotal = 720;
+    params.iPAng = 420; params.iPAngTotal = 420;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
-    params.bShortScan = false;
+    params.bShortScan = true;
 
     params.SID = 430.f; params.SDD = 769.579468f;
     params.du_mm = 0.417f; params.dv_mm = 0.417f;
@@ -162,7 +162,7 @@ int main_fdk_realdata()
     params.offsetV_mm = 40.32f;
     params.vol_offset_z_mm = 0.0f; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
 
-    params.desc = YK::SFilterKernelDesc::RamLak();
+    params.desc = YK::SFilterKernelDesc::RamLak(EWeightsBuildSource::DiscreteRLFFT, 1.0);
 
     float scan_range_deg = 210.f;
     params.scan_range_rad = (float)CUDA_PI * scan_range_deg / 180.f;
@@ -495,25 +495,24 @@ int main_fdk_v2()
     params.iPU = 1024; params.iPV = 1024;
     params.iPAng = 480; params.iPAngTotal = 480;
     params.tiltn_angle_rad = 0;
-    params.iVX = 512; params.iVY = 512; params.iVZ = 512;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
 
-    params.SID = 430.f; params.SDD = 770.f;
+    params.SID = 440.f; params.SDD = 770.f;
     params.du_mm = 0.417f; params.dv_mm = 0.417f;
-    params.vox_x_mm = 0.4492f; params.vox_y_mm = 0.4492f; params.vox_z_mm = 0.4492f;
+    params.vox_x_mm = 0.3f; params.vox_y_mm = 0.3f; params.vox_z_mm = 0.3f;
     params.offsetU_mm = 0.0f;
-    params.offsetV_mm = 100.0f * 0.417f;
+    params.offsetV_mm = 0.0f * 0.417f;
     params.vol_offset_z_mm = 0.0f; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
 
     params.desc = YK::SFilterKernelDesc::RamLak();
 
     float scan_range_deg = 240.f;
     params.scan_range_rad = (float)CUDA_PI * scan_range_deg / 180.f;
+
     std::vector<float> angle_list(params.iPAng);
-    for (int i = 0; i < params.iPAng; ++i) {
-        angle_list[i] = 0.f + scan_range_deg * i / params.iPAng;
-        angle_list[i] = angle_list[i] / 180.f * (float)CUDA_PI;
-    }
+    for (int i = 0; i < params.iPAng; ++i)
+        angle_list[i] = i * 2.0f * (float)CUDA_PI / 720;
 
     params.nDirSign = (angle_list.size() >= 2 && angle_list[1] < angle_list[0]) ? -1 : 1;
 
@@ -529,7 +528,7 @@ int main_fdk_v2()
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
     std::vector<float> h_proj(proj_elems);
-    std::string path = test_data_dir + fmt::format("proj_1024x1024x480_offset100.raw", scan_range_deg);
+    std::string path = test_data_dir + fmt::format("proj_1024x1024x480_offset0.raw", scan_range_deg);
     if (!read_raw_float(path.c_str(), h_proj)) {
         YK_LOGE("cannot read {}", path);
         return -1;

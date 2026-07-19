@@ -352,12 +352,9 @@ namespace YK {
             dim3 block(policy.block_threads, 1, 1);
             dim3 grid(2, 1, 1);
 
-            if (desc.kind == EFilterKernel::None)
-                detail::kernel_fill_identity_weights << <grid, block, 0, stream >> > (
-                    d_w, n_complex, N, desc.gain, bake_invN);
-            else
-                detail::kernel_build_weights_analytic_freq << <grid, block, 0, stream >> > (
-                    d_w, n_complex, N, desc, bake_invN);
+
+            detail::kernel_build_weights_analytic_freq << <grid, block, 0, stream >> > (
+                d_w, n_complex, N, desc, bake_invN);
 
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);
@@ -401,12 +398,9 @@ namespace YK {
             dim3 block(policy.block_threads, 1, 1);
             dim3 grid(2, 1, 1);
 
-            if (desc.kind == EFilterKernel::None)
-                detail::kernel_scale_inplace << <grid, block, 0, stream >> > (
-                    d_w, n_complex, desc.gain);
-            else
-                detail::kernel_apply_window_to_weights_inplace << <grid, block, 0, stream >> > (
-                    d_w, n_complex, N, desc);
+
+            detail::kernel_apply_window_to_weights_inplace << <grid, block, 0, stream >> > (
+                d_w, n_complex, N, desc);
 
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);

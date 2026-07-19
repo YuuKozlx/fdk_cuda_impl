@@ -123,46 +123,13 @@ namespace YK {
                 YK_ASSERT(d_weights_fft);
                 YK_ASSERT(du_real > 0.f);
 
-                // ── Custom 路径 ───────────────────────────────────────
-                if (desc.kind == EFilterKernel::Custom) {
-                    YK_ASSERT(!desc.custom_weights.empty());
-                    YK_ASSERT((int)desc.custom_weights.size() == n_complex_);
+                bool bBuildSuccess = build_custom_weights(desc, d_weights_fft, bake_invN, du_real);
 
-                    YK_CUDA_CHECK(cudaMemcpyAsync(
-                        d_weights_fft,
-                        desc.custom_weights.data(),
-                        (size_t)n_complex_ * sizeof(float),
-                        cudaMemcpyHostToDevice, stream_));
-
-                    // gain 缩放
-                    if (desc.gain != 1.0f) {
-                        flt_launch_kernel_scale_inplace(
-                            d_weights_fft, n_complex_, desc.gain, stream_);
-
-                        YK_CUDA_KERNEL_CHECK();
-                    }
-
-                    YK_CUDA_KERNEL_CHECK();
-                    // bake_invN
-                    if (bake_invN && paddedN_ > 0) {
-                        flt_launch_kernel_scale_inplace(
-                            d_weights_fft, n_complex_, 1.f / (float)paddedN_, stream_);
-
-                        YK_CUDA_KERNEL_CHECK();
-                    }
-
-
-                    // Custom 路径补 du 缩放，和 DiscreteRLFFT 路径保持一致
-                    if (fabs(du_real) > std::numeric_limits<float>::epsilon()) {
-                        flt_launch_kernel_scale_inplace(
-                            d_weights_fft, n_complex_, 1.0f / du_real, stream_);
-
-                        YK_CUDA_KERNEL_CHECK();
-                    }
-
-
+                if (bBuildSuccess) {
                     return;
                 }
+
+                // ---------------------------------------------
 
                 using namespace detail;
 
@@ -248,6 +215,51 @@ namespace YK {
                     d_weights_fft, n_complex_, 1.0f / du_real, stream_);
                 YK_CUDA_KERNEL_CHECK();
 
+            }
+
+            bool build_custom_weights(const YK::SFilterKernelDesc& desc, float* d_weights_fft, bool bake_invN, float du_real) const
+            {
+                // ── Custom 路径 ───────────────────────────────────────
+                if (desc.kind == EFilterKernel::Custom) {
+                    YK_ASSERT(!desc.custom_weights.empty());
+                    YK_ASSERT((int)desc.custom_weights.size() == n_complex_);
+
+                    YK_CUDA_CHECK(cudaMemcpyAsync(
+                        d_weights_fft,
+                        desc.custom_weights.data(),
+                        (size_t)n_complex_ * sizeof(float),
+                        cudaMemcpyHostToDevice, stream_));
+
+                    // gain 缩放
+                    if (desc.gain != 1.0f) {
+                        flt_launch_kernel_scale_inplace(
+                            d_weights_fft, n_complex_, desc.gain, stream_);
+
+                        YK_CUDA_KERNEL_CHECK();
+                    }
+
+                    YK_CUDA_KERNEL_CHECK();
+                    // bake_invN
+                    if (bake_invN && paddedN_ > 0) {
+                        flt_launch_kernel_scale_inplace(
+                            d_weights_fft, n_complex_, 1.f / (float)paddedN_, stream_);
+
+                        YK_CUDA_KERNEL_CHECK();
+                    }
+
+
+                    // Custom 路径补 du 缩放，和 DiscreteRLFFT 路径保持一致
+                    if (fabs(du_real) > std::numeric_limits<float>::epsilon()) {
+                        flt_launch_kernel_scale_inplace(
+                            d_weights_fft, n_complex_, 1.0f / du_real, stream_);
+
+                        YK_CUDA_KERNEL_CHECK();
+                    }
+
+
+                    return true;
+                }
+                return false;
             }
 
 

@@ -323,7 +323,7 @@ namespace YK {
                     float g_dS_x, g_dS_y, g_dS_z;
                     float g_dU_x, g_dU_y, g_dU_z;
                     float g_dV_x, g_dV_y, g_dV_z;
-                    float g_DSD;
+                    float g_DSD, g_DSO, g_inv_du;
 
                     if (ctx.lane == 0)
                     {
@@ -334,6 +334,8 @@ namespace YK {
                         g_dU_x = g.detU.x;  g_dU_y = g.detU.y;  g_dU_z = g.detU.z;
                         g_dV_x = g.detV.x;  g_dV_y = g.detV.y;  g_dV_z = g.detV.z;
                         g_DSD = gp.SDD_mm;
+                        g_DSO = gp.SOD_mm;   // ← 新增
+                        g_inv_du = gp.inv_du_mm;    // ← 新增
                     }
 
                     const float src_x = __shfl_sync(FULL_MASK, g_src_x, 0);
@@ -349,6 +351,28 @@ namespace YK {
                     const float dV_y = __shfl_sync(FULL_MASK, g_dV_y, 0);
                     const float dV_z = __shfl_sync(FULL_MASK, g_dV_z, 0);
                     const float DSD = __shfl_sync(FULL_MASK, g_DSD, 0);
+                    const float DSO = __shfl_sync(FULL_MASK, g_DSO, 0);   // ← 新增
+                    const float inv_du = __shfl_sync(FULL_MASK, g_inv_du, 0);    // ← 新增
+
+                    // ------------------------------------------------------------------
+                    // 权重构成说明（两个独立物理来源，借用同一遍历循环合并计算）：
+                    //
+                    //   1) w：余弦预加权（入射角修正），补偿斜射线比中心射线长
+                    //      造成的路径积分偏差。虚拟探测器（等中心平面）与真实探测器上
+                    //      物理意义相同，不受探测器/虚拟平面选择影响。
+                    //
+                    //   2) w_geom：角度积分密度归一化的单位换算，与余弦修正无关，独立来源。
+                    //      FDK 滤波反投影公式的推导基准是"虚拟探测器"（位于等中心平面，
+                    //      放大率=1），但实际数据在真实探测器（距源 SDD）上采集/滤波。
+                    //      真实探测器像素间距 du，换算到虚拟探测器上的等效间距为
+                    //      du*(SOD/SDD)；w_geom = SDD/(du*SOD) 正是这个换算的倒数形式。
+                    //      与反投影阶段 (SOD/U)^2 距离权重、以及 BP 阶段
+                    //      dtheta*fScaleDTheta 角度密度项，共同构成完整的离散化积分近似。
+                    //      —— BP 阶段目前不含 SDD/SOD 放大率项，此处补入不会重复计入；
+                    //         若未来任一环节的归一化方式调整，需联动检查此项。
+                    // ------------------------------------------------------------------
+                    const float w_geom = DSD / DSO / 2;  // ← 新增，逐视角常量，可提到 lane0 广播前算一次亦可
+                    // 先前的代码针对同一种物质 不同的放大比计算出的衰减值不一样，我不清楚来源于哪里，但很有可能是在虚拟探测器和真实探测器的像素大小转换上
 
                     // --------------------------------------------------------------
                     // 预计算 v 行基础向量 qs0 = detS + detV*v - src
@@ -375,7 +399,7 @@ namespace YK {
                         const float qsz = qs0_z + dU_z * fu;
                         const float r2 = qsx * qsx + qsy * qsy + qsz * qsz;
                         const float w = DSD * rsqrtf(fmaxf(r2, 1e-20f));
-                        dst_row[u] = src_row[u] * w;
+                        dst_row[u] = src_row[u] * (w * w_geom);   // ← 改这一行
                     }
                 }
             }

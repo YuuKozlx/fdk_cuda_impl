@@ -75,10 +75,10 @@ int main()
     YK::Logger::instance().add_file_sink("log.txt");
 
     // 按需开启/注释
-    //main_fdk();
+    main_fdk();
     //main_fdk_custom_filter();
     main_fdk_realdata();
-    //main_fdk_v2();
+    main_fdk_v2();
     //main_mcgpu_watercylinder_fdk();
     //main_bp_zslab_verify();
     //main_bp_runner();
