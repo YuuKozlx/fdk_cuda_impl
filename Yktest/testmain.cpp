@@ -34,6 +34,7 @@ int main_bp_zslab_verify();
 
 int main_helical_from_volume();
 int main_helical_online_from_volume();
+int main_helical_from_volume_cylinder();
 
 
 void test_fp_runner_fixed_offset(cudaStream_t stream);
@@ -68,17 +69,24 @@ int main_iter_sirt_recon_sim();
 int main_cgls_test();
 int main_ossart_realdata_test();
 int main_ossart_mcgpu_cylinder_test();
-
+int main_helical_from_volume_cylinder_ossart_independent();
+int main_helical_from_volume_cylinder_ossart();
+int main_helical_from_volume_cylinder_cgls();
 int main()
 {
+#ifdef _DEBUG
+    YK_LOGI("build config = DEBUG");
+#else
+    YK_LOGI("build config = RELEASE");
+#endif
     YK::Logger::instance().set_level(YK::LogLevel::Debug);
     YK::Logger::instance().add_file_sink("log.txt");
 
     // 按需开启/注释
-    main_fdk();
+    //main_fdk();
     //main_fdk_custom_filter();
-    main_fdk_realdata();
-    main_fdk_v2();
+    //main_fdk_realdata();
+    //main_fdk_v2();
     //main_mcgpu_watercylinder_fdk();
     //main_bp_zslab_verify();
     //main_bp_runner();
@@ -100,9 +108,9 @@ int main()
     //test_fp_cylinder_siddon_joseph(0);
     //main_fp();
     //main_fdk_zslab();
-    //main_helical_verify();
     //main_fdk_zslab_bigdata();
     //main_helical_from_volume();
+    //main_helical_from_volume_cylinder();
     //main_helical_online_from_volume();
     //test_fp_runner_random_offset(0);
     //test_fp_runner_fixed_offset(0);
@@ -137,5 +145,8 @@ int main()
     //main_cgls_test();
     //main_ossart_realdata_test();
     //main_ossart_mcgpu_cylinder_test();
+    main_helical_from_volume_cylinder_ossart_independent();
+    main_helical_from_volume_cylinder_ossart();
+    main_helical_from_volume_cylinder_cgls();
     return 0;
 }

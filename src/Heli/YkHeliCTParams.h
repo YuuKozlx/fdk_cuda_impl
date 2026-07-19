@@ -421,9 +421,9 @@ namespace YK {
         const float Z_vol = volumeZRange(p.iVZ, p.vox_z_mm);
 
         // ── 参数校验 ──────────────────────────────────────────────
-        if (p.pitch_mm > dZ_eff)
+        if (p.pitch_mm > pf * dZ_eff)   // 用 pf 留出冗余余量
             throw std::invalid_argument(
-                "pitch_mm 超过 dZ_eff(R)，r=R 处将产生漏采样");
+                "pitch_mm 超过 pf*dZ_eff(R)，r=R 处将产生漏采样风险");
         if (p.z_block_mm > dZ_eff)
             throw std::invalid_argument(
                 "z_block_mm 超过 dZ_eff(R)，slab 端部将落入锥体盲区");
