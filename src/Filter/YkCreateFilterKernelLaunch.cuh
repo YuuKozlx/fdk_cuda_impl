@@ -35,6 +35,14 @@ namespace YK {
             bool bake_invN,
             cudaStream_t stream);
 
+        bool flt_launch_kernel_build_spatial_ramp(
+            float* d_spatial,
+            int N,
+            const float* d_ramp,
+            int ramp_size,
+            bool bake_invN,
+            cudaStream_t stream);
+
 
         bool flt_launch_kernel_extract_weights_from_fft(
             const cufftComplex* d_src,

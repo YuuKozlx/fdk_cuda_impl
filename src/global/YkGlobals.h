@@ -344,13 +344,17 @@ namespace YK {
         Hann,        // Hann == Hanning
         Hamming,
         Blackman,
+        Butterworth,
+        Kaiser,
+        Tukey,
         Custom
     };
 
     // 权重构建来源（保留两条路径）
     enum class EWeightsBuildSource {
         AnalyticFreq,     // 直接频域写 H(f)=|f|*window
-        DiscreteRLFFT     // 空域RL->FFT 提取 ramp -> 乘窗
+        DiscreteRLFFT,    // 空域RL->FFT 提取 ramp -> 乘窗
+        SpatialRampFFT    // 用户提供对称离散 ramp 核 -> FFT
     };
 
     // 从离散RLFFT提取 ramp 的方式（仅对 EWeightsBuildSource::DiscreteRLFFT 有效）
@@ -365,11 +369,16 @@ namespace YK {
         ERampExtractMode     extract_mode = ERampExtractMode::RealPart;
         float                gain = 1.0f;
         float                cutoff = 0.5f;
+        float                order = 2.0f;   // Butterworth 阶数
+        float                beta = 8.6f;    // Kaiser beta
+        float                tukey_alpha = 0.5f;
         bool                 force_dc_zero = false;
 
 
         // Custom 路径专用，长度 = n_complex = paddedN/2+1  单边频域核
         std::vector<float>   custom_weights;
+        // SpatialRampFFT 专用：按 [h(-r),...,h(0),...,h(+r)] 排列，长度必须为奇数。
+        std::vector<float>   spatial_ramp;
 
         static SFilterKernelDesc Custom(
             std::vector<float> weights, float gain = 1.0f)
@@ -409,6 +418,53 @@ namespace YK {
             d.kind = EFilterKernel::Hann;
             d.source = EWeightsBuildSource::DiscreteRLFFT;
             d.cutoff = cutoff;
+            d.gain = gain;
+            return d;
+        }
+
+        static SFilterKernelDesc SpatialRamp(
+            std::vector<float> kernel, float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::RamLak;
+            d.source = EWeightsBuildSource::SpatialRampFFT;
+            d.spatial_ramp = std::move(kernel);
+            d.gain = gain;
+            return d;
+        }
+
+        static SFilterKernelDesc Butterworth(
+            float cutoff = 0.5f, float order = 2.0f, float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::Butterworth;
+            d.source = EWeightsBuildSource::AnalyticFreq;
+            d.cutoff = cutoff;
+            d.order = order;
+            d.gain = gain;
+            return d;
+        }
+
+        static SFilterKernelDesc Kaiser(
+            float cutoff = 0.5f, float beta = 8.6f, float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::Kaiser;
+            d.source = EWeightsBuildSource::AnalyticFreq;
+            d.cutoff = cutoff;
+            d.beta = beta;
+            d.gain = gain;
+            return d;
+        }
+
+        static SFilterKernelDesc Tukey(
+            float cutoff = 0.5f, float alpha = 0.5f, float gain = 1.0f)
+        {
+            SFilterKernelDesc d;
+            d.kind = EFilterKernel::Tukey;
+            d.source = EWeightsBuildSource::AnalyticFreq;
+            d.cutoff = cutoff;
+            d.tukey_alpha = alpha;
             d.gain = gain;
             return d;
         }
