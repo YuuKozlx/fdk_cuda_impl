@@ -6,6 +6,9 @@
 // ============================================================
 
 #include <cmath>
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
@@ -13,6 +16,18 @@
 #include <vector_types.h>
 
 namespace YK {
+
+    // Contract for kernels using WarpStrideCtx: one-dimensional, warp-aligned
+    // blocks.  Keep this check next to launch policy so launch sites cannot
+    // silently select an invalid shape.
+    inline void validateWarpLaunch(dim3 block, dim3 grid) {
+        assert(block.x >= 32);
+        assert(block.x <= 1024);
+        assert((block.x % 32) == 0);
+        assert(block.y == 1 && block.z == 1);
+        assert(grid.x > 0 && grid.y > 0 && grid.z > 0);
+    }
+
     struct SDimensions3D {
         unsigned int iVX;
         unsigned int iVY;
@@ -118,8 +133,96 @@ namespace YK {
 
     // ---------------------- launch policy ----------------------
     struct SKernelLaunchPolicy {
-        int  block_threads = 256;  // must be multiple of 32
+        // The policy describes launch *shape*, not a kernel's algorithmic
+        // mapping.  A 1D elementwise kernel, a row-warp kernel and a
+        // detector/view kernel therefore share safety rules while retaining
+        // their own appropriate thread layouts.
+        int  block_threads = 256;  // normalized to [32, 1024], warp aligned
         bool bounds_check = true;
+        int  blocks_per_sm_1d = 4;
+        int  blocks_per_sm_rowwarp = 2;
+
+        struct SDeviceLimits {
+            int sm_count = 1;
+            int max_grid_x = 1;
+            int max_grid_y = 1;
+            int max_grid_z = 1;
+        };
+
+        struct SLaunch1D {
+            dim3 block = dim3(1, 1, 1);
+            dim3 grid = dim3(1, 1, 1);
+        };
+
+        // Normalize user/occupancy supplied block sizes before they are used
+        // by warp-stride kernels.  Keeping this here avoids each FDK helper
+        // having a subtly different clamp/rounding rule.
+        int normalizedBlockThreads() const {
+            int threads = std::max(32, std::min(block_threads, 1024));
+            // Round up so a caller cannot silently lose the requested
+            // capacity; the resulting value is then clamped to CUDA's limit.
+            threads = ((threads + 31) / 32) * 32;
+            return std::min(threads, 1024);
+        }
+
+        SDeviceLimits deviceLimits(int device = -1) const {
+            if (device < 0) cudaGetDevice(&device);
+
+            SDeviceLimits limits;
+            cudaDeviceGetAttribute(&limits.sm_count,
+                cudaDevAttrMultiProcessorCount, device);
+            cudaDeviceGetAttribute(&limits.max_grid_x,
+                cudaDevAttrMaxGridDimX, device);
+            cudaDeviceGetAttribute(&limits.max_grid_y,
+                cudaDevAttrMaxGridDimY, device);
+            cudaDeviceGetAttribute(&limits.max_grid_z,
+                cudaDevAttrMaxGridDimZ, device);
+
+            limits.sm_count = std::max(limits.sm_count, 1);
+            limits.max_grid_x = std::max(limits.max_grid_x, 1);
+            limits.max_grid_y = std::max(limits.max_grid_y, 1);
+            limits.max_grid_z = std::max(limits.max_grid_z, 1);
+            return limits;
+        }
+
+        // 1D thread grid-stride launch.  The associated kernel must advance
+        // i by gridDim.x * blockDim.x so that a bounded grid still covers n.
+        SLaunch1D make1D(size_t n, int device = -1) const {
+            if (n == 0) return {};
+            const SDeviceLimits limits = deviceLimits(device);
+            const int threads = normalizedBlockThreads();
+            const size_t needed = (n + (size_t)threads - 1) / (size_t)threads;
+            const size_t cap = std::min(
+                (size_t)limits.max_grid_x,
+                (size_t)limits.sm_count * (size_t)std::max(blocks_per_sm_1d, 1));
+            return { dim3((unsigned)threads, 1, 1),
+                     dim3((unsigned)std::min(needed, cap), 1, 1) };
+        }
+
+        // Row-warp launch.  The kernel must assign rows with
+        // row = warp_global; row += total_warps.  This is used by FDK
+        // preweight/pad/crop/Parker and prevents large K*Nv from growing an
+        // unbounded grid.
+        SLaunch1D makeRowWarp(size_t rows, int device = -1) const {
+            if (rows == 0) return {};
+            const SDeviceLimits limits = deviceLimits(device);
+            const int threads = normalizedBlockThreads();
+            const int warps_per_block = threads / 32;
+            const size_t needed =
+                (rows + (size_t)warps_per_block - 1) / (size_t)warps_per_block;
+            const size_t cap = std::min(
+                (size_t)limits.max_grid_x,
+                (size_t)limits.sm_count * (size_t)std::max(blocks_per_sm_rowwarp, 1));
+            return { dim3((unsigned)threads, 1, 1),
+                     dim3((unsigned)std::min(needed, cap), 1, 1) };
+        }
+
+        // grid.z is limited independently by the device.  Callers that map
+        // one projection view to blockIdx.z must split K into this size and
+        // offset their sino/geometry pointers per chunk.
+        int maxAngleChunk(int device = -1) const {
+            return deviceLimits(device).max_grid_z;
+        }
 
         // 从 occupancy API 自动查询最优 block_threads
         template<typename KernelFunc>
@@ -198,6 +301,8 @@ namespace YK {
     // 该结构体用于__constan__ cuda全局常量的生命，不能初始化，否则编译报错
     // __constant__ 变量不能有动态初始化，只能零初始化或者没有初始化器。
     struct alignas(16)  FdkAffineCoeff {
+        // Perspective detector coordinates:
+        // u = Cu(x,y,z) / Cd(x,y,z), v = Cv(x,y,z) / Cd(x,y,z).
         float Cu_x, Cu_y, Cu_z, Cu_w;
         float Cv_x, Cv_y, Cv_z, Cv_w;
         float Cd_x, Cd_y, Cd_z, Cd_w;
@@ -207,13 +312,22 @@ namespace YK {
         float SDD2;
         float du_mm;
         float dv_mm;
-        float nReserved1;
-        float nReserved2;
+        // Matched BP constants.  Let r0 = detS - src.  These coefficients
+        // evaluate |r0 + u*detU + v*detV|^2 without rebuilding det(u,v):
+        // L2 = L2_0 + u*L2_u + v*L2_v + u^2*L2_uu + u*v*L2_uv + v^2*L2_vv.
+        // inv_SDD_plane keeps the legacy matched-BP denominator 1/sqrt(SDD2).
+        float inv_SDD_plane;
+        float L2_0;
+        float L2_u;
+        float L2_v;
+        float L2_uu;
+        float L2_uv;
+        float L2_vv;
 
     };
 
     // constant 内存，按 chunk 上传
-    // 1024 角度 × 64 bytes = 64KB，刚好在限制内
+    // FdkAffineCoeff is 112 bytes; kMaxChunkAng=32 uses only 3.5KB.
     static constexpr int kMaxChunkAng = 32;
     // YkFDKBackProject.cuh —— 只放 extern 声明
 

@@ -126,7 +126,7 @@ namespace YK {
 #define WARP_STRIDE_INIT()                                              \
     const int lane        = threadIdx.x & 31;                          \
     const int warp_in_blk = threadIdx.x >> 5;                          \
-    const int warps_per_blk = blockDim.x >> 5;                         \
+    const int warps_per_blk = (blockDim.x + 31) >> 5;                   \
     const int warp_global = blockIdx.x * warps_per_blk + warp_in_blk; \
     const int n_warps     = gridDim.x  * warps_per_blk;
 
@@ -170,8 +170,9 @@ namespace YK {
             {
                 const int lane = threadIdx.x & 31;
                 const int warp_in_blk = threadIdx.x >> 5;
-                const int warp_global = blockIdx.x * (blockDim.x >> 5) + warp_in_blk;
-                const int n_warps = gridDim.x * (blockDim.x >> 5);
+                const int warps_per_blk = (blockDim.x + 31) >> 5;
+                const int warp_global = blockIdx.x * warps_per_blk + warp_in_blk;
+                const int n_warps = gridDim.x * warps_per_blk;
 
                 float invN = (bake_invN && N > 0) ? (1.0f / (float)N) : 1.0f;
                 float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
@@ -304,8 +305,9 @@ namespace YK {
             {
                 const int lane = threadIdx.x & 31;
                 const int warp_in_blk = threadIdx.x >> 5;
-                const int warp_global = blockIdx.x * (blockDim.x >> 5) + warp_in_blk;
-                const int n_warps = gridDim.x * (blockDim.x >> 5);
+                const int warps_per_blk = (blockDim.x + 31) >> 5;
+                const int warp_global = blockIdx.x * warps_per_blk + warp_in_blk;
+                const int n_warps = gridDim.x * warps_per_blk;
 
                 float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
 

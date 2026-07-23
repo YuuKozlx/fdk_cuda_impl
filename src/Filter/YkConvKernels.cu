@@ -45,21 +45,21 @@ namespace YK {
             }
 
 
-#define WARP_STRIDE_INIT()                                               \
-    const int lane          = threadIdx.x & 31;                          \
-    const int warp_in_blk   = threadIdx.x >> 5;                          \
-    const int warps_per_blk = blockDim.x  >> 5;                          \
-    const int warp_global   = blockIdx.x * warps_per_blk + warp_in_blk; \
+#define WARP_STRIDE_INIT()                                                   \
+    const int lane          = threadIdx.x & 31;                              \
+    const int warp_in_blk   = threadIdx.x >> 5;                              \
+    const int warps_per_blk = (blockDim.x + 31) >> 5;                        \
+    const int warp_global   = blockIdx.x * warps_per_blk + warp_in_blk;      \
     const int n_warps       = gridDim.x  * warps_per_blk;
 #undef WARP_STRIDE_INIT
 
 
 
-#define WARP_STRIDE_INIT_BATCH()                                          \
-    const int lane          = threadIdx.x & 31;                           \
-    const int warp_in_blk   = threadIdx.x >> 5;                           \
-    const int warps_per_blk = blockDim.x  >> 5;                           \
-    const int warp_global   = blockIdx.x * warps_per_blk + warp_in_blk;  \
+#define WARP_STRIDE_INIT_BATCH()                                              \
+    const int lane          = threadIdx.x & 31;                               \
+    const int warp_in_blk   = threadIdx.x >> 5;                               \
+    const int warps_per_blk = (blockDim.x + 31) >> 5;                         \
+    const int warp_global   = blockIdx.x * warps_per_blk + warp_in_blk;       \
     const int n_warps       = gridDim.x  * warps_per_blk;
             // -----------------------------------------------------------------------------
             // v2: warp stride 版
@@ -185,16 +185,24 @@ namespace YK {
             int            batch,
             cudaStream_t   stream)
         {
+            // Empty work is a valid no-op; CUDA rejects a zero-dimensional
+            // grid, so return before computing the launch geometry.
+            if (n_complex <= 0 || batch <= 0)
+                return;
+
             SKernelLaunchPolicy policy;
-            dim3 block(policy.block_threads, 1);
+            const int block_threads = policy.normalizedBlockThreads();
+            dim3 block(block_threads, 1);
 
             // fft点数若为 2 的倍数 则调用f4版，否则调用f2版
             const int n_elem = (n_complex % 2 == 0) ? n_complex / 2 : n_complex;
-            const int warps_per_blk = policy.block_threads >> 5;
+            const int warps_per_blk = block_threads / 32;
             const int warps_need = (n_elem + 31) / 32;
             const int grid_x = std::min((warps_need + warps_per_blk - 1) / warps_per_blk, 8);
             const int grid_y = std::min(batch, 65535);
             dim3 grid(grid_x, grid_y);
+
+            YK::validateWarpLaunch(block, grid);
 
             if (n_complex % 2 == 0)
                 detail::_kernel_pointwise_mul_v4 << <grid, block, 0, stream >> > (
@@ -203,7 +211,7 @@ namespace YK {
                 detail::_kernel_pointwise_mul_v3 << <grid, block, 0, stream >> > (
                     reinterpret_cast<float2*>(data), weights, n_complex, batch);
 
-            YK_CUDA_CHECK(cudaGetLastError());
+            YK_CUDA_KERNEL_CHECK();
 
         }
 

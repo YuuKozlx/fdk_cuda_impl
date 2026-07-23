@@ -295,47 +295,26 @@ namespace YK
         }
 
 
-        __global__ void threshold_inf_kernel(float* d, size_t n, float thresh)
-        {
-            const size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-            if (i >= n) return;
-            if (d[i] <= thresh) d[i] = 1e30f;  // 或 CUDART_INF_F
-        }
-
         void threshold_inf_launch(float* d, size_t n, float thresh, cudaStream_t stream)
         {
-            const int block = 256;
-            const int grid = (int)((n + block - 1) / block);
-            threshold_inf_kernel << <grid, block, 0, stream >> > (d, n, thresh);
+            YK::elemwise(d, n, stream, [thresh] __device__(float& x, size_t) {
+                if (x <= thresh) x = 1e30f;
+            });
         }
 
-
-        __global__ void multiply_kernel(float* a, const float* b, size_t n)
-        {
-            const size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-            if (i >= n) return;
-            a[i] *= b[i];
-        }
 
         void multiply_launch(float* a, const float* b, size_t n, cudaStream_t stream)
         {
-            const int block = 256;
-            const int grid = (int)((n + block - 1) / block);
-            multiply_kernel << <grid, block, 0, stream >> > (a, b, n);
-        }
-
-        __global__ void rcp_kernel(float* d, size_t n)
-        {
-            const size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-            if (i >= n) return;
-            d[i] = __frcp_rn(d[i]);
+            YK::elemwise(a, n, stream, [b] __device__(float& x, size_t i) {
+                x *= b[i];
+            });
         }
 
         void rcp_launch(float* d, size_t n, cudaStream_t stream)
         {
-            const int block = 256;
-            const int grid = (int)((n + block - 1) / block);
-            rcp_kernel << <grid, block, 0, stream >> > (d, n);
+            YK::elemwise(d, n, stream, [] __device__(float& x, size_t) {
+                x = __frcp_rn(x);
+            });
         }
 
 
@@ -358,30 +337,43 @@ namespace YK
 
 
 
+        __device__ __forceinline__ float warp_sum(float value)
+        {
+            const unsigned mask = __activemask();
+            for (int offset = warpSize / 2; offset > 0; offset >>= 1)
+                value += __shfl_down_sync(mask, value, offset);
+            return value;
+        }
+
         // dot_reduce_kernel 放在文件作用域
         __global__ void dot_reduce_kernel(const float* a, const float* b,
             float* block_results, size_t n)
         {
-            extern __shared__ float sdata[];
-            const size_t tid = threadIdx.x;
-            size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+            extern __shared__ float warp_results[];
+            const int tid = static_cast<int>(threadIdx.x);
+            const int lane = tid & 31;
+            const int warp_id = tid >> 5;
+            const int warps_per_block = (static_cast<int>(blockDim.x) + 31) >> 5;
+            size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
 
             float val = 0.f;
             while (i < n) {
                 val += a[i] * b[i];
                 i += gridDim.x * blockDim.x;
             }
-            sdata[tid] = val;
+
+            val = warp_sum(val);
+            if (lane == 0)
+                warp_results[warp_id] = val;
             __syncthreads();
 
-            for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-                if (tid < (size_t)s)
-                    sdata[tid] += sdata[tid + s];
-                __syncthreads();
+            if (warp_id == 0) {
+                val = (lane < warps_per_block) ? warp_results[lane] : 0.f;
+                val = warp_sum(val);
             }
 
             if (tid == 0)
-                block_results[blockIdx.x] = sdata[0];
+                block_results[blockIdx.x] = val;
         }
 
         // ── dot product：result = sum(a * b) ─────────────────────────────
@@ -389,6 +381,10 @@ namespace YK
         void dot_launch(const float* a, const float* b,
             size_t n, float* h_result, cudaStream_t stream)
         {
+            if (n == 0) {
+                *h_result = 0.f;
+                return;
+            }
             const int block = 256;
             const int max_blocks = 1024;
             const int grid = (int)std::min(
@@ -406,8 +402,10 @@ namespace YK
             };
 
             // 实际 kernel 定义需放在文件作用域
-            dot_reduce_kernel << <grid, block, block * sizeof(float), stream >> > (
+            const int warps_per_block = (block + 31) / 32;
+            dot_reduce_kernel << <grid, block, warps_per_block * sizeof(float), stream >> > (
                 a, b, d_block, n);
+            YK_CUDA_KERNEL_CHECK();
 
             std::vector<float> h_block(grid);
             YK_CUDA_CHECK(cudaMemcpyAsync(h_block.data(), d_block,

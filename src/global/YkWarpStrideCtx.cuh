@@ -8,6 +8,7 @@
 // =============================================================================
 #pragma once
 
+#include <cassert>
 #include <cuda_runtime.h>
 
 namespace YK {
@@ -92,9 +93,15 @@ namespace YK {
 
         __device__ __forceinline__ WarpStrideCtx()
         {
+#ifndef NDEBUG
+            assert(blockDim.x >= 32);
+            assert(blockDim.x <= 1024);
+            assert((blockDim.x & 31) == 0);
+            assert(blockDim.y == 1 && blockDim.z == 1);
+#endif
             lane = static_cast<int>(threadIdx.x) & 31;
             int warp_in = static_cast<int>(threadIdx.x) >> 5;
-            int nw_blk = static_cast<int>(blockDim.x) >> 5;
+            int nw_blk = (static_cast<int>(blockDim.x) + 31) >> 5;
             warp_global = static_cast<int>(blockIdx.x) * nw_blk + warp_in;
             n_warps = static_cast<int>(gridDim.x) * nw_blk;
         }
@@ -129,15 +136,13 @@ namespace YK {
     //   dim3 grid(grid_x, grid_y, 1);
     //   kernel<<<grid, block, 0, stream>>>(..., n, batch);
     //
-    //   注意：batch 超出 65535 时需要在 kernel 内对 b 也做 stride loop
-    //         当前特化不包含 b 的 stride，超大 batch 需单独处理
+    //   batch 超出 gridDim.y 时，kernel 必须使用 b += gridDim.y 的 stride loop。
     //
     // 【Kernel 范式】
     //   __global__ void kernel(..., int n, int batch)
     //   {
     //       WarpStrideCtx<EWarpStrideAxis::XY> ctx;
-    //       if (ctx.b >= batch) return;   // y 方向顶层越界：整个线程无任务
-    //
+    //       for (int b = ctx.b; b < batch; b += ctx.b_stride)
     //       for (int base = ctx.warp_global * 32; base < n; base += ctx.n_warps * 32)
     //       {
     //           int u = base + ctx.lane;
@@ -159,16 +164,24 @@ namespace YK {
     struct WarpStrideCtx<EWarpStrideAxis::XY>
     {
         int b;
+        int b_stride;
         int lane;
         int warp_global;
         int n_warps;
 
         __device__ __forceinline__ WarpStrideCtx()
         {
+#ifndef NDEBUG
+            assert(blockDim.x >= 32);
+            assert(blockDim.x <= 1024);
+            assert((blockDim.x & 31) == 0);
+            assert(blockDim.y == 1 && blockDim.z == 1);
+#endif
             b = static_cast<int>(blockIdx.y);
+            b_stride = static_cast<int>(gridDim.y);
             lane = static_cast<int>(threadIdx.x) & 31;
             int warp_in = static_cast<int>(threadIdx.x) >> 5;
-            int nw_blk = static_cast<int>(blockDim.x) >> 5;
+            int nw_blk = (static_cast<int>(blockDim.x) + 31) >> 5;
             warp_global = static_cast<int>(blockIdx.x) * nw_blk + warp_in;
             n_warps = static_cast<int>(gridDim.x) * nw_blk;
         }
@@ -259,9 +272,15 @@ namespace YK {
 
         __device__ __forceinline__ WarpStrideCtx()
         {
+#ifndef NDEBUG
+            assert(blockDim.x >= 32);
+            assert(blockDim.x <= 1024);
+            assert((blockDim.x & 31) == 0);
+            assert(blockDim.y == 1 && blockDim.z == 1);
+#endif
             lane = static_cast<int>(threadIdx.x) & 31;
             int warp_in = static_cast<int>(threadIdx.x) >> 5;
-            int nw_blk = static_cast<int>(blockDim.x) >> 5;
+            int nw_blk = (static_cast<int>(blockDim.x) + 31) >> 5;
             warp_global = static_cast<int>(blockIdx.x) * nw_blk + warp_in;
             n_warps = static_cast<int>(gridDim.x) * nw_blk;
         }
