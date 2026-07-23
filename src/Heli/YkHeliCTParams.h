@@ -48,8 +48,13 @@ struct SHeliCTParam {
     float z_step_mm = 1.0f;
     int   Kchunk = 32;
     ETask fp_task = ETask::FP_Joseph;
-    YK::SFilterKernelDesc desc =
-        YK::SFilterKernelDesc(YK::EFilterKernel::RamLak);
+    // Keep the default explicit: SFilterKernelDesc no longer has an enum
+    // converting constructor.
+    YK::SFilterKernelDesc desc = [] {
+        YK::SFilterKernelDesc d{};
+        d.kind = YK::EFilterKernel::RamLak;
+        return d;
+    }();
 };
 
 

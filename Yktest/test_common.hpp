@@ -24,6 +24,11 @@
 #include <vector_functions.hpp>
 #include <vector_types.h>
 
+// This header declares reusable geometry and buffer helpers at global scope.
+// Resolve the library types here instead of relying on every test source to
+// add `using namespace YK` after including this file.
+using namespace YK;
+
 
 static bool read_raw_float(const char* path, std::vector<float>& data)
 {

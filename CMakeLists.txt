@@ -123,6 +123,28 @@ option(YKCBCT_BUILD_HELICAL "Build experimental helical CT support" OFF)
 if(YKCBCT_BUILD_HELICAL)
     add_subdirectory(src/Heli)
 endif()
+
+# Yktest exercises internal kernels and runner classes directly.  It therefore
+# cannot link only the public DLL: those implementation symbols are purposely
+# not part of the DLL ABI.  Pass the source list to the manual-test target so
+# it owns CUDA compilation/device-linking instead of consuming an OBJECT
+# library (which loses device-link metadata on this toolchain).
+if(BUILD_TESTS)
+    get_target_property(YKCBCT_MANUAL_SUPPORT_SOURCES YKCBCT SOURCES)
+    list(FILTER YKCBCT_MANUAL_SUPPORT_SOURCES EXCLUDE REGEX
+        ".*/src/interface/YkSession\\.cpp$")
+    list(FILTER YKCBCT_MANUAL_SUPPORT_SOURCES EXCLUDE REGEX
+        ".*/src/interface/YkLibraryAnchor\\.cpp$")
+    set(YKCBCT_MANUAL_SUPPORT_SOURCES_ABS)
+    foreach(source IN LISTS YKCBCT_MANUAL_SUPPORT_SOURCES)
+        if(IS_ABSOLUTE "${source}")
+            list(APPEND YKCBCT_MANUAL_SUPPORT_SOURCES_ABS "${source}")
+        else()
+            list(APPEND YKCBCT_MANUAL_SUPPORT_SOURCES_ABS
+                "${CMAKE_SOURCE_DIR}/${source}")
+        endif()
+    endforeach()
+endif()
 # ----------------------------------------------------------------
 # ----------------------------------------------------------------
 # 包安装配置
