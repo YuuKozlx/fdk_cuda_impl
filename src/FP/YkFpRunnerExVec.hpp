@@ -1,13 +1,12 @@
 ﻿#pragma once
 #include "FP/YkFpRunner.hpp"
-#include "Heli/YkHelicalGeo.hpp"
 
 namespace YK {
 
     // ====================================================================
     // ConeProjectorEx
     // 在 ConeProjector 基础上扩展，支持外部传入预建几何
-    // 用于螺旋正投影：几何由 build_helical_vec_geometry_from_theta 预建
+    // For callers that supply a prebuilt vector geometry.
     // ====================================================================
     class ConeProjectorEx {
     public:

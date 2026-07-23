@@ -9,9 +9,8 @@
 
 namespace YK {
 
-    // ----------------------------------------------------------------
-    // 任务类型
-    // ----------------------------------------------------------------
+    // Low-level projector/backprojector implementations.  These are used by
+    // AlgorithmDesc; they are not independent DLL tasks.
     enum class ETask : int32_t {
         FDK = 0,
         FP_Joseph = 1,
@@ -43,9 +42,17 @@ namespace YK {
         Tukey = 9,
     };
 
-    enum class EBufferMode {
-        DevicePtr,  // 外部提供 GPU 指针
-        HostPtr,    // 外部提供 CPU 指针，内部自动管理回拷/预上传
+    enum class EPipeline : int32_t {
+        FDK,
+        ForwardProjection,
+        SIRT,
+        OSSART,
+        CGLS,
+    };
+
+    enum class EMemoryLocation : int32_t {
+        Host,
+        Device,
     };
 
     enum class EFpStepSample : int32_t { x1 = 1, x2 = 2, x4 = 4 };
@@ -144,60 +151,56 @@ namespace YK {
         bool empty()             const { return deviceIds.empty(); }
     };
 
-    // ================================================================
-    // 接口参数
-    // ================================================================
-    struct TaskInitParams {
-        ETask     task = ETask::FDK;
-        SScanParams   scan;
-        SVolumeParams volume;
-        const void* algoParams = nullptr;
-        size_t        algoParamSize = 0;
-        GPURes  gpu = GPURes::fromList({ 0 });  // 默认用卡 0
+    struct AlgorithmDesc {
+        EPipeline pipeline = EPipeline::FDK;
+        ETask forward_projector = ETask::FP_Joseph;
+        ETask back_projector = ETask::BP_Joseph_v2;
+        SFdkAlgoParams fdk{};
+        SIterAlgoParams iterative{};
     };
 
-    // 公共基类
-    struct BatchParams {
-        const float* h_angles = nullptr;
-        int          K = 0;
-        bool         clearOut = true;
+    struct SessionDesc {
+        SScanParams scan{};
+        SVolumeParams volume{};
+        AlgorithmDesc algorithm{};
+        GPURes gpu = GPURes::fromList({ 0 });
+        // Required by iterative pipelines because their workspace is built
+        // for the complete acquisition during initialize().
+        std::vector<float> angles{};
     };
 
-    // FDK 重建参数
-    struct FdkBatchParams : BatchParams {
-        // 投影输入（仅 CPU）
-        const float* h_proj = nullptr;
-
-        // 体数据输出
-        float* d_vol_out = nullptr;
-        float* h_vol_out = nullptr;
-        EBufferMode vol_mode = EBufferMode::DevicePtr;
+    // All buffers are contiguous float arrays in the library's canonical
+    // layouts: projection [angle][v][u], volume [z][y][x].
+    struct Buffer {
+        float* data = nullptr;
+        EMemoryLocation location = EMemoryLocation::Device;
     };
 
-    struct FpBatchParams : BatchParams {
-        // 体数据输入
-        const float* d_vol_in = nullptr;
-        const float* h_vol_in = nullptr;
-        EBufferMode  vol_in_mode = EBufferMode::DevicePtr;
-
-        // 正弦图输出
-        float* d_sino_out = nullptr;
-        float* h_sino_out = nullptr;
-        EBufferMode sino_mode = EBufferMode::DevicePtr;
+    // For FDK and FP, angles/K define one batch.  For iterative pipelines K
+    // must equal SessionDesc::scan.NAng and projection contains all views.
+    struct ExecuteRequest {
+        const float* angles = nullptr; // host-resident radians
+        int K = 0;
+        Buffer projection{};
+        Buffer volume{};
+        bool clear_output = true;
+        // Zero uses AlgorithmDesc::iterative.iterations.
+        int iteration_count = 0;
     };
 
-    // YkDump.hpp
-    struct DumpPayload {
-        int          viewIdx;
-        const char* stage;
-        void* buf;
-        size_t       n;
-        cudaStream_t stream;
-        void* userdata;
-        bool         isDevicePtr = true;  // true=GPU, false=CPU
-    };
-
-
+    // Optional diagnostics hook used by the internal FDK/FP runners.
     using TaskDumpCallback = std::function<void(void*)>;
+
+    // Internal runners share this payload shape.  It remains public only
+    // because callbacks are intentionally part of the C++ extension surface.
+    struct DumpPayload {
+        int viewIdx = 0;
+        const char* stage = nullptr;
+        void* buf = nullptr;
+        size_t n = 0;
+        cudaStream_t stream = nullptr;
+        void* userdata = nullptr;
+        bool isDevicePtr = true;
+    };
 
 } // namespace YK

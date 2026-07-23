@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "FP/YkFPRunner.hpp"
+#include "FP/YkFpRunnerExVec.hpp"
 #include "kernel/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"

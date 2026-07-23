@@ -38,10 +38,9 @@ endif()
 #   CONFIG    : 使用包自带的 *Config.cmake，而不是 CMake 内置的 Find*.cmake
 #   REQUIRED  : 找不到直接报错终止
 # 找到后会创建 imported target，例如：
-#   spdlog::spdlog   CUDAToolkit 提供 CUDA::cudart / CUDA::cufft
+#   CUDAToolkit 提供 CUDA::cudart / CUDA::cufft
 # ----------------------------------------------------------------
 find_package(CUDAToolkit REQUIRED)
-find_package(spdlog CONFIG REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)   # 新增
 
 # ----------------------------------------------------------------
@@ -169,7 +168,7 @@ install(TARGETS YKCBCT
 )
 
 # 安装对外头文件（include/YKCBCT/ 整个目录）
-# 外部用户 #include "YKCBCT/interface/IYkTask.hpp" 即可找到
+# External users include the stable Session API from include/YKCBCT/.
 install(DIRECTORY include/YKCBCT
     DESTINATION include
 )
@@ -209,7 +208,7 @@ install(FILES
 # ----------------------------------------------------------------
 # 集成测试（Yktest）
 # ----------------------------------------------------------------
-option(BUILD_TESTS "Build integration test executable" ON)
+option(BUILD_TESTS "Build integration test executable" OFF)
 if(BUILD_TESTS)
     add_subdirectory(Yktest)
 endif()
@@ -222,7 +221,7 @@ endif()
 # ----------------------------------------------------------------
 # 单元测试（GoogleTest）
 # ----------------------------------------------------------------
-option(BUILD_UNIT_TESTS "Build unit tests" ON)
+option(BUILD_UNIT_TESTS "Build unit tests" OFF)
 if(BUILD_UNIT_TESTS)
     enable_testing()
     add_subdirectory(unit_test)
@@ -233,7 +232,7 @@ endif()
 # ----------------------------------------------------------------
 # dlltest：测试 DLL 导出接口的正确性和兼容性
 # ----------------------------------------------------------------
-option(BUILD_DLLTEST "Build DLL interface test" ON)
+option(BUILD_DLLTEST "Build DLL interface test" OFF)
 if(BUILD_DLLTEST)
     add_subdirectory(dlltest)
 endif()

@@ -520,6 +520,7 @@
 // YkOSSART.hpp
 #pragma once
 #include "FP/YkFPRunner.hpp"
+#include "FP/YkFpRunnerExVec.hpp"
 #include "kernel/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
@@ -675,11 +676,6 @@ namespace YK {
                 fp_.run(d_ones8, ps_w, d_row_w_full_, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 YK_CUDA_CHECK(cudaFree(d_ones8));
-
-                // 下载正投影结果检查
-                std::vector<float> h_tmp(w_n);
-                YK_CUDA_CHECK(cudaMemcpy(h_tmp.data(), d_row_w_full_, w_n * sizeof(float), cudaMemcpyDeviceToHost));
-                write_raw_float("ossart_tigre_w_raw.data", h_tmp.data(), w_n);
 
                 // W[W <= min(真实体素)/2] = inf; W = 1/W (inf → 0)
                 const float real_min_vox = std::min({
