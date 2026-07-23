@@ -187,7 +187,7 @@ namespace YK {
                     if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; continue; }
                     if (f > cc) { w[k] = 0.0f; continue; }
 
-                    w[k] = desc.gain * f * window_shape(f / cc, desc.kind) * invN;
+                    w[k] = desc.gain * f * window_shape_desc(f / cc, desc) * invN;
                 }
             }
 
@@ -272,6 +272,27 @@ namespace YK {
 
                         h[u] = val * invN;
                     }
+            }
+
+            static __global__ void kernel_build_spatial_ramp(
+                float* __restrict__ h, int N,
+                const float* __restrict__ ramp, int ramp_size,
+                bool bake_invN)
+            {
+                WARP_STRIDE_INIT()
+                const int center = ramp_size / 2;
+                const float invN = (bake_invN && N > 0) ? 1.0f / (float)N : 1.0f;
+                for (int base = warp_global * 32; base < N; base += n_warps * 32) {
+                    const int u = base + lane;
+                    if (u >= N) break;
+                    float value = 0.0f;
+                    for (int j = 0; j < ramp_size; ++j) {
+                        int index = j - center;
+                        if (index < 0) index += N;
+                        if (u == index) value = ramp[j];
+                    }
+                    h[u] = value * invN;
+                }
             }
 
             // (3) 从 FFT(RL) 提取实数权重 — warp stride 版
@@ -374,6 +395,22 @@ namespace YK {
                 d_h, N, bake_invN);
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);
+        }
+
+        bool flt_launch_kernel_build_spatial_ramp(
+            float* d_spatial, int N, const float* d_ramp,
+            int ramp_size, bool bake_invN, cudaStream_t stream)
+        {
+            if (!d_spatial || !d_ramp || N <= 0 || ramp_size <= 0)
+                return false;
+            SKernelLaunchPolicy policy;
+            dim3 block(policy.normalizedBlockThreads(), 1, 1);
+            dim3 grid(2, 1, 1);
+            YK::validateWarpLaunch(block, grid);
+            detail::kernel_build_spatial_ramp<<<grid, block, 0, stream>>>(
+                d_spatial, N, d_ramp, ramp_size, bake_invN);
+            YK_CUDA_KERNEL_CHECK();
+            return cudaGetLastError() == cudaSuccess;
         }
 
         bool flt_launch_kernel_extract_weights_from_fft(

@@ -123,6 +123,40 @@ namespace YK {
                 YK_ASSERT(d_weights_fft);
                 YK_ASSERT(du_real > 0.f);
 
+                if (desc.source == EWeightsBuildSource::SpatialRampFFT) {
+                    const size_t m = desc.spatial_ramp.size();
+                    YK_ASSERT(m > 0 && (m & 1u) == 1u);
+                    YK_ASSERT(m <= static_cast<size_t>(paddedN_));
+                    if (m == 0 || (m & 1u) == 0 || m > static_cast<size_t>(paddedN_))
+                        return;
+                    for (size_t i = 0; i < m / 2; ++i) {
+                        YK_ASSERT(std::isfinite(desc.spatial_ramp[i]));
+                        YK_ASSERT(std::isfinite(desc.spatial_ramp[m - 1 - i]));
+                        YK_ASSERT(std::fabs(desc.spatial_ramp[i] - desc.spatial_ramp[m - 1 - i]) < 1e-4f);
+                    }
+                    YK_ASSERT(std::isfinite(desc.spatial_ramp[m / 2]));
+
+                    float* d_spatial = nullptr;
+                    float* d_ramp = nullptr;
+                    YK_CUDA_CHECK(cudaMalloc(&d_spatial, (size_t)paddedN_ * sizeof(float)));
+                    YK_CUDA_CHECK(cudaMalloc(&d_ramp, m * sizeof(float)));
+                    YK_CUDA_CHECK(cudaMemcpyAsync(d_ramp, desc.spatial_ramp.data(),
+                        m * sizeof(float), cudaMemcpyHostToDevice, stream_));
+                    const bool ok = flt_launch_kernel_build_spatial_ramp(
+                        d_spatial, paddedN_, d_ramp, static_cast<int>(m), bake_invN, stream_);
+                    YK_ASSERT(ok);
+                    fft_r2c_.fft(d_spatial, d_tmp_fft_);
+                    YK_CUDA_CHECK(cudaFree(d_ramp));
+                    YK_CUDA_CHECK(cudaFree(d_spatial));
+                    flt_launch_kernel_extract_weights_from_fft(
+                        d_tmp_fft_, d_weights_fft, n_complex_,
+                        ERampExtractMode::RealPart, desc.force_dc_zero, stream_);
+                    flt_launch_kernel_scale_inplace(
+                        d_weights_fft, n_complex_, desc.gain / du_real, stream_);
+                    YK_CUDA_KERNEL_CHECK();
+                    return;
+                }
+
                 bool bBuildSuccess = build_custom_weights(desc, d_weights_fft, bake_invN, du_real);
 
                 if (bBuildSuccess) {
@@ -157,7 +191,6 @@ namespace YK {
                 // Step 1: 生成 du=1 的纯数字离散空域核
                 float* d_spatial = nullptr;
                 YK_CUDA_CHECK(cudaMalloc(&d_spatial, (size_t)paddedN_ * sizeof(float)));
-
                 flt_launch_kernel_gen_spatial_rl_kernel_du1(
                     d_spatial, paddedN_, bake_invN, stream_);
                 YK_CUDA_KERNEL_CHECK();

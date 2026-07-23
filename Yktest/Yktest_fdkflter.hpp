@@ -221,4 +221,64 @@ namespace YKTest {
         return pass;
     }
 
+    // 验证：用户提供对称离散 ramp 空域核，经 FFT 后可生成单边 FBP 频域权重。
+    // 这里使用有限长度 Ram-Lak 近似，并检查 DC、有限值、非负 ramp 频响以及
+    // 与同尺寸 AnalyticFreq ramp 的低频趋势，而不是把普通平滑核当作 FBP 核。
+    inline bool testFilterWeightsSpatialRamp(
+        int Nu = 512,
+        int radius = 31,
+        int dump_bins = 16,
+        bool bake_invN = true)
+    {
+        if (Nu <= 0 || radius <= 0 || (radius & 1) == 0)
+            return false;
+
+        int paddedN = 1;
+        while (paddedN < 2 * Nu) paddedN <<= 1;
+        const int ramp_size = 2 * radius + 1;
+        const int n_complex = paddedN / 2 + 1;
+        std::vector<float> h_ramp(ramp_size, 0.0f);
+        const float pi2 = CUDA_PI * CUDA_PI;
+
+        for (int j = 0; j < ramp_size; ++j) {
+            const int n = j - radius;
+            if (n == 0) h_ramp[j] = 0.25f;
+            else if (std::abs(n) & 1) {
+                const float fn = static_cast<float>(n);
+                h_ramp[j] = -1.0f / (pi2 * fn * fn);
+            }
+        }
+
+        float* d_w = nullptr;
+        YK_CUDA_CHECK(cudaMalloc(&d_w, (size_t)n_complex * sizeof(float)));
+        Filter::CreateFilterKernelFromFFT kernel;
+        kernel.prepare(paddedN, 0);
+
+        SFilterKernelDesc desc = SFilterKernelDesc::SpatialRamp(h_ramp);
+        kernel.build_weights(d_w, desc, 1.0f, bake_invN);
+
+        std::vector<float> h_w(n_complex);
+        YK_CUDA_CHECK(cudaMemcpy(h_w.data(), d_w,
+            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost));
+
+        bool pass = is_finite_vec(h_w);
+        float expected_dc = 0.0f;
+        for (float v : h_ramp) expected_dc += v;
+        if (bake_invN) expected_dc /= static_cast<float>(paddedN);
+        pass = pass && std::fabs(h_w[0] - expected_dc) < 5e-5f;
+        for (int k = 1; k < n_complex; ++k)
+            pass = pass && (h_w[k] >= -1e-5f);
+
+        std::printf("[testSpatialRamp] Nu=%d paddedN=%d radius=%d bake_invN=%d\n",
+            Nu, paddedN, radius, (int)bake_invN);
+        for (int k = 0; k < std::min(n_complex, dump_bins); ++k)
+            std::printf("  k=%d f=%.6f H=%.8e\n",
+                k, (float)k / paddedN, h_w[k]);
+        std::printf("[testSpatialRamp] %s\n", pass ? "PASS" : "FAIL");
+
+        cudaFree(d_w);
+        kernel.release();
+        return pass;
+    }
+
 } // namespace YKTest

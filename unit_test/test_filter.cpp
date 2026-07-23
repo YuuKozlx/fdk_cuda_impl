@@ -39,3 +39,12 @@ TEST(FilterTest, RamLak_NoBakeInvN)
         /*force_dc_zero=*/false,
         /*bake_invN=*/false));
 }
+
+TEST(FilterTest, SpatialRampFiniteKernel)
+{
+    EXPECT_TRUE(YKTest::testFilterWeightsSpatialRamp(
+        512,
+        /*radius=*/31,
+        /*dump_bins=*/16,
+        /*bake_invN=*/true));
+}
