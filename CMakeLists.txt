@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.24)
 project(YKCBCT LANGUAGES CXX CUDA)
 
 # ----------------------------------------------------------------
@@ -23,7 +23,7 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 # ----------------------------------------------------------------
 # CUDA 架构（按实际 GPU 调整）
 # ----------------------------------------------------------------
-set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89)
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86)
 
 # ----------------------------------------------------------------
 # 默认构建类型

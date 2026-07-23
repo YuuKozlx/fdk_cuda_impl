@@ -4,6 +4,7 @@
 // 外部调用请使用 Iter 模块提供的 launch 接口（如 YkIterLaunch.cuh 中声明的那些函数）
 #include <cstddef>
 #include <cuda_runtime.h>
+#include "global/YkGlobals.h"
 
 namespace YK {
 
@@ -11,8 +12,10 @@ namespace YK {
     template<class F>
     __global__ void elemwise_kernel(float* __restrict__ out, size_t n, F f)
     {
-        const size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-        if (i < n) f(out[i], i);
+        size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+        const size_t stride = (size_t)gridDim.x * blockDim.x;
+        for (; i < n; i += stride)
+            f(out[i], i);
     }
 
     // ── launch 入口 ───────────────────────────────────────────────────────────────
@@ -20,8 +23,15 @@ namespace YK {
     void elemwise(float* out, size_t n, cudaStream_t stream, F f, int block = 256)
     {
         if (n == 0) return;
-        const int grid = (int)((n + block - 1) / block);
-        elemwise_kernel << <grid, block, 0, stream >> > (out, n, f);
+
+        // Keep the launch size bounded, then let elemwise_kernel's grid-stride
+        // loop cover the remainder.  This avoids both oversized grids and the
+        // size_t-to-int truncation that the old one-thread-per-element launch
+        // incurred for very large volumes/sinograms.
+        SKernelLaunchPolicy policy;
+        policy.block_threads = block;
+        const auto launch = policy.make1D(n);
+        elemwise_kernel << <launch.grid, launch.block, 0, stream >> > (out, n, f);
     }
 
 } // namespace YK

@@ -153,13 +153,17 @@ namespace YK {
             YK_CUDA_CHECK(cudaMemsetAsync(
                 d_sino_out, 0, sino_elems * sizeof(float), stream));
 
-            // ── src_dirs（Joseph / Siddon 需要，CVP 不需要）─────────────
-            std::vector<float4> h_src_dirs;
+            // ── centre-ray directions (kept for the float4 overload) ──────
+            // Joseph chooses its stepping axis from srcCR, not from source
+            // position.  The normal run path below uses the richer h_views
+            // overload, but keep this vector semantically correct for callers
+            // that use the float4 overload directly.
+            std::vector<float4> h_center_ray_dirs;
             if (needTex) {
                 const int Na = params.iPAng;
-                h_src_dirs.resize(Na);
+                h_center_ray_dirs.resize(Na);
                 for (int i = 0; i < Na; ++i)
-                    h_src_dirs[i] = gpuctx.geo.h_views_vox()[i].src;
+                    h_center_ray_dirs[i] = gpuctx.geo.h_views_vox()[i].srcCR;
             }
 
             const int Na = params.iPAng;

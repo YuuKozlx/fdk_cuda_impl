@@ -282,7 +282,7 @@ namespace YK {
             //   不占用 shared memory，延迟约 4 cycle/次，远低于 smem 的 20~30 cycle
             //
             // launch 侧：
-            //   block 数上限 = sm_count * 2，避免过度启动
+            //   block 数上限由 SKernelLaunchPolicy::makeRowWarp 决定
             //   超出上限的行由 stride loop 自动分摊，kernel 侧无感知
             //   smem_bytes = 0（shfl 版不需要 shared memory）
             // =============================================================================
@@ -414,20 +414,13 @@ namespace YK {
                 const SKernelLaunchPolicy& policy,
                 cudaStream_t               stream)
             {
-                const int warps_per_blk = policy.block_threads / 32;
-                const int total_warps = K * Nv;
-
-                // 按需计算 block 数，但加上限避免过度启动
-                // sm_count 查一次缓存，避免重复调用
-                static int sm_count = 0;
-                if (sm_count == 0)
-                    YK_CUDA_CHECK(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0));
-
-                const int blocks_needed = (total_warps + warps_per_blk - 1) / warps_per_blk;
-                const int blocks = std::min(blocks_needed, sm_count * 2);
+                // The row-warp kernel covers remaining rows with its internal
+                // stride loop, so this bounded launch remains complete even
+                // when K*Nv is much larger than the active grid.
+                const auto launch = policy.makeRowWarp((size_t)K * Nv);
 
                 // shfl 版不需要 smem
-                preweight_vec_chunk_rowwarp_shfl_kernel_v2 << <blocks, policy.block_threads, 0, stream >> > (
+                preweight_vec_chunk_rowwarp_shfl_kernel_v2 << <launch.grid, launch.block, 0, stream >> > (
                     d_src, d_dst, d_geo, d_gv,
                     Nu, Nv, K,
                     policy.bounds_check ? 1 : 0);

@@ -8,7 +8,7 @@ namespace YK {
            // fdk_precompute_coeffs_kernel
            //
            //   每个 thread 处理一个视角，将几何参数预计算为仿射系数
-           //   FdkAffineCoeff{Cu, Cv, Cd, dtheta, SID2, fScaleDTheta}。
+            //   FdkAffineCoeff{Cu, Cv, Cd, FDK normalization, matched-BP terms}。
            //   所有中间量用 double 精度计算，结果截断为 float 写出。
            // ----------------------------------------------------------------
             __global__ void fdk_precompute_coeffs_kernel(
@@ -85,6 +85,25 @@ namespace YK {
                 c.SDD2 = (float)(SDD * SDD);
                 c.du_mm = gv.du_mm;
                 c.dv_mm = gv.dv_mm;
+
+                // Matched BP repeatedly evaluates
+                // |detS + u*detU + v*detV - src|^2.  Expanding this detector
+                // quadratic once per view removes world-point reconstruction
+                // from the hot voxel loop without changing the formula.
+                const double r0x = dsx - sx;
+                const double r0y = dsy - sy;
+                const double r0z = dsz - sz;
+                c.L2_0  = (float)(r0x * r0x + r0y * r0y + r0z * r0z);
+                c.L2_u  = (float)(2.0 * (r0x * ux + r0y * uy + r0z * uz));
+                c.L2_v  = (float)(2.0 * (r0x * vx + r0y * vy + r0z * vz));
+                c.L2_uu = (float)(ux * ux + uy * uy + uz * uz);
+                c.L2_uv = (float)(2.0 * (ux * vx + uy * vy + uz * vz));
+                c.L2_vv = (float)(vx * vx + vy * vy + vz * vz);
+
+                // Keep the previous denominator exactly: the old matched
+                // kernel computed DSD as sqrt(c.SDD2), with SDD2=SDD_plane^2.
+                c.inv_SDD_plane = (fabs(SDD) > 1e-12)
+                    ? (float)(1.0 / fabs(SDD)) : 0.f;
 
                 d_coeffs[a] = c;
 #ifdef YK_DEBUG

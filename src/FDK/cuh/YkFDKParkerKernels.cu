@@ -143,19 +143,11 @@ namespace YK {
                 int nDirSign,
                 cudaStream_t stream)
             {
-                static int sm_count = 0;
-                if (sm_count == 0)
-                    cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0);
+                SKernelLaunchPolicy policy;
+                policy.block_threads = 256;
+                const auto launch = policy.makeRowWarp((size_t)K * Nv);
 
-                const int total_rows = K * Nv;
-                const int warps_per_blk = 256 / 32;
-                const int blocks_need = (total_rows + warps_per_blk - 1) / warps_per_blk;
-                const int blocks = std::min(blocks_need, sm_count * 2);
-
-                dim3 block(256, 1, 1);
-                dim3 grid(blocks, 1, 1);
-
-                parker_weight_kernel << <grid, block, 0, stream >> > (
+                parker_weight_kernel << <launch.grid, launch.block, 0, stream >> > (
                     d_data, Nu, Nv, K,
                     fSDD, fDetUSize, fCentralFanAngle, fScale,
                     nDirSign);

@@ -231,9 +231,12 @@ namespace YK {
                 int i = 0;
                 while (i < Na)
                 {
-                    const MainAxis ax = getMainAxis(h_views[i].src);
+                    // Group by the geometric centre-ray direction rather than
+                    // source position.  Circular scans are unchanged because
+                    // src and srcCR are collinear up to sign.
+                    const MainAxis ax = getMainAxis(h_views[i].srcCR);
                     int j = i + 1;
-                    while (j < Na && getMainAxis(h_views[j].src) == ax) ++j;
+                    while (j < Na && getMainAxis(h_views[j].srcCR) == ax) ++j;
 
                     switch (ax) {
                     case MainAxis::X:

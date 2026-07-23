@@ -2,6 +2,7 @@
 #include "global/YkMacro.hpp"
 #include "common/YkVecGeo.hpp"
 #include "BP/kernels/YkBPSiddonLaunch.cuh"
+#include <algorithm>
 
 // ─── 公用宏：vol_origin = 第0体素中心 ────────────────────────────────────────
 //
@@ -137,15 +138,26 @@ namespace YK {
         {
             if (K <= 0) return;
 
-            dim3 block(16, 16, 1);
-            dim3 grid((Nu + 15) / 16, (Nv + 15) / 16, K);
+            SKernelLaunchPolicy policy;
+            const int max_angle_chunk = policy.maxAngleChunk();
+            const size_t view_elems = (size_t)Nu * Nv;
+            const dim3 block(16, 16, 1);
+            const dim3 grid_xy((Nu + block.x - 1) / block.x,
+                               (Nv + block.y - 1) / block.y, 1);
 
-            detail::siddon_bp_kernel << <grid, block, 0, stream >> > (
-                d_sino, d_vol, d_views,
-                g.origin(),
-                g.vox_x, g.vox_y, g.vox_z,
-                g.Nx, g.Ny, g.Nz,
-                Nu, Nv, K);
+            // The chunks execute in the supplied stream order.  Atomic adds
+            // therefore retain the original full-K accumulation semantics.
+            for (int base = 0; base < K; ) {
+                const int count = std::min(max_angle_chunk, K - base);
+                const dim3 grid(grid_xy.x, grid_xy.y, count);
+                detail::siddon_bp_kernel << <grid, block, 0, stream >> > (
+                    d_sino + (size_t)base * view_elems, d_vol, d_views + base,
+                    g.origin(),
+                    g.vox_x, g.vox_y, g.vox_z,
+                    g.Nx, g.Ny, g.Nz,
+                    Nu, Nv, count);
+                base += count;
+            }
         }
 
     } // namespace Bp

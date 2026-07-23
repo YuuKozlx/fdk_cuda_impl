@@ -22,7 +22,7 @@ namespace YK {
 
         void fp_joseph_launch(
             cudaTextureObject_t              volTex,
-            const std::vector<float4>& h_src_dirs,  // 每个角度的源点，仅用于主轴判断
+            const std::vector<float4>& h_center_ray_dirs, // 每个角度的中心射线方向，仅用于主轴判断
             const SConeProjGeomVec* d_views_vox,
             float* d_sino,
             const SVolGeom& g,
@@ -44,7 +44,7 @@ namespace YK {
 
         void fp_joseph_ss_launch(
             cudaTextureObject_t              volTex,
-            const std::vector<float4>& h_src_dirs,
+            const std::vector<float4>& h_center_ray_dirs,
             const SConeProjGeomVec* d_views_vox,
             float* d_sino,
             const SVolGeom& g,

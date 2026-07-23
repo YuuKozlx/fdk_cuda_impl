@@ -16,9 +16,7 @@ namespace YK {
             // ----------------------------------------------------------------
             YK_INLINE SKernelLaunchPolicy normalizeFilterPolicy(SKernelLaunchPolicy p)
             {
-                if (p.block_threads < 32) p.block_threads = 32;
-                p.block_threads = (p.block_threads + 31) & ~31;
-                p.block_threads = std::min(p.block_threads, 1024);
+                p.block_threads = p.normalizedBlockThreads();
                 return p;
             }
 

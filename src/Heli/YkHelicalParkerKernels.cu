@@ -100,13 +100,11 @@ namespace YK {
 			float fScale,
 			cudaStream_t stream)
 		{
-			constexpr int kThreads = 128;
-			const int grid_x =
-				std::min((K * Nv * 32 + kThreads - 1) / kThreads, 256);
-			const dim3 block(kThreads, 1, 1);
-			const dim3 grid(grid_x, 1, 1);
+			SKernelLaunchPolicy policy;
+			policy.block_threads = 128;
+			const auto launch = policy.makeRowWarp((size_t)K * Nv);
 
-			detail::helical_parker_kernel << <grid, block, 0, stream >> > (
+			detail::helical_parker_kernel << <launch.grid, launch.block, 0, stream >> > (
 				d_data, Nu, Nv, K,
 				fSDD, fDetUSize,
 				fCentralFanAngle, fScale);

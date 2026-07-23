@@ -401,13 +401,6 @@ namespace YK {
                         const float dx_xy = fX - src_x;
                         const float dy_xy = fY - src_y;
 
-                        // ── DSD：用仿射系数里的 SID2 和探测器几何推算 ────────
-                        // detU/detV 长度平方倒数（Z循环外）
-                        const float rcp_U2 = __frcp_rn(
-                            v.detU.x * v.detU.x + v.detU.y * v.detU.y + v.detU.z * v.detU.z);
-                        const float rcp_V2 = __frcp_rn(
-                            v.detV.x * v.detV.x + v.detV.y * v.detV.y + v.detV.z * v.detV.z);
-
                         // 初始值退一步
                         const float fZ0 = vg.origin().z + (startZ - 1) * vg.vox_z;
                         float den = denXY + c.Cd_z * fZ0;
@@ -429,16 +422,14 @@ namespace YK {
                             const float fu = uNum * fr;
                             const float fv = vNum * fr;
 
-                            // ── 探测器像素世界坐标 ────────────────────────────
-                            const float det_wx = v.detS.x + fu * v.detU.x + fv * v.detV.x;
-                            const float det_wy = v.detS.y + fu * v.detU.y + fv * v.detV.y;
-                            const float det_wz = v.detS.z + fu * v.detU.z + fv * v.detV.z;
-
-                            // ── L = |src - det_pixel|（源到探测器像素距离）───
-                            const float Lx = src_x - det_wx;
-                            const float Ly = src_y - det_wy;
-                            const float Lz = src_z - det_wz;
-                            const float L2 = Lx * Lx + Ly * Ly + Lz * Lz;
+                            // ── L² = |src - det(u,v)|² ────────────────────────
+                            // Precompute expands the exact old expression:
+                            // det(u,v) = detS + u*detU + v*detV.
+                            const float L2 = fmaf(fv, fmaf(fv, c.L2_vv,
+                                               c.L2_v + fu * c.L2_uv),
+                                             fmaf(fu, fmaf(fu, c.L2_uu, c.L2_u),
+                                                  c.L2_0));
+                            if (L2 < 1e-8f) continue;
                             const float L = __fsqrt_rn(L2);
 
                             // ── lsq = |src - voxel|²（源到体素距离平方）─────
@@ -447,14 +438,12 @@ namespace YK {
                             const float lsq = dx_xy * dx_xy + dy_xy * dy_xy + dz * dz;
                             if (lsq < 1e-8f) continue;
 
-                            // ── DSD = |src - detS_center| 近似（或从几何取）─
-                            // 用 sqrt(SID2 + (SDD-SID)^2) 更精确，但这里直接用 L 的均值近似
-                            // 实际上 TIGRE 用的是固定 DSD，这里用源到探测器中心的距离
-                            const float DSD = __fsqrt_rn(c.SDD2);
-                            if (DSD < 1e-8f) continue;
-
-                            // ── matched weight = L³ / (DSD · lsq) ────────────
-                            const float w_matched = __fdividef(L2 * L, DSD * lsq) * scale;
+                            // ── matched weight = L³ / (SDD_plane · lsq) ──────
+                            // inv_SDD_plane uses the same SDD2 convention as
+                            // the former sqrt(c.SDD2) code; only operation order
+                            // and repeated geometry work have changed.
+                            const float w_matched =
+                                __fdividef(L2 * L, lsq) * c.inv_SDD_plane * scale;
 
                             voxelColumn[iz] += tex3D<float>(sinoTex,
                                 fu + 0.5f, fv + 0.5f, ia_tex) * w_matched;

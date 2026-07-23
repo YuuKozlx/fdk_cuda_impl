@@ -474,17 +474,28 @@ namespace YK {
         {
             if (K <= 0) return;
 
-            // blockIdx.z 最大值受 GPU 限制（通常 65535），K=360 完全没问题
-            dim3 block(16, 16, 1);
-            dim3 grid((Nu + 15) / 16, (Nv + 15) / 16, K);
+            SKernelLaunchPolicy policy;
+            const int max_angle_chunk = policy.maxAngleChunk();
+            const size_t view_elems = (size_t)Nu * Nv;
+            const dim3 block(16, 16, 1);
+            const dim3 grid_xy((Nu + block.x - 1) / block.x,
+                               (Nv + block.y - 1) / block.y, 1);
 
-            detail::siddon_fp_kernel << <grid, block, 0, stream >> > (
-                d_vol, d_sino, d_views,
-                g.origin(),
-                g.vox_x, g.vox_y, g.vox_z,
-                g.Nx, g.Ny, g.Nz,
-                Nu, Nv, K,
-                accumulate);
+            // A view is represented by grid.z.  Split only the view dimension;
+            // each chunk addresses its own sino/geometry subrange, preserving
+            // both overwrite and accumulate semantics.
+            for (int base = 0; base < K; ) {
+                const int count = std::min(max_angle_chunk, K - base);
+                const dim3 grid(grid_xy.x, grid_xy.y, count);
+                detail::siddon_fp_kernel << <grid, block, 0, stream >> > (
+                    d_vol, d_sino + (size_t)base * view_elems, d_views + base,
+                    g.origin(),
+                    g.vox_x, g.vox_y, g.vox_z,
+                    g.Nx, g.Ny, g.Nz,
+                    Nu, Nv, count,
+                    accumulate);
+                base += count;
+            }
         }
 
 
@@ -504,17 +515,26 @@ namespace YK {
             const float rcp_vox_y = 1.f / g.vox_y;
             const float rcp_vox_z = 1.f / g.vox_z;
 
-            dim3 block(16, 16, 1);
-            dim3 grid((Nu + 15) / 16, (Nv + 15) / 16, K);
+            SKernelLaunchPolicy policy;
+            const int max_angle_chunk = policy.maxAngleChunk();
+            const size_t view_elems = (size_t)Nu * Nv;
+            const dim3 block(16, 16, 1);
+            const dim3 grid_xy((Nu + block.x - 1) / block.x,
+                               (Nv + block.y - 1) / block.y, 1);
 
-            detail::siddon_fp_tex_kernel << <grid, block, 0, stream >> > (
-                tex, d_sino, d_views,
-                origin,
-                g.vox_x, g.vox_y, g.vox_z,
-                rcp_vox_x, rcp_vox_y, rcp_vox_z,
-                g.Nx, g.Ny, g.Nz,
-                Nu, Nv, K,
-                accumulate);
+            for (int base = 0; base < K; ) {
+                const int count = std::min(max_angle_chunk, K - base);
+                const dim3 grid(grid_xy.x, grid_xy.y, count);
+                detail::siddon_fp_tex_kernel << <grid, block, 0, stream >> > (
+                    tex, d_sino + (size_t)base * view_elems, d_views + base,
+                    origin,
+                    g.vox_x, g.vox_y, g.vox_z,
+                    rcp_vox_x, rcp_vox_y, rcp_vox_z,
+                    g.Nx, g.Ny, g.Nz,
+                    Nu, Nv, count,
+                    accumulate);
+                base += count;
+            }
         }
     } // namespace Fp
 } // namespace YK

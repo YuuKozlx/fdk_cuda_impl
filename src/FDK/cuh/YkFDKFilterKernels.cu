@@ -95,31 +95,14 @@ namespace YK {
             }
 
 
-            // ----------------------------------------------------------------
-            // launch 侧统一加上限
-            // ----------------------------------------------------------------
-            static int s_sm_count = 0;
-            static int get_sm_count()
-            {
-                if (s_sm_count == 0)
-                    cudaDeviceGetAttribute(&s_sm_count, cudaDevAttrMultiProcessorCount, 0);
-                return s_sm_count;
-            }
-
             void fp_launchPad(
                 const float* d_src, float* d_padded, const int* d_startu,
                 int Nu, int Nv, int paddedN, int K,
                 const SKernelLaunchPolicy& policy, cudaStream_t stream)
             {
-                const int warps_per_blk = policy.block_threads / 32;
-                const int total_rows = K * Nv;
-                const int blocks_need = (total_rows + warps_per_blk - 1) / warps_per_blk;
-                const int blocks = std::min(blocks_need, get_sm_count() * 2);
+                const auto launch = policy.makeRowWarp((size_t)K * Nv);
 
-                dim3 block(policy.block_threads, 1, 1);
-                dim3 grid(blocks, 1, 1);
-
-                _fp_pad_kernel << <grid, block, 0, stream >> > (
+                _fp_pad_kernel << <launch.grid, launch.block, 0, stream >> > (
                     d_src, d_padded, d_startu,
                     Nu, Nv, paddedN, K,
                     policy.bounds_check ? 1 : 0);
@@ -147,15 +130,9 @@ namespace YK {
                 int Nu, int Nv, int paddedN, int K,
                 const SKernelLaunchPolicy& policy, cudaStream_t stream)
             {
-                const int warps_per_blk = policy.block_threads / 32;
-                const int total_rows = K * Nv;
-                const int blocks_need = (total_rows + warps_per_blk - 1) / warps_per_blk;
-                const int blocks = std::min(blocks_need, get_sm_count() * 2);
+                const auto launch = policy.makeRowWarp((size_t)K * Nv);
 
-                dim3 block(policy.block_threads, 1, 1);
-                dim3 grid(blocks, 1, 1);
-
-                _fp_crop_kernel << <grid, block, 0, stream >> > (
+                _fp_crop_kernel << <launch.grid, launch.block, 0, stream >> > (
                     d_padded, d_dst, d_startu,
                     Nu, Nv, paddedN, K,
                     policy.bounds_check ? 1 : 0);

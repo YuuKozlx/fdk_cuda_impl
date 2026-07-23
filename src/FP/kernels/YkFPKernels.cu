@@ -584,7 +584,7 @@ namespace YK {
 
         void fp_joseph_launch(
             cudaTextureObject_t              volTex,
-            const std::vector<float4>& h_src_dirs,
+            const std::vector<float4>& h_center_ray_dirs,
             const SConeProjGeomVec* d_views_vox,
             float* d_sino,
             const SVolGeom& g,
@@ -595,7 +595,7 @@ namespace YK {
         {
             for (int a = 0; a < Na; ++a)
             {
-                const MainAxis ax = getMainAxis(h_src_dirs[a]);
+                const MainAxis ax = getMainAxis(h_center_ray_dirs[a]);
                 float* d_s = d_sino + (size_t)a * Nv * Nu;
 
                 switch (step) {
@@ -626,9 +626,13 @@ namespace YK {
             int i = 0;
             while (i < Na)
             {
-                const MainAxis ax = getMainAxis(h_views[i].src);
+                // srcCR is the geometric centre-ray direction.  For the
+                // current circular trajectory it is collinear with src up to
+                // sign, so this preserves behavior but makes the meaning
+                // correct for future external geometries.
+                const MainAxis ax = getMainAxis(h_views[i].srcCR);
                 int j = i + 1;
-                while (j < Na && getMainAxis(h_views[j].src) == ax) ++j;
+                while (j < Na && getMainAxis(h_views[j].srcCR) == ax) ++j;
 
                 float* d_s = d_sino + (size_t)i * Nv * Nu;
 
@@ -649,11 +653,11 @@ namespace YK {
 
 
         // ============================================================
-         // 重载1：h_src_dirs，per-angle
+         // 重载1：h_center_ray_dirs，per-angle
          // ============================================================
         void fp_joseph_ss_launch(
             cudaTextureObject_t              volTex,
-            const std::vector<float4>& h_src_dirs,
+            const std::vector<float4>& h_center_ray_dirs,
             const SConeProjGeomVec* d_views_vox,
             float* d_sino,
             const SVolGeom& g,
@@ -665,7 +669,7 @@ namespace YK {
         {
             for (int a = 0; a < Na; ++a)
                 detail::fp_ss_dispatch(
-                    [&](int i) { return getMainAxis(h_src_dirs[i]); },
+                    [&](int i) { return getMainAxis(h_center_ray_dirs[i]); },
                     volTex, d_views_vox, d_sino, g, Nu, Nv,
                     a, a + 1, accumulate, stream, ss, det);
         }
@@ -688,12 +692,12 @@ namespace YK {
             int i = 0;
             while (i < Na)
             {
-                const MainAxis ax = getMainAxis(h_views[i].src);
+                const MainAxis ax = getMainAxis(h_views[i].srcCR);
                 int j = i + 1;
-                while (j < Na && getMainAxis(h_views[j].src) == ax) ++j;
+                while (j < Na && getMainAxis(h_views[j].srcCR) == ax) ++j;
 
                 detail::fp_ss_dispatch(
-                    [&](int k) { return getMainAxis(h_views[k].src); },
+                    [&](int k) { return getMainAxis(h_views[k].srcCR); },
                     volTex, d_views_vox, d_sino, g, Nu, Nv,
                     i, j, accumulate, stream, ss, det);
                 i = j;

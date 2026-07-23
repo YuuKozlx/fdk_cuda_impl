@@ -81,11 +81,13 @@ namespace YK {
             const int Na = params.iPAng;
             const size_t view_elems = (size_t)params.iPU * params.iPV;
 
-            std::vector<float4> h_src_dirs;
+            // Keep the legacy float4 overload input semantically aligned with
+            // Joseph's axis selector: it expects centre-ray directions.
+            std::vector<float4> h_center_ray_dirs;
             if (needTex) {
-                h_src_dirs.resize(Na);
+                h_center_ray_dirs.resize(Na);
                 for (int i = 0; i < Na; ++i)
-                    h_src_dirs[i] = gpuctx.geo.h_views_vox()[i].src;
+                    h_center_ray_dirs[i] = gpuctx.geo.h_views_vox()[i].srcCR;
             }
 
             switch (fp_type_) {
