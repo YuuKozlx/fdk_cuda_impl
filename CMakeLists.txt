@@ -116,8 +116,15 @@ add_subdirectory(src/Filter)
 add_subdirectory(src/FDK)
 add_subdirectory(src/BP)
 add_subdirectory(src/FP)
-add_subdirectory(src/Heli)
 add_subdirectory(src/Iter)
+
+# Helical reconstruction is still under active development.  Keep it out of
+# the default DLL so the regular FDK/iterative build has a focused, stable
+# dependency surface.  It can still be enabled explicitly for helical work.
+option(YKCBCT_BUILD_HELICAL "Build experimental helical CT support" OFF)
+if(YKCBCT_BUILD_HELICAL)
+    add_subdirectory(src/Heli)
+endif()
 # ----------------------------------------------------------------
 # 主库 DLL：只做链接，不重复编译源文件
 #
