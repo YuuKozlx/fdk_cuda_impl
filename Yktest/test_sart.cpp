@@ -81,7 +81,7 @@ int main_ossart_test()
     YK_CUDA_CHECK(cudaMemsetAsync(d_vol.data(), 0, vol_elems * sizeof(float), s));
 
     // ---- OS-SART 配置 ───────────────────────────────────────────
-    OSSART::Config cfg;
+    OSSART_TIGRE::Config cfg;
     cfg.n_iter = 10;
     cfg.n_subset = 20;
     cfg.lambda = 1.f;
@@ -90,12 +90,12 @@ int main_ossart_test()
     cfg.use_min = true;
     cfg.min_constraint = 0.f;     // CT 值非负约束
     cfg.fp_task = ETask::FP_Siddon;       // Joseph 正投影
-    cfg.bp_task = ETask::BP_FDK;    // Joseph 反投影（接近 FP_Joseph 的伴随）
+    cfg.bp_task = ETask::BP_FDK_matched;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ──────────────────────────────────────────
 
     {
-        OSSART recon;
+        OSSART_TIGRE recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("OSSART init failed");
             YK_CUDA_CHECK(cudaStreamDestroy(s));
@@ -1043,23 +1043,23 @@ int main_ossart_realdata_test()
 {
     SCBCTParams params;
     params.iPU = 1024; params.iPV = 1024;
-    params.iPAng = 420; params.iPAngTotal = 420;
+    params.iPAng = 210; params.iPAngTotal = 210;
     params.tiltn_angle_rad = 0;
     params.iVX = 512; params.iVY = 512; params.iVZ = 400;
     params.bShortScan = true;
     params.scan_range_rad = (float)CUDA_PI * 7.0f / 6.0f;
     params.SID = 430.f; params.SDD = 769.579468f;
     params.du_mm = 0.417f; params.dv_mm = 0.417f;
-    params.vox_x_mm = 0.40f; params.vox_y_mm = 0.40f; params.vox_z_mm = 0.4f;
+    params.vox_x_mm = 0.4492; params.vox_y_mm = 0.4492; params.vox_z_mm = 0.4492;
     params.offsetU_mm = 1.52205f;
     params.offsetV_mm = 40.03f;
     params.vol_offset_x_mm = 0.f;
     params.vol_offset_y_mm = 0.f;
-    params.vol_offset_z_mm = params.offsetV_mm * params.SID / params.SDD; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
+    params.vol_offset_z_mm = 0.f; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
 
     std::vector<float> angle_list(params.iPAng);
     for (int i = 0; i < params.iPAng; ++i) {
-        angle_list[i] = 48.f + 210.f * i / (params.iPAng - 1);
+        angle_list[i] = 48.f + 210.f * i / params.iPAng;
         angle_list[i] = angle_list[i] / 180.f * (float)CUDA_PI;
     }
 
@@ -1074,8 +1074,8 @@ int main_ossart_realdata_test()
 
     // ---- 读测量正弦图 ────────────────────────────────────────────
     std::vector<float> h_sino(proj_elems);
-    if (!read_raw_float((test_data_dir + "Dump_Data_BeamHCed_1024_1024.raw").c_str(), h_sino)) {
-        YK_LOGE("cannot read Dump_Data_BeamHCed_1024_1024.raw");
+    if (!read_raw_float((test_data_dir + "Dump_Data_BeamHCed_1024_1024_downsample.raw").c_str(), h_sino)) {
+        YK_LOGE("cannot read Dump_Data_BeamHCed_1024_1024_downsample.raw");
         return -1;
     }
     YK_LOGI("sino loaded");
@@ -1097,21 +1097,21 @@ int main_ossart_realdata_test()
     YK_CUDA_CHECK(cudaMemsetAsync(d_vol.data(), 0, vol_elems * sizeof(float), s));
 
     // ---- OS-SART 配置 ───────────────────────────────────────────
-    OSSART::Config cfg;
+    OSSART_TIGRE::Config cfg;
     cfg.n_iter = 10;
     cfg.n_subset = 20;
     cfg.lambda = 1.f;
-    cfg.lambda_red = 0.999f;
+    cfg.lambda_red = 0.95f;
     cfg.eps = 1e-6f;
     cfg.use_min = true;
     cfg.min_constraint = 0.f;     // CT 值非负约束
     cfg.fp_task = ETask::FP_Siddon;       // Joseph 正投影
-    cfg.bp_task = ETask::BP_FDK;    // Joseph 反投影（接近 FP_Joseph 的伴随）
+    cfg.bp_task = ETask::BP_FDK_matched;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ──────────────────────────────────────────
 
     {
-        OSSART recon;
+        OSSART_TIGRE recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("OSSART init failed");
             YK_CUDA_CHECK(cudaStreamDestroy(s));
@@ -1274,6 +1274,112 @@ int main_ossart_mcgpu_cylinder_test()
         else {
             YK_LOGI("mcgpu_cylinder_fdk_vec_vol_online.raw not found, skip FDK comparison");
         }
+    }
+
+    YK_CUDA_CHECK(cudaStreamDestroy(s));
+    return 0;
+}
+
+
+int main_cgls_realdata_test()
+{
+    SCBCTParams params;
+    params.iPU = 1024; params.iPV = 1024;
+    params.iPAng = 210; params.iPAngTotal = 210;
+    params.tiltn_angle_rad = 0;
+    params.iVX = 512; params.iVY = 512; params.iVZ = 400;
+    params.bShortScan = true;
+    params.scan_range_rad = (float)CUDA_PI * 7.0f / 6.0f;
+    params.SID = 430.f; params.SDD = 769.579468f;
+    params.du_mm = 0.417f; params.dv_mm = 0.417f;
+    params.vox_x_mm = 0.4492f; params.vox_y_mm = 0.4492f; params.vox_z_mm = 0.4492f;
+    params.offsetU_mm = 1.52205f;
+    params.offsetV_mm = 40.03f;
+    params.vol_offset_x_mm = 0.f;
+    params.vol_offset_y_mm = 0.f;
+    params.vol_offset_z_mm = 0.f; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
+
+    std::vector<float> angle_list(params.iPAng);
+    for (int i = 0; i < params.iPAng; ++i) {
+        angle_list[i] = 48.f + 210.f * i / params.iPAng;
+        angle_list[i] = angle_list[i] / 180.f * (float)CUDA_PI;
+    }
+
+    params.scan_start_angle_rad = angle_list[0];
+    params.angle_list = angle_list;
+    params.nDirSign = 1;
+
+    const int    Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
+    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const size_t proj_elems = view_elems * params.iPAng;
+    const size_t vol_elems = (size_t)Nx * Ny * Nz;
+
+    // ---- 读测量正弦图 ────────────────────────────────────────────
+    std::vector<float> h_sino(proj_elems);
+    if (!read_raw_float((test_data_dir + "Dump_Data_BeamHCed_1024_1024_downsample.raw").c_str(), h_sino)) {
+        YK_LOGE("cannot read Dump_Data_BeamHCed_1024_1024_downsample.raw");
+        return -1;
+    }
+    YK_LOGI("sino loaded");
+
+    cudaStream_t s = nullptr;
+    YK_CUDA_CHECK(cudaStreamCreate(&s));
+    MemoryController ctrl;
+
+
+
+    // 上传正弦图
+    auto d_sino = ctrl.allocateDevice3D<float>(view_elems, params.iPAng, 1, 0);
+    {
+        auto h_buf = ctrl.allocateCpu3D<float>(view_elems, params.iPAng, 1, false);
+        std::memcpy(h_buf.data(), h_sino.data(), proj_elems * sizeof(float));
+        ctrl.upload3D(d_sino, h_buf);
+    }
+
+    // 分配输出体积（初始全零）
+    auto d_vol = ctrl.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
+    YK_CUDA_CHECK(cudaMemsetAsync(d_vol.data(), 0, vol_elems * sizeof(float), s));
+
+    // ── CGLS 配置 ────────────────────────────────────────────────
+    CGLS::Config cfg;
+    cfg.n_iter = 50;
+    cfg.eps = 1e-8f;
+    cfg.use_min = true;
+    cfg.min_constraint = 0.f;
+    cfg.fp_task = ETask::FP_Joseph;
+    cfg.bp_task = ETask::BP_FDK_matched;
+
+    // ── 运行 CGLS ────────────────────────────────────────────────
+    {
+        CGLS recon;
+        if (!recon.init(params, cfg, s)) {
+            YK_LOGE("CGLS init failed");
+            YK_CUDA_CHECK(cudaStreamDestroy(s));
+            return -1;
+        }
+
+        YK_LOGI("CGLS start: {} iters", cfg.n_iter);
+
+        YK::Util::CudaTimer timer("cgls_total", s);
+        recon.run(d_sino.data(), d_vol.data(), params, s);
+        YK_CUDA_CHECK(cudaStreamSynchronize(s));
+
+        YK_LOGI("CGLS done");
+        recon.release();
+    }
+
+    // ── 保存结果 ─────────────────────────────────────────────────
+    {
+        auto h_vol = ctrl.allocateCpu3D<float>(Nx, Ny, Nz, false);
+        ctrl.download3D(h_vol, d_vol);
+
+        float minv = *std::min_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
+        float maxv = *std::max_element(h_vol.cdata(), h_vol.cdata() + vol_elems);
+        YK_LOGI("vol stats: min={:.6f} max={:.6f}", minv, maxv);
+
+        write_raw_float((test_data_dir + "cgls_vol_realdata.raw").c_str(),
+            h_vol.cdata(), vol_elems);
+        YK_LOGI("saved: cgls_vol_realdata.raw ({}x{}x{})", Nx, Ny, Nz);
     }
 
     YK_CUDA_CHECK(cudaStreamDestroy(s));
