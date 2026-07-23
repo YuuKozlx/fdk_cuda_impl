@@ -36,6 +36,11 @@ namespace YK {
         Hann = 4,
         Hamming = 5,
         Blackman = 6,
+        // Parameterized windows.  Keep existing numeric values stable because
+        // this enum is part of the public task interface.
+        Butterworth = 7,
+        Kaiser = 8,
+        Tukey = 9,
     };
 
     enum class EBufferMode {
@@ -87,6 +92,17 @@ namespace YK {
 
     struct SFdkAlgoParams {
         EFdkFilter filter = EFdkFilter::RamLak;
+
+        // Shared frequency-domain window parameters.  cutoff is normalized
+        // to Nyquist: 0.5 means the complete representable band.
+        float cutoff = 0.5f;
+        float gain = 1.f;
+        bool  force_dc_zero = false;
+
+        // Filter-specific parameters.  Unused fields are ignored.
+        float butterworth_order = 2.f;
+        float kaiser_beta = 8.6f;
+        float tukey_alpha = 0.5f;
     };
 
     struct SFpAlgoParams {

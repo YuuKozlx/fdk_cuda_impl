@@ -1,5 +1,7 @@
 ﻿// YkFdkTaskHandle.hpp
 #pragma once
+#include <algorithm>
+#include <cstring>
 #include <cuda_runtime.h>
 
 #include "global/YkCBCTParams.h"
@@ -50,13 +52,17 @@ namespace YK {
 
             SCBCTParams cp = mapParams(p);
 
-            if (p.algoParams && p.algoParamSize >= sizeof(SFdkAlgoParams)) {
-                const auto& ap = *static_cast<const SFdkAlgoParams*>(p.algoParams);
-                cp.desc = SFilterKernelDesc{ mapFilter(ap.filter) };
+            // Copy only the supplied bytes into defaults.  This keeps callers
+            // compiled against the former one-field SFdkAlgoParams layout
+            // source/binary compatible: they still select the old filters,
+            // while all new window parameters retain their defaults.
+            SFdkAlgoParams filter_params{};
+            if (p.algoParams && p.algoParamSize >= sizeof(EFdkFilter)) {
+                const size_t copy_bytes = std::min(
+                    p.algoParamSize, sizeof(SFdkAlgoParams));
+                std::memcpy(&filter_params, p.algoParams, copy_bytes);
             }
-            else {
-                cp.desc = SFilterKernelDesc{ EFilterKernel::RamLak };
-            }
+            cp.desc = makeFilterDesc(filter_params);
 
             YK_CUDA_CHECK(cudaStreamCreate(&stream_));
 
@@ -266,8 +272,32 @@ namespace YK {
             case EFdkFilter::Hann:       return EFilterKernel::Hann;
             case EFdkFilter::Hamming:    return EFilterKernel::Hamming;
             case EFdkFilter::Blackman:   return EFilterKernel::Blackman;
+            case EFdkFilter::Butterworth:return EFilterKernel::Butterworth;
+            case EFdkFilter::Kaiser:     return EFilterKernel::Kaiser;
+            case EFdkFilter::Tukey:      return EFilterKernel::Tukey;
             default:                     return EFilterKernel::RamLak;
             }
+        }
+
+        // ----------------------------------------------------------------
+        // Public task parameters -> internal filter descriptor
+        //
+        // Custom / SpatialRampFFT intentionally do not appear here: both
+        // require caller-owned weight arrays and must use SFilterKernelDesc
+        // directly, rather than a fixed-size public task struct.
+        // ----------------------------------------------------------------
+        static SFilterKernelDesc makeFilterDesc(const SFdkAlgoParams& ap)
+        {
+            SFilterKernelDesc desc{};
+            desc.kind = mapFilter(ap.filter);
+            desc.source = EWeightsBuildSource::AnalyticFreq;
+            desc.cutoff = ap.cutoff;
+            desc.gain = ap.gain;
+            desc.force_dc_zero = ap.force_dc_zero;
+            desc.order = ap.butterworth_order;
+            desc.beta = ap.kaiser_beta;
+            desc.tukey_alpha = ap.tukey_alpha;
+            return desc;
         }
     };
 
