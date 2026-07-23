@@ -1,6 +1,6 @@
 ﻿//// YkOSSART.hpp
 //#pragma once
-//#include "FP/YkFPRunner.hpp"
+//#include "common/YkProjectionOperators.hpp"
 //#include "kernel/YkIterLaunch.cuh"
 //#include "global/YkGlobals.h"
 //#include "global/YkMacro.hpp"
@@ -9,8 +9,7 @@
 //#include "YKCBCT/interface/YkTaskTypes.hpp"
 //
 //#include <cuda_runtime.h>
-//#include "BP/YkSiddonBPRunner.hpp"
-//#include <global/YkCBCTParams.h>
+////#include <global/YkCBCTParams.h>
 //#include <vector>
 //#include <numeric>
 //
@@ -73,8 +72,8 @@
 //            YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
 //            YK_CUDA_CHECK(cudaMalloc(&d_weight_, vol_n * sizeof(float)));
 //
-//            fp_.init(params, cfg.fp_task, deviceId);
-//            bp_.init(params, cfg.bp_task, deviceId);
+//            fp_.init(params, cfg.fp_task, deviceId, stream);
+//            bp_.init(params, cfg.bp_task, deviceId, stream);
 //
 //            precomputeWeight_(params, stream);
 //
@@ -215,8 +214,8 @@
 //        SCBCTParams  params_;
 //        Config       cfg_;
 //
-//        ConeProjector     fp_;
-//        ConeBackprojector bp_;
+//        ForwardOperatorAdapter fp_;
+//        BackOperatorAdapter bp_;
 //
 //        std::vector<std::vector<int>> subsets_;
 //        std::vector<SCBCTParams>      subset_params_;
@@ -248,7 +247,7 @@
 
 //// YkOSSART.hpp
 //#pragma once
-//#include "FP/YkFPRunner.hpp"
+//#include "common/YkProjectionOperators.hpp"
 //#include "kernel/YkIterLaunch.cuh"
 //#include "global/YkGlobals.h"
 //#include "global/YkMacro.hpp"
@@ -257,8 +256,7 @@
 //#include "YKCBCT/interface/YkTaskTypes.hpp"
 //
 //#include <cuda_runtime.h>
-//#include "BP/YkSiddonBPRunner.hpp"
-//#include <global/YkCBCTParams.h>
+////#include <global/YkCBCTParams.h>
 //#include <vector>
 //#include <numeric>
 //
@@ -312,8 +310,8 @@
 //            YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
 //            YK_CUDA_CHECK(cudaMalloc(&d_weight_, vol_n * sizeof(float)));
 //
-//            fp_.init(params, cfg.fp_task, deviceId);
-//            bp_.init(params, cfg.bp_task, deviceId);
+//            fp_.init(params, cfg.fp_task, deviceId, stream);
+//            bp_.init(params, cfg.bp_task, deviceId, stream);
 //
 //            precomputeWeight_(params, stream, deviceId);
 //
@@ -487,8 +485,8 @@
 //        SCBCTParams  params_;
 //        Config       cfg_;
 //
-//        ConeProjector     fp_;
-//        ConeBackprojector bp_;
+//        ForwardOperatorAdapter fp_;
+//        BackOperatorAdapter bp_;
 //
 //        std::vector<std::vector<int>> subsets_;
 //
@@ -519,7 +517,7 @@
 
 // YkOSSART.hpp
 #pragma once
-#include "FP/YkFPRunner.hpp"
+#include "common/YkProjectionOperators.hpp"
 #include "FP/YkFpRunnerExVec.hpp"
 #include "kernel/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
@@ -529,7 +527,6 @@
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 
 #include <cuda_runtime.h>
-#include "BP/YkSiddonBPRunner.hpp"
 #include <global/YkCBCTParams.h>
 #include <vector>
 #include <numeric>
@@ -647,8 +644,8 @@ namespace YK {
             YK_CUDA_CHECK(cudaMalloc(&d_residual_, max_sino * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            fp_.init(params, cfg.fp_task, deviceId, stream);
+            bp_.init(params, cfg.bp_task, deviceId, stream);
 
             // ── W:全角度一次预计算 (= TIGRE set_w) ─────────────────────
             // 粗网格 2x2x2;x/y 扩 1.1;z = max(探测器高, 体积高),不扩
@@ -843,8 +840,8 @@ namespace YK {
         SCBCTParams  params_;
         Config       cfg_;
 
-        ConeProjector     fp_;
-        ConeBackprojector bp_;
+        ForwardOperatorAdapter fp_;
+        BackOperatorAdapter bp_;
 
         int                      n_block_ = 0;
         std::vector<int>         block_start_;
@@ -994,8 +991,8 @@ namespace YK {
             YK_CUDA_CHECK(cudaMalloc(&d_ones_vol_, vol_n * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            fp_.init(params, cfg.fp_task, deviceId, stream);
+            bp_.init(params, cfg.bp_task, deviceId, stream);
 
             YK::Iter::fill_ones_launch(d_ones_vol_, vol_n, stream);
             YK_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -1128,8 +1125,8 @@ namespace YK {
         SCBCTParams  params_;
         Config       cfg_;
 
-        ConeProjector     fp_;
-        ConeBackprojector bp_;
+        ForwardOperatorAdapter fp_;
+        BackOperatorAdapter bp_;
 
         std::vector<std::vector<int>> subsets_;
         std::vector<SCBCTParams>      subset_params_;
@@ -1367,6 +1364,8 @@ namespace YK {
         std::vector<SCBCTParams>             subset_params_;
         std::vector<std::vector<SConeProjGeomVec>> subset_views_;
 
+        // External-geometry OSSART remains independent until GeometryContext
+        // accepts explicit per-view vectors.
         ConeProjectorEx     fp_;
         ConeBackprojectorEx bp_;
 

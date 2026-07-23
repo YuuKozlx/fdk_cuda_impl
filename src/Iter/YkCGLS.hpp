@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "FP/YkFPRunner.hpp"
+#include "common/YkProjectionOperators.hpp"
 #include "FP/YkFpRunnerExVec.hpp"
 #include "kernel/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
@@ -9,7 +9,6 @@
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 
 #include <cuda_runtime.h>
-#include "BP/YkSiddonBPRunner.hpp"
 #include <global/YkCBCTParams.h>
 #include <vector>
 #include <numeric>
@@ -51,8 +50,8 @@ namespace YK {
             // 正投影临时缓冲
             YK_CUDA_CHECK(cudaMalloc(&d_ax_, sino_n * sizeof(float)));
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            fp_.init(params, cfg.fp_task, deviceId, stream);
+            bp_.init(params, cfg.bp_task, deviceId, stream);
 
             is_initialized_ = true;
             YK_LOGI("[CGLS] init OK: {} angles", params.iPAng);
@@ -214,8 +213,8 @@ namespace YK {
         SCBCTParams  params_;
         Config       cfg_;
 
-        ConeProjector     fp_;
-        ConeBackprojector bp_;
+        ForwardOperatorAdapter fp_;
+        BackOperatorAdapter bp_;
 
         float* d_r_ = nullptr;   // 残差（正弦图空间）
         float* d_p_ = nullptr;   // 搜索方向（体积空间）
@@ -265,8 +264,8 @@ namespace YK {
             YK_CUDA_CHECK(cudaMalloc(&d_p_, vol_n * sizeof(float)));  // p（体积空间）
             YK_CUDA_CHECK(cudaMalloc(&d_z_, vol_n * sizeof(float)));  // z = A^T r（体积空间）
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            fp_.init(params, cfg.fp_task, deviceId, stream);
+            bp_.init(params, cfg.bp_task, deviceId, stream);
 
             is_initialized_ = true;
             YK_LOGI("[CGLSAstra] init OK: {} angles", params.iPAng);
@@ -382,8 +381,8 @@ namespace YK {
         SCBCTParams params_;
         Config      cfg_;
 
-        ConeProjector     fp_;
-        ConeBackprojector bp_;
+        ForwardOperatorAdapter fp_;
+        BackOperatorAdapter bp_;
 
         float* d_r_ = nullptr;   // 残差（正弦图空间）
         float* d_w_ = nullptr;   // w = A p（正弦图空间）
@@ -651,6 +650,8 @@ namespace YK {
 
         std::vector<SConeProjGeomVec> h_views_;
 
+        // External-geometry variant stays separate: its h_views input is not
+        // representable by the circular GeometryContext used by this adapter.
         ConeProjectorEx     fp_;
         ConeBackprojectorEx bp_;
 

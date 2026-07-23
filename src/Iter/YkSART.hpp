@@ -1,6 +1,6 @@
 ﻿// YkSART.hpp
 #pragma once
-#include "FP/YkFPRunner.hpp"
+#include "common/YkProjectionOperators.hpp"
 #include "kernel/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
@@ -9,7 +9,6 @@
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 
 #include <cuda_runtime.h>
-#include "BP/YkSiddonBPRunner.hpp"
 #include <global/YkCBCTParams.h>
 #include <vector>
 #include <numeric>
@@ -47,8 +46,8 @@ namespace YK {
             YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            fp_.init(params, cfg.fp_task, deviceId, stream);
+            bp_.init(params, cfg.bp_task, deviceId, stream);
 
             // ── 预计算 C = A^T · 1_proj（全局，所有角度）────────────
             {
@@ -194,8 +193,8 @@ namespace YK {
         SCBCTParams params_;
         Config      cfg_;
 
-        ConeProjector     fp_;
-        ConeBackprojector bp_;
+        ForwardOperatorAdapter fp_;
+        BackOperatorAdapter bp_;
 
         float* d_sino_fwd_ = nullptr;
         float* d_residual_ = nullptr;
@@ -289,8 +288,8 @@ namespace YK {
     //        YK_CUDA_CHECK(cudaMalloc(&d_ones_vol_, vol_n * sizeof(float)));
     //        YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
 
-    //        fp_.init(params, cfg.fp_task, deviceId);
-    //        bp_.init(params, cfg.bp_task, deviceId);
+    //        fp_.init(params, cfg.fp_task, deviceId, stream);
+    //        bp_.init(params, cfg.bp_task, deviceId, stream);
 
     //        // ── 预计算 C 列权重：d_col_w_ = Aᵀ·1_proj（全角度，3D，不压 Z）──
     //        //   分块累加：每块对一个全 1 batch sino 做 BP，累加到 d_col_w_。
@@ -450,8 +449,8 @@ namespace YK {
     //    SCBCTParams  params_;
     //    Config       cfg_;
 
-    //    ConeProjector     fp_;
-    //    ConeBackprojector bp_;
+    //    ForwardOperatorAdapter fp_;
+    //    BackOperatorAdapter bp_;
 
     //    std::vector<BatchMeta> batches_;
 
@@ -569,8 +568,8 @@ namespace YK {
     //        YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
     //        YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
 
-    //        fp_.init(params, cfg.fp_task, deviceId);
-    //        bp_.init(params, cfg.bp_task, deviceId);
+    //        fp_.init(params, cfg.fp_task, deviceId, stream);
+    //        bp_.init(params, cfg.bp_task, deviceId, stream);
 
     //        // ── 预计算 C = Aᵀ·1_proj (全分辨率 3D，分块累加) ──
     //        {
@@ -778,9 +777,9 @@ namespace YK {
     //    SCBCTParams  params_lo_;
     //    Config       cfg_;
 
-    //    ConeProjector     fp_;
+    //    ForwardOperatorAdapter fp_;
     //    ConeProjector     fp_lo_;
-    //    ConeBackprojector bp_;
+    //    BackOperatorAdapter bp_;
 
     //    std::vector<BatchMeta> batches_;
 
@@ -853,8 +852,8 @@ namespace YK {
             YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            fp_.init(params, cfg.fp_task, deviceId, stream);
+            bp_.init(params, cfg.bp_task, deviceId, stream);
 
             // ── 预计算 C = A^T · 1_proj（缩小体积，全分辨率网格）─────
             {
@@ -911,7 +910,10 @@ namespace YK {
                 YK::Iter::fill_ones_launch(d_ones_vol_lo_, 8, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
-                fp_lo_.init(params_lo_, cfg.fp_task, deviceId);
+                // The low-resolution R calculation uses the same FP operator
+                // contract as the full-resolution solver, but with its own
+                // volume geometry and therefore its own adapter instance.
+                fp_lo_.init(params_lo_, cfg.fp_task, deviceId, stream);
             }
 
             // ── DEBUG ─────────────────────────────────────────────────
@@ -1095,9 +1097,9 @@ namespace YK {
         SCBCTParams  params_lo_;
         Config       cfg_;
 
-        ConeProjector     fp_;
-        ConeProjector     fp_lo_;
-        ConeBackprojector bp_;
+        ForwardOperatorAdapter fp_;
+        ForwardOperatorAdapter fp_lo_;
+        BackOperatorAdapter bp_;
 
         std::vector<BatchMeta> batches_;
 
@@ -1118,4 +1120,3 @@ namespace YK {
         return recon.run(d_sino_meas, d_vol, params, stream);
     }
 } // namespace YK
-

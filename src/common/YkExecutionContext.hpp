@@ -16,6 +16,18 @@ namespace YK {
 // selecting a different FP/BP implementation.
 class GeometryContext {
 public:
+    // Internal iterative solvers already work with SCBCTParams.  This overload
+    // lets them adopt the shared context without changing their math loops.
+    bool initialize(const SCBCTParams& params)
+    {
+        if (params.iPU <= 0 || params.iPV <= 0 || params.iPAngTotal <= 0 ||
+            params.iVX <= 0 || params.iVY <= 0 || params.iVZ <= 0)
+            return false;
+        base_ = params;
+        all_angles_ = params.angle_list;
+        return true;
+    }
+
     bool initialize(const SessionDesc& desc)
     {
         if (desc.scan.Nu <= 0 || desc.scan.Nv <= 0 || desc.scan.NAng <= 0 ||
@@ -77,15 +89,23 @@ public:
         YK_CUDA_CHECK(cudaStreamCreate(&stream_));
         return true;
     }
+    // A solver receives a stream from its caller.  Borrow it rather than
+    // creating a second stream; release() will not destroy borrowed streams.
+    void attach(cudaStream_t stream, int device)
+    {
+        release(); stream_ = stream; device_ = device; owns_stream_ = false;
+    }
     void release()
     {
-        if (stream_) { cudaStreamSynchronize(stream_); cudaStreamDestroy(stream_); stream_ = nullptr; }
+        if (stream_ && owns_stream_) { cudaStreamSynchronize(stream_); cudaStreamDestroy(stream_); }
+        stream_ = nullptr; owns_stream_ = true;
     }
     cudaStream_t stream() const { return stream_; }
     int device() const { return device_; }
 private:
     cudaStream_t stream_ = nullptr;
     int device_ = 0;
+    bool owns_stream_ = true;
 };
 
 } // namespace YK

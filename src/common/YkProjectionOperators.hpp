@@ -61,4 +61,44 @@ inline std::unique_ptr<IForwardOperator> makeForwardOperator(ETask kind)
 inline std::unique_ptr<IBackOperator> makeBackOperator(ETask kind)
 { return std::make_unique<BackOperator>(kind); }
 
+// Compatibility adapter for existing solvers.  The public run shape is kept
+// deliberately while the concrete Joseph/Siddon runner is hidden behind the
+// common operator contract.  This makes solver migration numerical-neutral.
+class ForwardOperatorAdapter {
+public:
+    bool init(const SCBCTParams& params, ETask kind, int device, cudaStream_t stream)
+    {
+        if (!geometry_.initialize(params)) return false;
+        resources_.attach(stream, device);
+        op_ = makeForwardOperator(kind);
+        return op_->prepare(geometry_, resources_);
+    }
+    bool run(const float* d_volume, const SCBCTParams& batch, float* d_projection, cudaStream_t)
+    { return op_ && op_->apply(d_volume, batch, d_projection, resources_); }
+    void release() { if (op_) op_->release(); op_.reset(); resources_.release(); }
+private:
+    GeometryContext geometry_;
+    ResourceContext resources_;
+    std::unique_ptr<IForwardOperator> op_;
+};
+
+class BackOperatorAdapter {
+public:
+    bool init(const SCBCTParams& params, ETask kind, int device, cudaStream_t stream)
+    {
+        if (!geometry_.initialize(params)) return false;
+        resources_.attach(stream, device);
+        op_ = makeBackOperator(kind);
+        return op_->prepare(geometry_, resources_);
+    }
+    bool run(const float* d_projection, const SCBCTParams& batch, float* d_volume,
+        cudaStream_t, bool clear_volume)
+    { return op_ && op_->apply(d_projection, batch, d_volume, clear_volume, resources_); }
+    void release() { if (op_) op_->release(); op_.reset(); resources_.release(); }
+private:
+    GeometryContext geometry_;
+    ResourceContext resources_;
+    std::unique_ptr<IBackOperator> op_;
+};
+
 } // namespace YK
