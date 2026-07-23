@@ -41,3 +41,7 @@ set_target_properties(ykcbct_manual_tests PROPERTIES
     CUDA_STANDARD_REQUIRED ON
     CUDA_SEPARABLE_COMPILATION ON
 )
+
+if(YKCBCT_BUILD_HELICAL_MANUAL_TESTS)
+    target_compile_definitions(ykcbct_manual_tests PRIVATE YKCBCT_MANUAL_HELICAL=1)
+endif()
