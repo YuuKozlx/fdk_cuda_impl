@@ -1,0 +1,7 @@
+﻿#pragma once
+
+// YkFDKPreWeight.cuh — PreWeight 模块 umbrella header
+
+#include "FDK/cuh/YkFDKPreWeightHelpers.cuh"
+#include "FDK/cuh/YkFDKPreWeightLaunch.cuh"
+#include "FDK/YkFDKPreWeightProcessor.hpp"

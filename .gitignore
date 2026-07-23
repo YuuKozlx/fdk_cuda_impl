@@ -363,3 +363,48 @@ MigrationBackup/
 FodyWeavers.xsd
 *.tif
 *.raw
+
+# Visual Studio Code workspace file
+/install/RelWithDebInfo
+
+# Ignore the vcpkg installed directory, which contains the built libraries and headers for dependencies.
+/thirdparty/vcpkg_installed
+
+
+# bininaries
+*.dll
+*.exe
+*.so
+*.dylib
+*.lib
+*.a
+*.app
+
+# binaries with debug symbols
+*.pdb
+*.dSYM
+
+
+# images
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.ico
+*.tif
+*.tiff
+*.svg
+*.psd
+*.ai
+*.eps
+*.pdf
+*.xps
+*.raw
+*.mha
+*.dcm
+
+
+#
+[Tt]hirdparty/
+*.ncu-rep

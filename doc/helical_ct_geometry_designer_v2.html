@@ -1,0 +1,203 @@
+
+<h2 class="sr-only">螺旋 CT 几何设计器 — 输入约束条件，自动推导探测器排数、pitch、圈数等参数。</h2>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem}
+.sec{font-size:11px;font-weight:500;color:var(--color-text-tertiary);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px}
+.met{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:.875rem 1rem}
+.ml{font-size:12px;color:var(--color-text-secondary);margin-bottom:3px}
+.mv{font-size:22px;font-weight:500;color:var(--color-text-primary);line-height:1.1}
+.mu{font-size:12px;color:var(--color-text-secondary);margin-left:2px}
+.field{margin-bottom:11px}
+.field label{font-size:13px;color:var(--color-text-secondary);display:flex;justify-content:space-between;margin-bottom:3px}
+.field label span{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--color-text-primary)}
+.badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:var(--border-radius-md);font-weight:500;vertical-align:middle}
+.bok{background:#EAF3DE;color:#3B6D11}
+.bwarn{background:#FAEEDA;color:#854F0B}
+.berr{background:#FCEBEB;color:#A32D2D}
+.binfo{background:#E6F1FB;color:#185FA5}
+.hr{border:none;border-top:0.5px solid var(--color-border-tertiary);margin:12px 0}
+.fl{display:flex;align-items:baseline;gap:8px;margin-bottom:5px;font-size:13px}
+.fll{color:var(--color-text-secondary);min-width:110px;flex-shrink:0}
+.flr{font-family:var(--font-mono);font-size:12px;color:var(--color-text-primary)}
+.wbox{border-left:3px solid #EF9F27;border-radius:0;padding:8px 12px;font-size:13px;color:var(--color-text-warning);background:var(--color-background-warning);margin-top:10px;display:none}
+.ebox{border-left:3px solid #E24B4A;border-radius:0;padding:8px 12px;font-size:13px;color:var(--color-text-danger);background:var(--color-background-danger);margin-top:10px;display:none}
+.cppblock{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px 14px;font-family:var(--font-mono);font-size:12px;color:var(--color-text-primary);line-height:1.7;margin-top:10px;white-space:pre}
+</style>
+
+<div style="padding:1rem 0">
+
+<div class="g2" style="margin-bottom:12px">
+  <div class="card">
+    <div class="sec">约束输入</div>
+    <div class="field">
+      <label>Z 扫描范围 (mm) <span id="lZvol">180</span></label>
+      <input type="range" min="50" max="400" step="5" value="180" id="Zvol">
+    </div>
+    <div class="field">
+      <label>最大圈数 N_r ≤ <span id="lMaxRot">15</span></label>
+      <input type="range" min="5" max="60" step="1" value="15" id="maxRot">
+    </div>
+    <div class="field">
+      <label>每圈采样张数 <span id="lVPR">720</span></label>
+      <input type="range" min="180" max="2880" step="180" value="720" id="VPR">
+    </div>
+    <div class="field">
+      <label>Pitch 比 pf <span id="lPF">0.75</span></label>
+      <input type="range" min="0.50" max="1.50" step="0.05" value="0.75" id="PF">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="sec">探测器 &amp; 几何</div>
+    <div class="field">
+      <label>像素尺寸 dv (mm) <span id="lDV">0.417</span></label>
+      <input type="range" min="0.10" max="1.00" step="0.001" value="0.417" id="DV">
+    </div>
+    <div class="field">
+      <label>探测器列数 iPU <span id="lIPU">1024</span></label>
+      <input type="range" min="256" max="2048" step="128" value="1024" id="IPU">
+    </div>
+    <div class="field">
+      <label>SID (mm) <span id="lSID">500</span></label>
+      <input type="range" min="200" max="800" step="10" value="500" id="SID">
+    </div>
+    <div class="field">
+      <label>SDD (mm) <span id="lSDD">1000</span></label>
+      <input type="range" min="500" max="1500" step="10" value="1000" id="SDD">
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:12px">
+  <div class="sec">推导结果</div>
+  <div class="g4" style="margin-bottom:10px">
+    <div class="met"><div class="ml">最少排数（理论）</div><div class="mv" id="mMinR">—</div></div>
+    <div class="met"><div class="ml">推荐排数（2幂次）</div><div class="mv" style="color:#185FA5" id="mRecR">—</div></div>
+    <div class="met"><div class="ml">实际圈数</div><div class="mv" id="mNRot">—</div></div>
+    <div class="met"><div class="ml">总投影数</div><div class="mv" id="mTot">—</div></div>
+  </div>
+  <div class="g4">
+    <div class="met"><div class="ml">螺旋 pitch</div><div class="mv" id="mPitch">—<span class="mu">mm</span></div></div>
+    <div class="met"><div class="ml">等中心Z覆盖/圈</div><div class="mv" id="mDZ">—<span class="mu">mm</span></div></div>
+    <div class="met"><div class="ml">z_start</div><div class="mv" id="mZs">—<span class="mu">mm</span></div></div>
+    <div class="met"><div class="ml">最大锥角</div><div class="mv" id="mCone">—<span class="mu">°</span></div></div>
+  </div>
+  <div id="wbox" class="wbox"></div>
+  <div id="ebox" class="ebox"></div>
+</div>
+
+<div class="g2" style="margin-bottom:12px">
+  <div class="card">
+    <div class="sec">各项验证</div>
+    <div class="fl"><span class="fll">pitch_ratio</span><span class="flr" id="fPR">—</span><span id="bPR"></span></div>
+    <div class="fl"><span class="fll">放大比 M</span><span class="flr" id="fM">—</span></div>
+    <div class="fl"><span class="fll">扇角 gamma_max</span><span class="flr" id="fGM">—</span></div>
+    <div class="fl"><span class="fll">角步长 deg/张</span><span class="flr" id="fAS">—</span></div>
+    <div class="fl"><span class="fll">FDK 适用</span><span id="bFDK"></span></div>
+    <div class="fl"><span class="fll">圈数约束</span><span id="bROT"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="sec">C++ 初始化片段</div>
+    <div class="cppblock" id="cpp">—</div>
+  </div>
+</div>
+
+</div>
+
+<script>
+function nextPow2(n){let p=1;while(p<n)p<<=1;return p;}
+
+function calc(){
+  const Zvol   = +document.getElementById('Zvol').value;
+  const maxRot = +document.getElementById('maxRot').value;
+  const vpr    = +document.getElementById('VPR').value;
+  const pf     = +document.getElementById('PF').value;
+  const dv     = +document.getElementById('DV').value;
+  const iPU    = +document.getElementById('IPU').value;
+  const SID    = +document.getElementById('SID').value;
+  const SDD    = +document.getElementById('SDD').value;
+
+  document.getElementById('lZvol').textContent  = Zvol;
+  document.getElementById('lMaxRot').textContent= maxRot;
+  document.getElementById('lVPR').textContent   = vpr;
+  document.getElementById('lPF').textContent    = pf.toFixed(2);
+  document.getElementById('lDV').textContent    = dv.toFixed(3);
+  document.getElementById('lIPU').textContent   = iPU;
+  document.getElementById('lSID').textContent   = SID;
+  document.getElementById('lSDD').textContent   = SDD;
+
+  const M = SDD / SID;
+
+  const hEst    = Zvol / (maxRot - 1);
+  const minRowsF= hEst * M / (pf * dv);
+  const minRows = Math.ceil(minRowsF);
+  const recRows = nextPow2(minRows);
+
+  const dZ_det  = recRows * dv / M;
+  const pitch   = pf * dZ_det;
+  const N_r     = Math.ceil((Zvol + 2 * dZ_det) / pitch) + 1;
+  const z_start = -(Zvol * 0.5 + dZ_det + pitch);
+  const alpha   = Math.atan2(dZ_det * 0.5, SID) * 180 / Math.PI;
+  const pr      = pitch / dZ_det;
+  const gmax    = Math.atan2(iPU * dv * 0.5 / M, SID) * 180 / Math.PI;
+  const astep   = (360 / vpr).toFixed(3);
+  const N_total = N_r * vpr;
+
+  document.getElementById('mMinR').textContent = minRows;
+  document.getElementById('mRecR').textContent = recRows;
+  document.getElementById('mNRot').textContent = N_r;
+  document.getElementById('mTot').textContent  = N_total.toLocaleString();
+  document.getElementById('mPitch').innerHTML  = pitch.toFixed(1)+'<span class="mu">mm</span>';
+  document.getElementById('mDZ').innerHTML     = dZ_det.toFixed(1)+'<span class="mu">mm</span>';
+  document.getElementById('mZs').innerHTML     = z_start.toFixed(1)+'<span class="mu">mm</span>';
+  document.getElementById('mCone').innerHTML   = alpha.toFixed(2)+'<span class="mu">°</span>';
+
+  document.getElementById('fPR').textContent  = pr.toFixed(3);
+  document.getElementById('fM').textContent   = M.toFixed(3);
+  document.getElementById('fGM').textContent  = gmax.toFixed(2)+'°';
+  document.getElementById('fAS').textContent  = astep+'°';
+
+  const bPR = document.getElementById('bPR');
+  if(pr<=1.0){bPR.className='badge bok';bPR.textContent='OK';}
+  else if(pr<=1.5){bPR.className='badge bwarn';bPR.textContent='插值补偿';}
+  else{bPR.className='badge berr';bPR.textContent='漏采样';}
+
+  const bFDK=document.getElementById('bFDK');
+  if(alpha<2){bFDK.className='badge bok';bFDK.textContent='FDK 直接适用';}
+  else if(alpha<5){bFDK.className='badge bwarn';bFDK.textContent='加权 FDK';}
+  else{bFDK.className='badge berr';bFDK.textContent='需 Katsevich';}
+
+  const bROT=document.getElementById('bROT');
+  if(N_r<=maxRot){bROT.className='badge bok';bROT.textContent=N_r+' 圈 ≤ '+maxRot+' ✓';}
+  else{bROT.className='badge berr';bROT.textContent=N_r+' 圈 > '+maxRot+' ✗';}
+
+  const wb=document.getElementById('wbox');
+  const eb=document.getElementById('ebox');
+  if(pr>1.5){eb.style.display='block';eb.textContent='pitch_ratio='+pr.toFixed(2)+' > 1.5，将产生严重漏采样，建议增加探测器排数或减小 Z 扫描范围。';wb.style.display='none';}
+  else if(pr>1.0){wb.style.display='block';wb.textContent='pitch_ratio='+pr.toFixed(2)+' > 1.0，相邻圈存在间隙，重建时需要 Z 方向插值补偿。';eb.style.display='none';}
+  else{wb.style.display='none';eb.style.display='none';}
+
+  document.getElementById('cpp').textContent =
+`p.iPV        = ${recRows};
+p.dv_mm      = ${dv.toFixed(3)}f;
+p.iPU        = ${iPU};
+p.du_mm      = ${dv.toFixed(3)}f;
+p.SID        = ${SID}.0f;
+p.SDD        = ${SDD}.0f;
+p.pitch_mm   = ${pitch.toFixed(1)}f;
+p.bShortScan = true;
+// z_start  = ${z_start.toFixed(1)} mm  (自动填充)
+// 圈数     = ${N_r}  ×  ${vpr} 张/圈
+YK::fillHelicalScanGeometry(p, ${pf.toFixed(2)}f, ${vpr});`;
+}
+
+['Zvol','maxRot','VPR','PF','DV','IPU','SID','SDD'].forEach(id=>{
+  document.getElementById(id).addEventListener('input',calc);
+});
+calc();
+</script>

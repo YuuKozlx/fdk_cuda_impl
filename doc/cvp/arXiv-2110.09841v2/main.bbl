@@ -1,0 +1,107 @@
+\begin{thebibliography}{10}
+
+\bibitem{Feldkamp1984}
+{\sc L.~A. Feldkamp, L.~C. Davis, and J.~W. Kress}, {\em Practical cone-beam
+  algorithm}, Journal of the Optical Society of America A, 1 (1984), p.~612,
+  \url{https://doi.org/10.1364/josaa.1.000612}.
+
+\bibitem{Haseljic2021}
+{\sc H.~Haselji\'{c}, V.~Kulvait, R.~Frysch, B.~Hensen, F.~Wacker, G.~Rose, and
+  T.~Werncke}, {\em The application of time separation technique to enhance
+  {C-arm CT} dynamic liver perfusion imaging}, in 16th International Meeting on
+  Fully Three-Dimensional Image Reconstruction in Radiology and Nuclear
+  Medicine, G.~Schramm, A.~Rezaei, K.~Thielemans, and J.~Nuyts, eds., 2021.
+
+\bibitem{3540309}
+{\sc joriki (https://math.stackexchange.com/users/6622/joriki)}, {\em Area of
+  the sphere that gets projected to rectangle}.
+\newblock Mathematics Stack Exchange,
+  \url{https://math.stackexchange.com/q/3540309},
+  \url{https://arxiv.org/abs/https://math.stackexchange.com/q/3540309}.
+\newblock URL:https://math.stackexchange.com/q/3540309 (version: 2020-02-09).
+
+\bibitem{Katsevich2004}
+{\sc A.~Katsevich}, {\em An improved exact filtered backprojection algorithm
+  for spiral computed tomography}, Advances in Applied Mathematics, 32 (2004),
+  pp.~681--697, \url{https://doi.org/10.1016/s0196-8858(03)00099-x}.
+
+\bibitem{Kulvait2022}
+{\sc V.~Kulvait, P.~Hoelter, R.~Frysch, H.~Haseljić, A.~Doerfler, and
+  G.~Rose}, {\em A novel use of time separation technique to improve flat
+  detector {CT} perfusion imaging in stroke patients}, Medical Physics, 49
+  (2022), pp.~3624--3637, \url{https://doi.org/10.1002/mp.15640}.
+
+\bibitem{Kulvait2021}
+{\sc V.~Kulvait and G.~Rose}, {\em {Software Implementation of the Krylov
+  Methods Based Reconstruction for the 3D Cone Beam CT Operator}}, in 16th
+  International Meeting on Fully Three-Dimensional Image Reconstruction in
+  Radiology and Nuclear Medicine, G.~Schramm, A.~Rezaei, K.~Thielemans, and
+  J.~Nuyts, eds., 2021.
+
+\bibitem{Long2010}
+{\sc Y.~Long, J.~A. Fessler, and J.~M. Balter}, {\em 3d forward and
+  back-projection for x-ray {CT} using separable footprints}, {IEEE}
+  Transactions on Medical Imaging, 29 (2010), pp.~1839--1850,
+  \url{https://doi.org/10.1109/tmi.2010.2050898}.
+
+\bibitem{Man2004}
+{\sc B.~D. Man and S.~Basu}, {\em Distance-driven projection and backprojection
+  in three dimensions}, Physics in Medicine and Biology, 49 (2004),
+  pp.~2463--2475, \url{https://doi.org/10.1088/0031-9155/49/11/024}.
+
+\bibitem{Moosmann2014}
+{\sc J.~Moosmann, A.~Ershov, V.~Weinhardt, T.~Baumbach, M.~S. Prasad,
+  C.~LaBonne, X.~Xiao, J.~Kashef, and R.~Hofmann}, {\em Time-lapse x-ray
+  phase-contrast microtomography for in vivo imaging and analysis of
+  morphogenesis}, Nature Protocols, 9 (2014), pp.~294--304,
+  \url{https://doi.org/10.1038/nprot.2014.033}.
+
+\bibitem{Pfeiffer2021}
+{\sc T.~Pfeiffer, R.~Frysch, and G.~Rose}, {\em {Two extensions of the
+  separable footprint forward projector}}, in 16th International Meeting on
+  Fully Three-Dimensional Image Reconstruction in Radiology and Nuclear
+  Medicine, G.~Schramm, A.~Rezaei, K.~Thielemans, and J.~Nuyts, eds., 2021.
+
+\bibitem{Prasolov2001}
+{\sc V.~Prasolov and V.~Tikhomirov}, {\em Geometry}, Translations of
+  Mathematical Monographs, American Mathematical Society, 2001.
+
+\bibitem{Rit2014}
+{\sc S.~Rit, M.~V. Oliva, S.~Brousmiche, R.~Labarbe, D.~Sarrut, and G.~C.
+  Sharp}, {\em The reconstruction toolkit ({RTK}), an open-source cone-beam
+  {CT} reconstruction toolkit based on the insight toolkit ({ITK})}, Journal of
+  Physics: Conference Series, 489 (2014), p.~012079,
+  \url{https://doi.org/10.1088/1742-6596/489/1/012079}.
+
+\bibitem{Siddon1985}
+{\sc R.~L. Siddon}, {\em Fast calculation of the exact radiological path for a
+  three-dimensional {CT} array}, Medical Physics, 12 (1985), pp.~252--255,
+  \url{https://doi.org/10.1118/1.595715}.
+
+\bibitem{Sramek2000}
+{\sc M.~Sramek and A.~Kaufman}, {\em Fast ray-tracing of rectilinear volume
+  data using distance transforms}, {IEEE} Transactions on Visualization and
+  Computer Graphics, 6 (2000), pp.~236--252,
+  \url{https://doi.org/10.1109/2945.879785}.
+
+\bibitem{Todhunter1914}
+{\sc I.~Todhunter}, {\em Spherical trigonometry}, Macmillan and Company, 1914.
+
+\bibitem{Tuy1983}
+{\sc H.~K. Tuy}, {\em An inversion formula for cone-beam reconstruction},
+  {SIAM} Journal on Applied Mathematics, 43 (1983), pp.~546--552,
+  \url{https://doi.org/10.1137/0143035}.
+
+\bibitem{ASTRA2016}
+{\sc W.~van Aarle, W.~J. Palenstijn, J.~Cant, E.~Janssens, F.~Bleichrodt,
+  A.~Dabravolski, J.~De~Beenhouwer, K.~Joost~Batenburg, and J.~Sijbers}, {\em
+  Fast and flexible x-ray tomography using the astra toolbox}, Optics Express,
+  24 (2016), p.~25129, \url{https://doi.org/10.1364/oe.24.025129}.
+
+\bibitem{Zhao2003}
+{\sc H.~Zhao and A.~Reader}, {\em Fast ray-tracing technique to calculate line
+  integral paths in voxel arrays}, in 2003 {IEEE} Nuclear Science Symposium.
+  Conference Record ({IEEE} Cat. No.03CH37515), {IEEE}, 2003, pp.~2808--2812,
+  \url{https://doi.org/10.1109/nssmic.2003.1352469}.
+
+\end{thebibliography}

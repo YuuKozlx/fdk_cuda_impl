@@ -1,0 +1,92 @@
+% SIAM Shared Information Template
+% This is information that is shared between the main document and any
+% supplement. If no supplement is required, then this information can
+% be included directly in the main document.
+
+
+% Packages and macros go here
+\usepackage{lipsum}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{algorithmic}
+\ifpdf
+  \DeclareGraphicsExtensions{.eps,.pdf,.png,.jpg}
+\else
+  \DeclareGraphicsExtensions{.eps}
+\fi
+
+%INTERNAL
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{siunitx}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{colortbl}
+\usepackage{xcolor}
+%\colorlet{tablerowcolor}{yellow!10} % Table row separator colour = 10% gray
+\newcommand{\rowcol}{\rowcolor{tablerowcolor}} %
+\let\vec\mathbf %Nicer vectors typesetting
+\usepackage{color} %For authors notes to be resolved
+\newcommand{\RED}[1]{\textcolor{red}{#1}}
+\newcommand{\BLUE}[1]{\textcolor{blue}{#1}}
+\newcommand{\GREEN}[1]{\textcolor{green}{#1}}
+\newcommand{\figref}[1]{Figure~\ref{#1}}
+\newcommand{\INTEGRAL}[3]{\int\limits#1 \! #2 \, \mathrm{d} #3}
+\DeclareMathOperator{\atantwo}{atan2}
+
+
+
+
+
+% Add a serial/Oxford comma by default.
+\newcommand{\creflastconjunction}{, and~}
+
+% Used for creating new theorem and remark environments
+\newsiamremark{remark}{Remark}
+\newsiamremark{hypothesis}{Hypothesis}
+\crefname{hypothesis}{Hypothesis}{Hypotheses}
+\newsiamthm{claim}{Claim}
+
+% Sets running headers as well as PDF title and authors
+\headers{Cutting Voxel Projector}{V. Kulvait, J. Moosmann and G. Rose}
+
+% Title. If the supplement option is on, then "Supplementary Material"
+% is automatically inserted before the title.
+\title{Cutting Voxel Projector a New Approach to Construct 3D Cone Beam CT Operator\thanks{
+Preprint pre submission as of 25 November 2024
+%to SIAM Journal on Imaging Sciences on
+\funding{This work was partially funded by the German Federal Ministry of Education and Research through the Research Campus STIMULATE (grant number 13GW0473A) and supported by the Hereon project \textit{Holistic Data Analysis (HoliDAy)} under the I\textsuperscript{2}B Innovation, Information \& Biologisation Fund.}
+}}
+
+% Authors: full names plus addresses.
+\author{Vojt\v{e}ch~Kulvait\thanks{Institute of Materials Physics, Helmholtz-Zentrum Hereon, Max-Planck-Straße 1, 21502 Geesthacht, Germany (\email{vojtech.kulvait@hereon.de},+49 4152 871054).}
+\and Julian~Moosmann\thanks{Institute of Materials Physics, Helmholtz-Zentrum Hereon, Max-Planck-Straße 1, 21502 Geesthacht, Germany (\email{julian.moosmannt@hereon.de},+49 4152 871048).}
+\and Georg~Rose\thanks{Institute for Medical Engineering and Research Campus STIMULATE, Otto von Guericke University Magdeburg, Universitätsplatz 2,39106 Magdeburg (\email{georg.rose@ovgu.de},+49 3916 758862).}}
+
+\usepackage{amsopn}
+\DeclareMathOperator{\diag}{diag}
+
+
+%% Added on Overleaf: enabling xr
+\makeatletter
+\newcommand*{\addFileDependency}[1]{% argument=file name and extension
+  \typeout{(#1)}% latexmk will find this if $recorder=0 (however, in that case, it will ignore #1 if it is a .aux or .pdf file etc and it exists! if it doesn't exist, it will appear in the list of dependents regardless)
+  \@addtofilelist{#1}% if you want it to appear in \listfiles, not really necessary and latexmk doesn't use this
+  \IfFileExists{#1}{}{\typeout{No file #1.}}% latexmk will find this message if #1 doesn't exist (yet)
+}
+\makeatother
+
+\newcommand*{\myexternaldocument}[1]{%
+    \externaldocument{#1}%
+    \addFileDependency{#1.tex}%
+    \addFileDependency{#1.aux}%
+}
+%%% END HELPER CODE
+%%% Local Variables: 
+%%% mode:latex
+%%% TeX-master: "ex_article"
+%%% End: 

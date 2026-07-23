@@ -1,0 +1,34 @@
+﻿// YkTaskFactory.hpp
+#pragma once
+#include "YKCBCT/interface/IYkTask.hpp"
+#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "YKCBCT/global/YkExport.hpp"
+
+
+
+
+namespace YK {
+
+    // ----------------------------------------------------------------
+    // TaskFactory
+    //
+    //   跨 DLL 的唯一创建/销毁点
+    //   new/delete 在同一 CRT 侧执行，避免堆损坏
+    //
+    //   推荐用法：
+    //     auto* p = YK::TaskFactory::create(ETask::FDK);
+    //     // ...
+    //     YK::TaskFactory::destroy(p);
+    //
+    //   或配合 unique_ptr：
+    //     auto p = std::unique_ptr<YK::ITask,
+    //                  decltype(&YK::TaskFactory::destroy)>(
+    //                      YK::TaskFactory::create(ETask::FDK),
+    //                      YK::TaskFactory::destroy);
+    // ----------------------------------------------------------------
+    struct YK_API TaskFactory {
+        static ITask* create(ETask task);
+        static void        destroy(ITask* p);
+    };
+
+} // namespace YK

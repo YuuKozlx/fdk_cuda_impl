@@ -1,0 +1,474 @@
+﻿// test_Task_dll.cpp
+// 测试 TaskFactory 创建 FDK 和 FP 任务，验证 DLL 接口完整性
+
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <vector>
+
+
+#include <cuda_runtime_api.h>
+
+#include "YKCBCT/interface/IYkTask.hpp"
+#include "YKCBCT/interface/YkTaskFactory.hpp"
+#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/common.h>
+
+#ifndef FMT_UNICODE
+#  define FMT_UNICODE 0
+#endif
+
+
+#pragma comment(lib, "YKCBCT.lib")
+
+
+
+// ----------------------------------------------------------------
+// 工具函数
+// ----------------------------------------------------------------
+static bool loadRaw(const char* path, std::vector<float>& buf, size_t count)
+{
+    buf.resize(count);
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { fprintf(stderr, "[loadRaw] cannot open %s\n", path); return false; }
+    f.read(reinterpret_cast<char*>(buf.data()), count * sizeof(float));
+    return (size_t)f.gcount() == count * sizeof(float);
+}
+
+static bool saveRaw(const char* path, const float* data, size_t count)
+{
+    std::ofstream f(path, std::ios::binary);
+    if (!f) { fprintf(stderr, "[saveRaw] cannot open %s\n", path); return false; }
+    f.write(reinterpret_cast<const char*>(data), count * sizeof(float));
+    return true;
+}
+
+static void printStats(const std::vector<float>& v, const char* tag)
+{
+    float mn = *std::min_element(v.begin(), v.end());
+    float mx = *std::max_element(v.begin(), v.end());
+    double sum = 0.0;
+    for (auto x : v) sum += x;
+    printf("  [%s] min=%.4f  max=%.4f  sum=%.3e  count=%zu\n",
+        tag, mn, mx, sum, v.size());
+}
+
+static bool createLogger()
+{
+    try {
+        auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        auto logger = std::make_shared<spdlog::logger>("default", sink);
+        spdlog::set_default_logger(logger);
+        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%P] [YK] %v");
+        spdlog::set_level(spdlog::level::debug);
+        spdlog::info("Logger initialized");
+        return true;
+    }
+    catch (const spdlog::spdlog_ex& ex) {
+        fprintf(stderr, "Log initialization failed: %s\n", ex.what());
+        return false;
+    }
+}
+
+// ----------------------------------------------------------------
+// 公共几何参数，FDK 和 FP 共用
+// ----------------------------------------------------------------
+static YK::SScanParams makeScanParams()
+{
+    YK::SScanParams s{};
+    s.Nu = 1024;
+    s.Nv = 1024;
+    s.du_mm = 0.25f;
+    s.dv_mm = 0.25f;
+    s.SOD_mm = 500.f;
+    s.SDD_mm = 1000.f;
+    s.scanRangeRad = 2.f * 3.14159265f;
+    s.startAngleRad = 3.14159265f * 1.5f;
+    s.shortScan = false;
+    s.NAng = 360; // 仅 FDK 用，表示总视图数（非批次大小）
+    return s;
+}
+
+static YK::SVolumeParams makeVolumeParams()
+{
+    YK::SVolumeParams v{};
+    v.Nx = 512;
+    v.Ny = 512;
+    v.Nz = 400;
+    v.voxX_mm = 0.25f;
+    v.voxY_mm = 0.25f;
+    v.voxZ_mm = 0.25f;
+    return v;
+}
+
+// ----------------------------------------------------------------
+// 测试1：FP 正投影
+// ----------------------------------------------------------------
+static void test_fp_task()
+{
+    printf("\n[DLL Test1] FP_Joseph forward projection\n");
+
+    constexpr int Na = 360, Nu = 1024, Nv = 1024;
+    constexpr int Nx = 512, Ny = 512, Nz = 400;
+
+    // --- 加载体积 ---
+    std::vector<float> h_vol;
+    if (!loadRaw("fdk_vec_vol_offline.raw", h_vol,
+        (size_t)Nx * Ny * Nz)) return;
+    printf("  volume loaded\n");
+
+
+    // --- 分配输出 ---
+    const size_t sino_elems = (size_t)Na * Nv * Nu;
+
+
+    // --- 构建角度 ---
+    std::vector<float> angles(Na);
+    for (int i = 0; i < Na; ++i)
+        angles[i] = 3.14159265f * 1.5f * 0 + 2.f * 3.14159265f * i / Na;
+
+    // --- 创建任务 ---
+    YK::ITask* task = YK::TaskFactory::create(YK::ETask::FP_Joseph);
+    if (!task) { fprintf(stderr, "  create failed\n"); return; }
+
+    // --- init ---
+    YK::SFpAlgoParams fpAlgo{};
+    fpAlgo.stepSS = YK::EFpStepSample::x1;
+    fpAlgo.detSS = YK::EFpDetSample::x1;
+
+    YK::TaskInitParams initP{};
+    initP.task = YK::ETask::FP_Joseph;
+    initP.scan = makeScanParams();
+    initP.volume = makeVolumeParams();
+    initP.algoParams = &fpAlgo;
+    initP.algoParamSize = sizeof(fpAlgo);
+
+    if (!task->init(initP)) {
+        fprintf(stderr, "  init failed\n");
+        YK::TaskFactory::destroy(task);
+        return;
+    }
+    printf("  init OK\n");
+
+
+    std::vector<float> h_sino(sino_elems);
+    // --- run ---
+    YK::FpBatchParams batchP{};
+    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // 输入体积使用 CPU 内存，测试接口的自动管理功能
+    batchP.sino_mode = YK::EBufferMode::HostPtr;    // 输出正弦图使用 GPU 内存，测试不同模式混用
+    batchP.h_vol_in = h_vol.data();
+    batchP.h_sino_out = h_sino.data();
+    batchP.h_angles = angles.data();
+    batchP.K = Na;
+    batchP.clearOut = true;
+
+    if (!task->run(batchP)) {
+        fprintf(stderr, "  run failed\n");
+        YK::TaskFactory::destroy(task);
+        return;
+    }
+    printf("  run OK\n");
+
+    // --- 回读统计 ---
+    printStats(h_sino, "fp sino");
+
+    saveRaw("dll_test1_fp_sino.raw", h_sino.data(), sino_elems);
+    printf("  saved: dll_test1_fp_sino.raw\n");
+
+    // --- 清理 ---
+    YK::TaskFactory::destroy(task);
+
+}
+
+// ----------------------------------------------------------------
+// 测试2：FDK 重建
+// ----------------------------------------------------------------
+static void test_fdk_task()
+{
+    createLogger();
+    printf("\n[DLL Test2] FDK reconstruction\n");
+
+    constexpr int Na = 360, Nu = 1024, Nv = 1024;
+    constexpr int Nx = 512, Ny = 512, Nz = 400;
+
+    // --- 加载正弦图 ---
+    std::vector<float> h_sino;
+    if (!loadRaw("dll_test1_fp_sino.raw", h_sino,
+        (size_t)Na * Nv * Nu)) {
+        fprintf(stderr, "  sino not found, run test1 first\n");
+        return;
+    }
+    printf("  sino loaded\n");
+    printStats(h_sino, "input sino");
+
+    // --- 分配输出体积 ---
+    void* d_vol = nullptr;
+    cudaMalloc(&d_vol, (size_t)Nx * Ny * Nz * sizeof(float));
+
+    // --- 构建角度 ---
+    std::vector<float> angles(Na);
+    for (int i = 0; i < Na; ++i)
+        angles[i] = 3.14159265f * 1.5f + 2.f * 3.14159265f * i / Na;
+
+    // --- 创建任务 ---
+    YK::ITask* task = YK::TaskFactory::create(YK::ETask::FDK);
+    if (!task) { fprintf(stderr, "  create failed\n"); return; }
+
+    // --- init ---
+    YK::SFdkAlgoParams fdkAlgo{};
+    fdkAlgo.filter = YK::EFdkFilter::RamLak;
+
+    YK::TaskInitParams initP{};
+    initP.task = YK::ETask::FDK;
+    initP.scan = makeScanParams();
+    initP.volume = makeVolumeParams();
+    initP.algoParams = &fdkAlgo;
+    initP.algoParamSize = sizeof(fdkAlgo);
+
+    if (!task->init(initP)) {
+        fprintf(stderr, "  init failed\n");
+        YK::TaskFactory::destroy(task);
+        return;
+    }
+    printf("  init OK\n");
+
+
+    std::vector<float> h_vol((size_t)Nx * Ny * Nz);
+    // --- run ---
+    YK::FdkBatchParams batchP{};
+    batchP.vol_mode = YK::EBufferMode::HostPtr;   // 输出体积使用 CPU 内存，测试接口的自动管理功能
+    batchP.h_proj = h_sino.data();
+    batchP.h_vol_out = h_vol.data();
+    batchP.h_angles = angles.data();
+    batchP.K = Na;
+    batchP.clearOut = true;
+
+    YK::TaskDumpCallback dumpCb = [&](void* payload)
+        {
+            if (!payload) return;
+            YK::DumpPayload* p = static_cast<YK::DumpPayload*>(payload);
+            if (p->viewIdx != 0) return;
+
+            std::vector<float> h(p->n);
+            cudaMemcpy(h.data(), p->buf, p->n * sizeof(float), cudaMemcpyDeviceToHost);
+
+            float sum = 0.f, maxv = -1e30f, minv = 1e30f;
+            for (auto v : h) {
+                sum += v;
+                maxv = std::max(maxv, v);
+                minv = std::min(minv, v);
+            }
+
+            spdlog::info("[dump][a={}][{}] n={} min={:.4f} max={:.4f} mean={:.6f}",
+                p->viewIdx, p->stage, p->n, minv, maxv, sum / (float)p->n);
+
+            auto path = fmt::format("dump_a{}_{}.raw", p->viewIdx, p->stage);
+            //auto path = std::string("dump_") + p->stage + ".raw";
+            std::ofstream f(path, std::ios::binary);
+            if (f)
+                f.write(reinterpret_cast<const char*>(h.data()), p->n * sizeof(float));
+            else
+                /*YK_LOGE("[dump] cannot save {}", path);*/
+                printf("  cannot save %s\n", path.c_str());
+        };
+
+
+    if (!task->run(batchP, dumpCb)) {
+        fprintf(stderr, "  run failed\n");
+        YK::TaskFactory::destroy(task);
+        return;
+    }
+    printf("  run OK\n");
+
+
+    saveRaw("dll_test2_fdk_vol.raw", h_vol.data(), h_vol.size());
+    printf("  saved: dll_test2_fdk_vol.raw\n");
+
+    // --- 清理 ---
+    YK::TaskFactory::destroy(task);
+}
+
+static void test_fdk_task_online()
+{
+    printf("\n[DLL Test] FDK online chunked reconstruction\n");
+
+    constexpr int Na = 360, Nu = 1024, Nv = 1024;
+    constexpr int Nx = 512, Ny = 512, Nz = 400;
+    constexpr int ChunkSize = 32;  // 每次 feed 的视图数，Na 的因数
+
+    // --- 加载正弦图 ---
+    std::vector<float> h_sino;
+    if (!loadRaw("dll_test1_fp_sino.raw", h_sino, (size_t)Na * Nv * Nu)) {
+        fprintf(stderr, "  sino not found, run test1 first\n");
+        return;
+    }
+    printf("  sino loaded\n");
+    printStats(h_sino, "input sino");
+
+    // --- 分配输出体积 ---
+    void* d_vol = nullptr;
+    cudaMalloc(&d_vol, (size_t)Nx * Ny * Nz * sizeof(float));
+
+    // --- 构建角度 ---
+    std::vector<float> angles(Na);
+    for (int i = 0; i < Na; ++i)
+        angles[i] = 3.14159265f * 1.5f + 2.f * 3.14159265f * i / Na;
+
+    // --- 创建任务 ---
+    YK::ITask* task = YK::TaskFactory::create(YK::ETask::FDK);
+    if (!task) { fprintf(stderr, "  create failed\n"); return; }
+
+    // --- init ---
+    YK::SFdkAlgoParams fdkAlgo{};
+    fdkAlgo.filter = YK::EFdkFilter::RamLak;
+
+    YK::TaskInitParams initP{};
+    initP.task = YK::ETask::FDK;
+    initP.scan = makeScanParams();
+    initP.volume = makeVolumeParams();
+    initP.algoParams = &fdkAlgo;
+    initP.algoParamSize = sizeof(fdkAlgo);
+
+    if (!task->init(initP)) {
+        fprintf(stderr, "  init failed\n");
+        YK::TaskFactory::destroy(task);
+        return;
+    }
+    printf("  init OK\n");
+
+    // --- 分包 run ---
+    const size_t view_elems = (size_t)Nu * Nv;
+    int fed = 0;
+
+    for (int base = 0; base < Na; base += ChunkSize) {
+        const int K = std::min(ChunkSize, Na - base);
+
+        YK::FdkBatchParams batchP{};
+        batchP.vol_mode = YK::EBufferMode::DevicePtr;   // 输出体积使用 GPU 内存，测试接口的外部管理功能
+        batchP.h_proj = h_sino.data() + (size_t)base * view_elems;
+        batchP.d_vol_out = (float*)d_vol;
+        batchP.h_angles = angles.data() + base;
+        batchP.K = K;
+        batchP.clearOut = (base == 0);    // 只有第一包清零
+
+        if (!task->run(batchP)) {
+            fprintf(stderr, "  run failed at base=%d\n", base);
+            YK::TaskFactory::destroy(task);
+            cudaFree(d_vol);
+            return;
+        }
+
+        fed += K;
+        printf("  fed %d / %d views\n", fed, Na);
+    }
+
+    printf("  all chunks done\n");
+
+    // --- 回读统计 ---
+    std::vector<float> h_vol((size_t)Nx * Ny * Nz);
+    cudaMemcpy(h_vol.data(), d_vol,
+        h_vol.size() * sizeof(float), cudaMemcpyDeviceToHost);
+    printStats(h_vol, "recon vol");
+
+    saveRaw("dll_test2_fdk_vol_online.raw", h_vol.data(), h_vol.size());
+    printf("  saved: dll_test2_fdk_vol_online.raw\n");
+
+    // --- 清理 ---
+    YK::TaskFactory::destroy(task);
+    cudaFree(d_vol);
+}
+
+// ----------------------------------------------------------------
+// 测试3：reset 后重复 run
+// ----------------------------------------------------------------
+static void test_reset()
+{
+    printf("\n[DLL Test3] reset and re-run\n");
+
+    constexpr int Na = 10, Nu = 64, Nv = 64;
+    constexpr int Nx = 64, Ny = 64, Nz = 64;
+
+    std::vector<float> h_vol(Nx * Ny * Nz, 1.f);
+
+
+    const size_t sino_elems = (size_t)Na * Nv * Nu;
+
+
+    std::vector<float> angles(Na);
+    for (int i = 0; i < Na; ++i)
+        angles[i] = 2.f * 3.14159265f * i / Na;
+
+    YK::ITask* task = YK::TaskFactory::create(YK::ETask::FP_Joseph);
+
+    YK::SScanParams scan{};
+    scan.Nu = Nu; scan.Nv = Nv;
+    scan.du_mm = 1.f; scan.dv_mm = 1.f;
+    scan.SOD_mm = 500.f; scan.SDD_mm = 1000.f;
+    scan.scanRangeRad = 2.f * 3.14159265f;
+    scan.NAng = Na;
+
+    YK::SVolumeParams vol{};
+    vol.Nx = Nx; vol.Ny = Ny; vol.Nz = Nz;
+    vol.voxX_mm = vol.voxY_mm = vol.voxZ_mm = 0.1f;
+
+    YK::TaskInitParams initP{};
+    initP.task = YK::ETask::FP_Joseph;
+    initP.scan = scan;
+    initP.volume = vol;
+    task->init(initP);
+
+    std::vector<float> h_sino1(sino_elems);
+    std::vector<float> h_sino2(sino_elems);
+
+    YK::FpBatchParams batchP{};
+    batchP.vol_in_mode = YK::EBufferMode::HostPtr;   // 输入体积使用 CPU 内存，测试接口的自动管理功能
+    batchP.h_vol_in = h_vol.data();
+    batchP.sino_mode = YK::EBufferMode::HostPtr;    // 输出正弦图使用 GPU 内存，测试不同模式混用
+    batchP.h_sino_out = h_sino1.data();
+    batchP.h_angles = angles.data();
+    batchP.K = Na;
+    batchP.clearOut = true;
+
+    // 第一次 run
+
+    task->run(batchP);
+
+
+    printStats(h_sino1, "run1");
+
+    // reset 后第二次 run
+    batchP.h_sino_out = h_sino2.data();
+    task->reset();
+
+    task->run(batchP);
+
+    printStats(h_sino2, "run2");
+
+    // 两次结果应完全一致
+    double maxDiff = 0.0;
+    for (size_t k = 0; k < sino_elems; ++k)
+        maxDiff = std::max(maxDiff, (double)std::abs(h_sino1[k] - h_sino2[k]));
+    printf("  run1 vs run2: maxDiff=%.2e  %s\n",
+        maxDiff, maxDiff < 1e-4 ? "OK" : "MISMATCH");
+
+    YK::TaskFactory::destroy(task);
+
+}
+
+// ----------------------------------------------------------------
+// 主入口
+// ----------------------------------------------------------------
+int main()
+{
+    printf("=== TaskFactory DLL Interface Test ===\n");
+
+    test_fp_task();
+    test_fdk_task();
+    test_fdk_task_online();
+    test_reset();
+    cudaDeviceReset();
+    printf("\n=== all done ===\n");
+    return 0;
+}

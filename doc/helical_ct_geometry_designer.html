@@ -1,0 +1,262 @@
+
+<h2 class="sr-only">Helical CT geometry designer — interactive parameter calculator for detector rows, pitch, rotations, and scan range.</h2>
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem 1.25rem; }
+.metric { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.875rem 1rem; }
+.metric-label { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }
+.metric-value { font-size: 22px; font-weight: 500; color: var(--color-text-primary); }
+.metric-unit { font-size: 13px; color: var(--color-text-secondary); margin-left: 3px; }
+.section-title { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 10px; }
+.field { margin-bottom: 12px; }
+.field label { font-size: 13px; color: var(--color-text-secondary); display: flex; justify-content: space-between; margin-bottom: 4px; }
+.field label span { font-weight: 500; color: var(--color-text-primary); font-family: var(--font-mono); font-size: 12px; }
+.badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: var(--border-radius-md); font-weight: 500; }
+.badge-ok { background: #EAF3DE; color: #3B6D11; }
+.badge-warn { background: #FAEEDA; color: #854F0B; }
+.badge-err { background: #FCEBEB; color: #A32D2D; }
+.divider { border: none; border-top: 0.5px solid var(--color-border-tertiary); margin: 14px 0; }
+.formula-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.formula-lhs { color: var(--color-text-secondary); min-width: 100px; }
+.formula-rhs { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-primary); }
+.warn-box { background: #FAEEDA; border-left: 3px solid #EF9F27; border-radius: 0; padding: 8px 12px; font-size: 13px; color: #633806; margin-top: 10px; display: none; }
+.chart-wrap { position: relative; width: 100%; height: 180px; margin-top: 12px; }
+</style>
+
+<div style="padding: 1rem 0;">
+
+<div class="grid2" style="gap: 14px; margin-bottom: 14px;">
+
+  <div class="card">
+    <div class="section-title">探测器 &amp; 几何</div>
+    <div class="field">
+      <label>探测器列数 iPU <span id="lIPU">1024</span></label>
+      <input type="range" min="256" max="2048" step="256" value="1024" id="iPU">
+    </div>
+    <div class="field">
+      <label>像素尺寸 du=dv (mm) <span id="lDU">0.417</span></label>
+      <input type="range" min="0.1" max="1.0" step="0.001" value="0.417" id="dU">
+    </div>
+    <div class="field">
+      <label>SID (mm) <span id="lSID">500</span></label>
+      <input type="range" min="200" max="800" step="10" value="500" id="SID">
+    </div>
+    <div class="field">
+      <label>SDD (mm) <span id="lSDD">1000</span></label>
+      <input type="range" min="500" max="1500" step="10" value="1000" id="SDD">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">体积 &amp; 扫描约束</div>
+    <div class="field">
+      <label>体积层数 iVZ <span id="lIVZ">400</span></label>
+      <input type="range" min="50" max="800" step="10" value="400" id="iVZ">
+    </div>
+    <div class="field">
+      <label>体素 Z 尺寸 (mm) <span id="lVoxZ">0.45</span></label>
+      <input type="range" min="0.1" max="1.0" step="0.01" value="0.45" id="voxZ">
+    </div>
+    <div class="field">
+      <label>Pitch 比 pf <span id="lPF">0.75</span></label>
+      <input type="range" min="0.5" max="1.5" step="0.05" value="0.75" id="PF">
+    </div>
+    <div class="field">
+      <label>最大允许圈数 <span id="lMaxRot">20</span></label>
+      <input type="range" min="5" max="100" step="1" value="20" id="maxRot">
+    </div>
+  </div>
+
+</div>
+
+<div class="card" style="margin-bottom: 14px;">
+  <div class="section-title">推荐探测器排数</div>
+  <div class="grid4">
+    <div class="metric">
+      <div class="metric-label">最少排数（理论）</div>
+      <div class="metric-value" id="mMinRows">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">推荐排数（2的幂次）</div>
+      <div class="metric-value" id="mRecRows" style="color: #185FA5;">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">等中心 Z 覆盖</div>
+      <div class="metric-value" id="mDZDet">—<span class="metric-unit">mm</span></div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">最大锥角</div>
+      <div class="metric-value" id="mCone">—<span class="metric-unit">°</span></div>
+    </div>
+  </div>
+  <div id="warnBox" class="warn-box"></div>
+</div>
+
+<div class="card" style="margin-bottom: 14px;">
+  <div class="section-title">扫描几何结果</div>
+  <div class="grid4">
+    <div class="metric">
+      <div class="metric-label">螺旋 pitch</div>
+      <div class="metric-value" id="mPitch">—<span class="metric-unit">mm</span></div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">旋转圈数</div>
+      <div class="metric-value" id="mNRot">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">每圈投影数</div>
+      <div class="metric-value" id="mNViews">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">总投影数</div>
+      <div class="metric-value" id="mTotal">—</div>
+    </div>
+  </div>
+  <hr class="divider">
+  <div class="grid2">
+    <div>
+      <div class="formula-row"><span class="formula-lhs">Z_vol</span><span class="formula-rhs" id="fZvol">—</span></div>
+      <div class="formula-row"><span class="formula-lhs">z_start</span><span class="formula-rhs" id="fZstart">—</span></div>
+      <div class="formula-row"><span class="formula-lhs">pitch_ratio</span><span class="formula-rhs" id="fPitchRatio">—</span> <span id="badgePR"></span></div>
+    </div>
+    <div>
+      <div class="formula-row"><span class="formula-lhs">M (放大比)</span><span class="formula-rhs" id="fM">—</span></div>
+      <div class="formula-row"><span class="formula-lhs">gamma_max</span><span class="formula-rhs" id="fGamma">—</span></div>
+      <div class="formula-row"><span class="formula-lhs">FDK 适用</span><span id="fFDK"></span></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title">圈数 vs 探测器排数（当前体积）</div>
+  <div class="chart-wrap">
+    <canvas id="chart" role="img" aria-label="Line chart showing number of rotations required vs detector rows">Rotations vs detector rows.</canvas>
+  </div>
+</div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+function nextPow2(n) {
+  let p = 1; while (p < n) p <<= 1; return p;
+}
+function calcAll() {
+  const iPU    = +document.getElementById('iPU').value;
+  const dU     = +document.getElementById('dU').value;
+  const SID    = +document.getElementById('SID').value;
+  const SDD    = +document.getElementById('SDD').value;
+  const iVZ    = +document.getElementById('iVZ').value;
+  const voxZ   = +document.getElementById('voxZ').value;
+  const pf     = +document.getElementById('PF').value;
+  const maxRot = +document.getElementById('maxRot').value;
+
+  document.getElementById('lIPU').textContent = iPU;
+  document.getElementById('lDU').textContent = dU.toFixed(3);
+  document.getElementById('lSID').textContent = SID;
+  document.getElementById('lSDD').textContent = SDD;
+  document.getElementById('lIVZ').textContent = iVZ;
+  document.getElementById('lVoxZ').textContent = voxZ.toFixed(2);
+  document.getElementById('lPF').textContent = pf.toFixed(2);
+  document.getElementById('lMaxRot').textContent = maxRot;
+
+  const M      = SDD / SID;
+  const Z_vol  = iVZ * voxZ;
+  const dv     = dU;
+
+  const minRowsF = (Z_vol / (maxRot - 1)) * M / (pf * dv);
+  const minRows  = Math.ceil(minRowsF);
+  const recRows  = nextPow2(minRows);
+
+  const dZ_det  = recRows * dv / M;
+  const pitch   = pf * dZ_det;
+  const N_r     = Math.ceil((Z_vol + 2 * dZ_det) / pitch) + 1;
+  const z_start = -(Z_vol * 0.5 + dZ_det + pitch);
+  const gmax    = Math.atan2(iPU * dU * 0.5 / M, SID);
+  const dgamma  = Math.asin(dU / (M * SID));
+  const N_views = Math.ceil((Math.PI + 2 * gmax) / dgamma);
+  const N_total = N_r * N_views;
+  const alpha   = Math.atan2(dZ_det * 0.5, SID) * 180 / Math.PI;
+  const pr      = pitch / dZ_det;
+
+  document.getElementById('mMinRows').textContent = minRows;
+  document.getElementById('mRecRows').textContent = recRows;
+  document.getElementById('mDZDet').innerHTML  = dZ_det.toFixed(1) + '<span class="metric-unit">mm</span>';
+  document.getElementById('mCone').innerHTML   = alpha.toFixed(2) + '<span class="metric-unit">°</span>';
+  document.getElementById('mPitch').innerHTML  = pitch.toFixed(2) + '<span class="metric-unit">mm</span>';
+  document.getElementById('mNRot').textContent = N_r;
+  document.getElementById('mNViews').textContent = N_views;
+  document.getElementById('mTotal').textContent = N_total.toLocaleString();
+
+  document.getElementById('fZvol').textContent    = Z_vol.toFixed(1) + ' mm';
+  document.getElementById('fZstart').textContent  = z_start.toFixed(1) + ' mm';
+  document.getElementById('fPitchRatio').textContent = pr.toFixed(3);
+  document.getElementById('fM').textContent       = M.toFixed(3);
+  document.getElementById('fGamma').textContent   = (gmax * 180 / Math.PI).toFixed(2) + '°';
+
+  const prBadge = document.getElementById('badgePR');
+  if (pr <= 1.0) { prBadge.className = 'badge badge-ok'; prBadge.textContent = 'OK'; }
+  else if (pr <= 1.5) { prBadge.className = 'badge badge-warn'; prBadge.textContent = '插值补偿'; }
+  else { prBadge.className = 'badge badge-err'; prBadge.textContent = '漏采样'; }
+
+  const fFDK = document.getElementById('fFDK');
+  if (alpha < 2) { fFDK.className = 'badge badge-ok'; fFDK.textContent = 'FDK 直接适用'; }
+  else if (alpha < 5) { fFDK.className = 'badge badge-warn'; fFDK.textContent = '加权 FDK'; }
+  else { fFDK.className = 'badge badge-err'; fFDK.textContent = 'Katsevich 建议'; }
+
+  const wb = document.getElementById('warnBox');
+  if (N_r > maxRot) {
+    wb.style.display = 'block';
+    wb.textContent = '警告：当前推荐排数 ' + recRows + ' 排仍需 ' + N_r + ' 圈，超过约束 ' + maxRot + ' 圈。可增大 iPV 或接受更大 pitch 比。';
+  } else { wb.style.display = 'none'; }
+
+  updateChart(iVZ, voxZ, dv, M, pf, maxRot);
+}
+
+let myChart = null;
+function updateChart(iVZ, voxZ, dv, M, pf, maxRot) {
+  const Z_vol = iVZ * voxZ;
+  const rowSets = [16,32,48,64,80,96,128,160,192,256,320];
+  const labels = rowSets.map(r => r + '');
+  const rots = rowSets.map(r => {
+    const dz  = r * dv / M;
+    const h   = pf * dz;
+    return Math.ceil((Z_vol + 2 * dz) / h) + 1;
+  });
+  const limitData = rowSets.map(() => maxRot);
+
+  if (!myChart) {
+    myChart = new Chart(document.getElementById('chart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: '需要圈数', data: rots, borderColor: '#185FA5', backgroundColor: 'rgba(24,95,165,0.08)', fill: true, tension: 0.3, pointRadius: 3 },
+          { label: '最大允许', data: limitData, borderColor: '#BA7517', borderDash: [5,4], pointRadius: 0, fill: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { title: { display: true, text: '探测器排数', font: { size: 11 } } },
+          y: { title: { display: true, text: '圈数', font: { size: 11 } }, beginAtZero: true }
+        }
+      }
+    });
+  } else {
+    myChart.data.datasets[0].data = rots;
+    myChart.data.datasets[1].data = limitData;
+    myChart.update('none');
+  }
+}
+
+['iPU','dU','SID','SDD','iVZ','voxZ','PF','maxRot'].forEach(id => {
+  document.getElementById(id).addEventListener('input', calcAll);
+});
+calcAll();
+</script>

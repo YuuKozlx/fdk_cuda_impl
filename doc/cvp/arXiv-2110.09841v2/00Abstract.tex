@@ -1,0 +1,13 @@
+\begin{abstract}
+In this paper, we introduce a novel class of projectors for 3D cone beam tomographic reconstruction. Analytical formulas are derived to compute the relationship between the volume of a voxel projected onto a detector pixel and its contribution to the line integral of attenuation recorded by that pixel. Based on these formulas, we construct a near-exact projector and backprojector, particularly suited for algebraic reconstruction techniques and hierarchical reconstruction approaches with nonuniform voxel grids. Unlike traditional projectors, which assume a uniform grid with fixed voxel sizes, our method enables local refinement of voxels, allowing for adaptive grid resolution and improved reconstruction quality in regions of interest. We have implemented this cutting voxel projector along with a relaxed, speed-optimized version and compared them to two established projectors: a ray-tracing projector based on Siddon's algorithm and a TT footprint projector. Our results demonstrate that the cutting voxel projector achieves higher accuracy than the TT projector, especially for large cone beam angles. Furthermore, the relaxed version of the cutting voxel projector offers a significant speed advantage over current footprint projector implementations, while maintaining comparable accuracy. In contrast, Siddon's algorithm, when achieving similar accuracy, is considerably slower than the cutting voxel projector. All algorithms are implemented in an open-source framework for algebraic reconstruction using OpenCL and C++, optimized for efficient GPU computation.
+\end{abstract}
+
+% REQUIRED
+\begin{keywords}
+  Cone beam computed tomography, CT reconstruction, CT projection, CT operator, Algebraic CT reconstruction, Cutting voxel projector, GPU optimized reconstruction, OpenCL, GPU computing, parallel processing
+\end{keywords}
+
+% REQUIRED
+\begin{AMS}
+  65D18, 65R32, 65Y05, 68U10, 44A12
+\end{AMS}

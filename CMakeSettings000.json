@@ -1,0 +1,84 @@
+﻿{
+  "configurations": [
+    {
+      "name": "x64-Debug",
+      "generator": "Ninja",
+      "configurationType": "Debug",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\Debug",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "cmakeToolchain": "D:/Users/zlx/scoop/apps/vcpkg/current/scripts/buildsystems/vcpkg.cmake",
+      "variables": [
+        {
+          "name": "VCPKG_MANIFEST_MODE",
+          "value": "true",
+          "type": "BOOL"
+        },
+        {
+          "name": "VCPKG_INSTALLED_DIR",
+          "value": "${projectDir}\\thirdparty\\vcpkg_installed",
+          "type": "STRING"
+        }
+      ],
+      "intelliSenseMode": "windows-clang-x64"
+    },
+    {
+      "name": "x64-Release",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\Release",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "cmakeToolchain": "D:/Users/zlx/scoop/apps/vcpkg/current/scripts/buildsystems/vcpkg.cmake",
+      "variables": [
+        {
+          "name": "VCPKG_MANIFEST_MODE",
+          "value": "true",
+          "type": "BOOL"
+        },
+        {
+          "name": "VCPKG_INSTALLED_DIR",
+          "value": "${projectDir}\\thirdparty\\vcpkg_installed",
+          "type": "STRING"
+        },
+        {
+          "name": "CMAKE_INSTALL_PREFIX",
+          "value": "G:/Code/fanproj/fdk-test/install/Release/YKCBCT",
+          "type": "PATH"
+        }
+      ],
+      "intelliSenseMode": "windows-clang-x64"
+    },
+    {
+      "name": "x64-RelWithDebInfo",
+      "generator": "Ninja",
+      "configurationType": "RelWithDebInfo",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\RelWithDebInfo",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "cmakeToolchain": "D:/Users/zlx/scoop/apps/vcpkg/current/scripts/buildsystems/vcpkg.cmake",
+      "variables": [
+        {
+          "name": "VCPKG_MANIFEST_MODE",
+          "value": "true",
+          "type": "BOOL"
+        },
+        {
+          "name": "VCPKG_INSTALLED_DIR",
+          "value": "${projectDir}\\thirdparty\\vcpkg_installed",
+          "type": "STRING"
+        }
+      ],
+      "intelliSenseMode": "windows-clang-x64"
+    }
+  ]
+}
