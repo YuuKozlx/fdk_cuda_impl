@@ -1,4 +1,4 @@
-target_sources(YKCBCT_obj PRIVATE
+target_sources(YKCBCT PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/cuh/YkFDKBpKernels.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/cuh/YkFDKBpPrecompute.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/cuh/YkFDKFilterKernels.cu

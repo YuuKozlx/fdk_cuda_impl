@@ -24,8 +24,7 @@ namespace YK {
                 return false;
             }
             if (task != ETask::FP_Joseph &&
-                task != ETask::FP_Siddon &&
-                task != ETask::FP_CVP) {
+                task != ETask::FP_Siddon) {
                 YK_LOGE("[ConeProjectorEx] unsupported task {}", (int)task);
                 return false;
             }
@@ -64,7 +63,7 @@ namespace YK {
                 params.vol_offset_y_mm,
                 params.vol_offset_z_mm);
             ETask task = fp_type_;
-            const bool needTex = (task == ETask::FP_Joseph || task == ETask::FP_CVP || task == ETask::FP_Siddon);
+            const bool needTex = true;
 
             Fp::FpGpuContext gpuctx;
             if (needTex)
@@ -110,16 +109,6 @@ namespace YK {
                     vol_geom,
                     params.iPU, params.iPV, Na,
                     false, stream);
-                break;
-
-            case ETask::FP_CVP:
-                Fp::fp_cvp_launch(
-                    gpuctx.volTex.tex,
-                    d_sino_out,
-                    gpuctx.geo.h_views(),
-                    vol_geom,
-                    Na, params.iPU, params.iPV,
-                    stream);
                 break;
 
             default:

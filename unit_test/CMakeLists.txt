@@ -6,10 +6,10 @@ add_executable(YKCBCT_unit_test
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fdk.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_bp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp 
-    $<TARGET_OBJECTS:YKCBCT_obj>
 )
 
 target_link_libraries(YKCBCT_unit_test PRIVATE
+    YKCBCT
     GTest::gtest
     GTest::gtest_main
     CUDA::cudart

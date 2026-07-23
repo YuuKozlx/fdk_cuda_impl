@@ -44,14 +44,13 @@ find_package(CUDAToolkit REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)   # 新增
 
 # ----------------------------------------------------------------
-# OBJECT 库：所有源文件编译一次，DLL 和测试共用同一批 .obj
-#
-# OBJECT 库不产生 .lib/.dll，只编译出 .obj 文件集合。
-# 后续 DLL 和测试都消费这批 .obj，源文件不重复编译。
+# The final DLL owns every CUDA translation unit.  CUDA device linking then
+# happens inside one CMake target; an OBJECT library split loses the generated
+# device-link object on the MSVC/CUDA toolchain.
 # ----------------------------------------------------------------
-add_library(YKCBCT_obj OBJECT)
+add_library(YKCBCT SHARED src/interface/YkLibraryAnchor.cpp)
 
-target_compile_definitions(YKCBCT_obj PRIVATE
+target_compile_definitions(YKCBCT PRIVATE
     _WINDOWS
     YKCBCT_EXPORTS
     $<$<CONFIG:Release>:NDEBUG>
@@ -62,7 +61,7 @@ target_compile_definitions(YKCBCT_obj PRIVATE
 # Windows 编译选项
 # 跨平台编译选项
 if(WIN32)
-    target_compile_options(YKCBCT_obj PRIVATE
+    target_compile_options(YKCBCT PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/W3 /Zc:__cplusplus /utf-8>
         $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2 /arch:AVX2>
         $<$<COMPILE_LANGUAGE:CUDA>:
@@ -73,7 +72,7 @@ if(WIN32)
     )
 
 elseif(UNIX)
-    target_compile_options(YKCBCT_obj PRIVATE
+    target_compile_options(YKCBCT PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -pthread>
         $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3 -march=native -DNDEBUG>
         $<$<COMPILE_LANGUAGE:CUDA>:
@@ -86,27 +85,27 @@ elseif(UNIX)
     
 endif()
 
-# PUBLIC  : 自身和消费者都能看到（include 路径会传递给链接 YKCBCT_obj 的目标）
+# PUBLIC  : 自身和消费者都能看到（include 路径会传递给链接 YKCBCT 的目标）
 # PRIVATE : 只有自身编译时用（内部头文件路径不对外暴露）
-target_include_directories(YKCBCT_obj
+target_include_directories(YKCBCT
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
 )
 
-target_link_libraries(YKCBCT_obj PRIVATE
+target_link_libraries(YKCBCT PRIVATE
     CUDA::cudart
     CUDA::cufft
     OpenMP::OpenMP_CXX   # 新增
 )
 
-set_target_properties(YKCBCT_obj PROPERTIES
+set_target_properties(YKCBCT PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
 
 # ----------------------------------------------------------------
-# 子模块：各自往 YKCBCT_obj 里添加源文件
+# 子模块：各自往 YKCBCT 里添加源文件
 # ----------------------------------------------------------------
 add_subdirectory(src/global)
 add_subdirectory(src/interface)
@@ -125,27 +124,6 @@ if(YKCBCT_BUILD_HELICAL)
     add_subdirectory(src/Heli)
 endif()
 # ----------------------------------------------------------------
-# 主库 DLL：只做链接，不重复编译源文件
-#
-# $<TARGET_OBJECTS:YKCBCT_obj>
-#   生成器表达式，展开为 YKCBCT_obj 编译出的所有 .obj 文件路径。
-#   CUDA 场景下显式引用比只用 target_link_libraries 更稳定。
-# ----------------------------------------------------------------
-add_library(YKCBCT SHARED
-    $<TARGET_OBJECTS:YKCBCT_obj>
-)
-
-target_link_libraries(YKCBCT PRIVATE
-    YKCBCT_obj
-    CUDA::cudart
-    CUDA::cufft
-    OpenMP::OpenMP_CXX   # 新增
-)
-
-set_target_properties(YKCBCT PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-
 # ----------------------------------------------------------------
 # 包安装配置
 #

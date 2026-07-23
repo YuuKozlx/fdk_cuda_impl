@@ -1,4 +1,4 @@
-target_sources(YKCBCT_obj PRIVATE
+target_sources(YKCBCT PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkFPKernels.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkFPSiddonKernel.cu
 )
@@ -7,7 +7,7 @@ target_sources(YKCBCT_obj PRIVATE
 # regular forward-projection library unless it is explicitly requested.
 option(YKCBCT_BUILD_CVP "Build experimental CVP forward projector" OFF)
 if(YKCBCT_BUILD_CVP)
-    target_sources(YKCBCT_obj PRIVATE
+    target_sources(YKCBCT PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkFPCVPKernels.cu
     )
 endif()

@@ -3,7 +3,7 @@
 # target_sources(YKCBCT PRIVATE
 #     ${CMAKE_CURRENT_SOURCE_DIR}/YkBPKernels.cu
 # )
-target_sources(YKCBCT_obj PRIVATE
+target_sources(YKCBCT PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkBPSiddonKernel.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkBPJosephKernel.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkBpFdkKernel.cu

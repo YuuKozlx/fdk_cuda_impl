@@ -41,9 +41,8 @@ namespace YK {
     // 支持的 ETask：
     //   FP_Joseph  —— 带纹理，三线性插值
     //   FP_Siddon  —— 带纹理，Siddon 步进
-    //   FP_CVP     —— 无纹理，体素裸指针
-    //
-    // 其他 ETask（FDK / SART / OSEM）会直接报错返回 false。
+    // Other task kinds are rejected here.  CVP was an experimental test path
+    // and is deliberately not linked into the regular library.
     // ====================================================================
     class ConeProjector {
     public:
@@ -77,8 +76,7 @@ namespace YK {
 
             // ── 任务类型检查 ─────────────────────────────────────────────
             if (task != ETask::FP_Joseph &&
-                task != ETask::FP_Siddon &&
-                task != ETask::FP_CVP)
+                task != ETask::FP_Siddon)
             {
                 YK_LOGE(
                     "[ConeProjector] run: task {:2d} is not a FP task\n",
@@ -136,10 +134,9 @@ namespace YK {
                     rad2deg(params.tiltv_angle_rad)));
 
             // ── 按任务决定是否创建纹理 ───────────────────────────────────
-            //   Joseph / Siddon：三线性插值，必须走纹理路径
-            //   CVP            ：直接操作体素指针，不建纹理节省显存和时间
+            // Joseph and Siddon both sample through the volume texture.
             ETask task = fp_type_;
-            const bool needTex = (task == ETask::FP_Joseph || task == ETask::FP_CVP || task == ETask::FP_Siddon);
+            const bool needTex = true;
 
             Fp::FpGpuContext gpuctx;
             if (needTex)
@@ -199,18 +196,6 @@ namespace YK {
                 );
                 break;
             }
-
-
-            case ETask::FP_CVP:
-                Fp::fp_cvp_launch(
-                    gpuctx.volTex.tex,
-                    d_sino_out,
-                    gpuctx.geo.h_views(),
-                    vol_geom,
-                    Na, params.iPU, params.iPV,
-                    stream);
-                break;
-
             default:
                 // 前面已拦截，理论上不可达
                 return false;
