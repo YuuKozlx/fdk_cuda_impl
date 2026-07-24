@@ -1,10 +1,10 @@
-﻿#pragma once
+#pragma once
 #include <cuda_runtime.h>
 
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
-#include "FDK/YkFdkPipelineContext.hpp"   // FdkAffineCoeff
+#include "FDK/YkFdkStageTypes.hpp"   // FdkAffineCoeff
 #include "common/YkVecGeo.hpp"
 
 namespace YK {

@@ -1,15 +1,14 @@
-﻿#pragma once
+#pragma once
 #include <cmath>
 #include <cstdio>
 
 #include <cuda_runtime.h>
 
-#include "global/IProcessor.hpp"
-#include "FDK/YkFdkPipelineContext.hpp"
+#include "FDK/YkFdkStageTypes.hpp"
 #include "global/YkGlobals.h"              // CUDA_PI
 #include "global/YkMacro.hpp"
 
-#include "FDK/cuh/YkFDKParkerLaunch.cuh"
+#include "FDK/kernels/YkFDKParkerLaunch.cuh"
 
 namespace YK {
     namespace Fdk {
@@ -17,154 +16,79 @@ namespace YK {
         // ============================================================
         // ParkerWeightProcessor
         //
-        //   生命周期：
-        //     setInitContext(&ParkerWeightInitContext{...})
-        //     init()
-        //     loop:
-        //       setContext(&ParkerWeightChunkContext{ h_angles, K })
-        //       process(d_inout, d_inout, stream)   ← 仅支持原地
-        //     release()
+        //   生命周期：prepare(config) -> apply(projection, chunk) -> release()
         // ============================================================
-        class ParkerWeightProcessor : public IProcessor {
+        class ParkerWeightProcessor {
         public:
             ParkerWeightProcessor() = default;
-            ~ParkerWeightProcessor() override { release(); }
+            ~ParkerWeightProcessor() { release(); }
 
             ParkerWeightProcessor(const ParkerWeightProcessor&) = delete;
             ParkerWeightProcessor& operator=(const ParkerWeightProcessor&) = delete;
 
-            // ----------------------------------------------------------------
-            // IProcessor::setInitContext
-            // ----------------------------------------------------------------
-            void setInitContext(const void* ctx) override
+            // 初始化配置只在 prepare 时传入；每个 chunk 的角度从 geometry 中
+            // 提取，避免引入与几何不一致的第二份角度数组。
+            bool prepare(const ParkerWeightConfig& config)
             {
-                if (!ctx) {
-                    std::fprintf(stderr, "[YK][Parker][E] setInitContext: null.\n"); return;
-                }
-                const auto* ic = static_cast<const ParkerWeightInitContext*>(ctx);
-
-                Nu_ = ic->dims.iPU;
-                Nv_ = ic->dims.iPV;
-                fDetUSize_ = ic->fDetUSize;
-                fSrcOrigin_ = ic->fSrcOrigin;
-                fDetOrigin_ = ic->fDetOrigin;
-                // fScale = scanRange / π，使冗余区域积分归一
-                fScale_ = ic->fScanRangeRad / static_cast<float>(CUDA_PI);
-                fAngleBase_ = ic->fStartAngleRad;
-                cfg_ready_ = true;
-                nDirSign_ = ic->nDirSign;
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::init
-            // ----------------------------------------------------------------
-            bool init() override
-            {
-                if (!cfg_ready_) {
-                    std::fprintf(stderr, "[YK][Parker][E] init: setInitContext() not called.\n");
-                    return false;
-                }
-                if (Nu_ <= 0 || Nv_ <= 0) {
-                    std::fprintf(stderr, "[YK][Parker][E] init: invalid dims Nu=%d Nv=%d.\n",
-                        Nu_, Nv_);
-                    return false;
-                }
-
+                release();
+                Nu_ = config.dims.iPU;
+                Nv_ = config.dims.iPV;
+                max_K_ = config.dims.iPAng;
+                fDetUSize_ = config.fDetUSize;
+                fSrcOrigin_ = config.fSrcOrigin;
+                fDetOrigin_ = config.fDetOrigin;
+                fScale_ = config.fScanRangeRad / static_cast<float>(CUDA_PI);
+                fAngleBase_ = config.fStartAngleRad;
+                nDirSign_ = config.nDirSign;
                 const float fSDD = fSrcOrigin_ + fDetOrigin_;
-#ifdef _WIN32
-                fCentralFanAngle_ = std::fabs(std::atanf(fDetUSize_ * (Nu_ * 0.5f) / fSDD));
-#elif defined(__unix__)
-                fCentralFanAngle_ = std::fabs(std::atan(fDetUSize_ * (Nu_ * 0.5f) / fSDD));
-#endif
-                // 检查扫描范围是否足够覆盖 Parker 权重范围
-                const float fRange = fScale_ * static_cast<float>(CUDA_PI);
-                if (fRange + 1e-3f < static_cast<float>(CUDA_PI) + 2.0f * fCentralFanAngle_) {
-                    std::fprintf(stderr,
-                        "[YK][Parker][W] init: angular range (%.4f rad) smaller than "
-                        "Parker weighting range (%.4f rad).\n",
-                        fRange, static_cast<float>(CUDA_PI) + 2.0f * fCentralFanAngle_);
+                if (Nu_ <= 0 || Nv_ <= 0 || max_K_ <= 0 || fDetUSize_ <= 0.f || fSDD <= 0.f ||
+                    (nDirSign_ != 1 && nDirSign_ != -1)) {
+                    std::fprintf(stderr, "[YK][Parker][E] prepare: invalid configuration.\n");
+                    return false;
                 }
-
+                fCentralFanAngle_ = std::fabs(std::atan(fDetUSize_ * (Nu_ * 0.5f) / fSDD));
                 is_initialized_ = true;
                 return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::setContext — 每 chunk 前上传角度
-            // ----------------------------------------------------------------
-            void setContext(const void* ctx) override
+            bool apply(float* d_projection, const ParkerWeightChunk& chunk,
+                cudaStream_t stream)
             {
-                if (!is_initialized_) {
-                    std::fprintf(stderr, "[YK][Parker][E] setContext: not initialized.\n"); return;
+                if (!is_initialized_ || !d_projection || !chunk.h_geometry ||
+                    chunk.K <= 0 || chunk.K > max_K_) {
+                    std::fprintf(stderr, "[YK][Parker][E] apply: invalid prepared state or chunk.\n");
+                    return false;
                 }
-                if (!ctx) {
-                    std::fprintf(stderr, "[YK][Parker][E] setContext: null.\n"); return;
-                }
-                const auto* cc = static_cast<const ParkerWeightChunkContext*>(ctx);
-                if (cc->K <= 0) {
-                    std::fprintf(stderr, "[YK][Parker][E] setContext: invalid K=%d.\n", cc->K); return;
-                }
-
-                // 角度归一化 + 上传至 constant memory
-                detail::pk_uploadAngles(cc->h_angles, cc->K, fAngleBase_, nDirSign_);
-                chunk_ = *cc;
+                std::vector<float> angles(chunk.K);
+                for (int i = 0; i < chunk.K; ++i)
+                    angles[i] = chunk.h_geometry[i].angle.x;
+                detail::pk_uploadAngles(angles.data(), chunk.K, fAngleBase_, nDirSign_);
+                detail::pk_launchParker(d_projection, Nu_, Nv_, chunk.K,
+                    fSrcOrigin_ + fDetOrigin_, fDetUSize_, fCentralFanAngle_,
+                    fScale_, nDirSign_, stream);
+                return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::process  — 仅支持原地，d_input == d_output
-            // ----------------------------------------------------------------
-            void process(const void* d_input, void* d_output,
-                cudaStream_t stream = 0) override
-            {
-                if (!is_initialized_) {
-                    std::fprintf(stderr, "[YK][Parker][E] process: not initialized.\n"); return;
-                }
-                if (!d_input || !d_output) {
-                    std::fprintf(stderr, "[YK][Parker][E] process: null pointer.\n"); return;
-                }
-                if (d_input != d_output) {
-                    std::fprintf(stderr, "[YK][Parker][W] process: in-place only, d_input ignored.\n");
-                    return;
-                }
-                if (chunk_.K <= 0) {
-                    std::fprintf(stderr, "[YK][Parker][E] process: setContext() not called.\n"); return;
-                }
-
-                detail::pk_launchParker(
-                    static_cast<float*>(d_output),
-                    Nu_, Nv_, chunk_.K,
-                    fSrcOrigin_ + fDetOrigin_,
-                    fDetUSize_,
-                    fCentralFanAngle_,
-                    fScale_,
-                    nDirSign_,
-                    stream);
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::release
-            // ----------------------------------------------------------------
-            void release() override
+            void release()
             {
                 Nu_ = 0;
                 Nv_ = 0;
+                max_K_ = 0;
                 fDetUSize_ = 1.f;
                 fSrcOrigin_ = 0.f;
                 fDetOrigin_ = 0.f;
                 fCentralFanAngle_ = 0.f;
                 fScale_ = 1.f;
                 fAngleBase_ = 0.f;
-                chunk_ = {};
                 is_initialized_ = false;
-                cfg_ready_ = false;
             }
 
-            bool        isInitialized() const override { return is_initialized_; }
-            const char* name()          const override { return "ParkerWeightProcessor"; }
+            bool isPrepared() const { return is_initialized_; }
 
         private:
             int   Nu_ = 0;
             int   Nv_ = 0;
+            int   max_K_ = 0;
             float fDetUSize_ = 1.f;
             float fSrcOrigin_ = 0.f;
             float fDetOrigin_ = 0.f;
@@ -174,9 +98,7 @@ namespace YK {
             /// 基准角度：相对角 = 绝对角 - fAngleBase_
             float fAngleBase_ = 0.f;
 
-            ParkerWeightChunkContext chunk_ = {};
             bool                     is_initialized_ = false;
-            bool                     cfg_ready_ = false;
         };
 
     }

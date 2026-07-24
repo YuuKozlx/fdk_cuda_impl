@@ -87,6 +87,18 @@ namespace YK {
             if (!enabled_) return true;
             if (!prefix || !d_src || count_f32 == 0) return false;
 
+            return dumpDeviceF32(makeNameA(prefix, a, ".raw"), d_src, count_f32, stream);
+        }
+
+        bool DumpManager::dumpDeviceF32(
+            const std::string& file_name,
+            const float* d_src,
+            size_t count_f32,
+            cudaStream_t stream)
+        {
+            if (!enabled_) return true;
+            if (file_name.empty() || !d_src || count_f32 == 0) return false;
+
             const size_t bytes = count_f32 * sizeof(float);
             if (!reserveBytes(bytes)) return false;
 
@@ -95,7 +107,7 @@ namespace YK {
             YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
             // Write raw
-            const std::string fname = joinPath(out_dir_, makeNameA(prefix, a, ".raw"));
+            const std::string fname = joinPath(out_dir_, file_name);
             std::ofstream os(fname, std::ios::binary);
             if (!os) return false;
             os.write(reinterpret_cast<const char*>(h_pinned_), (std::streamsize)bytes);
@@ -106,7 +118,14 @@ namespace YK {
             if (!enabled_) return true;
             if (!prefix) return false;
 
-            const std::string fname = joinPath(out_dir_, makeNameA(prefix, a, ".txt"));
+            return dumpText(makeNameA(prefix, a, ".txt"), text);
+        }
+
+        bool DumpManager::dumpText(const std::string& file_name, const std::string& text) {
+            if (!enabled_) return true;
+            if (file_name.empty()) return false;
+
+            const std::string fname = joinPath(out_dir_, file_name);
             std::ofstream os(fname);
             if (!os) return false;
             os << text;

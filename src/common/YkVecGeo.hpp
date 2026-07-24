@@ -12,6 +12,7 @@
 #include "../global/YkLog.h"
 #include "../global/YkMacro.hpp"
 #include "../util/YkVecOperation.hpp"
+#include "YKCBCT/geometry/YkProjectionGeometryBuilders.hpp"
 
 namespace YK {
 
@@ -343,106 +344,6 @@ namespace YK {
 
 
 
-    YK_INLINE SConeProjGeomVec build_from_rtk_single(
-        float gantryAngle,      // RTK: GantryAngle [rad]
-        float outOfPlaneAngle,  // RTK: OutOfPlaneAngle [rad]
-        float inPlaneAngle,     // RTK: InPlaneAngle [rad]
-        float SAD,              // RTK: SourceToIsocenterDistance
-        float SID,              // RTK: SourceToDetectorDistance
-        float srcOffsetX,       // RTK: SourceOffsetX
-        float srcOffsetY,       // RTK: SourceOffsetY
-        float projOffsetX,      // RTK: ProjectionOffsetX
-        float projOffsetY,      // RTK: ProjectionOffsetY
-        int Nu, int Nv,
-        float du, float dv
-    )
-    {
-        // ----------------------------------------
-        // 参数转换
-        // RTK: 源在 +Z，旋转轴 Y
-        // 你:  源在 -Y，旋转轴 Z
-        // 但参数含义对齐，不改坐标，只映射数值
-        // ----------------------------------------
-
-        // SID → 你的 SID（源到等中心）
-        // SID - SAD → 你的 IDD（等中心到探测器）
-        float my_SID = SAD;
-        float my_IDD = SID - SAD;
-
-        // src_offset: RTK SourceOffsetX/Y 在旋转坐标系内
-        // 你的接口也是旋转前施加，含义一致
-        float3 src_offset = make_float3(srcOffsetX, srcOffsetY, 0.f);
-
-        // det_offset: RTK ProjectionOffsetX/Y
-        float3 det_offset = make_float3(projOffsetX, 0.f, projOffsetY);
-
-        // detTiltEuler:
-        //   x = OutOfPlaneAngle（绕局部X轴）
-        //   y = 0（RTK无此项）
-        //   z = InPlaneAngle（绕探测器法线）
-        float3 detTiltEuler = make_float3(outOfPlaneAngle, 0.f, inPlaneAngle);
-
-        // srcCRTiltEuler: RTK无对应，置零
-        float3 srcCRTiltEuler = make_float3(0.f, 0.f, 0.f);
-
-        // ----------------------------------------
-        // 构造单个投影
-        // ----------------------------------------
-        std::vector<SConeProjGeomVec> geo;
-        std::vector<float> theta = { gantryAngle };
-
-        build_circular_vec_geometry_from_theta(
-            geo,
-            theta,
-            1, Nu, Nv,
-            du, dv,
-            my_SID, my_IDD,
-            det_offset,
-            detTiltEuler,
-            src_offset,
-            srcCRTiltEuler
-        );
-
-        return geo[0];
-    }
-
-    // 批量版本：从 RTK XML 读出的 per-projection 参数数组转换
-    YK_INLINE  void build_from_rtk_geometry(
-        std::vector<SConeProjGeomVec>& geo,
-        const std::vector<float>& gantryAngles,
-        float SAD, float SID,                    // 若全局相同
-        int Nu, int Nv, float du, float dv,
-        // per-projection 偏移，若无则传空vector
-        const std::vector<float>& projOffsetX,
-        const std::vector<float>& projOffsetY,
-        float outOfPlaneAngle = 0.f,
-        float inPlaneAngle = 0.f,
-        float srcOffsetX = 0.f,
-        float srcOffsetY = 0.f
-    )
-    {
-        int Ang = (int)gantryAngles.size();
-        geo.resize(Ang);
-
-        for (int a = 0; a < Ang; ++a)
-        {
-            float px = projOffsetX.empty() ? 0.f : projOffsetX[a];
-            float py = projOffsetY.empty() ? 0.f : projOffsetY[a];
-
-            geo[a] = build_from_rtk_single(
-                gantryAngles[a],
-                outOfPlaneAngle,
-                inPlaneAngle,
-                SAD, SID,
-                srcOffsetX, srcOffsetY,
-                px, py,
-                Nu, Nv, du, dv
-            );
-        }
-    }
-
-
-
 #ifndef __CUDACC__
 #include <util/fmt/format.h>
 
@@ -483,7 +384,7 @@ namespace YK {
 } // namespace YK
 
 
-namespace YK {
+/*namespace YK {
     // planar CT
     YK_INLINE void build_planar_ct_vec_geometry(
         std::vector<SConeProjGeomVec>& geo,
@@ -595,4 +496,4 @@ namespace YK {
         build_planar_ct_vec_geometry_custom(geo, theta, Ang, Nu, Nv, du, dv, SID, IDD, src_pos);
     }
 
-} // namespace YK
+} // namespace YK*/

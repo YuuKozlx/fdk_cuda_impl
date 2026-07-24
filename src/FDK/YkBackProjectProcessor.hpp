@@ -1,15 +1,14 @@
-﻿#pragma once
+#pragma once
 
 
-#include "global/IProcessor.hpp"
 #include "global/YkGlobals.h"
-#include "YkFdkPipelineContext.hpp"
+#include "YkFdkStageTypes.hpp"
 
 #include <driver_types.h>
 #include <functional>
 #include <texture_types.h>
 #include "global/YkLog.h"
-#include "cuh/YkFDKBpLaunch.cuh"
+#include "kernels/YkFDKBpLaunch.cuh"
 
 namespace YK {
     namespace Fdk {
@@ -19,136 +18,69 @@ namespace YK {
         // ============================================================
         // BpProcessor
         //
-        //   生命周期：
-        //     setInitContext(&BpInitContext{...})
-        //     init()
-        //     loop:
-        //       setContext(&BpChunkContext{ d_texObjs, K, [d_geo, d_gv] })
-        //       process(d_texObjs, d_vol, stream)
-        //     release()
+        //   生命周期：prepare(config) -> apply(textures, volume, chunk) -> release()
         //
-        //   两种模式由 BpInitContext::use_precomputed 选择：
+        //   两种模式由 BpConfig::use_precomputed 选择：
         //     true  — gC_coeffs constant memory 已在外部写入
         //     false — kernel 内直接计算，需要 d_geo / d_gv
         // ============================================================
-        class BpProcessor : public IProcessor {
+        class BpProcessor {
         public:
             BpProcessor() = default;
-            ~BpProcessor() override { release(); }
+            ~BpProcessor() { release(); }
 
             BpProcessor(const BpProcessor&) = delete;
             BpProcessor& operator=(const BpProcessor&) = delete;
 
-            // ----------------------------------------------------------------
-            // IProcessor::setInitContext
-            // ----------------------------------------------------------------
-            void setInitContext(const void* ctx) override
+            // 普通 FDK 只使用预计算系数路径；强类型入口避免每个 chunk 先写
+            // 可变 context 再调用 process()。
+            bool prepare(const BpConfig& config)
             {
-                if (!ctx) {
-                    YK_LOGE("[YK][Bp][E] setInitContext: null."); return;
-                }
-                const auto* ic = static_cast<const BpInitContext*>(ctx);
-                vol_geom_ = ic->vol_geom;
-                use_precomputed_ = ic->use_precomputed;
-                cfg_ready_ = true;
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::init
-            // ----------------------------------------------------------------
-            bool init() override
-            {
-                if (!cfg_ready_) {
-                    YK_LOGE("[YK][Bp][E] init: setInitContext() not called.\n");
-                    return false;
-                }
-                if (vol_geom_.Nx <= 0 || vol_geom_.Ny <= 0 || vol_geom_.Nz <= 0
-                    || vol_geom_.vox_x <= 0.f
-                    || vol_geom_.vox_y <= 0.f
-                    || vol_geom_.vox_z <= 0.f) {
-                    YK_LOGE("[YK][Bp][E] init: invalid vol_geom.\n");
+                release();
+                vol_geom_ = config.vol_geom;
+                use_precomputed_ = config.use_precomputed;
+                max_K_ = config.max_chunk_views;
+                if (vol_geom_.Nx <= 0 || vol_geom_.Ny <= 0 || vol_geom_.Nz <= 0 ||
+                    vol_geom_.vox_x <= 0.f || vol_geom_.vox_y <= 0.f || vol_geom_.vox_z <= 0.f ||
+                    max_K_ <= 0) {
+                    YK_LOGE("[YK][Bp][E] prepare: invalid volume geometry.");
                     return false;
                 }
                 is_initialized_ = true;
                 return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::setContext
-            // ----------------------------------------------------------------
-            void setContext(const void* ctx) override
+            bool apply(const cudaTextureObject_t* d_textures, float* d_volume,
+                const BpChunk& chunk, cudaStream_t stream)
             {
-                if (!is_initialized_) {
-                    YK_LOGE("[YK][Bp][E] setContext: not initialized.\n"); return;
+                if (!is_initialized_ || !d_textures || !d_volume || chunk.K <= 0 || chunk.K > max_K_ ||
+                    (!use_precomputed_ && (!chunk.d_geo || !chunk.d_gv))) {
+                    YK_LOGE("[YK][Bp][E] apply: invalid prepared state or chunk.");
+                    return false;
                 }
-                if (!ctx) {
-                    YK_LOGE("[YK][Bp][E] setContext: null.\n"); return;
-                }
-                const auto* cc = static_cast<const BpChunkContext*>(ctx);
-                if (cc->K <= 0) {
-                    YK_LOGE("[YK][Bp][E] setContext: invalid K={}.\n", cc->K); return;
-                }
-                if (!use_precomputed_ && (!cc->d_geo || !cc->d_gv)) {
-                    YK_LOGE(
-                        "[YK][Bp][E] setContext: non-precomputed mode requires d_geo and d_gv.\n");
-                    return;
-                }
-                chunk_ = *cc;
+                if (use_precomputed_)
+                    Fdk::bp_launchBpPrecomputed(d_textures, d_volume, vol_geom_, chunk.K, stream);
+                else
+                    Fdk::bp_launchBpDirect(d_textures, chunk.d_geo, chunk.d_gv,
+                        d_volume, vol_geom_, chunk.K, stream);
+                return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::process
-            //   d_input  : const cudaTextureObject_t*  — device 纹理对象数组
-            //   d_output : float*                      — [Nz*Ny*Nx] 体素累加缓冲
-            // ----------------------------------------------------------------
-            void process(const void* d_input, void* d_output,
-                cudaStream_t stream = 0) override
+            void release()
             {
-                if (!is_initialized_) {
-                    YK_LOGE("[YK][Bp][E] process: not initialized.\n"); return;
-                }
-                if (!d_input || !d_output || chunk_.K <= 0) {
-                    YK_LOGE("[YK][Bp][E] process: setContext() not called.\n"); return;
-                }
-
-                const cudaTextureObject_t* d_texObjs =
-                    static_cast<const cudaTextureObject_t*>(d_input);
-                float* d_vol = static_cast<float*>(d_output);
-
-                if (use_precomputed_) {
-                    Fdk::bp_launchBpPrecomputed(
-                        d_texObjs, d_vol, vol_geom_,
-                        chunk_.K, stream);
-                }
-                else {
-                    Fdk::bp_launchBpDirect(
-                        d_texObjs, chunk_.d_geo, chunk_.d_gv,
-                        d_vol, vol_geom_,
-                        chunk_.K, stream);
-                }
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::release
-            // ----------------------------------------------------------------
-            void release() override
-            {
-                chunk_ = {};
                 vol_geom_ = {};
                 use_precomputed_ = true;
+                max_K_ = 0;
                 is_initialized_ = false;
-                cfg_ready_ = false;
             }
 
-            bool        isInitialized() const override { return is_initialized_; }
-            const char* name()          const override { return "BpProcessor"; }
+            bool isPrepared() const { return is_initialized_; }
 
         private:
             SVolGeom        vol_geom_ = {};
             bool            use_precomputed_ = true;
-            BpChunkContext  chunk_ = {};
+            int             max_K_ = 0;
             bool            is_initialized_ = false;
-            bool            cfg_ready_ = false;
         };
 
     }

@@ -10,7 +10,6 @@
 #include "FP/kernels/YkFPLaunch.cuh"
 #include "FP/kernels/YkFPHelpers.cuh"
 #include "FP/kernels/YkFPCVPLaunch.cuh"
-#include "FP/YkFPRunner.hpp"
 #include "global/YkCudaTextureController.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkMem3d.hpp"

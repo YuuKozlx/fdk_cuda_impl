@@ -1,11 +1,11 @@
-﻿#pragma once
+#pragma once
 #include <cuda_runtime.h>
 
 #include "common/YkVecGeo.hpp"
-#include "FDK/YkFdkPipelineContext.hpp"   // SKernelLaunchPolicy
+#include "FDK/YkFdkStageTypes.hpp"   // SKernelLaunchPolicy
 
 
-#include "FDK/cuh/YkFDKPreWeightHelpers.cuh"
+#include "FDK/kernels/YkFDKPreWeightHelpers.cuh"
 #include "global/YkMacro.hpp"
 namespace YK {
     namespace Fdk {

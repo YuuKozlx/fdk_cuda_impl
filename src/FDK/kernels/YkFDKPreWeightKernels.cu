@@ -4,8 +4,8 @@
 
 #include "global/YkGlobals.h"
 #include "common/YkVecGeo.hpp"             // SConeProjGeomVec, SFDKGeoParamPerView
-#include "FDK/cuh/YkFDKPreWeightHelpers.cuh"
-#include "FDK/cuh/YkFDKPreWeightLaunch.cuh"
+#include "FDK/kernels/YkFDKPreWeightHelpers.cuh"
+#include "FDK/kernels/YkFDKPreWeightLaunch.cuh"
 #include "global/YkWarpStrideCtx.cuh"
 
 namespace YK {

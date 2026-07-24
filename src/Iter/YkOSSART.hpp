@@ -1,8 +1,7 @@
 ﻿// YkOSSART.hpp
 #pragma once
 #include "common/YkProjectionOperators.hpp"
-#include "FP/YkFpRunnerExVec.hpp"
-#include "kernel/YkIterLaunch.cuh"
+#include "kernels/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
 #include "common/YkVecGeo.hpp"
@@ -130,6 +129,19 @@ namespace YK {
             fp_.init(params, cfg.fp_task, deviceId, stream);
             bp_.init(params, cfg.bp_task, deviceId, stream);
 
+            // W is projected from a 2x2x2 temporary volume.  Keep a distinct
+            // FP operator so texture dimensions always match that buffer.
+            const float sVolX = params.iVX * params.vox_x_mm;
+            const float sVolY = params.iVY * params.vox_y_mm;
+            const float sVolZ = params.iVZ * params.vox_z_mm;
+            const float sDetZ = params.iPV * params.dv_mm;
+            params_lo_ = params;
+            params_lo_.iVX = 2; params_lo_.iVY = 2; params_lo_.iVZ = 2;
+            params_lo_.vox_x_mm = sVolX * 1.1f / 2.f;
+            params_lo_.vox_y_mm = sVolY * 1.1f / 2.f;
+            params_lo_.vox_z_mm = std::max(sDetZ, sVolZ) / 2.f;
+            fp_lo_.init(params_lo_, cfg.fp_task, deviceId, stream);
+
             // ── W:全角度一次预计算 (= TIGRE set_w) ─────────────────────
             // 粗网格 2x2x2;x/y 扩 1.1;z = max(探测器高, 体积高),不扩
             {
@@ -138,11 +150,7 @@ namespace YK {
                 const float sVolZ = params.iVZ * params.vox_z_mm;
                 const float sDetZ = params.iPV * params.dv_mm;
 
-                SCBCTParams ps_w = params;            // 全角度列表
-                ps_w.iVX = 2; ps_w.iVY = 2; ps_w.iVZ = 2;
-                ps_w.vox_x_mm = sVolX * 1.1f / 2.f;
-                ps_w.vox_y_mm = sVolY * 1.1f / 2.f;
-                ps_w.vox_z_mm = std::max(sDetZ, sVolZ) / 2.f;
+                SCBCTParams ps_w = params_lo_;        // 全角度列表
 
                 const size_t w_n = (size_t)Na * view_n;
                 YK_CUDA_CHECK(cudaMalloc(&d_row_w_full_, w_n * sizeof(float)));
@@ -153,7 +161,7 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_ones8, 8 * sizeof(float)));
                 YK::Iter::fill_ones_launch(d_ones8, 8, stream);
 
-                fp_.run(d_ones8, ps_w, d_row_w_full_, stream);
+                fp_lo_.run(d_ones8, ps_w, d_row_w_full_, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 YK_CUDA_CHECK(cudaFree(d_ones8));
 
@@ -308,6 +316,7 @@ namespace YK {
             block_params_.clear();
 
             fp_.release();
+            fp_lo_.release();
             bp_.release();
             is_initialized_ = false;
             iteration_ = 0;
@@ -321,9 +330,11 @@ namespace YK {
         unsigned int iteration_ = 0;
         float        lambda_cur_ = 1.0f;
         SCBCTParams  params_;
+        SCBCTParams  params_lo_;
         Config       cfg_;
 
         ForwardOperatorAdapter fp_;
+        ForwardOperatorAdapter fp_lo_;
         BackOperatorAdapter bp_;
 
         int                      n_block_ = 0;
@@ -717,8 +728,11 @@ namespace YK {
             YK_CUDA_CHECK(cudaMalloc(&d_ones_vol_, vol_n * sizeof(float)));
             YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            if (!fp_.init(params, h_views_, cfg.fp_task, deviceId, stream) ||
+                !bp_.init(params, h_views_, cfg.bp_task, deviceId, stream)) {
+                release();
+                return false;
+            }
 
             YK::Iter::fill_ones_launch(d_ones_vol_, vol_n, stream);
             YK_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -752,11 +766,11 @@ namespace YK {
 
                 // 行权重：A_s · 1_vol
                 YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_, 0, sino_n * sizeof(float), stream));
-                fp_.run(d_ones_vol_, ps, sv, d_row_w_, stream);
+                fp_.run(d_ones_vol_, ps, d_row_w_, stream);
 
                 // 列权重：A_s^T · 1_proj
                 YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
-                bp_.run(d_residual_, ps, sv, stream, d_col_w_, true, deviceId_);
+                bp_.run(d_residual_, ps, d_col_w_, stream, true);
 
                 // 收集子集正弦图
                 for (int i = 0; i < K; ++i)
@@ -768,7 +782,7 @@ namespace YK {
 
                 // 正投影
                 YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd_, 0, sino_n * sizeof(float), stream));
-                fp_.run(d_vol, ps, sv, d_sino_fwd_, stream);
+                fp_.run(d_vol, ps, d_sino_fwd_, stream);
 
                 // 残差
                 YK::Iter::residual_launch(
@@ -778,7 +792,7 @@ namespace YK {
                 YK::Iter::divide_launch(d_residual_, d_row_w_, cfg_.eps, sino_n, stream);
 
                 // 反投影
-                bp_.run(d_residual_, ps, sv, stream, d_bp_, true, deviceId_);
+                bp_.run(d_residual_, ps, d_bp_, stream, true);
 
                 // 更新
                 YK::Iter::update_launch(
@@ -847,10 +861,10 @@ namespace YK {
         std::vector<SCBCTParams>             subset_params_;
         std::vector<std::vector<SConeProjGeomVec>> subset_views_;
 
-        // External-geometry OSSART remains independent until GeometryContext
-        // accepts explicit per-view vectors.
-        ConeProjectorEx     fp_;
-        ConeBackprojectorEx bp_;
+        // Same operator contract as circular iterative solvers; only the
+        // GeometryContext construction differs.
+        ForwardOperatorAdapter fp_;
+        BackOperatorAdapter bp_;
 
         float* d_sino_meas_sub_ = nullptr;
         float* d_sino_fwd_ = nullptr;

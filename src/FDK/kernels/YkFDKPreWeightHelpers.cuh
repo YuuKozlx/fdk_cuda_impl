@@ -1,7 +1,7 @@
-﻿#pragma once
+#pragma once
 #include <algorithm>
 
-#include "../YkFdkPipelineContext.hpp"   // SKernelLaunchPolicy
+#include "../YkFdkStageTypes.hpp"   // SKernelLaunchPolicy
 
 namespace YK {
     namespace Fdk {

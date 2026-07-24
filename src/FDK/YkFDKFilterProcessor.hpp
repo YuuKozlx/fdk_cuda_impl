@@ -1,18 +1,17 @@
-﻿#pragma once
+#pragma once
 #include <vector>
 
 #include <cuda_runtime.h>
 #include <cufft.h>
 
-#include "FDK/YkFdkPipelineContext.hpp"
+#include "FDK/YkFdkStageTypes.hpp"
 #include "Filter/YkConv.hpp"
 #include "Filter/YkFFT.hpp"
-#include "global/IProcessor.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
 
-#include "FDK/cuh/YkFDKFilterHelpers.cuh"  // normalizeFilterPolicy / fp_computePaddedN / fp_computeStartU
-#include "FDK/cuh/YkFDKFilterLaunch.cuh"   // fp_launchPad / fp_launchFilter / fp_launchCrop
+#include "FDK/kernels/YkFDKFilterHelpers.cuh"  // normalizeFilterPolicy / fp_computePaddedN / fp_computeStartU
+#include "FDK/kernels/YkFDKFilterLaunch.cuh"   // fp_launchPad / fp_launchFilter / fp_launchCrop
 #include "Filter/YkCreateFilterKernel.cuh"
 #include "global/YkLog.h"
 
@@ -22,56 +21,31 @@ namespace YK {
         // ============================================================
         // FilterProcessor
         //
-        //   生命周期：
-        //     setInitContext(&FdkFilterInitContext{...})
-        //     init()
-        //     loop:
-        //       setContext(&FdkFilterContext{ h_gv+base, K })
-        //       process(d_in, d_out, stream)
-        //     release()
+        //   生命周期：prepare(config) -> apply(input, output, chunk) -> release()
         //
         //   流水：[K*Nv*Nu] --pad--> [K*Nv*paddedN]
         //                  --FFT·W·IFFT--> [K*Nv*paddedN]
         //                  --crop--> [K*Nv*Nu]
         // ============================================================
-        class FilterProcessor : public IProcessor {
+        class FilterProcessor {
         public:
             FilterProcessor() = default;
-            ~FilterProcessor() override { release(); }
+            ~FilterProcessor() { release(); }
 
             FilterProcessor(const FilterProcessor&) = delete;
             FilterProcessor& operator=(const FilterProcessor&) = delete;
 
-            // ----------------------------------------------------------------
-            // IProcessor::setInitContext
-            // ----------------------------------------------------------------
-            void setInitContext(const void* ctx) override
-            {
-                if (!ctx) { YK_LOGE("setInitContext: null."); return; }
-                const auto* ic = static_cast<const FdkFilterInitContext*>(ctx);
-
-                cfg_.Nu = static_cast<int>(ic->dims.iPU);
-                cfg_.Nv = static_cast<int>(ic->dims.iPV);
-                cfg_.K = static_cast<int>(ic->dims.iPAng);
-                cfg_.desc = ic->desc;
-                cfg_.policy = detail::normalizeFilterPolicy(ic->policy);
-                cfg_.stream = ic->stream;
-                cfg_ready_ = true;
-
-                YK_LOGI("setInitContext: Nu={} Nv={} Kchunk={} stream={}",
-                    cfg_.Nu, cfg_.Nv, cfg_.K, static_cast<void*>(cfg_.stream));
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::init
-            // ----------------------------------------------------------------
-            bool init() override
+            // 强类型初始化入口。滤波器需要为最大 chunk 建立 FFT 工作区；尾包
+            // 通过 apply() 的 context.K 直接处理，不再为了改变 K 反复重建 plan。
+            bool prepare(const FdkFilterConfig& config)
             {
                 release();
-
-                if (!cfg_ready_) {
-                    YK_LOGE("init failed: setInitContext() not called."); return false;
-                }
+                cfg_.Nu = static_cast<int>(config.dims.iPU);
+                cfg_.Nv = static_cast<int>(config.dims.iPV);
+                cfg_.K = static_cast<int>(config.dims.iPAng);
+                cfg_.desc = config.desc;
+                cfg_.policy = detail::normalizeFilterPolicy(config.policy);
+                cfg_.stream = config.stream;
                 if (!validateCfg_()) return false;
 
                 Nu_ = cfg_.Nu;
@@ -83,101 +57,56 @@ namespace YK {
                 policy_ = cfg_.policy;
                 desc_ = cfg_.desc;
 
-                YK_CUDA_CHECK(cudaMalloc(&d_startu_,
-                    static_cast<size_t>(K_) * sizeof(int)));
+                YK_CUDA_CHECK(cudaMalloc(&d_startu_, static_cast<size_t>(K_) * sizeof(int)));
                 YK_CUDA_CHECK(cudaMalloc(&d_padded_,
                     static_cast<size_t>(K_) * Nv_ * paddedN_ * sizeof(float)));
-                YK_CUDA_CHECK(cudaMalloc(&d_weights_,
-                    static_cast<size_t>(n_cmplx_) * sizeof(float)));
+                YK_CUDA_CHECK(cudaMalloc(&d_weights_, static_cast<size_t>(n_cmplx_) * sizeof(float)));
                 YK_CUDA_CHECK(cudaMalloc(&d_complex_buf_,
                     static_cast<size_t>(K_) * Nv_ * n_cmplx_ * sizeof(cufftComplex)));
-
                 fft_batch_.init(paddedN_, K_ * Nv_, stream_);
                 kernel_fft_.prepare(paddedN_, stream_);
-
                 is_initialized_ = true;
                 weights_ready_ = false;
                 weights_dirty_ = true;
                 current_K_ = 0;
-
-                YK_LOGI("init ok: Nu={} Nv={} Kchunk={} paddedN={} n_cmplx={} stream={}",
-                    Nu_, Nv_, K_, paddedN_, n_cmplx_, static_cast<void*>(stream_));
                 return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::setContext — 每 chunk 前调用
-            // ----------------------------------------------------------------
-            void setContext(const void* ctx) override
+            // 强类型批次入口。h_gv 只作为本批几何派生数据的只读视图，
+            // 不保存在 processor 中，避免上一批 context 遗留到下一批。
+            bool apply(const float* d_input, float* d_output,
+                const FdkFilterChunk& context, cudaStream_t stream)
             {
-                if (!is_initialized_) { YK_LOGE("setContext: not initialized."); return; }
-                if (!ctx) { YK_LOGE("setContext: null.");            return; }
-
-                const auto* fc = static_cast<const FdkFilterContext*>(ctx);
-
-                if (!fc->h_gv) {
-                    YK_LOGE("setContext: h_gv is null."); return;
+                if (!is_initialized_ || !d_input || !d_output || !context.h_gv ||
+                    context.K <= 0 || context.K > K_) {
+                    YK_LOGE("[YK][Filter][E] apply: invalid prepared state or chunk.");
+                    return false;
                 }
-                if (fc->K <= 0 || fc->K > K_) {
-                    YK_LOGE("setContext: K({}) out of range [1, {}].", fc->K, K_); return;
-                }
+                if (stream != 0 && stream != stream_) setStream_(stream);
 
-                current_K_ = fc->K;
-
+                current_K_ = context.K;
                 host_startu_.resize(current_K_);
                 for (int i = 0; i < current_K_; ++i) {
                     host_startu_[i] = detail::fp_computeStartU(
-                        Nu_, paddedN_, fc->h_gv[i].offsetU_pix);
+                        Nu_, paddedN_, context.h_gv[i].offsetU_pix);
                 }
-
-
-                YK_CUDA_CHECK(cudaMemcpyAsync(
-                    d_startu_, host_startu_.data(),
+                YK_CUDA_CHECK(cudaMemcpyAsync(d_startu_, host_startu_.data(),
                     static_cast<size_t>(current_K_) * sizeof(int),
                     cudaMemcpyHostToDevice, stream_));
-
-                du_real_ = (fc->h_gv[0].du_mm > 0.0f)
-                    ? fc->h_gv[0].du_mm
-                    : 1.0f;
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::process
-            // ----------------------------------------------------------------
-            void process(const void* d_input, void* d_output,
-                cudaStream_t stream = 0) override
-            {
-                const float* d_in = static_cast<const float*>(d_input);
-                float* d_out = static_cast<float*>(d_output);
-
-                if (!validateApply_(d_in, d_out)) return;
-                if (stream != 0 && stream != stream_) setStream_(stream);
+                du_real_ = context.h_gv[0].du_mm > 0.f ? context.h_gv[0].du_mm : 1.f;
 
                 ensureWeights_();
-                if (!weights_ready_) {
-                    YK_LOGE("process aborted: weights not ready."); return;
-                }
-
-                detail::fp_launchPad(
-                    d_in, d_padded_, d_startu_,
-                    Nu_, Nv_, paddedN_, current_K_,
-                    policy_, stream_);
-
-                detail::fp_launchFilter(
-                    d_padded_, d_complex_buf_, d_weights_,
-                    n_cmplx_, paddedN_, current_K_, Nv_,
-                    fft_batch_, stream_);
-
-                detail::fp_launchCrop(
-                    d_padded_, d_out, d_startu_,
-                    Nu_, Nv_, paddedN_, current_K_,
-                    policy_, stream_);
+                if (!weights_ready_) return false;
+                detail::fp_launchPad(d_input, d_padded_, d_startu_, Nu_, Nv_, paddedN_,
+                    current_K_, policy_, stream_);
+                detail::fp_launchFilter(d_padded_, d_complex_buf_, d_weights_, n_cmplx_,
+                    paddedN_, current_K_, Nv_, fft_batch_, stream_);
+                detail::fp_launchCrop(d_padded_, d_output, d_startu_, Nu_, Nv_, paddedN_,
+                    current_K_, policy_, stream_);
+                return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::release
-            // ----------------------------------------------------------------
-            void release() override
+            void release()
             {
                 fft_batch_.release();
                 kernel_fft_.release();
@@ -201,10 +130,7 @@ namespace YK {
             }
 
             // ----------------------------------------------------------------
-            // IProcessor 状态查询
-            // ----------------------------------------------------------------
-            bool        isInitialized() const override { return is_initialized_; }
-            const char* name()          const override { return "FilterProcessor"; }
+            bool isPrepared() const { return is_initialized_; }
 
             // 调试访问器
             int   Nu()           const { return Nu_; }
@@ -226,7 +152,6 @@ namespace YK {
                 SKernelLaunchPolicy policy = {};
                 cudaStream_t        stream = 0;
             } cfg_;
-            bool cfg_ready_ = false;
 
             // ---- 运行期状态 ----
             int          Nu_ = 0;
@@ -263,23 +188,6 @@ namespace YK {
                     YK_LOGE("validateCfg: invalid dims Nu={} Nv={} K={}.",
                         cfg_.Nu, cfg_.Nv, cfg_.K);
                     return false;
-                }
-                return true;
-            }
-
-            bool validateApply_(const float* d_in, const float* d_out) const
-            {
-                if (!is_initialized_) {
-                    YK_LOGE("process aborted: not initialized."); return false;
-                }
-                if (!d_in) {
-                    YK_LOGE("process aborted: d_input is null.");  return false;
-                }
-                if (!d_out) {
-                    YK_LOGE("process aborted: d_output is null."); return false;
-                }
-                if (current_K_ <= 0) {
-                    YK_LOGE("process aborted: setContext() not called."); return false;
                 }
                 return true;
             }

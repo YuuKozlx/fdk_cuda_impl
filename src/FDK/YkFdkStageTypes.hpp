@@ -7,7 +7,7 @@
 namespace YK {
 
     // 初始化阶段配置
-    struct FdkFilterInitContext {
+    struct FdkFilterConfig {
         SProjDims       dims;           // dims.iPAng = Kchunk
         SFilterKernelDesc    desc;
         SKernelLaunchPolicy policy = {};
@@ -15,7 +15,7 @@ namespace YK {
     };
 
 
-    struct FdkFilterContext {
+    struct FdkFilterChunk {
         const SFDKGeoParamPerView* h_gv = nullptr;  // host pointer，当前 chunk 起始
         int                        K = 0;         // 当前 chunk 实际视角数
     };
@@ -24,23 +24,21 @@ namespace YK {
     // Context 结构体
     // ============================================================
 
-    // setInitContext 注入
-    struct PreweightInitContext {
+    struct PreweightConfig {
         SProjDims      dims = {};
         SKernelLaunchPolicy policy = {};
     };
 
-    // setContext 注入（每 chunk 前调用）
-    struct PreweightChunkContext {
+    struct PreweightChunk {
         const SConeProjGeomVec* d_geo = nullptr;  // device，已偏移到 chunk 起始
         const SFDKGeoParamPerView* d_gv = nullptr;  // device，已偏移到 chunk 起始
         int                        K = 0;         // 当前 chunk 实际视角数
     };
 
     // ============================================================
-// ParkerWeightInitContext / ParkerWeightChunkContext
+// ParkerWeightConfig / ParkerWeightChunk
 // ============================================================
-    struct ParkerWeightInitContext {
+    struct ParkerWeightConfig {
         SProjDims    dims = {};
         float        fDetUSize = 1.f;
         float        fSrcOrigin = 0.f;
@@ -51,20 +49,21 @@ namespace YK {
         int          nDirSign = 1;          // 方向符号，1 或 -1，取决于角度增减方向，影响冗余区域定义
     };
 
-    struct ParkerWeightChunkContext {
-        const float* h_angles = nullptr;  // 本 chunk 的角度列表，大小 = K
+    struct ParkerWeightChunk {
+        const SConeProjGeomVec* h_geometry = nullptr; // 当前 chunk 的唯一角度来源
         int          K = 0;
     };
 
     // ----------------------------------------------------------------
-    // Init / Chunk context
+    // 静态配置 / 运行期 chunk
     // ----------------------------------------------------------------
-    struct BpInitContext {
+    struct BpConfig {
         SVolGeom vol_geom;
         bool use_precomputed = true;  // true: 预计算版本，false: 非预计算版本
+        int max_chunk_views = 0;      // Pipeline prepare 后固定的工作区上界
     };
 
-    struct BpChunkContext {
+    struct BpChunk {
         const SConeProjGeomVec* d_geo = nullptr;
         const SFDKGeoParamPerView* d_gv = nullptr;
         int                        K = 0;

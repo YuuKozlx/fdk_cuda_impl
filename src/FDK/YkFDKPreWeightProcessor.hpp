@@ -1,16 +1,15 @@
-﻿#pragma once
+#pragma once
 #include <cstdio>
 
 #include <cuda_runtime.h>
 
-#include "FDK/YkFdkPipelineContext.hpp"
+#include "FDK/YkFdkStageTypes.hpp"
 #include "common/YkVecGeo.hpp"
-#include "global/IProcessor.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
 
-#include "FDK/cuh/YkFDKPreWeightHelpers.cuh"
-#include "FDK/cuh/YkFDKPreWeightLaunch.cuh"
+#include "FDK/kernels/YkFDKPreWeightHelpers.cuh"
+#include "FDK/kernels/YkFDKPreWeightLaunch.cuh"
 
 namespace YK {
     namespace Fdk {
@@ -18,122 +17,62 @@ namespace YK {
         // ============================================================
         // PreweightProcessor
         //
-        //   生命周期：
-        //     setInitContext(&PreweightInitContext{...})
-        //     init()
-        //     loop:
-        //       setContext(&PreweightChunkContext{ d_geo, d_gv, K })
-        //       process(d_in, d_out, stream)
-        //     release()
+        //   生命周期：prepare(config) -> apply(input, output, chunk) -> release()
         //
         //   支持原地：d_output == d_input 合法。
         // ============================================================
-        class PreweightProcessor : public IProcessor {
+        class PreweightProcessor {
         public:
             PreweightProcessor() = default;
-            ~PreweightProcessor() override { release(); }
+            ~PreweightProcessor() { release(); }
 
             PreweightProcessor(const PreweightProcessor&) = delete;
             PreweightProcessor& operator=(const PreweightProcessor&) = delete;
 
-            // ----------------------------------------------------------------
-            // IProcessor::setInitContext
-            // ----------------------------------------------------------------
-            void setInitContext(const void* ctx) override
+            // 初始化配置只在 prepare 时传入；chunk 数据由 apply 显式传入。
+            bool prepare(const PreweightConfig& config)
             {
-                if (!ctx) {
-                    std::fprintf(stderr, "[YK][Preweight][E] setInitContext: null.\n"); return;
-                }
-                const auto* ic = static_cast<const PreweightInitContext*>(ctx);
-                Nu_ = static_cast<int>(ic->dims.iPU);
-                Nv_ = static_cast<int>(ic->dims.iPV);
-                policy_ = detail::normalizePreweightPolicy(ic->policy);
-                cfg_ready_ = true;
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::init — 无 GPU 资源，仅验参
-            // ----------------------------------------------------------------
-            bool init() override
-            {
-                if (!cfg_ready_) {
-                    std::fprintf(stderr, "[YK][Preweight][E] init: setInitContext() not called.\n");
-                    return false;
-                }
-                if (Nu_ <= 0 || Nv_ <= 0) {
-                    std::fprintf(stderr, "[YK][Preweight][E] init: invalid dims Nu=%d Nv=%d.\n",
-                        Nu_, Nv_);
+                release();
+                Nu_ = static_cast<int>(config.dims.iPU);
+                Nv_ = static_cast<int>(config.dims.iPV);
+                max_K_ = static_cast<int>(config.dims.iPAng);
+                policy_ = detail::normalizePreweightPolicy(config.policy);
+                if (Nu_ <= 0 || Nv_ <= 0 || max_K_ <= 0) {
+                    std::fprintf(stderr, "[YK][Preweight][E] prepare: invalid dimensions.\n");
                     return false;
                 }
                 is_initialized_ = true;
                 return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::setContext — 每 chunk 前注入 geo/gv/K
-            // ----------------------------------------------------------------
-            void setContext(const void* ctx) override
+            bool apply(const float* d_input, float* d_output,
+                const PreweightChunk& chunk, cudaStream_t stream)
             {
-                if (!is_initialized_) {
-                    std::fprintf(stderr, "[YK][Preweight][E] setContext: not initialized.\n"); return;
+                if (!is_initialized_ || !d_input || !d_output ||
+                    !chunk.d_geo || !chunk.d_gv || chunk.K <= 0 || chunk.K > max_K_) {
+                    std::fprintf(stderr, "[YK][Preweight][E] apply: invalid prepared state or chunk.\n");
+                    return false;
                 }
-                if (!ctx) {
-                    std::fprintf(stderr, "[YK][Preweight][E] setContext: null.\n"); return;
-                }
-                const auto* cc = static_cast<const PreweightChunkContext*>(ctx);
-                if (!cc->d_geo || !cc->d_gv || cc->K <= 0) {
-                    std::fprintf(stderr, "[YK][Preweight][E] setContext: invalid chunk context.\n"); return;
-                }
-                chunk_ = *cc;
+                detail::pw_launchPreweight(d_input, d_output, chunk.d_geo,
+                    chunk.d_gv, Nu_, Nv_, chunk.K, policy_, stream);
+                return true;
             }
 
-            // ----------------------------------------------------------------
-            // IProcessor::process
-            //   d_input  : [K*Nv*Nu] device
-            //   d_output : [K*Nv*Nu] device（in-place 合法）
-            // ----------------------------------------------------------------
-            void process(const void* d_input, void* d_output,
-                cudaStream_t stream = 0) override
+            // 无 GPU 资源，release 仅清除配置。
+            void release()
             {
-                if (!is_initialized_) {
-                    std::fprintf(stderr, "[YK][Preweight][E] process: not initialized.\n"); return;
-                }
-                if (!d_input || !d_output) {
-                    std::fprintf(stderr, "[YK][Preweight][E] process: null pointer.\n"); return;
-                }
-                if (!chunk_.d_geo || !chunk_.d_gv || chunk_.K <= 0) {
-                    std::fprintf(stderr, "[YK][Preweight][E] process: setContext() not called.\n"); return;
-                }
-
-                detail::pw_launchPreweight(
-                    static_cast<const float*>(d_input),
-                    static_cast<float*>(d_output),
-                    chunk_.d_geo, chunk_.d_gv,
-                    Nu_, Nv_, chunk_.K,
-                    policy_, stream);
-            }
-
-            // ----------------------------------------------------------------
-            // IProcessor::release — 无 GPU 资源
-            // ----------------------------------------------------------------
-            void release() override
-            {
-                Nu_ = Nv_ = 0;
-                chunk_ = {};
+                Nu_ = Nv_ = max_K_ = 0;
                 is_initialized_ = false;
-                cfg_ready_ = false;
             }
 
-            bool        isInitialized() const override { return is_initialized_; }
-            const char* name()          const override { return "PreweightProcessor"; }
+            bool isPrepared() const { return is_initialized_; }
 
         private:
             int                    Nu_ = 0;
             int                    Nv_ = 0;
+            int                    max_K_ = 0;
             SKernelLaunchPolicy    policy_ = {};
-            PreweightChunkContext  chunk_ = {};
             bool                   is_initialized_ = false;
-            bool                   cfg_ready_ = false;
         };
 
     }

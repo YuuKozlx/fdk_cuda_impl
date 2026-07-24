@@ -1,6 +1,7 @@
 ﻿#include "test_common.hpp"
 #include "Iter/YkOSSART.hpp"
 #include "Iter/YkSART.hpp"
+#include "common/YkProjectionOperators.hpp"
 
 #include <vector>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #include "global/YkMacro.hpp"
 #include <Iter/YkCGLS.hpp>
 #include <Heli/YkHelicalProjector.hpp>
+#include "util/YkDeviceTensorDumper.hpp"
 
 
 using namespace YK::Mem;
@@ -105,8 +107,27 @@ int main_ossart_test()
         YK_LOGI("OSSART start: {} iters x {} subsets = {} updates",
             cfg.n_iter, cfg.n_subset, cfg.n_iter * cfg.n_subset);
 
+        // dump 是测试层的显式行为：每次调用一个更新后，导出当前体数据即可。
+        // 不需要也不应在 OSSART 内部注册回调。
+        IO::DeviceTensorDumper dumper;
+        dumper.initialize({ "./iter_volume_dump", false, true });
         YK::Util::CudaTimer timer("ossart_total", s);
-        recon.run(d_sino.data(), d_vol.data(), params, s);
+        for (int step = 0; step < cfg.n_iter * cfg.n_subset; ++step) {
+            if (!recon.iterate(d_sino.data(), d_vol.data(), params, s, 1)) {
+                YK_LOGE("OSSART iteration {} failed", step + 1);
+                recon.release();
+                YK_CUDA_CHECK(cudaStreamDestroy(s));
+                return -1;
+            }
+            // 将 enabled 设为 true 时，按 update 序号导出 [z,y,x] 体数据。
+            if (!dumper.dump({ "ossart_update_" + std::to_string(step + 1),
+                d_vol.data(), { Nz, Ny, Nx }, s })) {
+                YK_LOGE("OSSART volume dump failed");
+                recon.release();
+                YK_CUDA_CHECK(cudaStreamDestroy(s));
+                return -1;
+            }
+        }
         YK_CUDA_CHECK(cudaStreamSynchronize(s));
 
         YK_LOGI("OSSART done, total iterations = {}", recon.totalIterations());
@@ -355,12 +376,17 @@ int main_iter_recon_sim()
 
     // ---- Step1：Joseph FP 生成正弦图 ───────────────────────────
     {
-        ConeProjector fp;
-        fp.init(params, ETask::FP_Joseph);
+        GeometryContext geometry;
+        ResourceContext resources;
+        geometry.initialize(params);
+        resources.attach(s, 0);
+        auto fp = makeForwardOperator(ETask::FP_Joseph);
+        if (!fp->prepare(geometry, resources)) return -1;
         YK_CUDA_CHECK(cudaMemsetAsync(d_sino.data(), 0,
             proj_elems * sizeof(float), s));
         YK::Util::CudaTimer timer("fp_generate_sino", s);
-        fp.run(d_vol_gt.data(), params, d_sino.data(), s);
+        fp->apply(d_vol_gt.data(), params, d_sino.data(), resources);
+        fp->release();
     }
     cudaStreamSynchronize(s);
     {
@@ -674,18 +700,6 @@ void test_flat_detector_roty_fp_ossart(cudaStream_t stream)
     auto d_vol = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0, false);
     YK_CUDA_CHECK(cudaMemsetAsync(d_vol.data(), 0, vol_elems * sizeof(float), stream));
 
-    //// just bp
-    //{
-    //    ConeBackprojectorEx recon;
-    //    recon.init(params, ETask::BP_FDK, 0);
-    //    recon.run(d_sino.data(), params, h_views, stream, d_vol.data(), true, 0);
-    //    auto h_vol = ctrl.allocateCpu3D<float>(params.iVX, params.iVY, params.iVZ, false);
-    //    ctrl.download3D(h_vol, d_vol);
-
-    //    write_raw_float((test_data_dir + "bp_only_vol.raw").c_str(),
-    //        h_vol.data(), vol_elems);
-    //}
-
     // ---- OS-SART ────────────────────────────────────────────────
     OSSARTEx::Config cfg;
     cfg.n_iter = 10;
@@ -794,12 +808,7 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
     cfg.fp_task = ETask::FP_Joseph;
     cfg.bp_task = ETask::BP_FDK;
 
-    // OSSART内部用ConeProjector/ConeBackprojector，不接受外部h_views
-    // 改用Ex版手动实现迭代
-    ConeProjectorEx     fp;
-    ConeBackprojectorEx bp;
-    fp.init(params, cfg.fp_task);
-    bp.init(params, cfg.bp_task);
+    // 手工子集循环也使用生产 operator；每个非连续子集有独立的几何快照。
 
     const int    Na = params.iPAng;
     const int    n_subset = cfg.n_subset;
@@ -849,11 +858,17 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
 
             // 行权重：A_s · 1_vol
             YK_CUDA_CHECK(cudaMemsetAsync(d_row_w, 0, sino_n * sizeof(float), stream));
-            fp.run(d_ones_vol, ps, sub_views, d_row_w, stream);
+            auto geometry = detail::makeSubsetGeometry(ps, sub_views);
+            ResourceContext resources;
+            resources.attach(stream, 0);
+            auto fp = makeForwardOperator(cfg.fp_task);
+            auto bp = makeBackOperator(cfg.bp_task);
+            if (!fp->prepare(geometry, resources) || !bp->prepare(geometry, resources)) return;
+            fp->apply(d_ones_vol, ps, d_row_w, resources);
 
             // 列权重：A_s^T · 1_proj
             YK::Iter::fill_ones_launch(d_residual, sino_n, stream);
-            bp.run(d_residual, ps, sub_views, stream, d_col_w, true);
+            bp->apply(d_residual, ps, d_col_w, true, resources);
 
             // 收集子集正弦图
             for (int i = 0; i < K; ++i)
@@ -865,7 +880,7 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
 
             // 正投影
             YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd, 0, sino_n * sizeof(float), stream));
-            fp.run(d_vol.data(), ps, sub_views, d_sino_fwd, stream);
+            fp->apply(d_vol.data(), ps, d_sino_fwd, resources);
 
             // 残差
             YK::Iter::residual_launch(d_sino_sub, d_sino_fwd, d_residual, sino_n, stream);
@@ -874,7 +889,9 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
             YK::Iter::divide_launch(d_residual, d_row_w, cfg.eps, sino_n, stream);
 
             // 反投影
-            bp.run(d_residual, ps, sub_views, stream, d_bp, true);
+            bp->apply(d_residual, ps, d_bp, true, resources);
+            fp->release();
+            bp->release();
 
             // 更新
             YK::Iter::update_launch(d_vol.data(), d_bp, d_col_w,
@@ -1418,16 +1435,7 @@ int main_helical_from_volume_cylinder_ossart_independent()
 
     // 螺旋扫描
     p.pitch_mm = 20.0f;
-    p.bShortScan = true;
-
-    // 重建（z_block/z_step 是 HelicalReconstructor 分段FDK用的，
-    // 这里走整卷 OS-SART 不用 slab，字段保留只为
-    // fillHelicalScanGeometry 内部校验不报错）
-    p.z_block_mm = 15.0f;
-    p.z_step_mm = p.z_block_mm * 0.5;
     YK::fillHelicalScanGeometry(p, 1.f, 360, -1, true);
-
-    p.Kchunk = 32;
     p.fp_task = ETask::FP_Joseph;
 
     // ----------------------------------------------------------------
@@ -1503,12 +1511,10 @@ int main_helical_from_volume_cylinder_ossart_independent()
     }
 
     // ----------------------------------------------------------------
-    // OS-SART（手动实现，仿 test_flat_detector_roty_fp_independent，
-    // 不依赖 OSSART/OSSARTEx 类，直接用 ConeProjectorEx/
-    // ConeBackprojectorEx + h_views，规避 OSSARTEx 相关编译问题）
+    // OS-SART（手动实现，复用通用 FP/BP operator 与外部 h_views）。
     //
     // 几何：projector.geo() 已是每视图带 z 偏移的完整
-    // SConeProjGeomVec，跟 HelicalReconstructor 用的是同一份。
+    // SConeProjGeomVec 是螺旋正投、反投和迭代的统一几何来源。
     // ----------------------------------------------------------------
     const auto& h_views = projector.geo();
     const int   Na = (int)h_views.size();
@@ -1558,10 +1564,6 @@ int main_helical_from_volume_cylinder_ossart_independent()
         ETask fp_task = ETask::FP_Joseph; ETask bp_task = ETask::BP_Joseph_v3;
     } cfg;
 
-    ConeProjectorEx     fp;
-    ConeBackprojectorEx bp;
-    fp.init(params, cfg.fp_task);
-    bp.init(params, cfg.bp_task);
 
     const int    n_subset = cfg.n_subset;
     const size_t max_K = (Na + n_subset - 1) / n_subset;
@@ -1612,11 +1614,17 @@ int main_helical_from_volume_cylinder_ossart_independent()
 
             // 行权重：A_s · 1_vol
             YK_CUDA_CHECK(cudaMemsetAsync(d_row_w, 0, sino_n * sizeof(float), stream));
-            fp.run(d_ones_vol, ps, sub_views, d_row_w, stream);
+            auto geometry = detail::makeSubsetGeometry(ps, sub_views);
+            ResourceContext resources;
+            resources.attach(stream, 0);
+            auto fp = makeForwardOperator(cfg.fp_task);
+            auto bp = makeBackOperator(cfg.bp_task);
+            if (!fp->prepare(geometry, resources) || !bp->prepare(geometry, resources)) return -1;
+            fp->apply(d_ones_vol, ps, d_row_w, resources);
 
             // 列权重：A_s^T · 1_proj
             YK::Iter::fill_ones_launch(d_residual, sino_n, stream);
-            bp.run(d_residual, ps, sub_views, stream, d_col_w, true);
+            bp->apply(d_residual, ps, d_col_w, true, resources);
 
             // 收集子集正弦图
             for (int i = 0; i < K; ++i)
@@ -1628,7 +1636,7 @@ int main_helical_from_volume_cylinder_ossart_independent()
 
             // 正投影
             YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd, 0, sino_n * sizeof(float), stream));
-            fp.run(d_vol.data(), ps, sub_views, d_sino_fwd, stream);
+            fp->apply(d_vol.data(), ps, d_sino_fwd, resources);
 
             // 残差
             YK::Iter::residual_launch(d_sino_sub, d_sino_fwd, d_residual, sino_n, stream);
@@ -1637,7 +1645,9 @@ int main_helical_from_volume_cylinder_ossart_independent()
             YK::Iter::divide_launch(d_residual, d_row_w, cfg.eps, sino_n, stream);
 
             // 反投影
-            bp.run(d_residual, ps, sub_views, stream, d_bp, true);
+            bp->apply(d_residual, ps, d_bp, true, resources);
+            fp->release();
+            bp->release();
 
             // 更新
             YK::Iter::update_launch(d_vol.data(), d_bp, d_col_w,
@@ -1726,16 +1736,7 @@ int main_helical_from_volume_cylinder_ossart()
 
     // 螺旋扫描
     p.pitch_mm = 20.0f;
-    p.bShortScan = true;
-
-    // 重建（z_block/z_step 是 HelicalReconstructor 分段FDK用的，
-    // 这里走整卷 OSSARTEx 不分 slab，字段保留只为
-    // fillHelicalScanGeometry 内部校验不报错）
-    p.z_block_mm = 15.0f;
-    p.z_step_mm = p.z_block_mm * 0.5;
     YK::fillHelicalScanGeometry(p, 1.f, 360, -1, true);
-
-    p.Kchunk = 32;
     p.fp_task = ETask::FP_Joseph;
 
     // ----------------------------------------------------------------
@@ -1952,16 +1953,7 @@ int main_helical_from_volume_cylinder_cgls()
 
     // 螺旋扫描
     p.pitch_mm = 20.0f;
-    p.bShortScan = true;
-
-    // 重建（z_block/z_step 是 HelicalReconstructor 分段FDK用的，
-    // 这里走整卷 CGLSEx 不分 slab，字段保留只为
-    // fillHelicalScanGeometry 内部校验不报错）
-    p.z_block_mm = 15.0f;
-    p.z_step_mm = p.z_block_mm * 0.5;
     YK::fillHelicalScanGeometry(p, 1.f, 180, -1, true);
-
-    p.Kchunk = 32;
     p.fp_task = ETask::FP_Joseph;
 
     // ----------------------------------------------------------------

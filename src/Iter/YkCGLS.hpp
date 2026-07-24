@@ -1,11 +1,12 @@
 ﻿#pragma once
 #include "common/YkProjectionOperators.hpp"
-#include "FP/YkFpRunnerExVec.hpp"
-#include "kernel/YkIterLaunch.cuh"
+#include "common/YkDeviceWorkspace.hpp"
+#include "kernels/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkLog.h"
+#include "util/YkCpuProfiler.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 
 #include <cuda_runtime.h>
@@ -38,17 +39,17 @@ namespace YK {
             const size_t sino_n = (size_t)params.iPAng * params.iPU * params.iPV;
 
             // r = b - Ax（残差，正弦图空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_r_, sino_n * sizeof(float)));
+            d_r_.allocate(sino_n, deviceId);
             // p = A^T r（搜索方向，体积空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_p_, vol_n * sizeof(float)));
+            d_p_.allocate(vol_n, deviceId);
             // q = A p（正弦图空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_q_, sino_n * sizeof(float)));
+            d_q_.allocate(sino_n, deviceId);
             // s = A^T r（体积空间，临时）
-            YK_CUDA_CHECK(cudaMalloc(&d_s_, vol_n * sizeof(float)));
+            d_s_.allocate(vol_n, deviceId);
             // 上一次 x 的备份（用于发散时回退）
-            YK_CUDA_CHECK(cudaMalloc(&d_x_prev_, vol_n * sizeof(float)));
+            d_x_prev_.allocate(vol_n, deviceId);
             // 正投影临时缓冲
-            YK_CUDA_CHECK(cudaMalloc(&d_ax_, sino_n * sizeof(float)));
+            d_ax_.allocate(sino_n, deviceId);
 
             fp_.init(params, cfg.fp_task, deviceId, stream);
             bp_.init(params, cfg.bp_task, deviceId, stream);
@@ -161,12 +162,8 @@ namespace YK {
 
         void release()
         {
-            if (d_r_) { cudaFree(d_r_);      d_r_ = nullptr; }
-            if (d_p_) { cudaFree(d_p_);      d_p_ = nullptr; }
-            if (d_q_) { cudaFree(d_q_);      d_q_ = nullptr; }
-            if (d_s_) { cudaFree(d_s_);      d_s_ = nullptr; }
-            if (d_x_prev_) { cudaFree(d_x_prev_); d_x_prev_ = nullptr; }
-            if (d_ax_) { cudaFree(d_ax_);     d_ax_ = nullptr; }
+            d_r_.reset(); d_p_.reset(); d_q_.reset();
+            d_s_.reset(); d_x_prev_.reset(); d_ax_.reset();
             fp_.release();
             bp_.release();
             is_initialized_ = false;
@@ -216,12 +213,12 @@ namespace YK {
         ForwardOperatorAdapter fp_;
         BackOperatorAdapter bp_;
 
-        float* d_r_ = nullptr;   // 残差（正弦图空间）
-        float* d_p_ = nullptr;   // 搜索方向（体积空间）
-        float* d_q_ = nullptr;   // A*p（正弦图空间）
-        float* d_s_ = nullptr;   // A^T*r（体积空间）
-        float* d_x_prev_ = nullptr;   // x 备份
-        float* d_ax_ = nullptr;   // 正投影临时缓冲
+        DeviceWorkspaceF32 d_r_;       // 残差（正弦图空间）
+        DeviceWorkspaceF32 d_p_;       // 搜索方向（体积空间）
+        DeviceWorkspaceF32 d_q_;       // A*p（正弦图空间）
+        DeviceWorkspaceF32 d_s_;       // A^T*r（体积空间）
+        DeviceWorkspaceF32 d_x_prev_;  // x 备份
+        DeviceWorkspaceF32 d_ax_;      // 正投影临时缓冲
     };
 
     YK_INLINE bool cgls_reconstruct(
@@ -259,10 +256,10 @@ namespace YK {
             const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
             const size_t sino_n = (size_t)params.iPAng * params.iPU * params.iPV;
 
-            YK_CUDA_CHECK(cudaMalloc(&d_r_, sino_n * sizeof(float)));  // r（正弦图空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_w_, sino_n * sizeof(float)));  // w = A p（正弦图空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_p_, vol_n * sizeof(float)));  // p（体积空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_z_, vol_n * sizeof(float)));  // z = A^T r（体积空间）
+            d_r_.allocate(sino_n, deviceId);  // r（正弦图空间）
+            d_w_.allocate(sino_n, deviceId);  // w = A p（正弦图空间）
+            d_p_.allocate(vol_n, deviceId);   // p（体积空间）
+            d_z_.allocate(vol_n, deviceId);   // z = A^T r（体积空间）
 
             fp_.init(params, cfg.fp_task, deviceId, stream);
             bp_.init(params, cfg.bp_task, deviceId, stream);
@@ -365,10 +362,7 @@ namespace YK {
 
         void release()
         {
-            if (d_r_) { cudaFree(d_r_); d_r_ = nullptr; }
-            if (d_w_) { cudaFree(d_w_); d_w_ = nullptr; }
-            if (d_p_) { cudaFree(d_p_); d_p_ = nullptr; }
-            if (d_z_) { cudaFree(d_z_); d_z_ = nullptr; }
+            d_r_.reset(); d_w_.reset(); d_p_.reset(); d_z_.reset();
             fp_.release();
             bp_.release();
             is_initialized_ = false;
@@ -384,10 +378,10 @@ namespace YK {
         ForwardOperatorAdapter fp_;
         BackOperatorAdapter bp_;
 
-        float* d_r_ = nullptr;   // 残差（正弦图空间）
-        float* d_w_ = nullptr;   // w = A p（正弦图空间）
-        float* d_p_ = nullptr;   // 搜索方向（体积空间）
-        float* d_z_ = nullptr;   // z = A^T r（体积空间）
+        DeviceWorkspaceF32 d_r_; // 残差（正弦图空间）
+        DeviceWorkspaceF32 d_w_; // w = A p（正弦图空间）
+        DeviceWorkspaceF32 d_p_; // 搜索方向（体积空间）
+        DeviceWorkspaceF32 d_z_; // z = A^T r（体积空间）
     };
 
     YK_INLINE bool cgls_astra_reconstruct(
@@ -408,11 +402,8 @@ namespace YK {
     // ============================================================
     //  CGLSEx
     //
-    //  与 CGLS 的差异：正反投影算子换成 ConeProjectorEx /
-    //  ConeBackprojectorEx，几何以外部传入的 h_views
-    //  （std::vector<SConeProjGeomVec>）驱动，不依赖
-    //  SCBCTParams.angle_list 内部反推几何 —— 跟 OSSARTEx 相对
-    //  OSSART 的关系一致，因此天然支持任意轨迹（螺旋等）。
+    //  与 CGLS 的差异仅在于 GeometryContext 由外部 h_views 构造，
+    //  FP/BP 仍使用同一套通用 operator，不再维护第二套 runner。
     //
     //  迭代算法本身（CG 数学结构、收敛判据、回退重启逻辑）与
     //  CGLS 完全一致，不做任何改动。
@@ -464,8 +455,11 @@ namespace YK {
             // 正投影临时缓冲
             YK_CUDA_CHECK(cudaMalloc(&d_ax_, sino_n * sizeof(float)));
 
-            fp_.init(params, cfg.fp_task, deviceId);
-            bp_.init(params, cfg.bp_task, deviceId);
+            if (!fp_.init(params, h_views_, cfg.fp_task, deviceId, stream) ||
+                !bp_.init(params, h_views_, cfg.bp_task, deviceId, stream)) {
+                release();
+                return false;
+            }
 
             is_initialized_ = true;
             YK_LOGI("[CGLSEx] init OK: {} angles (external geometry)",
@@ -503,7 +497,7 @@ namespace YK {
                     sino_n * sizeof(float), stream));
                 {
                     Util::CpuTimer t("CGLSEx fp:q=Ap");
-                    fp_.run(d_p_, params, h_views_, d_q_, stream);
+                    fp_.run(d_p_, params, d_q_, stream);
                     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 }
 
@@ -523,7 +517,7 @@ namespace YK {
                     sino_n * sizeof(float), stream));
                 {
                     Util::CpuTimer t("CGLSEx fp:Ax(convergence check)");
-                    fp_.run(d_vol, params, h_views_, d_ax_, stream);
+                    fp_.run(d_vol, params, d_ax_, stream);
                     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 }
                 YK::Iter::residual_launch(d_sino_meas, d_ax_,
@@ -561,7 +555,7 @@ namespace YK {
                 // s = A^T r
                 {
                     Util::CpuTimer t("CGLSEx bp:s=A^Tr");
-                    bp_.run(d_r_, params, h_views_, stream, d_s_, /*clear_vol=*/true, deviceId_);
+                    bp_.run(d_r_, params, d_s_, stream, /*clear_vol=*/true);
                     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                 }
 
@@ -615,7 +609,7 @@ namespace YK {
                 sino_n * sizeof(float), stream));
             {
                 Util::CpuTimer t("CGLSEx init:fp Ax");
-                fp_.run(d_vol, params, h_views_, d_r_, stream);
+                fp_.run(d_vol, params, d_r_, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
             }
             YK::Iter::residual_launch(d_sino_meas, d_r_,
@@ -624,7 +618,7 @@ namespace YK {
             // p = A^T r
             {
                 Util::CpuTimer t("CGLSEx init:bp A^Tr");
-                bp_.run(d_r_, params, h_views_, stream, d_p_, /*clear_vol=*/true, deviceId_);
+                bp_.run(d_r_, params, d_p_, stream, /*clear_vol=*/true);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
             }
         }
@@ -650,10 +644,8 @@ namespace YK {
 
         std::vector<SConeProjGeomVec> h_views_;
 
-        // External-geometry variant stays separate: its h_views input is not
-        // representable by the circular GeometryContext used by this adapter.
-        ConeProjectorEx     fp_;
-        ConeBackprojectorEx bp_;
+        ForwardOperatorAdapter fp_;
+        BackOperatorAdapter bp_;
 
         float* d_r_ = nullptr;   // 残差（正弦图空间）
         float* d_p_ = nullptr;   // 搜索方向（体积空间）

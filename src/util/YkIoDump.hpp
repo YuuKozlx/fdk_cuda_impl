@@ -40,11 +40,22 @@ namespace YK {
                 size_t count_f32,
                 cudaStream_t stream);
 
+            // 写入指定文件名（相对 output_dir）。用于由独立诊断组件决定命名
+            // 规则；DumpManager 本身不理解算法、视图或处理 stage。
+            bool dumpDeviceF32(
+                const std::string& file_name,
+                const float* d_src,
+                size_t count_f32,
+                cudaStream_t stream);
+
             // Optional: dump a small text file: <output_dir>/<prefix>_aXXXX.txt
             bool dumpText_A(
                 const char* prefix,
                 int a,
                 const std::string& text);
+
+            // 写入指定文本文件名（相对 output_dir）。
+            bool dumpText(const std::string& file_name, const std::string& text);
 
             // Utility: join path safely (very simple)
             static std::string joinPath(const std::string& dir, const std::string& name);

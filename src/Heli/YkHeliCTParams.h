@@ -2,6 +2,7 @@
 #include "global/YkGlobals.h"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 #include <cassert>
+#include <stdexcept>
 
 using namespace YK;
 
@@ -42,19 +43,8 @@ struct SHeliCTParam {
     int               views_per_rot = 720;
     std::vector<float> angle_list;  // 新增：外部传入，仿真或真实数据均用此
 
-    // ---- 重建 ----
-    bool  bShortScan = false;
-    float z_block_mm = 3.f;
-    float z_step_mm = 1.0f;
-    int   Kchunk = 32;
+    // ---- 算子选择 ----
     ETask fp_task = ETask::FP_Joseph;
-    // Keep the default explicit: SFilterKernelDesc no longer has an enum
-    // converting constructor.
-    YK::SFilterKernelDesc desc = [] {
-        YK::SFilterKernelDesc d{};
-        d.kind = YK::EFilterKernel::RamLak;
-        return d;
-    }();
 };
 
 
@@ -118,9 +108,8 @@ namespace YK {
      * 推导：源点到 r=R 体素的射线在探测器面上的 V 方向张角，
      * 等效回等中心平面时需乘以几何压缩因子 (SID - R) / SID。
      *
-     * 此值应作为 z_block_mm 的上限，保证每个 slab 内所有
-     * 横断面（包括 r=R 边缘）均有完整的锥束投影覆盖。
-     * 超出此范围的 slab 端部落入锥体盲区，重建质量劣化。
+     * 此值可用于判断指定重建范围在给定 pitch 下是否具备足够的
+     * z 向采样覆盖；具体 wFBP/PI-line 窗口应由对应算法单独定义。
      *
      * @param iPV    探测器排数
      * @param dv_mm  探测器排间距 (mm)
@@ -392,7 +381,7 @@ namespace YK {
      *
      * 前提：调用前必须已设置以下字段：
      *   iPV, dv_mm, iPU, du_mm, SID, SDD,
-     *   iVZ, vox_z_mm, pitch_mm, bShortScan
+     *   iVZ, vox_z_mm, pitch_mm
      *
      * 填充字段：
      *   start_z_mm  ← 由 scanStartZ() 计算
@@ -429,13 +418,6 @@ namespace YK {
         if (p.pitch_mm > pf * dZ_eff)   // 用 pf 留出冗余余量
             throw std::invalid_argument(
                 "pitch_mm 超过 pf*dZ_eff(R)，r=R 处将产生漏采样风险");
-        if (p.z_block_mm > dZ_eff)
-            throw std::invalid_argument(
-                "z_block_mm 超过 dZ_eff(R)，slab 端部将落入锥体盲区");
-        if (p.z_step_mm > p.z_block_mm)
-            throw std::invalid_argument(
-                "z_step_mm > z_block_mm，相邻 slab 之间存在空洞");
-
         // ── 填充扫描几何 ──────────────────────────────────────────
         p.start_z_mm = scanStartZ(Z_vol, dZ_eff, p.pitch_mm);
 
@@ -451,7 +433,6 @@ namespace YK {
         if (verbose) {
             const float alpha = maxConeAngle(dZ_axis, p.SID);
             const float alpha_deg = alpha * 180.f / static_cast<float>(M_PI);
-            const float overlap = (1.f - p.z_step_mm / p.z_block_mm) * 100.f;
 
             printf("--- Helical CT Param Summary ------------------------\n");
             printf("  M            = %.4f\n", M);
@@ -464,11 +445,6 @@ namespace YK {
                 p.pitch_mm,
                 p.pitch_mm / dZ_eff,
                 p.pitch_mm / dZ_eff <= 1.f ? "(OK)" : "(WARNING: >1)");
-            printf("  z_block_mm   = %.2f mm  %s\n",
-                p.z_block_mm,
-                p.z_block_mm <= dZ_eff ? "(OK)" : "(WARNING: >dZ_eff)");
-            printf("  z_step_mm    = %.2f mm  overlap=%.0f%%\n",
-                p.z_step_mm, overlap);
             printf("  Z_vol        = %.1f mm\n", Z_vol);
             printf("  z_start      = %.2f mm\n", p.start_z_mm);
             printf("  n_rotations  = %d\n", n_rot);

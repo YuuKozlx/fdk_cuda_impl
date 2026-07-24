@@ -1,10 +1,10 @@
-﻿#pragma once
+#pragma once
 #include <cufft.h>
 #include <cuda_runtime.h>
 
 #include "../../Filter/YkConv.hpp"               // _kernel_pointwise_mul
 #include "../../Filter/YkFFT.hpp"                // CudaFFT
-#include "../../FDK/YkFdkPipelineContext.hpp" // SKernelLaunchPolicy
+#include "../../FDK/YkFdkStageTypes.hpp" // SKernelLaunchPolicy
 #include "../../global/YkMacro.hpp"              // YK_CUDA_KERNEL_CHECK
 
 

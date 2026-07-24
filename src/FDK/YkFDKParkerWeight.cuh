@@ -2,6 +2,6 @@
 
 // YkFDKParkerWeight.cuh — ParkerWeight 模块 umbrella header
 
-#include "FDK/cuh/YkFDKParkerHelpers.cuh"
-#include "FDK/cuh/YkFDKParkerLaunch.cuh"
+#include "FDK/kernels/YkFDKParkerHelpers.cuh"
+#include "FDK/kernels/YkFDKParkerLaunch.cuh"
 #include "FDK/YkFDKParkerWeightProcessor.hpp"

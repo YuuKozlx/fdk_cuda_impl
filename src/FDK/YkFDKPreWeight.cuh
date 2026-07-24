@@ -2,6 +2,6 @@
 
 // YkFDKPreWeight.cuh — PreWeight 模块 umbrella header
 
-#include "FDK/cuh/YkFDKPreWeightHelpers.cuh"
-#include "FDK/cuh/YkFDKPreWeightLaunch.cuh"
+#include "FDK/kernels/YkFDKPreWeightHelpers.cuh"
+#include "FDK/kernels/YkFDKPreWeightLaunch.cuh"
 #include "FDK/YkFDKPreWeightProcessor.hpp"

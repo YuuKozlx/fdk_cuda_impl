@@ -14,6 +14,7 @@
 #include <cuda_runtime.h>
 #include <vector>
 #include <vector_types.h>
+#include "YKCBCT/geometry/YkProjectionGeometry.hpp"
 
 namespace YK {
 
@@ -121,15 +122,6 @@ namespace YK {
         }
     };
 
-
-    struct alignas(16) SConeProjGeomVec {
-        float4 src;     // xyz = source position, w = unused
-        float4 srcCR;   // xyz = center ray direction, w = unused
-        float4 detS;    // xyz = detector (0,0) position, w = unused
-        float4 detU;    // xyz = per-pixel U vector, w = unused
-        float4 detV;    // xyz = per-pixel V vector, w = unused
-        float4 angle;   // x = gantry angle, y/z = reserved, w = unused
-    };
 
     // ---------------------- launch policy ----------------------
     struct SKernelLaunchPolicy {

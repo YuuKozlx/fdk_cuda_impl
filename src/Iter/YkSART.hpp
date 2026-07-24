@@ -1,11 +1,12 @@
 ﻿// YkSART.hpp
 #pragma once
 #include "common/YkProjectionOperators.hpp"
-#include "kernel/YkIterLaunch.cuh"
+#include "kernels/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkLog.h"
+#include "util/YkCpuProfiler.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 
 #include <cuda_runtime.h>
@@ -48,6 +49,20 @@ namespace YK {
 
             fp_.init(params, cfg.fp_task, deviceId, stream);
             bp_.init(params, cfg.bp_task, deviceId, stream);
+
+            // R uses a temporary 2x2x2 volume.  It must have its own FP
+            // geometry/texture contract; reusing fp_ would interpret an
+            // eight-float buffer as the full reconstruction volume.
+            const float sVolX = params.iVX * params.vox_x_mm;
+            const float sVolY = params.iVY * params.vox_y_mm;
+            const float sVolZ = params.iVZ * params.vox_z_mm;
+            const float sDetZ = params.iPV * params.dv_mm;
+            params_lo_ = params;
+            params_lo_.iVX = 2; params_lo_.iVY = 2; params_lo_.iVZ = 2;
+            params_lo_.vox_x_mm = sVolX * 1.1f / 2.f;
+            params_lo_.vox_y_mm = sVolY * 1.1f / 2.f;
+            params_lo_.vox_z_mm = std::max(sDetZ, sVolZ) / 2.f;
+            fp_lo_.init(params_lo_, cfg.fp_task, deviceId, stream);
 
             // ── 预计算 C = A^T · 1_proj（全局，所有角度）────────────
             {
@@ -106,16 +121,9 @@ namespace YK {
 
                     // ── 实时计算 R = A_i · 1_vol（单角度，扩大体积粗网格）
                     {
-                        const float sVolX = params.iVX * params.vox_x_mm;
-                        const float sVolY = params.iVY * params.vox_y_mm;
-                        const float sVolZ = params.iVZ * params.vox_z_mm;
-                        const float sDetZ = params.iPV * params.dv_mm;
-
-                        SCBCTParams ps_r = p1;
-                        ps_r.iVX = 2; ps_r.iVY = 2; ps_r.iVZ = 2;
-                        ps_r.vox_x_mm = sVolX * 1.1f / 2.f;
-                        ps_r.vox_y_mm = sVolY * 1.1f / 2.f;
-                        ps_r.vox_z_mm = std::max(sDetZ, sVolZ) / 2.f;
+                        SCBCTParams ps_r = params_lo_;
+                        ps_r.iPAng = 1;
+                        ps_r.angle_list = p1.angle_list;
 
                         float* d_ones_coarse = nullptr;
                         YK_CUDA_CHECK(cudaMalloc(&d_ones_coarse, 8 * sizeof(float)));
@@ -123,7 +131,7 @@ namespace YK {
 
                         YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_, 0,
                             view_n * sizeof(float), stream));
-                        fp_.run(d_ones_coarse, ps_r, d_row_w_, stream);
+                        fp_lo_.run(d_ones_coarse, ps_r, d_row_w_, stream);
                         YK_CUDA_CHECK(cudaStreamSynchronize(stream));
                         cudaFree(d_ones_coarse);
 
@@ -180,6 +188,7 @@ namespace YK {
             if (d_bp_) { cudaFree(d_bp_);       d_bp_ = nullptr; }
             if (d_col_w_) { cudaFree(d_col_w_);    d_col_w_ = nullptr; }
             fp_.release();
+            fp_lo_.release();
             bp_.release();
             is_initialized_ = false;
             lambda_cur_ = 1.0f;
@@ -191,9 +200,11 @@ namespace YK {
         bool        is_initialized_ = false;
         float       lambda_cur_ = 1.0f;
         SCBCTParams params_;
+        SCBCTParams params_lo_;
         Config      cfg_;
 
         ForwardOperatorAdapter fp_;
+        ForwardOperatorAdapter fp_lo_;
         BackOperatorAdapter bp_;
 
         float* d_sino_fwd_ = nullptr;

@@ -2,19 +2,14 @@
 # consume large local raw-data files and are selected by a command-line group.
 set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/testmain.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_fdk.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_fp_runner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_bp.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_helical_algorithms.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_sart.cpp
 )
 
-option(YKCBCT_BUILD_HELICAL_MANUAL_TESTS
-    "Include experimental helical integration tests" OFF)
-if(YKCBCT_BUILD_HELICAL_MANUAL_TESTS)
-    list(APPEND YKCBCT_MANUAL_TEST_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_heli.cpp)
-endif()
 
 add_executable(ykcbct_manual_tests
     ${YKCBCT_MANUAL_TEST_SOURCES}
@@ -41,7 +36,3 @@ set_target_properties(ykcbct_manual_tests PROPERTIES
     CUDA_STANDARD_REQUIRED ON
     CUDA_SEPARABLE_COMPILATION ON
 )
-
-if(YKCBCT_BUILD_HELICAL_MANUAL_TESTS)
-    target_compile_definitions(ykcbct_manual_tests PRIVATE YKCBCT_MANUAL_HELICAL=1)
-endif()

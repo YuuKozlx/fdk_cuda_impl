@@ -12,8 +12,8 @@
 #include "global/YkMacro.hpp"
 #include "global/YkMem3d.hpp"
 #include "FDK/YkFDKBackProject.cuh"
-#include "FDK/cuh/YkFDKBpHelpers.cuh"
-#include "FDK/cuh/YkFDKBpPrecompute.cuh"
+#include "FDK/kernels/YkFDKBpHelpers.cuh"
+#include "FDK/kernels/YkFDKBpPrecompute.cuh"
 
 
 namespace YK {
@@ -124,12 +124,28 @@ namespace YK {
             const std::vector<SFDKGeoParamPerView>& h_gv,
             int offset, int K, cudaStream_t stream)
         {
-            YK_CUDA_CHECK(cudaMemcpy(
+            YK_CUDA_CHECK(cudaMemcpyAsync(
                 geo.data() + offset, h_geo.data(),
-                K * sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice));
-            YK_CUDA_CHECK(cudaMemcpy(
+                K * sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice, stream));
+            YK_CUDA_CHECK(cudaMemcpyAsync(
                 gv.data() + offset, h_gv.data(),
-                K * sizeof(SFDKGeoParamPerView), cudaMemcpyHostToDevice));
+                K * sizeof(SFDKGeoParamPerView), cudaMemcpyHostToDevice, stream));
+            Fdk::bp_launchPrecomputeCoeffs(
+                geo.data() + offset, gv.data() + offset,
+                coeffs.data() + offset, K, stream);
+        }
+
+        void uploadBatchIncremental(
+            const SConeProjGeomVec* h_geo,
+            const SFDKGeoParamPerView* h_gv,
+            int offset, int K, cudaStream_t stream)
+        {
+            YK_CUDA_CHECK(cudaMemcpyAsync(
+                geo.data() + offset, h_geo,
+                K * sizeof(SConeProjGeomVec), cudaMemcpyHostToDevice, stream));
+            YK_CUDA_CHECK(cudaMemcpyAsync(
+                gv.data() + offset, h_gv,
+                K * sizeof(SFDKGeoParamPerView), cudaMemcpyHostToDevice, stream));
             Fdk::bp_launchPrecomputeCoeffs(
                 geo.data() + offset, gv.data() + offset,
                 coeffs.data() + offset, K, stream);
@@ -210,6 +226,12 @@ namespace YK {
             const std::vector<SConeProjGeomVec>& h_geo,
             const std::vector<SFDKGeoParamPerView>& h_gv,
             int offset, int K, cudaStream_t stream)
+        {
+            geo.uploadBatchIncremental(h_geo, h_gv, offset, K, stream);
+        }
+
+        void uploadGeoIncremental(const SConeProjGeomVec* h_geo,
+            const SFDKGeoParamPerView* h_gv, int offset, int K, cudaStream_t stream)
         {
             geo.uploadBatchIncremental(h_geo, h_gv, offset, K, stream);
         }

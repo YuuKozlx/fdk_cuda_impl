@@ -5,13 +5,13 @@
 #include <vector>
 
 #include <global/YkMacro.hpp>
-#include "FDK/YkFdkReconstructor.hpp"
+#include "FDK/YkFdkPipeline.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 #include "global/YkMem3d.hpp"
 #include "test_common.hpp"
-#include <BP/YkBPRunner.hpp>
+#include "common/YkProjectionOperators.hpp"
 
 using namespace YK;
 using namespace Mem;
@@ -43,6 +43,17 @@ static SCBCTParams makeFdkParams()
     return params;
 }
 
+// 圆轨迹测试统一先构造完整 geometry 并预计算。这样离线与在线测试都走
+// Session 的正式 FdkPipeline 数据流，而非旧 runner 的独立实现。
+static bool runFdkPipeline(const float* h_proj, float* d_volume,
+    const SCBCTParams& params, int chunk, cudaStream_t stream, bool clear_output)
+{
+    FdkPipeline pipeline;
+    if (!pipeline.prepareWithAngles(params, params.angle_list, chunk, stream)) return false;
+    const FdkProjectionBatch batch{ h_proj, nullptr, nullptr, params.iPAng };
+    return pipeline.processBatch(batch, d_volume, clear_output);
+}
+
 // ----------------------------------------------------------------
 // FdkTest：离线重建（目视类，验证能跑通且结果非零）
 // ----------------------------------------------------------------
@@ -63,7 +74,7 @@ TEST(FdkTest, OfflineRecon_NonZeroOutput)
     MemoryController ctrl;
     auto d_vol = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0, false);
 
-    bool ok = YK::fdk_recon(h_proj.data(), d_vol.data(), params,
+    bool ok = runFdkPipeline(h_proj.data(), d_vol.data(), params,
         /*Kchunk=*/32, s, /*clear_vol=*/true);
     EXPECT_TRUE(ok);
 
@@ -104,30 +115,24 @@ TEST(FdkTest, OnlineRecon_MatchesOffline)
         params.iVX, params.iVY, params.iVZ, 0, false);
 
     // 离线
-    ASSERT_TRUE(YK::fdk_recon(h_proj.data(), d_vol_offline.data(), params,
+    ASSERT_TRUE(runFdkPipeline(h_proj.data(), d_vol_offline.data(), params,
         32, s, true));
 
     // 在线分包
     const int batch_size = 32 * 3;
     const int batch_num = (Ang + batch_size - 1) / batch_size;
-    auto angle_list = params.angle_list;
-
-    FdkReconstructor recon;
-    ASSERT_TRUE(recon.init(params, 32, s));
+    FdkPipeline pipeline;
+    ASSERT_TRUE(pipeline.prepareWithAngles(params, params.angle_list, 32, s));
 
     for (int i = 0; i < batch_num; ++i) {
         const int base = i * batch_size;
         const int count = std::min(batch_size, Ang - base);
 
-        SCBCTParams bp = params;
-        bp.iPAng = count;
-        bp.angle_list = std::vector<float>(
-            angle_list.begin() + base,
-            angle_list.begin() + base + count);
-
-        ASSERT_TRUE(recon.feed(h_proj.data() + base * view_elems,
-            bp, s, d_vol_online.data(), (i == 0)));
+        const FdkProjectionBatch batch{
+            h_proj.data() + base * view_elems, nullptr, nullptr, count };
+        ASSERT_TRUE(pipeline.processBatch(batch, d_vol_online.data(), i == 0));
     }
+    EXPECT_TRUE(pipeline.complete());
 
     cudaStreamSynchronize(s);
 
@@ -150,10 +155,10 @@ TEST(FdkTest, OnlineRecon_MatchesOffline)
 }
 
 // ----------------------------------------------------------------
-// FdkTest：BpReconstructor 与 FDK 反投影阶段一致性验证
+// FdkTest：通用 BP operator 与 FDK 反投影阶段一致性验证
 // 数值验证类
 // ----------------------------------------------------------------
-TEST(FdkTest, BpReconstructor_MatchesFdk)
+TEST(FdkTest, BackOperator_MatchesFdk)
 {
     auto params = makeFdkParams();
     const size_t view_elems = (size_t)params.iPU * params.iPV;
@@ -176,40 +181,39 @@ TEST(FdkTest, BpReconstructor_MatchesFdk)
 
     std::vector<float> h_flt_all(proj_elems, 0.f);
 
-    // FDK + dump flt
+    // FDK：测试直接读取 pipeline 暴露的最后一个 stage 设备视图，不再使用
+    // 算法内部回调或在计算路径中强制同步。
     {
-        FdkReconstructor recon;
-        ASSERT_TRUE(recon.init(params, 32, s));
-
-        struct DumpCtx { cudaStream_t stream; float* buf; size_t ve; };
-        DumpCtx ctx{ s, h_flt_all.data(), view_elems };
-
-        auto onDump = [](void* p) {
-            auto* payload = static_cast<DumpPayload*>(p);
-            if (std::string(payload->stage) != "flt") return;
-            auto* ctx = static_cast<DumpCtx*>(payload->userdata);
-            cudaMemcpyAsync(
-                ctx->buf + (size_t)payload->viewIdx * ctx->ve,
-                payload->buf, payload->n * sizeof(float),
-                cudaMemcpyDeviceToHost, ctx->stream);
-            };
-
-        ASSERT_TRUE(recon.feed(h_proj.data(), params, s,
-            d_vol_fdk.data(), true, onDump, &ctx));
+        FdkPipeline pipeline;
+        ASSERT_TRUE(pipeline.prepareWithAngles(params, params.angle_list, params.iPAng, s));
+        const FdkProjectionBatch batch{ h_proj.data(), nullptr, nullptr, params.iPAng };
+        ASSERT_TRUE(pipeline.processBatch(batch, d_vol_fdk.data(), true));
+        const FdkStageView& stage = pipeline.lastStage();
+        ASSERT_TRUE(stage.valid());
+        ASSERT_EQ(stage.first_view, 0);
+        ASSERT_EQ(stage.count, params.iPAng);
+        ASSERT_EQ(cudaMemcpyAsync(h_flt_all.data(), stage.d_filtered,
+            proj_elems * sizeof(float), cudaMemcpyDeviceToHost, stage.stream), cudaSuccess);
     }
 
     cudaStreamSynchronize(s);
 
-    // BpReconstructor
+    // 直接调用通用 BP operator。滤波投影和目标体数据均由调用方持有，
+    // 因此无 runner、无回调，也不会在算法内部强制同步。
     float* d_flt_raw = nullptr;
     ASSERT_EQ(cudaMalloc(&d_flt_raw, proj_elems * sizeof(float)), cudaSuccess);
     ASSERT_EQ(cudaMemcpy(d_flt_raw, h_flt_all.data(),
         proj_elems * sizeof(float), cudaMemcpyHostToDevice), cudaSuccess);
 
     {
-        YK::BpReconstructor recon;
-        ASSERT_TRUE(recon.init(params, 32, s));
-        ASSERT_TRUE(recon.feed(d_flt_raw, params, s, d_vol_bp.data(), true));
+        GeometryContext geometry;
+        ResourceContext resources;
+        ASSERT_TRUE(geometry.initialize(params));
+        resources.attach(s, 0);
+        auto bp = makeBackOperator(ETask::BP_FDK);
+        ASSERT_TRUE(bp->prepare(geometry, resources));
+        ASSERT_TRUE(bp->apply(d_flt_raw, params, d_vol_bp.data(), true, resources));
+        bp->release();
     }
 
     cudaStreamSynchronize(s);
@@ -228,7 +232,7 @@ TEST(FdkTest, BpReconstructor_MatchesFdk)
     }
     mse /= (double)vol_elems;
 
-    EXPECT_LT(maxDiff, 1e-5) << "BpReconstructor differs from FDK, maxDiff=" << maxDiff;
+    EXPECT_LT(maxDiff, 1e-5) << "BackOperator differs from FDK, maxDiff=" << maxDiff;
     EXPECT_LT(mse, 1e-10) << "MSE too large: " << mse;
 
     write_raw_float((test_data_dir + "bp_vec_vol_online_bpvsfdk.raw").c_str(), h_vol_bp.cdata(), vol_elems);

@@ -6,13 +6,13 @@
 
 #include <global/YkMacro.hpp>
 #include <random>
-#include "FDK/YkFdkReconstructor.hpp"
+#include "FDK/YkFdkPipeline.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 #include "global/YkMem3d.hpp"
 
-#include <FP/YkFpRunnerExVec.hpp>
+#include "common/YkProjectionOperators.hpp"
 #include <cmath>
 #include <common/YkVecGeo.hpp>
 #include <cuda_runtime_api.h>
@@ -300,9 +300,17 @@ YK_INLINE void run_fp(
     { auto borrow = mc.borrowCpu3D(h_vol.data(), Nx, Ny, Nz); mc.upload3D(d_vol, borrow); }
     h_vol.reset();
 
-    ConeProjectorEx fpr;
-    if (!fpr.init(params, ETask::FP_Joseph, 0)) { YK_LOGE("FP init failed"); return; }
-    fpr.run(d_vol.data(), params, h_views, d_sino.data(), stream);
+    GeometryContext geometry;
+    ResourceContext resources;
+    if (!geometry.initialize(params, h_views)) { YK_LOGE("FP geometry init failed"); return; }
+    resources.attach(stream, 0);
+    auto fp = makeForwardOperator(ETask::FP_Joseph);
+    if (!fp->prepare(geometry, resources) ||
+        !fp->apply(d_vol.data(), params, d_sino.data(), resources)) {
+        YK_LOGE("FP operator execution failed");
+        return;
+    }
+    fp->release();
     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
     std::vector<float> h_sino(view_elems * Na);
@@ -337,8 +345,18 @@ YK_INLINE void run_recon(
     auto d_vol_buf = mc.allocateDevice3D<float>(Nx, Ny, Nz, 0, false);
     {
         YK::Util::CudaTimer timer("recon", stream);
-        YK::fdk_recon_ex(h_sino.data(), d_vol_buf.data(), params,
-            h_views_recon, 64, stream, true, nullptr, nullptr);
+        // 外部 geometry 是唯一真源：在重建开始前一次性建立派生几何缓存，
+        // 运行阶段只按视图顺序提交投影，不再传第二份角度或几何参数。
+        FdkPipeline pipeline;
+        if (!pipeline.prepareWithGeometry(params, h_views_recon, 64, stream)) {
+            YK_LOGE("FDK geometry pipeline prepare failed");
+            return;
+        }
+        const FdkProjectionBatch batch{ h_sino.data(), &h_views_recon, nullptr, Na };
+        if (!pipeline.processBatch(batch, d_vol_buf.data(), true)) {
+            YK_LOGE("FDK geometry pipeline execution failed");
+            return;
+        }
     }
     auto h_vol = mc.allocateCpu3D<float>(Nx, Ny, Nz, false);
     mc.download3D(h_vol, d_vol_buf);

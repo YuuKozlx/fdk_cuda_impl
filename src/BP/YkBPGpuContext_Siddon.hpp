@@ -10,6 +10,7 @@
 #include "../global/YkMem3d.hpp"
 //#include "YkBp.cuh"
 #include "kernels/YkBPHelpers.cuh"
+#include "FDK/kernels/YkFDKBpPrecompute.cuh"
 
 namespace YK {
     namespace Bp {

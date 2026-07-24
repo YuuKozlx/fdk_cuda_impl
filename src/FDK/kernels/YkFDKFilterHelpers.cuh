@@ -1,10 +1,10 @@
-﻿#pragma once
+#pragma once
 #include <algorithm>
 #include <cmath>
 
 #include <cuda_runtime.h>
 
-#include "../YkFdkPipelineContext.hpp"   // SKernelLaunchPolicy
+#include "../YkFdkStageTypes.hpp"   // SKernelLaunchPolicy
 
 
 namespace YK {

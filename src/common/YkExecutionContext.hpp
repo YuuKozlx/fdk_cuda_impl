@@ -28,6 +28,20 @@ public:
         return true;
     }
 
+    // Iterative algorithms with calibrated per-view geometry use this overload.
+    // The vector is copied once during prepare and remains the only geometry
+    // source for the lifetime of the operator set.
+    bool initialize(const SCBCTParams& params, const std::vector<SConeProjGeomVec>& geometry)
+    {
+        if (!initialize(params) || static_cast<int>(geometry.size()) != params.iPAng)
+            return false;
+        all_geometry_ = geometry;
+        all_angles_.resize(geometry.size());
+        for (size_t i = 0; i < geometry.size(); ++i)
+            all_angles_[i] = geometry[i].angle.x;
+        return true;
+    }
+
     bool initialize(const SessionDesc& desc)
     {
         if (desc.scan.Nu <= 0 || desc.scan.Nv <= 0 || desc.scan.NAng <= 0 ||
@@ -52,6 +66,7 @@ public:
         base_.vol_offset_x_mm = desc.volume.offsetX_mm;
         base_.vol_offset_y_mm = desc.volume.offsetY_mm; base_.vol_offset_z_mm = desc.volume.offsetZ_mm;
         all_angles_ = desc.angles;
+        all_geometry_ = desc.geometry;
         return true;
     }
 
@@ -65,6 +80,8 @@ public:
 
     const SCBCTParams& base() const { return base_; }
     const std::vector<float>& allAngles() const { return all_angles_; }
+    const std::vector<SConeProjGeomVec>& allGeometry() const { return all_geometry_; }
+    bool hasExternalGeometry() const { return !all_geometry_.empty(); }
     SVolGeom volumeGeometry() const
     {
         SVolGeom g = SVolGeom::make_centered(base_.iVX, base_.iVY, base_.iVZ,
@@ -76,6 +93,7 @@ public:
 private:
     SCBCTParams base_{};
     std::vector<float> all_angles_{};
+    std::vector<SConeProjGeomVec> all_geometry_{};
 };
 
 // Owns the CUDA resources shared by every operator in one session.

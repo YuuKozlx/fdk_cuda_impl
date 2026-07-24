@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include <vector>
-#include "FP/YkFpRunnerExVec.hpp"
+#include "common/YkProjectionOperators.hpp"
 #include "Heli/YkHelicalGeo.hpp"
 #include "Heli/YkHeliCTParams.h"
 #include "global/YkLog.h"
@@ -83,19 +83,28 @@ namespace YK {
 			fp_params.iPAngTotal = total_views;
 			fp_params.angle_list = param_.angle_list;
 
-			ConeProjectorEx fp;
-			if (!fp.init(fp_params, param_.fp_task, device_id_)) {
+			GeometryContext geometry;
+			ResourceContext resources;
+			if (!geometry.initialize(fp_params, geo_)) {
+				cudaFree(d_proj);
+				return false;
+			}
+			resources.attach(stream, device_id_);
+			auto fp = makeForwardOperator(param_.fp_task);
+			if (!fp->prepare(geometry, resources)) {
 				cudaFree(d_proj);
 				return false;
 			}
 
 			{
 				Util::CudaTimer timer("helical_fp", stream);
-				if (!fp.run(d_vol, fp_params, geo_, d_proj, stream)) {
+				if (!fp->apply(d_vol, fp_params, d_proj, resources)) {
+					fp->release();
 					cudaFree(d_proj);
 					return false;
 				}
 			}
+			fp->release();
 
 			YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 			YK_CUDA_CHECK(cudaMemcpy(

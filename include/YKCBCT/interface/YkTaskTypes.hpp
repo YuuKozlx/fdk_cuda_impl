@@ -2,8 +2,8 @@
 #pragma once
 #include <cstdint>
 #include <cuda_runtime_api.h>
-#include <functional>
 #include <vector>
+#include "YKCBCT/geometry/YkProjectionGeometry.hpp"
 
 
 
@@ -164,8 +164,12 @@ namespace YK {
         SVolumeParams volume{};
         AlgorithmDesc algorithm{};
         GPURes gpu = GPURes::fromList({ 0 });
-        // Required by iterative pipelines because their workspace is built
-        // for the complete acquisition during initialize().
+        // FDK 优先使用完整逐视图 geometry。geometry 非空时是唯一的几何和
+        // 角度来源，长度必须等于 scan.NAng；当前公开 FDK 仅接受初始化时的
+        // 完整 geometry，不接受 execute() 逐批改变几何。
+        std::vector<SConeProjGeomVec> geometry{};
+        // 圆轨迹回退输入；geometry 为空时，FDK 用它构造完整 geometry。
+        // 迭代管线当前仍需要完整 angles 建立工作区。
         std::vector<float> angles{};
     };
 
@@ -176,8 +180,11 @@ namespace YK {
         EMemoryLocation location = EMemoryLocation::Device;
     };
 
-    // For FDK and FP, angles/K define one batch.  For iterative pipelines K
-    // must equal SessionDesc::scan.NAng and projection contains all views.
+    // 对 FDK 和 FP，angles/K 描述一个批次。FDK 批次按 execute() 调用顺序
+    // 追加，总视图数必须恰好达到 SessionDesc::scan.NAng；重建完成后，在
+    // reset() 前 session 会拒绝继续提交 FDK 批次。clear_output 仅允许用于
+    // initialize() 或 reset() 后的首批，防止意外清掉此前的在线累积结果。
+    // 对迭代管线，K 必须等于 SessionDesc::scan.NAng，projection 包含全视图。
     struct ExecuteRequest {
         const float* angles = nullptr; // host-resident radians
         int K = 0;
@@ -186,21 +193,6 @@ namespace YK {
         bool clear_output = true;
         // Zero uses AlgorithmDesc::iterative.iterations.
         int iteration_count = 0;
-    };
-
-    // Optional diagnostics hook used by the internal FDK/FP runners.
-    using TaskDumpCallback = std::function<void(void*)>;
-
-    // Internal runners share this payload shape.  It remains public only
-    // because callbacks are intentionally part of the C++ extension surface.
-    struct DumpPayload {
-        int viewIdx = 0;
-        const char* stage = nullptr;
-        void* buf = nullptr;
-        size_t n = 0;
-        cudaStream_t stream = nullptr;
-        void* userdata = nullptr;
-        bool isDevicePtr = true;
     };
 
 } // namespace YK

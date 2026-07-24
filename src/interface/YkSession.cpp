@@ -4,8 +4,7 @@
 
 #include <cuda_runtime.h>
 
-#include "FDK/YkFdkReconstructor.hpp"
-#include "FP/YkFPRunner.hpp"
+#include "FDK/YkFdkPipeline.hpp"
 #include "Iter/YkSART.hpp"
 #include "Iter/YkOSSART.hpp"
 #include "Iter/YkCGLS.hpp"
@@ -51,13 +50,31 @@ public:
         if (!geometry_.initialize(desc) || !resources_.initialize(device_)) return false;
         params_ = geometry_.base();
         params_.angle_list = geometry_.allAngles();
+        if (geometry_.hasExternalGeometry()) {
+            // 外部 geometry 的 angle.x 是唯一角度来源。同步写入内部参数仅为
+            // 复用当前 FDK/Parker 配置接口，绝不读取 SessionDesc::angles。
+            params_.angle_list.resize(geometry_.allGeometry().size());
+            for (size_t i = 0; i < geometry_.allGeometry().size(); ++i)
+                params_.angle_list[i] = geometry_.allGeometry()[i].angle.x;
+            params_.scan_start_angle_rad = params_.angle_list.front();
+            if (params_.angle_list.size() >= 2)
+                params_.nDirSign = params_.angle_list[1] >= params_.angle_list[0] ? 1 : -1;
+        }
         params_.iPAng = static_cast<int>(params_.angle_list.size());
 
         bool ok = false;
         switch (desc.algorithm.pipeline) {
         case EPipeline::FDK:
             params_.desc = makeFilterDesc(desc.algorithm.fdk);
-            ok = fdk_.init(params_, kMaxChunkAng, resources_.stream(), device_);
+            // geometry 非空时，它是唯一的几何/角度真源。圆轨迹 angles 只在
+            // geometry 为空时用于构造同一份完整 geometry。
+            ok = geometry_.hasExternalGeometry()
+                ? fdk_.prepareWithGeometry(params_, geometry_.allGeometry(), kMaxChunkAng,
+                    resources_.stream(), device_)
+                : static_cast<int>(params_.angle_list.size()) == params_.iPAngTotal
+                ? fdk_.prepareWithAngles(params_, params_.angle_list, kMaxChunkAng,
+                    resources_.stream(), device_)
+                : fdk_.prepare(params_, kMaxChunkAng, resources_.stream(), device_);
             break;
         case EPipeline::ForwardProjection:
             forward_ = makeForwardOperator(desc.algorithm.forward_projector);
@@ -152,25 +169,30 @@ private:
 
     bool executeFdk_(const ExecuteRequest& r)
     {
-        if (!r.angles || r.K <= 0 || !r.projection.data || !r.volume.data) return false;
-        // FdkReconstructor performs asynchronous host-to-device staging per
-        // chunk.  Device projections intentionally are not accepted here;
-        // accepting them would hide a synchronous device->host round trip.
+        if (r.K <= 0 || !r.projection.data || !r.volume.data) return false;
+        if (!geometry_.hasExternalGeometry() && !r.angles) {
+            YK_LOGE("[Session] FDK 圆轨迹模式要求 ExecuteRequest::angles。");
+            return false;
+        }
+        // FDK pipeline 会按 chunk 异步完成主机到设备的投影传输。这里不接受
+        // device projection，避免接口暗中引入一次同步的 device-to-host 回传。
         if (r.projection.location != EMemoryLocation::Host) {
             YK_LOGE("[Session] FDK projection input must be host memory.");
             return false;
         }
-        SCBCTParams batch = geometry_.batch(r.angles, r.K);
-        batch.desc = params_.desc;
         float* d_out = r.volume.location == EMemoryLocation::Device
             ? r.volume.data : ensureVolumeScratch_();
         if (!d_out) return false;
-        if (!fdk_.feed(r.projection.data, batch, resources_.stream(), d_out, r.clear_output)) return false;
+        // 外部 geometry 模式在 initialize 时已预计算全序列；执行时仅提交
+        // 投影。圆轨迹模式的 angles 只用于 fallback geometry 构造。
+        const FdkProjectionBatch batch{ r.projection.data, nullptr,
+            geometry_.hasExternalGeometry() ? nullptr : r.angles, r.K };
+        if (!fdk_.processBatch(batch, d_out, r.clear_output)) return false;
         // A host output only becomes a complete reconstruction after the
         // final FDK batch.  Copying earlier would expose a partial volume and
         // adds an unnecessary device synchronization for every batch.
         if (r.volume.location == EMemoryLocation::Host &&
-            fdk_.totalReceived() >= params_.iPAngTotal) {
+            fdk_.complete()) {
             YK_CUDA_CHECK(cudaMemcpyAsync(r.volume.data, d_out, volumeBytes_(),
                 cudaMemcpyDeviceToHost, resources_.stream()));
             YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
@@ -257,7 +279,7 @@ private:
     SCBCTParams params_{};
     int device_ = 0;
     bool initialized_ = false;
-    FdkReconstructor fdk_;
+    FdkPipeline fdk_;
     GeometryContext geometry_;
     ResourceContext resources_;
     std::unique_ptr<IForwardOperator> forward_;

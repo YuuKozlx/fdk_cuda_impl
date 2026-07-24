@@ -4,7 +4,6 @@ add_executable(YKCBCT_unit_test
     ${CMAKE_CURRENT_SOURCE_DIR}/test_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_filter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fdk.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_bp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp 
 )
 
