@@ -1,11 +1,10 @@
 #pragma once
 
-#include <algorithm>
 #include <cufft.h>
 
 #include "Filter/YkConv.hpp"
 #include "Filter/YkFFT.hpp"
-#include "Filter/YkCreateFilterKernel.cuh"
+#include "Heli/YkHeliCTParams.h"
 #include "Heli/wfbp/YkWfbpTypes.hpp"
 #include "Heli/wfbp/kernels/YkWfbpLaunch.cuh"
 #include "global/YkMem3d.hpp"
@@ -19,7 +18,7 @@ public:
         geometry_ = geometry;
         flat_du_mm_ = flat_du_mm;
         policy_ = config.launch;
-        return geometry_.views > 0 && geometry_.rows > 0 &&
+        return geometry_.raw_views > 0 && geometry_.input_rows > 0 &&
             geometry_.input_channels > 1 && flat_du_mm_ > 0.f;
     }
 
@@ -43,7 +42,8 @@ public:
     {
         geometry_ = geometry;
         policy_ = config.launch;
-        return geometry_.views > 0 && geometry_.rows > 0 &&
+        return geometry_.raw_views > 0 && geometry_.views > 0 &&
+            geometry_.input_rows > 1 && geometry_.rows > 1 &&
             geometry_.input_channels > 1 && geometry_.output_channels > 1;
     }
 
@@ -73,20 +73,32 @@ public:
         geometry_ = geometry;
         policy_ = config.launch;
         stream_ = stream;
+        filter_config_ = config.filter;
+
+        // FreeCT 新版使用至少 2*Nu 的 2 次幂零填充，避免周期卷积污染有效通道。
         padded_channels_ = 1;
         while (padded_channels_ < 2 * geometry_.output_channels)
             padded_channels_ <<= 1;
         complex_channels_ = padded_channels_ / 2 + 1;
         const int batch = geometry_.views * geometry_.rows;
+
         d_padded_ = memory_.allocateDevice3D<float>(padded_channels_,
             geometry_.rows, geometry_.views, device_id);
         d_complex_ = memory_.allocateDevice3D<cufftComplex>(complex_channels_,
             geometry_.rows, geometry_.views, device_id);
-        d_weights_ = memory_.allocateDevice3D<float>(complex_channels_, 1, 1, device_id);
-        if (!fft_.init(padded_channels_, batch, stream_)) return false;
-        filter_builder_.prepare(padded_channels_, stream_);
-        filter_builder_.build_weights(d_weights_.data(), config.filter,
-            geometry_.parallel_spacing, true);
+        d_spatial_filter_ = memory_.allocateDevice3D<float>(padded_channels_, 1, 1,
+            device_id);
+        d_filter_fft_ = memory_.allocateDevice3D<cufftComplex>(complex_channels_, 1, 1,
+            device_id);
+
+        if (!fft_.init(padded_channels_, batch, stream_) ||
+            !filter_fft_.init(padded_channels_, 1, CudaFFT::EPlanMode::R2COnly,
+                stream_)) return false;
+
+        // 严格采用 FreeCT generate_filter() 的空间核，再 FFT 到频域。
+        detail::launch_build_freect_filter(d_spatial_filter_.data(),
+            padded_channels_, geometry_.parallel_spacing, filter_config_, policy_, stream_);
+        filter_fft_.fft(d_spatial_filter_.data(), d_filter_fft_.data());
         prepared_ = true;
         return true;
     }
@@ -97,8 +109,9 @@ public:
         detail::launch_pad(input, d_padded_.data(), geometry_.output_channels,
             padded_channels_, geometry_.rows, geometry_.views, policy_, stream_);
         fft_.fft(d_padded_.data(), d_complex_.data());
-        Filter::launch_pointwise_mul(d_complex_.data(), d_weights_.data(),
-            complex_channels_, geometry_.views * geometry_.rows, stream_);
+        detail::launch_multiply_filter(d_complex_.data(), d_filter_fft_.data(),
+            complex_channels_, geometry_.views * geometry_.rows,
+            1.f / padded_channels_, policy_, stream_);
         fft_.ifft(d_complex_.data(), d_padded_.data());
         detail::launch_crop(d_padded_.data(), output, geometry_.output_channels,
             padded_channels_, geometry_.rows, geometry_.views, policy_, stream_);
@@ -107,17 +120,19 @@ public:
 
     void release()
     {
-        filter_builder_.release();
         fft_.release(false);
+        filter_fft_.release(false);
         d_padded_ = {};
         d_complex_ = {};
-        d_weights_ = {};
+        d_spatial_filter_ = {};
+        d_filter_fft_ = {};
         padded_channels_ = complex_channels_ = 0;
         prepared_ = false;
     }
 
 private:
     Geometry geometry_{};
+    FreeCtFilterConfig filter_config_{};
     SKernelLaunchPolicy policy_{};
     cudaStream_t stream_ = nullptr;
     int padded_channels_ = 0;
@@ -126,9 +141,10 @@ private:
     Mem::MemoryController memory_{};
     Mem::DeviceLinearBuffer3D<float> d_padded_{};
     Mem::DeviceLinearBuffer3D<cufftComplex> d_complex_{};
-    Mem::DeviceLinearBuffer3D<float> d_weights_{};
+    Mem::DeviceLinearBuffer3D<float> d_spatial_filter_{};
+    Mem::DeviceLinearBuffer3D<cufftComplex> d_filter_fft_{};
     CudaFFT fft_{};
-    Filter::CreateFilterKernelFromFFT filter_builder_{};
+    CudaFFT filter_fft_{};
 };
 
 class BackProjectProcessor {

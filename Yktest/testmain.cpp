@@ -17,6 +17,10 @@ int main_ossart_tigre_smoke(); int main_ossart_smoke(); int main_ossart_ex_smoke
 int main_cgls_smoke(); int main_cgls_astra_smoke(); int main_cgls_ex_smoke();
 int main_helical_icd_smoke();
 int main_helical_wfbp_smoke();
+int main_helical_wfbp_ffs_smoke();
+int main_helical_wfbp_comparison();
+int main_fpcyl_adjoint();
+int main_fpcyl_wfbp_comparison();
 
 int main_ossart_test(); int main_ossart_ex_test(); int main_iter_recon_sim();
 int main_iter_sirt_recon_sim(); int main_cgls_test(); int main_ossart_realdata_test();
@@ -60,6 +64,10 @@ const TestEntry kTests[] = {
     TEST_INT("geometry/planar-fp-bp", "geometry", false, main_planar_geometry_operator_smoke),
     TEST_INT("helical/icd", "helical", false, main_helical_icd_smoke),
     TEST_INT("helical/wfbp", "helical", false, main_helical_wfbp_smoke),
+    TEST_INT("helical/wfbp-ffs", "helical", false, main_helical_wfbp_ffs_smoke),
+    TEST_INT("helical/wfbp-compare", "helical", false, main_helical_wfbp_comparison),
+    TEST_INT("fpcyl/adjoint", "fpcyl", false, main_fpcyl_adjoint),
+    TEST_INT("fpcyl/wfbp-compare", "fpcyl", false, main_fpcyl_wfbp_comparison),
     TEST_INT("fp/basic", "fp", false, main_fp),
 
     TEST_INT("iter/ossart", "iter", false, main_ossart_test),

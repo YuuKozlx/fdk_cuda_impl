@@ -6,6 +6,7 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_helical_algorithms.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_fpcyl.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_sart.cpp
 )
@@ -27,7 +28,7 @@ target_compile_options(ykcbct_manual_tests PRIVATE
     $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/openmp:experimental>
     $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:GNU>>:-Wall -Wextra -Wpedantic>
     $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:Clang>>:-Wall -Wextra -Wpedantic>
-    $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
+    $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda -Xcompiler=/utf-8>
 )
 set_target_properties(ykcbct_manual_tests PROPERTIES
     CXX_STANDARD 17

@@ -67,6 +67,7 @@ if(WIN32)
         $<$<COMPILE_LANGUAGE:CUDA>:
             --extended-lambda
             -Xcompiler="/W3"
+            -Xcompiler="/utf-8"
             $<$<CONFIG:Release>:-O3 -use_fast_math>
         >
     )
@@ -114,6 +115,7 @@ add_subdirectory(src/Filter)
 add_subdirectory(src/FDK)
 add_subdirectory(src/BP)
 add_subdirectory(src/FP)
+add_subdirectory(src/CylFpBp)
 add_subdirectory(src/Iter)
 
 # Helical reconstruction is still under active development.  Keep it out of
