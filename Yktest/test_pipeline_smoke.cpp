@@ -5,63 +5,66 @@
 
 #include <cuda_runtime.h>
 
+#include <global/YkGlobals.h>
+#include <utility>
 #include "FDK/YkFdkPipeline.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
+#include "test_common.hpp"
 
 namespace {
 
-using namespace YK;
+    using namespace YK;
 
-SCBCTParams makeSmallParams(int views = 12)
-{
-    SCBCTParams p{};
-    p.iPU = 48; p.iPV = 36;
-    p.iPAng = views; p.iPAngTotal = views;
-    p.iVX = 32; p.iVY = 32; p.iVZ = 24;
-    p.du_mm = 1.f; p.dv_mm = 1.f;
-    p.vox_x_mm = 1.f; p.vox_y_mm = 1.f; p.vox_z_mm = 1.f;
-    p.SID = 100.f; p.SDD = 200.f;
-    p.scan_range_rad = 2.f * CUDA_PI;
-    p.scan_start_angle_rad = 0.f;
-    p.bShortScan = false;
-    p.angle_list.resize(views);
-    for (int i = 0; i < views; ++i)
-        p.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / views;
-    return p;
-}
+    SCBCTParams makeSmallParams(int views = 12)
+    {
+        SCBCTParams p{};
+        p.iPU = 48; p.iPV = 36;
+        p.iPAng = views; p.iPAngTotal = views;
+        p.iVX = 32; p.iVY = 32; p.iVZ = 24;
+        p.du_mm = 1.f; p.dv_mm = 1.f;
+        p.vox_x_mm = 1.f; p.vox_y_mm = 1.f; p.vox_z_mm = 1.f;
+        p.SID = 100.f; p.SDD = 200.f;
+        p.scan_range_rad = 2.f * CUDA_PI;
+        p.scan_start_angle_rad = 0.f;
+        p.bShortScan = false;
+        p.angle_list.resize(views);
+        for (int i = 0; i < views; ++i)
+            p.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / views;
+        return p;
+    }
 
-SCBCTParams makeFdkSmokeParams()
-{
-    SCBCTParams p = makeSmallParams();
-    // FDK 分包回归只验证在线状态和 chunk 边界；保持最小已验证尺寸，避免
-    // 测试本身把 FFT 工作区扩张成性能/显存压力测试。
-    p.iPU = 32; p.iPV = 24;
-    p.iVX = 16; p.iVY = 16; p.iVZ = 12;
-    return p;
-}
+    SCBCTParams makeFdkSmokeParams()
+    {
+        SCBCTParams p = makeSmallParams();
+        // FDK 分包回归只验证在线状态和 chunk 边界；保持最小已验证尺寸，避免
+        // 测试本身把 FFT 工作区扩张成性能/显存压力测试。
+        p.iPU = 32; p.iPV = 24;
+        p.iVX = 16; p.iVY = 16; p.iVZ = 12;
+        return p;
+    }
 
-bool checkCuda(cudaError_t status, const char* what)
-{
-    if (status == cudaSuccess) return true;
-    std::fprintf(stderr, "%s: %s\n", what, cudaGetErrorString(status));
-    return false;
-}
+    bool checkCuda(cudaError_t status, const char* what)
+    {
+        if (status == cudaSuccess) return true;
+        std::fprintf(stderr, "%s: %s\n", what, cudaGetErrorString(status));
+        return false;
+    }
 
-float maxAbsDiff(const std::vector<float>& a, const std::vector<float>& b)
-{
-    float result = 0.f;
-    for (size_t i = 0; i < a.size(); ++i)
-        result = std::max(result, std::fabs(a[i] - b[i]));
-    return result;
-}
+    float maxAbsDiff(const std::vector<float>& a, const std::vector<float>& b)
+    {
+        float result = 0.f;
+        for (size_t i = 0; i < a.size(); ++i)
+            result = std::max(result, std::fabs(a[i] - b[i]));
+        return result;
+    }
 
-bool hasSignal(const std::vector<float>& data)
-{
-    return std::any_of(data.begin(), data.end(), [](float value) {
-        return std::isfinite(value) && std::fabs(value) > 1e-6f;
-    });
-}
+    bool hasSignal(const std::vector<float>& data)
+    {
+        return std::any_of(data.begin(), data.end(), [](float value) {
+            return std::isfinite(value) && std::fabs(value) > 1e-6f;
+            });
+    }
 
 } // namespace
 
@@ -98,7 +101,7 @@ int main_operator_roundtrip_smoke()
     ok = ok && checkCuda(cudaMemcpy(h_sino.data(), d_sino, sino_n * sizeof(float),
         cudaMemcpyDeviceToHost), "download projection") &&
         checkCuda(cudaMemcpy(h_backprojection.data(), d_backprojection, volume_n * sizeof(float),
-        cudaMemcpyDeviceToHost), "download backprojection") &&
+            cudaMemcpyDeviceToHost), "download backprojection") &&
         hasSignal(h_sino) && hasSignal(h_backprojection);
     std::printf("operator roundtrip: %s\n", ok ? "PASS" : "FAIL");
 
@@ -145,7 +148,7 @@ int main_external_geometry_operator_smoke()
     ok = ok && checkCuda(cudaMemcpy(h_circular.data(), d_circular, sino_n * sizeof(float),
         cudaMemcpyDeviceToHost), "download circular sino") &&
         checkCuda(cudaMemcpy(h_external.data(), d_external, sino_n * sizeof(float),
-        cudaMemcpyDeviceToHost), "download external sino");
+            cudaMemcpyDeviceToHost), "download external sino");
     const float diff = ok ? maxAbsDiff(h_circular, h_external) : INFINITY;
     ok = ok && diff < 1e-5f;
     std::printf("external geometry FP: max diff = %.8g, %s\n", diff, ok ? "PASS" : "FAIL");
@@ -193,7 +196,7 @@ int main_fdk_batch_consistency_smoke()
     ok = ok && checkCuda(cudaMemcpy(h_full.data(), d_full, volume_n * sizeof(float),
         cudaMemcpyDeviceToHost), "download full FDK") &&
         checkCuda(cudaMemcpy(h_split.data(), d_split, volume_n * sizeof(float),
-        cudaMemcpyDeviceToHost), "download split FDK");
+            cudaMemcpyDeviceToHost), "download split FDK");
     const float diff = ok ? maxAbsDiff(h_full, h_split) : INFINITY;
     ok = ok && diff < 1e-4f;
     std::printf("FDK batch consistency: max diff = %.8g, %s\n", diff, ok ? "PASS" : "FAIL");
@@ -223,5 +226,88 @@ int main_catphan_phantom_smoke()
         *min_it == 0.f && *max_it >= 0.080f;
     std::printf("Catphan-like phantom: air=%d base=%d high=%d low=%d, %s\n",
         air, base, high, low, ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+const std::string test_data_dir = R"(H:\Code\fanproj\fdk-test\TestData\)";
+
+int main_fdk_realdata()
+{
+    SCBCTParams p;
+    p.iPU = 1024;
+    p.iPV = 1024;
+    p.iPAng = 420;
+    p.iPAngTotal = 420;
+    p.iVX = 512;
+    p.iVY = 512;
+    p.iVZ = 400;
+    p.du_mm = 0.417;
+    p.dv_mm = 0.417;
+    p.vox_x_mm = 0.4495;
+    p.vox_y_mm = 0.4495;
+    p.vox_z_mm = 0.4495;
+    p.bShortScan = true;
+    p.scan_range_rad = 210.f / 180.f * CUDA_PI;
+    p.scan_start_angle_rad = 48.f / 180.f * CUDA_PI;
+
+    p.SID = 430.f; p.SDD = 769.579468f;
+    p.offsetU_mm = 1.52205f;
+    p.offsetV_mm = 40.32f;
+    p.vol_offset_z_mm = p.offsetV_mm * p.SID / p.SDD; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
+
+    p.desc = YK::SFilterKernelDesc::RamLak(EWeightsBuildSource::DiscreteRLFFT, 1.0);
+
+    std::vector<float> angle_list(p.iPAngTotal);
+    for (int i = 0; i < p.iPAngTotal; ++i) {
+        angle_list[i] = 48.f / 180.f * CUDA_PI + i * 0.5f / 180.f * CUDA_PI;
+    }
+
+    p.angle_list = std::move(angle_list);
+
+    p.nDirSign = 1;
+
+
+    const size_t view_n = static_cast<size_t>(p.iPU) * p.iPV;
+    const size_t sino_n = static_cast<size_t>(p.iPAng) * view_n;
+    const size_t volume_n = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
+    std::vector<float> h_projection(sino_n);
+
+    read_raw_float((test_data_dir + "Dump_Data_BeamHCed_1024_1024.raw").c_str(), h_projection);
+
+    cudaStream_t stream = nullptr;
+    float* d_full = nullptr; float* d_split = nullptr;
+    bool ok = checkCuda(cudaStreamCreate(&stream), "create stream") &&
+        checkCuda(cudaMalloc(&d_full, volume_n * sizeof(float)), "allocate full volume") &&
+        checkCuda(cudaMalloc(&d_split, volume_n * sizeof(float)), "allocate split volume");
+    FdkPipeline full, split;
+    ok = ok && full.prepareWithAngles(p, p.angle_list, 32, stream) &&
+        split.prepareWithAngles(p, p.angle_list, 32, stream);
+    if (ok) {
+        const FdkProjectionBatch all{ h_projection.data(), nullptr, nullptr, p.iPAng };
+        const int first_count = 5;
+        const FdkProjectionBatch first{ h_projection.data(), nullptr, nullptr, first_count };
+        const FdkProjectionBatch second{ h_projection.data() + first_count * view_n,
+            nullptr, nullptr, p.iPAng - first_count };
+        ok = full.processBatch(all, d_full, true) &&
+            split.processBatch(first, d_split, true) &&
+            split.processBatch(second, d_split, false) && split.complete() &&
+            checkCuda(cudaStreamSynchronize(stream), "FDK synchronize");
+    }
+    std::vector<float> h_full(volume_n), h_split(volume_n);
+    ok = ok && checkCuda(cudaMemcpy(h_full.data(), d_full, volume_n * sizeof(float),
+        cudaMemcpyDeviceToHost), "download full FDK") &&
+        checkCuda(cudaMemcpy(h_split.data(), d_split, volume_n * sizeof(float),
+            cudaMemcpyDeviceToHost), "download split FDK");
+    const float diff = ok ? maxAbsDiff(h_full, h_split) : INFINITY;
+    ok = ok && diff < 1e-4f;
+    std::printf("FDK batch consistency: max diff = %.8g, %s\n", diff, ok ? "PASS" : "FAIL");
+
+    write_raw_float((test_data_dir + "new_fdk_offline_realdata.raw").c_str(), h_full);
+    write_raw_float((test_data_dir + "new_fdk_online_realdata.raw").c_str(), h_split);
+
+    full.release(); split.release();
+    if (d_split) cudaFree(d_split);
+    if (d_full) cudaFree(d_full);
+    if (stream) cudaStreamDestroy(stream);
     return ok ? 0 : 1;
 }

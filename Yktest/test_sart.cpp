@@ -1124,8 +1124,8 @@ int main_ossart_realdata_test()
     cfg.eps = 1e-6f;
     cfg.use_min = true;
     cfg.min_constraint = 0.f;     // CT 值非负约束
-    cfg.fp_task = ETask::FP_Siddon;       // Joseph 正投影
-    cfg.bp_task = ETask::BP_FDK_matched;    // Joseph 反投影（接近 FP_Joseph 的伴随）
+    cfg.fp_task = ETask::FP_Joseph;       // Joseph 正投影
+    cfg.bp_task = ETask::BP_Joseph_v3;    // Joseph 反投影（接近 FP_Joseph 的伴随）
 
     // ---- 运行 OS-SART ──────────────────────────────────────────
 

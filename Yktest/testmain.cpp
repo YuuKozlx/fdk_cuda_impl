@@ -12,6 +12,7 @@ int main_fp();
 int main_operator_roundtrip_smoke();
 int main_external_geometry_operator_smoke();
 int main_fdk_batch_consistency_smoke();
+int main_fdk_realdata();
 int main_catphan_phantom_smoke();
 int main_filter_spatial_ramp_validation();
 int main_filter_discrete_ramlak_dc_zero();
@@ -56,135 +57,136 @@ void test_flat_detector_roty_fp_ossart(cudaStream_t); void test_flat_detector_ro
 
 
 namespace {
-using TestFn = int (*)();
+    using TestFn = int (*)();
 
-int runWithStream(void (*fn)(cudaStream_t)) {
-    cudaStream_t stream = nullptr;
-    if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
-    fn(stream);
-    const cudaError_t status = cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
-    return status == cudaSuccess ? 0 : 1;
-}
-int runVoid(void (*fn)()) { fn(); return 0; }
+    int runWithStream(void (*fn)(cudaStream_t)) {
+        cudaStream_t stream = nullptr;
+        if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
+        fn(stream);
+        const cudaError_t status = cudaStreamSynchronize(stream);
+        cudaStreamDestroy(stream);
+        return status == cudaSuccess ? 0 : 1;
+    }
+    int runVoid(void (*fn)()) { fn(); return 0; }
 
 #define TEST_INT(name, category, real_data, fn) {name, category, real_data, fn}
 #define TEST_STREAM(name, category, real_data, fn) {name, category, real_data, []() { return runWithStream(fn); }}
 #define TEST_VOID(name, category, real_data, fn) {name, category, real_data, []() { return runVoid(fn); }}
 
-struct TestEntry { const char* name; const char* category; bool needs_real_data; TestFn run; };
+    struct TestEntry { const char* name; const char* category; bool needs_real_data; TestFn run; };
 
-YK::LogLevel parseLogLevel(const std::string& value)
-{
-    if (value == "trace") return YK::LogLevel::Trace;
-    if (value == "debug") return YK::LogLevel::Debug;
-    if (value == "info") return YK::LogLevel::Info;
-    if (value == "warn") return YK::LogLevel::Warn;
-    if (value == "error") return YK::LogLevel::Error;
-    if (value == "critical") return YK::LogLevel::Critical;
-    return YK::LogLevel::Off;
-}
-
-const TestEntry kTests[] = {
-    // Framework and public data-flow contracts.
-    TEST_INT("framework/operator-roundtrip", "framework", false, main_operator_roundtrip_smoke),
-    TEST_INT("framework/external-geometry", "framework", false, main_external_geometry_operator_smoke),
-
-    // FDK, filter and phantom numerical regressions.
-    TEST_INT("fdk/batch-consistency", "fdk", false, main_fdk_batch_consistency_smoke),
-    TEST_INT("phantom/catphan-like", "phantom", false, main_catphan_phantom_smoke),
-    TEST_INT("filter/spatial-ramp", "filter", false, main_filter_spatial_ramp_validation),
-    TEST_INT("filter/discrete-ramlak-dc", "filter", false, main_filter_discrete_ramlak_dc_zero),
-
-    // Forward/back projector properties.
-    TEST_INT("fp/siddon-uniform-center", "fp", false, main_fp_siddon_uniform_center_length),
-    TEST_INT("fp/siddon-single-voxel", "fp", false, main_fp_siddon_single_voxel_peak),
-    TEST_INT("operator/matrix-circular", "operator", false, main_operator_matrix_smoke),
-    TEST_INT("geometry/planar-fp-bp", "geometry", false, main_planar_geometry_operator_smoke),
-
-    // Synthetic reconstruction smoke tests.
-    TEST_INT("recon/sart", "recon", false, main_sart_smoke),
-    TEST_INT("recon/sirt", "recon", false, main_sirt_smoke),
-    TEST_INT("recon/ossart-tigre", "recon", false, main_ossart_tigre_smoke),
-    TEST_INT("recon/ossart", "recon", false, main_ossart_smoke),
-    TEST_INT("recon/ossart-ex", "recon", false, main_ossart_ex_smoke),
-    TEST_INT("recon/algebraic-ex", "recon", false, main_algebraic_ex_smoke),
-    TEST_INT("recon/algebraic", "recon", false, main_algebraic_smoke),
-    TEST_INT("recon/convergence", "recon", false, main_iterative_convergence_smoke),
-    TEST_INT("recon/ossart-tv", "recon", false, main_ossart_tv_smoke),
-    TEST_INT("recon/tigre-gradient-family", "recon", false,
-        main_tigre_gradient_family_smoke),
-    TEST_INT("recon/cgls", "recon", false, main_cgls_smoke),
-    TEST_INT("recon/cgls-astra", "recon", false, main_cgls_astra_smoke),
-    TEST_INT("recon/cgls-ex", "recon", false, main_cgls_ex_smoke),
-    TEST_INT("recon/cgls-unified", "recon", false, main_cgls_unified_smoke),
-
-    // 大体积性能与显存测试，单独分类避免混入常规重建冒烟项。
-    TEST_INT("large/water-pwls", "large", false, main_large_water_pwls),
-    TEST_INT("large/water-ossart", "large", false, main_large_water_ossart),
-    TEST_INT("large/water-fdk", "large", false, main_large_water_fdk),
-    TEST_INT("large/water-fdk-iterative", "large", false,
-        main_large_water_fdk_iterative),
-    TEST_INT("large/arrow-tigre", "large", false, main_large_arrow_tigre),
-
-    // Helical and cylindrical detector algorithms.
-#if YKCBCT_TEST_HAS_HELICAL
-    TEST_INT("helical/icd", "helical", false, main_helical_icd_smoke),
-    TEST_INT("helical/wfbp", "helical", false, main_helical_wfbp_smoke),
-    TEST_INT("helical/wfbp-ffs", "helical", false, main_helical_wfbp_ffs_smoke),
-    TEST_INT("helical/wfbp-compare", "helical", false, main_helical_wfbp_comparison),
-    TEST_INT("helical/large-volume", "helical", false, main_helical_large_volume),
-    TEST_INT("helical/large-volume-icd", "helical", false, main_helical_large_volume_icd),
-    TEST_INT("fpcyl/adjoint", "fpcyl", false, main_fpcyl_adjoint),
-    TEST_INT("fpcyl/wfbp-compare", "fpcyl", false, main_fpcyl_wfbp_comparison),
-#endif
-    // Legacy diagnostic suites.  These consume files from a developer-local
-    // data directory and are excluded from category/all-local runs.
-    TEST_INT("fp/legacy-realdata", "fp", true, main_fp),
-
-    // Iterative algorithm diagnostics.
-    TEST_INT("iter/ossart", "iter", false, main_ossart_test),
-    TEST_INT("iter/ossart-ex", "iter", false, main_ossart_ex_test),
-    TEST_INT("iter/sim", "iter", false, main_iter_recon_sim),
-    TEST_INT("iter/sirt", "iter", false, main_iter_sirt_recon_sim),
-    TEST_INT("iter/cgls", "iter", false, main_cgls_test),
-    TEST_INT("iter/ossart-realdata", "iter", true, main_ossart_realdata_test),
-    TEST_INT("iter/ossart-mcgpu-cylinder", "iter", true, main_ossart_mcgpu_cylinder_test),
-    TEST_INT("iter/cgls-realdata", "iter", true, main_cgls_realdata_test),
-    TEST_STREAM("iter/flat-detector-ossart", "iter", false, test_flat_detector_roty_fp_ossart),
-    TEST_STREAM("iter/flat-detector-independent", "iter", false, test_flat_detector_roty_fp_independent),
-};
-
-void listTests() {
-    for (const auto& test : kTests)
-        std::printf("%-38s %-6s %s\n", test.name, test.category,
-            test.needs_real_data ? "real-data" : "synthetic/local");
-}
-
-int runSelection(const char* selection)
-{
-    const bool all_local = std::strcmp(selection, "all-local") == 0;
-    int selected = 0;
-    int failed = 0;
-    for (const auto& test : kTests) {
-        const bool category_match = std::strcmp(selection, test.category) == 0;
-        if ((!all_local && !category_match) || test.needs_real_data) continue;
-        ++selected;
-        std::printf("\n=== RUN  %s ===\n", test.name);
-        const int status = test.run();
-        failed += status != 0;
-        std::printf("=== %s %s ===\n", status == 0 ? "PASS" : "FAIL", test.name);
+    YK::LogLevel parseLogLevel(const std::string& value)
+    {
+        if (value == "trace") return YK::LogLevel::Trace;
+        if (value == "debug") return YK::LogLevel::Debug;
+        if (value == "info") return YK::LogLevel::Info;
+        if (value == "warn") return YK::LogLevel::Warn;
+        if (value == "error") return YK::LogLevel::Error;
+        if (value == "critical") return YK::LogLevel::Critical;
+        return YK::LogLevel::Off;
     }
-    if (selected == 0) return -1;
-    std::printf("\nSummary: selected=%d passed=%d failed=%d\n",
-        selected, selected - failed, failed);
-    return failed == 0 ? 0 : 1;
-}
+
+    const TestEntry kTests[] = {
+        // Framework and public data-flow contracts.
+        TEST_INT("framework/operator-roundtrip", "framework", false, main_operator_roundtrip_smoke),
+        TEST_INT("framework/external-geometry", "framework", false, main_external_geometry_operator_smoke),
+
+        // FDK, filter and phantom numerical regressions.
+        TEST_INT("fdk/batch-consistency", "fdk", false, main_fdk_batch_consistency_smoke),
+        TEST_INT("fdk/realdata", "fdk", true, main_fdk_realdata),
+        TEST_INT("phantom/catphan-like", "phantom", false, main_catphan_phantom_smoke),
+        TEST_INT("filter/spatial-ramp", "filter", false, main_filter_spatial_ramp_validation),
+        TEST_INT("filter/discrete-ramlak-dc", "filter", false, main_filter_discrete_ramlak_dc_zero),
+
+        // Forward/back projector properties.
+        TEST_INT("fp/siddon-uniform-center", "fp", false, main_fp_siddon_uniform_center_length),
+        TEST_INT("fp/siddon-single-voxel", "fp", false, main_fp_siddon_single_voxel_peak),
+        TEST_INT("operator/matrix-circular", "operator", false, main_operator_matrix_smoke),
+        TEST_INT("geometry/planar-fp-bp", "geometry", false, main_planar_geometry_operator_smoke),
+
+        // Synthetic reconstruction smoke tests.
+        TEST_INT("recon/sart", "recon", false, main_sart_smoke),
+        TEST_INT("recon/sirt", "recon", false, main_sirt_smoke),
+        TEST_INT("recon/ossart-tigre", "recon", false, main_ossart_tigre_smoke),
+        TEST_INT("recon/ossart", "recon", false, main_ossart_smoke),
+        TEST_INT("recon/ossart-ex", "recon", false, main_ossart_ex_smoke),
+        TEST_INT("recon/algebraic-ex", "recon", false, main_algebraic_ex_smoke),
+        TEST_INT("recon/algebraic", "recon", false, main_algebraic_smoke),
+        TEST_INT("recon/convergence", "recon", false, main_iterative_convergence_smoke),
+        TEST_INT("recon/ossart-tv", "recon", false, main_ossart_tv_smoke),
+        TEST_INT("recon/tigre-gradient-family", "recon", false,
+            main_tigre_gradient_family_smoke),
+        TEST_INT("recon/cgls", "recon", false, main_cgls_smoke),
+        TEST_INT("recon/cgls-astra", "recon", false, main_cgls_astra_smoke),
+        TEST_INT("recon/cgls-ex", "recon", false, main_cgls_ex_smoke),
+        TEST_INT("recon/cgls-unified", "recon", false, main_cgls_unified_smoke),
+
+        // 大体积性能与显存测试，单独分类避免混入常规重建冒烟项。
+        TEST_INT("large/water-pwls", "large", false, main_large_water_pwls),
+        TEST_INT("large/water-ossart", "large", false, main_large_water_ossart),
+        TEST_INT("large/water-fdk", "large", false, main_large_water_fdk),
+        TEST_INT("large/water-fdk-iterative", "large", false,
+            main_large_water_fdk_iterative),
+        TEST_INT("large/arrow-tigre", "large", false, main_large_arrow_tigre),
+
+        // Helical and cylindrical detector algorithms.
+    #if YKCBCT_TEST_HAS_HELICAL
+        TEST_INT("helical/icd", "helical", false, main_helical_icd_smoke),
+        TEST_INT("helical/wfbp", "helical", false, main_helical_wfbp_smoke),
+        TEST_INT("helical/wfbp-ffs", "helical", false, main_helical_wfbp_ffs_smoke),
+        TEST_INT("helical/wfbp-compare", "helical", false, main_helical_wfbp_comparison),
+        TEST_INT("helical/large-volume", "helical", false, main_helical_large_volume),
+        TEST_INT("helical/large-volume-icd", "helical", false, main_helical_large_volume_icd),
+        TEST_INT("fpcyl/adjoint", "fpcyl", false, main_fpcyl_adjoint),
+        TEST_INT("fpcyl/wfbp-compare", "fpcyl", false, main_fpcyl_wfbp_comparison),
+    #endif
+        // Legacy diagnostic suites.  These consume files from a developer-local
+        // data directory and are excluded from category/all-local runs.
+        TEST_INT("fp/legacy-realdata", "fp", true, main_fp),
+
+        // Iterative algorithm diagnostics.
+        TEST_INT("iter/ossart", "iter", false, main_ossart_test),
+        TEST_INT("iter/ossart-ex", "iter", false, main_ossart_ex_test),
+        TEST_INT("iter/sim", "iter", false, main_iter_recon_sim),
+        TEST_INT("iter/sirt", "iter", false, main_iter_sirt_recon_sim),
+        TEST_INT("iter/cgls", "iter", false, main_cgls_test),
+        TEST_INT("iter/ossart-realdata", "iter", true, main_ossart_realdata_test),
+        TEST_INT("iter/ossart-mcgpu-cylinder", "iter", true, main_ossart_mcgpu_cylinder_test),
+        TEST_INT("iter/cgls-realdata", "iter", true, main_cgls_realdata_test),
+        TEST_STREAM("iter/flat-detector-ossart", "iter", false, test_flat_detector_roty_fp_ossart),
+        TEST_STREAM("iter/flat-detector-independent", "iter", false, test_flat_detector_roty_fp_independent),
+    };
+
+    void listTests() {
+        for (const auto& test : kTests)
+            std::printf("%-38s %-6s %s\n", test.name, test.category,
+                test.needs_real_data ? "real-data" : "synthetic/local");
+    }
+
+    int runSelection(const char* selection)
+    {
+        const bool all_local = std::strcmp(selection, "all-local") == 0;
+        int selected = 0;
+        int failed = 0;
+        for (const auto& test : kTests) {
+            const bool category_match = std::strcmp(selection, test.category) == 0;
+            if ((!all_local && !category_match) || test.needs_real_data) continue;
+            ++selected;
+            std::printf("\n=== RUN  %s ===\n", test.name);
+            const int status = test.run();
+            failed += status != 0;
+            std::printf("=== %s %s ===\n", status == 0 ? "PASS" : "FAIL", test.name);
+        }
+        if (selected == 0) return -1;
+        std::printf("\nSummary: selected=%d passed=%d failed=%d\n",
+            selected, selected - failed, failed);
+        return failed == 0 ? 0 : 1;
+    }
 }
 
 int main(int argc, char** argv)
 {
-    CLI::App app{"YKCBCT CUDA、算法集成和数值回归测试"};
+    CLI::App app{ "YKCBCT CUDA、算法集成和数值回归测试" };
     std::string selection = "list";
     std::string log_level = "debug";
     std::string arrow_method = "os-asd-pocs";
@@ -204,13 +206,13 @@ int main(int argc, char** argv)
     app.add_option("selection", selection, "测试名、测试分类、all-local 或 list");
     app.add_flag("-l,--list", show_list, "列出全部测试");
     app.add_option("--log-level", log_level, "日志等级")
-        ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error", "critical", "off"}));
+        ->check(CLI::IsMember({ "trace", "debug", "info", "warn", "error", "critical", "off" }));
     app.add_option("--arrow-method", arrow_method, "大箭头模体重建方法")
         ->check(CLI::IsMember({
             "sart", "os-sart", "sirt",
             "asd-pocs", "os-asd-pocs", "b-asd-pocs-beta",
             "pcsd", "os-pcsd", "aw-pcsd", "os-aw-pcsd",
-            "aw-asd-pocs", "os-aw-asd-pocs"}));
+            "aw-asd-pocs", "os-aw-asd-pocs" }));
     app.add_option("--arrow-iterations", arrow_iterations,
         "大箭头模体外循环次数")->check(CLI::PositiveNumber);
     app.add_option("--arrow-block-size", arrow_block_size,
@@ -221,7 +223,7 @@ int main(int argc, char** argv)
         "POCS 方法每轮 TV 内迭代次数")->check(CLI::PositiveNumber);
     app.add_option("--water-iterative-method", water_iterative_method,
         "水模 FDK 初值后的迭代方法")
-        ->check(CLI::IsMember({"ossart", "cgls"}));
+        ->check(CLI::IsMember({ "ossart", "cgls" }));
     app.add_option("--water-iterative-iterations", water_iterative_iterations,
         "水模 FDK 初值后的迭代次数")->check(CLI::PositiveNumber);
     app.add_option("--water-iterative-subsets", water_iterative_subsets,
@@ -250,7 +252,8 @@ int main(int argc, char** argv)
         "真实数据测试只能通过完整测试名显式运行。");
     try {
         app.parse(argc, argv);
-    } catch (const CLI::ParseError& error) {
+    }
+    catch (const CLI::ParseError& error) {
         return app.exit(error);
     }
 
