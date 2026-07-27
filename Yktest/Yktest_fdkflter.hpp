@@ -87,7 +87,6 @@ namespace YKTest {
     inline bool testFilterWeightsSpectra_RamLak(
         int Nu = 512,
         int dump_bins = 64,
-        bool force_dc_zero = false,
         bool bake_invN = true,
         bool ignore_dc_in_stats = true,
         float pass_max_rel = 5e-3f,
@@ -99,8 +98,8 @@ namespace YKTest {
 
         cudaStream_t stream = 0;
 
-        std::printf("[testWeights] Nu=%d paddedN=%d n_complex=%d bake_invN=%d force_dc_zero=%d\n",
-            Nu, paddedN, n_complex, (int)bake_invN, (int)force_dc_zero);
+        std::printf("[testWeights] Nu=%d paddedN=%d n_complex=%d bake_invN=%d\n",
+            Nu, paddedN, n_complex, (int)bake_invN);
 
         // ---- 分配设备内存 ----
         float* d_w_A = nullptr;
@@ -127,9 +126,8 @@ namespace YKTest {
             descI.kind = EFilterKernel::None;
             descI.gain = 1.0f;
             descI.cutoff = 0.5f;
-            descI.force_dc_zero = false;
             descI.source = EWeightsBuildSource::AnalyticFreq;
-            kernel.build_weights(d_w_I, descI, bake_invN);
+            kernel.build_weights(d_w_I, descI, /*du_real=*/1.0f, bake_invN);
         }
 
         // ---- AnalyticFreq RamLak ----
@@ -137,15 +135,15 @@ namespace YKTest {
         descA.kind = EFilterKernel::RamLak;
         descA.cutoff = 0.5f;
         descA.gain = 1.0f;
-        descA.force_dc_zero = force_dc_zero;
         descA.source = EWeightsBuildSource::AnalyticFreq;
         descA.extract_mode = ERampExtractMode::Magnitude;
-        kernel.build_weights(d_w_A, descA, bake_invN);
+        kernel.build_weights(d_w_A, descA, /*du_real=*/1.0f, bake_invN);
 
         // ---- DiscreteRLFFT RamLak ----
         SFilterKernelDesc descB = descA;
         descB.source = EWeightsBuildSource::DiscreteRLFFT;
-        kernel.build_weights(d_w_B, descB, bake_invN);
+        // DiscreteRLFFT always suppresses DC as fixed algorithm behavior.
+        kernel.build_weights(d_w_B, descB, /*du_real=*/1.0f, bake_invN);
 
         // ---- Copy back ----
         std::vector<float> hA(n_complex), hB(n_complex), hI(n_complex);

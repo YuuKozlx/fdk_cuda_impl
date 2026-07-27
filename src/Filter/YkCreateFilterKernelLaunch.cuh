@@ -49,7 +49,6 @@ namespace YK {
             float* d_dst,
             int n_complex,
             ERampExtractMode mode,
-            bool force_dc_zero,
             cudaStream_t stream);
 
 

@@ -150,7 +150,7 @@ namespace YK {
                     YK_CUDA_CHECK(cudaFree(d_spatial));
                     flt_launch_kernel_extract_weights_from_fft(
                         d_tmp_fft_, d_weights_fft, n_complex_,
-                        ERampExtractMode::RealPart, desc.force_dc_zero, stream_);
+                        ERampExtractMode::RealPart, stream_);
                     flt_launch_kernel_scale_inplace(
                         d_weights_fft, n_complex_, desc.gain / du_real, stream_);
                     YK_CUDA_KERNEL_CHECK();
@@ -200,10 +200,15 @@ namespace YK {
                 fft_r2c_.fft(d_spatial, d_tmp_fft_);
                 YK_CUDA_CHECK(cudaFree(d_spatial));
 
-                // Step 3: 提取 RL 频谱（取实部或模）du = 1
+                // Step 3: 提取有限离散 RL 频谱（取实部或模）du = 1。
+                // 截断后的空域核求和通常不严格为零，因此 FFT 会残留一个
+                // O(1/N) 的 DC 偏置。Ram-Lak 必须抑制常量投影分量，这里对
+                // DiscreteRLFFT 路径强制令 k=0 为零，不依赖调用方选项。
                 flt_launch_kernel_extract_weights_from_fft(
                     d_tmp_fft_, d_weights_fft, n_complex_,
-                    desc.extract_mode, desc.force_dc_zero, stream_);
+                    desc.extract_mode, stream_);
+                YK_CUDA_CHECK(cudaMemsetAsync(
+                    d_weights_fft, 0, sizeof(float), stream_));
                 YK_CUDA_KERNEL_CHECK();
 
                 // Step 4: 加窗（Hamming / Hann 等） du =1

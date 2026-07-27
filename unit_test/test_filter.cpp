@@ -23,20 +23,11 @@ TEST(FilterTest, RamLak_Nu1024_DefaultParams)
     EXPECT_TRUE(YKTest::testFilterWeightsSpectra_RamLak(1024));
 }
 
-TEST(FilterTest, RamLak_ForceDcZero)
-{
-    EXPECT_TRUE(YKTest::testFilterWeightsSpectra_RamLak(
-        512,
-        /*dump_bins=*/64,
-        /*force_dc_zero=*/true));
-}
-
 TEST(FilterTest, RamLak_NoBakeInvN)
 {
     EXPECT_TRUE(YKTest::testFilterWeightsSpectra_RamLak(
         512,
         /*dump_bins=*/64,
-        /*force_dc_zero=*/false,
         /*bake_invN=*/false));
 }
 

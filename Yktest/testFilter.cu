@@ -115,8 +115,6 @@ int main() {
         desc.cutoff = cutoff_full;          // [0,0.5]
         desc.gain = 1.0f;
         desc.normalized_ramp = true;        // ramp=f
-        desc.force_dc_zero = true;          // align with discrete
-
         kfft.build_analytic(d_w, desc, /*bake_invN=*/true);
 
         YK_CUDA_CHECK(cudaMemcpyAsync(hW.data(), d_w, (size_t)nC * sizeof(float),
@@ -137,8 +135,7 @@ int main() {
         kfft.build_discrete_ramlak_du1(
             d_w,
             /*bake_invN=*/true,
-            YK::FilterKernelFFT::EKernelToWeightsMode::RealPart,
-            /*force_dc_zero=*/true);
+            YK::FilterKernelFFT::EKernelToWeightsMode::RealPart);
 
         YK_CUDA_CHECK(cudaMemcpyAsync(hW.data(), d_w, (size_t)nC * sizeof(float),
             cudaMemcpyDeviceToHost, s));

@@ -24,7 +24,6 @@ SFilterKernelDesc makeFilterDesc(const SFdkAlgoParams& ap)
     d.kind = static_cast<EFilterKernel>(ap.filter);
     d.cutoff = ap.cutoff;
     d.gain = ap.gain;
-    d.force_dc_zero = ap.force_dc_zero;
     d.order = ap.butterworth_order;
     d.beta = ap.kaiser_beta;
     d.tukey_alpha = ap.tukey_alpha;

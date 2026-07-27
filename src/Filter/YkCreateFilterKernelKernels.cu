@@ -184,7 +184,6 @@ namespace YK {
 
                     float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
 
-                    if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; continue; }
                     if (f > cc) { w[k] = 0.0f; continue; }
 
                     w[k] = desc.gain * f * window_shape_desc(f / cc, desc) * invN;
@@ -299,7 +298,7 @@ namespace YK {
             static __global__ void kernel_extract_weights_from_fft(
                 const cufftComplex* __restrict__ src,
                 float* __restrict__ dst,
-                int n_complex, ERampExtractMode mode, bool force_dc_zero)
+                int n_complex, ERampExtractMode mode)
             {
                 WARP_STRIDE_INIT()
 
@@ -314,7 +313,6 @@ namespace YK {
                     float2 c = src2[k];                             // 64-bit LD
                     float  v = (mode == ERampExtractMode::Magnitude) ? hypotf(c.x, c.y) : c.x;
 
-                    if (force_dc_zero && k == 0) v = 0.0f;
                     dst[k] = v;
                 }
             }
@@ -339,7 +337,6 @@ namespace YK {
 
                     float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
 
-                    if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; continue; }
                     if (f > cc) { w[k] = 0.0f; continue; }
 
                     w[k] *= desc.gain * window_shape(f / cc, desc.kind);
@@ -415,7 +412,7 @@ namespace YK {
 
         bool flt_launch_kernel_extract_weights_from_fft(
             const cufftComplex* d_src, float* d_dst,
-            int n_complex, ERampExtractMode mode, bool force_dc_zero,
+            int n_complex, ERampExtractMode mode,
             cudaStream_t stream)
         {
             SKernelLaunchPolicy policy;
@@ -423,7 +420,7 @@ namespace YK {
             dim3 block(policy.block_threads, 1, 1);
             dim3 grid(2, 1, 1);
             detail::kernel_extract_weights_from_fft << <grid, block, 0, stream >> > (
-                d_src, d_dst, n_complex, mode, force_dc_zero);
+                d_src, d_dst, n_complex, mode);
             YK_CUDA_KERNEL_CHECK();
             return (cudaGetLastError() == cudaSuccess);
         }
@@ -509,8 +506,6 @@ namespace YK {
 //
 //                float f = (N > 0) ? ((float)k / (float)N) : 0.0f; // [0, 0.5]
 //
-//                if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
-//
 //                float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
 //                if (f > cc) { w[k] = 0.0f; return; }
 //
@@ -553,8 +548,7 @@ namespace YK {
 //                const cufftComplex* __restrict__ src,
 //                float* __restrict__ dst,
 //                int n_complex,
-//                int mode,           // 0 = RealPart, 1 = Magnitude
-//                bool force_dc_zero)
+//                int mode)           // 0 = RealPart, 1 = Magnitude
 //            {
 //                int k = blockIdx.x * blockDim.x + threadIdx.x;
 //                if (k >= n_complex) return;
@@ -563,7 +557,6 @@ namespace YK {
 //                float im = src[k].y;
 //                float v = (mode == 1) ? sqrtf(re * re + im * im) : re;
 //
-//                if (force_dc_zero && k == 0) v = 0.0f;
 //                dst[k] = v;
 //            }
 //
@@ -583,8 +576,6 @@ namespace YK {
 //                }
 //
 //                float f = (N > 0) ? ((float)k / (float)N) : 0.0f;
-//
-//                if (desc.force_dc_zero && k == 0) { w[k] = 0.0f; return; }
 //
 //                float cc = (desc.cutoff > 0.0f) ? desc.cutoff : 0.5f;
 //                if (f > cc) { w[k] = 0.0f; return; }
@@ -649,13 +640,12 @@ namespace YK {
 //            float* d_dst,
 //            int n_complex,
 //            ERampExtractMode mode,
-//            bool force_dc_zero,
 //            cudaStream_t stream)
 //        {
 //            dim3 block(256, 1);
 //            dim3 grid((n_complex + block.x - 1) / block.x, 1);
 //            detail::kernel_extract_weights_from_fft << <grid, block, 0, stream >> > (
-//                d_src, d_dst, n_complex, (int)mode, force_dc_zero);
+//                d_src, d_dst, n_complex, (int)mode);
 //            YK_CUDA_KERNEL_CHECK();
 //            return (cudaGetLastError() == cudaSuccess);
 //        }

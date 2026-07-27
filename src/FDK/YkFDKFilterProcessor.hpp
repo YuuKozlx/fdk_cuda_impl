@@ -203,7 +203,8 @@ namespace YK {
                     "gain={:.3f} dc0={} paddedN={}",
                     static_cast<int>(desc_.source), static_cast<int>(desc_.kind),
                     desc_.cutoff, desc_.gain,
-                    static_cast<int>(desc_.force_dc_zero), paddedN_);
+                    static_cast<int>(desc_.source == EWeightsBuildSource::DiscreteRLFFT),
+                    paddedN_);
 
                 weights_ready_ = true;
                 weights_dirty_ = false;

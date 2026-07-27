@@ -104,7 +104,8 @@ namespace YK {
         // to Nyquist: 0.5 means the complete representable band.
         float cutoff = 0.5f;
         float gain = 1.f;
-        bool  force_dc_zero = false;
+        // Finite discrete Ram-Lak always suppresses DC; this is fixed
+        // algorithm behavior and is not exposed as a runtime option.
 
         // Filter-specific parameters.  Unused fields are ignored.
         float butterworth_order = 2.f;

@@ -12,6 +12,7 @@ int main_external_geometry_operator_smoke();
 int main_fdk_batch_consistency_smoke();
 int main_catphan_phantom_smoke();
 int main_filter_spatial_ramp_validation();
+int main_filter_discrete_ramlak_dc_zero();
 int main_sart_smoke(); int main_sirt_smoke();
 int main_operator_matrix_smoke(); int main_planar_geometry_operator_smoke();
 int main_ossart_tigre_smoke(); int main_ossart_smoke(); int main_ossart_ex_smoke();
@@ -54,6 +55,7 @@ const TestEntry kTests[] = {
     TEST_INT("fdk/batch-consistency", "fdk", false, main_fdk_batch_consistency_smoke),
     TEST_INT("phantom/catphan-like", "phantom", false, main_catphan_phantom_smoke),
     TEST_INT("filter/spatial-ramp", "filter", false, main_filter_spatial_ramp_validation),
+    TEST_INT("filter/discrete-ramlak-dc", "filter", false, main_filter_discrete_ramlak_dc_zero),
     TEST_INT("recon/sart", "recon", false, main_sart_smoke),
     TEST_INT("recon/sirt", "recon", false, main_sirt_smoke),
     TEST_INT("recon/ossart-tigre", "recon", false, main_ossart_tigre_smoke),

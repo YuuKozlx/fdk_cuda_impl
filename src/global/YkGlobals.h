@@ -345,7 +345,7 @@ namespace YK {
     // 权重构建来源（保留两条路径）
     enum class EWeightsBuildSource {
         AnalyticFreq,     // 直接频域写 H(f)=|f|*window
-        DiscreteRLFFT,    // 空域RL->FFT 提取 ramp -> 乘窗
+        DiscreteRLFFT,    // 空域RL->FFT 提取 ramp -> DC固定为0 -> 乘窗
         SpatialRampFFT    // 用户提供对称离散 ramp 核 -> FFT
     };
 
@@ -364,9 +364,6 @@ namespace YK {
         float                order = 2.0f;   // Butterworth 阶数
         float                beta = 8.6f;    // Kaiser beta
         float                tukey_alpha = 0.5f;
-        bool                 force_dc_zero = false;
-
-
         // Custom 路径专用，长度 = n_complex = paddedN/2+1  单边频域核
         std::vector<float>   custom_weights;
         // SpatialRampFFT 专用：按 [h(-r),...,h(0),...,h(+r)] 排列，长度必须为奇数。
