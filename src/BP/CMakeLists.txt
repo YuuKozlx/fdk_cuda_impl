@@ -1,8 +1,4 @@
-# BP 模块目前全是头文件，无需添加源文件
-# 如后续有 .cu 或 .cpp 文件，在此添加：
-# target_sources(YKCBCT PRIVATE
-#     ${CMAKE_CURRENT_SOURCE_DIR}/YkBPKernels.cu
-# )
+# 通用反投影 CUDA 实现：Siddon、Joseph 和 FDK 反投影。
 target_sources(YKCBCT PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkBPSiddonKernel.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/kernels/YkBPJosephKernel.cu

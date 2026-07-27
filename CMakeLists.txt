@@ -1,117 +1,159 @@
 cmake_minimum_required(VERSION 3.24)
-project(YKCBCT LANGUAGES CXX CUDA)
 
-# ----------------------------------------------------------------
-# 安装路径
-# 只有当用户没有指定安装路径时才设置默认值，避免覆盖用户的选择。
-# 例如用户通过 -DCMAKE_INSTALL_PREFIX=... 指定了安装路径，就不修改它。
-# ----------------------------------------------------------------
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX
-        "${CMAKE_SOURCE_DIR}/install"
-        CACHE PATH "Install path" FORCE)
-endif()
+project(YKCBCT VERSION 1.0.0 LANGUAGES CXX CUDA)
 
-# ----------------------------------------------------------------
-# 标准
-# ----------------------------------------------------------------
+# ============================================================================
+# 顶层构建说明
+# ============================================================================
+#
+# 本项目生成四类目标：
+#
+#   YKCBCT                主动态库，拥有全部正式 C++/CUDA 实现源码；
+#   ykcbct_manual_tests   CUDA、算法集成和数值回归测试（Yktest）；
+#   YKCBCT_unit_test      不依赖算法 CUDA device-link 的轻量单元测试；
+#   dlltest               只通过安装风格公共头文件和 DLL ABI 调用主库。
+#
+# 源码组织规则：
+#
+#   - 顶层先创建 YKCBCT 目标；
+#   - src/*/CMakeLists.txt 仅通过 target_sources() 向主目标追加源码；
+#   - Yktest 需要直接访问内部 kernel，因此复制主目标的实现源码并自行完成
+#     CUDA device-link，而不是链接后再重复编译同一批实现；
+#   - unit_test 只放轻量组件测试，算法和 CUDA 数值测试统一放入 Yktest；
+#   - 安装导出提供 YKCBCT::YKCBCT，供外部工程 find_package() 使用。
+#
+# 常用配置示例：
+#
+#   cmake -S . -B out/build/release -G Ninja \
+#       -DCMAKE_BUILD_TYPE=Release \
+#       -DCMAKE_CUDA_ARCHITECTURES=86
+#
+#   cmake -S . -B out/build/tests -G Ninja \
+#       -DBUILD_TESTS=ON -DBUILD_UNIT_TESTS=ON \
+#       -DYKCBCT_BUILD_HELICAL=ON
+#
+# 所有功能选项均在首次使用前于本文件统一声明。子目录不得重复声明全局选项。
+
+# ============================================================================
+# 构建选项
+# ============================================================================
+
+option(YKCBCT_BUILD_HELICAL "构建实验性螺旋 CT 算法" OFF)
+option(YKCBCT_BUILD_CVP "构建实验性 CVP 正投影算法" OFF)
+option(BUILD_TESTS "构建 Yktest 集成与数值回归测试" OFF)
+option(BUILD_UNIT_TESTS "构建轻量 GoogleTest 单元测试" OFF)
+option(BUILD_DLLTEST "构建 DLL 公共接口测试" OFF)
+
+# ============================================================================
+# 工具链和全局默认值
+# ============================================================================
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# ----------------------------------------------------------------
-# CUDA 架构（按实际 GPU 调整）
-# ----------------------------------------------------------------
-set(CMAKE_CUDA_ARCHITECTURES 75 80 86)
-
-# ----------------------------------------------------------------
-# 默认构建类型
-# ----------------------------------------------------------------
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+# 仅在用户和 toolchain 都未指定时提供默认架构，避免覆盖命令行配置。
+# 75/80/86 分别覆盖 Turing、Ampere A100 和 Ampere 消费级 GPU。
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES "75;80;86" CACHE STRING
+        "构建 YKCBCT 使用的 CUDA 架构")
 endif()
 
-# ----------------------------------------------------------------
-# 依赖
-# find_package(<包名> CONFIG REQUIRED)
-#   CONFIG    : 使用包自带的 *Config.cmake，而不是 CMake 内置的 Find*.cmake
-#   REQUIRED  : 找不到直接报错终止
-# 找到后会创建 imported target，例如：
-#   CUDAToolkit 提供 CUDA::cudart / CUDA::cufft
-# ----------------------------------------------------------------
-find_package(CUDAToolkit REQUIRED)
-find_package(OpenMP REQUIRED COMPONENTS CXX)   # 新增
+# Ninja 等单配置生成器需要默认构建类型；Visual Studio 等多配置生成器在
+# 构建阶段选择 Debug/Release，不应强行设置 CMAKE_BUILD_TYPE。
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "构建类型" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        Debug Release RelWithDebInfo MinSizeRel)
+endif()
 
-# ----------------------------------------------------------------
-# The final DLL owns every CUDA translation unit.  CUDA device linking then
-# happens inside one CMake target; an OBJECT library split loses the generated
-# device-link object on the MSVC/CUDA toolchain.
-# ----------------------------------------------------------------
-add_library(YKCBCT SHARED src/interface/YkLibraryAnchor.cpp)
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${PROJECT_SOURCE_DIR}/install"
+        CACHE PATH "安装路径" FORCE)
+endif()
+
+# ============================================================================
+# 外部依赖
+# ============================================================================
+
+find_package(CUDAToolkit REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
+
+# ============================================================================
+# 主动态库目标
+# ============================================================================
+
+# 正式 CUDA 源码全部归属于同一个动态库目标，以保证 MSVC/CUDA 工具链生成的
+# device-link 对象不会因拆分 OBJECT library 而丢失。
+add_library(YKCBCT SHARED
+    src/interface/YkLibraryAnchor.cpp
+)
+add_library(YKCBCT::YKCBCT ALIAS YKCBCT)
 
 target_compile_definitions(YKCBCT PRIVATE
-    _WINDOWS
     YKCBCT_EXPORTS
+    $<$<PLATFORM_ID:Windows>:_WINDOWS>
     $<$<CONFIG:Release>:NDEBUG>
     $<$<CONFIG:Debug>:_DEBUG>
 )
 
-# 跨平台编译选项
-# Windows 编译选项
-# 跨平台编译选项
-if(WIN32)
+target_include_directories(YKCBCT
+    PUBLIC
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/src/util
+)
+
+target_link_libraries(YKCBCT
+    PUBLIC
+        CUDA::cudart
+    PRIVATE
+        CUDA::cufft
+        OpenMP::OpenMP_CXX
+)
+
+if(MSVC)
     target_compile_options(YKCBCT PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/W3 /Zc:__cplusplus /utf-8>
         $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2 /arch:AVX2>
         $<$<COMPILE_LANGUAGE:CUDA>:
             --extended-lambda
-            -Xcompiler="/W3"
-            -Xcompiler="/utf-8"
+            -Xcompiler=/W3
+            -Xcompiler=/utf-8
             $<$<CONFIG:Release>:-O3 -use_fast_math>
         >
     )
-
-elseif(UNIX)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(YKCBCT PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic -pthread>
-        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3 -march=native -DNDEBUG>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3 -march=native>
         $<$<COMPILE_LANGUAGE:CUDA>:
-            -Xcompiler="-Wall" -Xcompiler="-Wextra" -Xcompiler="-Wpedantic"
-            -Xcompiler="-fPIC"
-             --extended-lambda
+            --extended-lambda
+            -Xcompiler=-Wall
+            -Xcompiler=-Wextra
+            -Xcompiler=-Wpedantic
+            -Xcompiler=-fPIC
             $<$<CONFIG:Release>:-O3 -use_fast_math>
         >
     )
-    
 endif()
-
-# PUBLIC  : 自身和消费者都能看到（include 路径会传递给链接 YKCBCT 的目标）
-# PRIVATE : 只有自身编译时用（内部头文件路径不对外暴露）
-target_include_directories(YKCBCT
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/src/util
-)
-
-target_link_libraries(YKCBCT PRIVATE
-    CUDA::cudart
-    CUDA::cufft
-    OpenMP::OpenMP_CXX   # 新增
-)
 
 set_target_properties(YKCBCT PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
 
-# ----------------------------------------------------------------
-# 子模块：各自往 YKCBCT 里添加源文件
-# ----------------------------------------------------------------
+# ============================================================================
+# 功能模块源码
+# ============================================================================
+
 add_subdirectory(src/global)
 add_subdirectory(src/interface)
 add_subdirectory(src/util)
+add_subdirectory(src/common)
 add_subdirectory(src/Filter)
 add_subdirectory(src/FDK)
 add_subdirectory(src/BP)
@@ -119,135 +161,101 @@ add_subdirectory(src/FP)
 add_subdirectory(src/CylFpBp)
 add_subdirectory(src/Iter)
 
-# Helical reconstruction is still under active development.  Keep it out of
-# the default DLL so the regular FDK/iterative build has a focused, stable
-# dependency surface.  It can still be enabled explicitly for helical work.
-option(YKCBCT_BUILD_HELICAL "Build experimental helical CT support" OFF)
 if(YKCBCT_BUILD_HELICAL)
     add_subdirectory(src/Heli)
 endif()
 
-# Yktest exercises internal kernels and runner classes directly.  It therefore
-# cannot link only the public DLL: those implementation symbols are purposely
-# not part of the DLL ABI.  Pass the source list to the manual-test target so
-# it owns CUDA compilation/device-linking instead of consuming an OBJECT
-# library (which loses device-link metadata on this toolchain).
-if(BUILD_TESTS)
-    get_target_property(YKCBCT_MANUAL_SUPPORT_SOURCES YKCBCT SOURCES)
-    list(FILTER YKCBCT_MANUAL_SUPPORT_SOURCES EXCLUDE REGEX
-        ".*/src/interface/YkSession\\.cpp$")
-    list(FILTER YKCBCT_MANUAL_SUPPORT_SOURCES EXCLUDE REGEX
-        ".*/src/interface/YkLibraryAnchor\\.cpp$")
-    set(YKCBCT_MANUAL_SUPPORT_SOURCES_ABS)
-    foreach(source IN LISTS YKCBCT_MANUAL_SUPPORT_SOURCES)
+# ============================================================================
+# 测试和开发工具
+# ============================================================================
+
+# Yktest 直接测试私有 kernel，不能只依赖公共 DLL ABI。这里从 YKCBCT 目标
+# 读取实现源码，转成绝对路径并排除 DLL 入口和 Session 导出实现，再交给
+# Yktest 自行完成 CUDA 编译及 device-link。
+function(ykcbct_collect_manual_test_sources output_variable)
+    get_target_property(manual_sources YKCBCT SOURCES)
+    set(absolute_sources)
+    foreach(source IN LISTS manual_sources)
         if(IS_ABSOLUTE "${source}")
-            list(APPEND YKCBCT_MANUAL_SUPPORT_SOURCES_ABS "${source}")
+            set(absolute_source "${source}")
         else()
-            list(APPEND YKCBCT_MANUAL_SUPPORT_SOURCES_ABS
-                "${CMAKE_SOURCE_DIR}/${source}")
+            set(absolute_source "${PROJECT_SOURCE_DIR}/${source}")
         endif()
+        cmake_path(NORMAL_PATH absolute_source)
+        if(absolute_source STREQUAL
+                "${PROJECT_SOURCE_DIR}/src/interface/YkSession.cpp" OR
+           absolute_source STREQUAL
+                "${PROJECT_SOURCE_DIR}/src/interface/YkLibraryAnchor.cpp")
+            continue()
+        endif()
+        list(APPEND absolute_sources "${absolute_source}")
     endforeach()
-endif()
-# ----------------------------------------------------------------
-# ----------------------------------------------------------------
-# 包安装配置
-#
-# 目标：让外部项目能用以下方式使用本库：
-#   find_package(YKCBCT CONFIG REQUIRED)
-#   target_link_libraries(my_app PRIVATE YKCBCT::YKCBCT)
-# ----------------------------------------------------------------
-include(CMakePackageConfigHelpers)
-# CMake 内置模块，提供下面用到的两个函数
+    set(${output_variable} "${absolute_sources}" PARENT_SCOPE)
+endfunction()
 
-# 安装库产物（.dll/.lib）并记录到导出集合 YKCBCTTargets
-# EXPORT YKCBCTTargets : 把 YKCBCT target 信息收集到这个导出集合里
-# RUNTIME → .dll 装到 bin/
-# ARCHIVE → .lib（导入库）装到 lib/
-install(TARGETS YKCBCT
-    EXPORT  YKCBCTTargets
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-)
-
-# 安装对外头文件（include/YKCBCT/ 整个目录）
-# External users include the stable Session API from include/YKCBCT/.
-install(DIRECTORY include/YKCBCT
-    DESTINATION include
-)
-
-# 把导出集合写成 YKCBCTTargets.cmake 文件
-# NAMESPACE YKCBCT:: : target 名字加前缀，外部用 YKCBCT::YKCBCT
-install(EXPORT YKCBCTTargets
-    FILE        YKCBCTTargets.cmake
-    NAMESPACE   YKCBCT::
-    DESTINATION lib/cmake/YKCBCT
-)
-
-# 把 YKCBCTConfig.cmake.in 模板渲染成 YKCBCTConfig.cmake
-# @PACKAGE_INIT@ 占位符会被替换成路径处理代码，
-# 使配置文件在任意安装位置都能正确定位 YKCBCTTargets.cmake
-configure_package_config_file(
-    ${CMAKE_SOURCE_DIR}/cmake/YKCBCTConfig.cmake.in
-    ${CMAKE_BINARY_DIR}/YKCBCTConfig.cmake
-    INSTALL_DESTINATION lib/cmake/YKCBCT
-)
-
-# 生成版本文件
-# SameMajorVersion : 主版本号相同即兼容（1.2.0 兼容 1.0.0 要求，但不兼容 2.0.0）
-write_basic_package_version_file(
-    ${CMAKE_BINARY_DIR}/YKCBCTConfigVersion.cmake
-    VERSION       1.0.0
-    COMPATIBILITY SameMajorVersion
-)
-
-# 安装配置文件和版本文件
-install(FILES
-    ${CMAKE_BINARY_DIR}/YKCBCTConfig.cmake
-    ${CMAKE_BINARY_DIR}/YKCBCTConfigVersion.cmake
-    DESTINATION lib/cmake/YKCBCT
-)
-
-# ----------------------------------------------------------------
-# 集成测试（Yktest）
-# ----------------------------------------------------------------
-option(BUILD_TESTS "Build integration test executable" OFF)
 if(BUILD_TESTS)
+    ykcbct_collect_manual_test_sources(YKCBCT_MANUAL_SUPPORT_SOURCES_ABS)
     add_subdirectory(Yktest)
 endif()
 
-#option(NEW_TEST "Build integration test executable" ON)
-#if(NEW_TEST)
-#    add_subdirectory(SimultaneousTest)
-#endif()
-
-# ----------------------------------------------------------------
-# 单元测试（GoogleTest）
-# ----------------------------------------------------------------
-option(BUILD_UNIT_TESTS "Build unit tests" OFF)
 if(BUILD_UNIT_TESTS)
     enable_testing()
     add_subdirectory(unit_test)
 endif()
 
-
-
-# ----------------------------------------------------------------
-# dlltest：测试 DLL 导出接口的正确性和兼容性
-# ----------------------------------------------------------------
-option(BUILD_DLLTEST "Build DLL interface test" OFF)
 if(BUILD_DLLTEST)
     add_subdirectory(dlltest)
 endif()
 
+# ============================================================================
+# 安装与 CMake 包导出
+# ============================================================================
 
-# ----------------------------------------------------------------
-# extra: pre-commit hook 自动安装,禁止大文件提交等
-# ----------------------------------------------------------------
+include(CMakePackageConfigHelpers)
+
+install(TARGETS YKCBCT
+    EXPORT YKCBCTTargets
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+)
+
+install(DIRECTORY include/YKCBCT
+    DESTINATION include
+)
+
+install(EXPORT YKCBCTTargets
+    FILE YKCBCTTargets.cmake
+    NAMESPACE YKCBCT::
+    DESTINATION lib/cmake/YKCBCT
+)
+
+configure_package_config_file(
+    ${PROJECT_SOURCE_DIR}/cmake/YKCBCTConfig.cmake.in
+    ${PROJECT_BINARY_DIR}/YKCBCTConfig.cmake
+    INSTALL_DESTINATION lib/cmake/YKCBCT
+)
+
+write_basic_package_version_file(
+    ${PROJECT_BINARY_DIR}/YKCBCTConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    ${PROJECT_BINARY_DIR}/YKCBCTConfig.cmake
+    ${PROJECT_BINARY_DIR}/YKCBCTConfigVersion.cmake
+    DESTINATION lib/cmake/YKCBCT
+)
+
+# ============================================================================
+# 开发辅助
+# ============================================================================
+
 find_program(PRE_COMMIT pre-commit)
-if(PRE_COMMIT AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+if(PRE_COMMIT AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
     execute_process(
         COMMAND ${PRE_COMMIT} install
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
     )
 endif()

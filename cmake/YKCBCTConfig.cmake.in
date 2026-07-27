@@ -9,6 +9,10 @@
 
 @PACKAGE_INIT@
 
+# 公共头文件暴露 CUDA runtime 类型，导入 YKCBCT 目标前先恢复其公共依赖。
+include(CMakeFindDependencyMacro)
+find_dependency(CUDAToolkit)
+
 # 加载 target 定义文件，执行后 YKCBCT::YKCBCT 这个 imported target 就存在了
 include("${CMAKE_CURRENT_LIST_DIR}/YKCBCTTargets.cmake")
 
