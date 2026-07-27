@@ -6,6 +6,7 @@
 
 #include "Iter/YkAlgebraicBackends.hpp"
 #include "Iter/YkAlgebraicRegularizers.hpp"
+#include "Iter/YkIterativeConvergence.hpp"
 #include "global/YkLog.h"
 
 namespace YK::Iter {
@@ -46,6 +47,7 @@ struct AlgebraicReconstructionConfig {
     float epsilon = 1e-6f;
     // 正则化在每轮完整子集扫描后执行；None 保持原代数重建行为。
     AlgebraicRegularizationConfig regularization{};
+    IterativeConvergenceConfig convergence{};
     bool use_min = false;
     float min_constraint = 0.f;
     bool use_max = false;
@@ -78,6 +80,7 @@ public:
         params_ = params;
         config_ = config;
         stream_ = stream;
+        geometry_ = geometry;
         subset_count_ = resolvedSubsetCount_(params, config);
 
         use_tigre_weights_ = config.weight_model == EAlgebraicWeightModel::TigreApprox ||
@@ -124,6 +127,8 @@ public:
         if (prepared_)
             prepared_ = regularizer_.prepare(params_, config.regularization,
                 stream_, device_id);
+        if (prepared_ && convergenceEnabled(config_.convergence))
+            prepared_ = prepareConvergence_(geometry, device_id);
         if (!prepared_) release();
         return prepared_;
     }
@@ -131,6 +136,13 @@ public:
     bool reconstruct(const float* d_measured_projection, float* d_volume)
     {
         if (!prepared_ || !d_measured_projection || !d_volume) return false;
+        convergence_statistics_ = {};
+        convergence_patience_ = 0;
+        previous_residual_ = std::numeric_limits<float>::quiet_NaN();
+        if (d_previous_volume_) {
+            YK_CUDA_CHECK(cudaMemcpyAsync(d_previous_volume_, d_volume,
+                volumeCount_() * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
+        }
         for (int outer = 0; outer < config_.iterations; ++outer) {
             if (!iterateDataSubsets_(d_measured_projection, d_volume,
                     static_cast<unsigned int>(actual_subset_count_)))
@@ -144,6 +156,10 @@ public:
                     static_cast<float>(outer));
             if (!regularizer_.apply(d_volume, context)) return false;
             applyConstraints_(d_volume);
+            convergence_statistics_.completed_iterations = outer + 1;
+            if (shouldCheckConvergence_(outer + 1) &&
+                checkConvergence_(d_measured_projection, d_volume))
+                break;
         }
         return true;
     }
@@ -170,13 +186,20 @@ public:
         detailed_weights_.release();
         tigre_.release();
         regularizer_.release();
+        convergence_fp_.release();
+        if (d_projection_residual_) cudaFree(d_projection_residual_);
+        if (d_previous_volume_) cudaFree(d_previous_volume_);
+        d_projection_residual_ = nullptr;
+        d_previous_volume_ = nullptr;
         params_ = {};
         config_ = {};
         stream_ = nullptr;
+        geometry_.clear();
         subset_count_ = 0;
         actual_subset_count_ = 0;
         use_tigre_weights_ = false;
         prepared_ = false;
+        convergence_statistics_ = {};
     }
 
     bool isPrepared() const { return prepared_; }
@@ -188,8 +211,114 @@ public:
             return tigre_.totalIterations();
         return detailed_weights_.totalIterations();
     }
+    const IterativeConvergenceStatistics& convergenceStatistics() const
+    { return convergence_statistics_; }
 
 private:
+    size_t volumeCount_() const
+    {
+        return static_cast<size_t>(params_.iVX) * params_.iVY * params_.iVZ;
+    }
+
+    size_t projectionCount_() const
+    {
+        return static_cast<size_t>(params_.iPAng) * params_.iPU * params_.iPV;
+    }
+
+    bool prepareConvergence_(const std::vector<SConeProjGeomVec>& geometry,
+        int device_id)
+    {
+        const auto& convergence = config_.convergence;
+        if (convergence.relative_residual_tolerance > 0.f ||
+            convergence.relative_improvement_tolerance > 0.f) {
+            YK_CUDA_CHECK(cudaMalloc(&d_projection_residual_,
+                projectionCount_() * sizeof(float)));
+            if (!convergence_fp_.init(params_, geometry, config_.fp_task,
+                    device_id, stream_)) return false;
+        }
+        if (convergence.relative_update_tolerance > 0.f)
+            YK_CUDA_CHECK(cudaMalloc(&d_previous_volume_,
+                volumeCount_() * sizeof(float)));
+        return true;
+    }
+
+    bool shouldCheckConvergence_(int completed_iterations) const
+    {
+        if (!convergenceEnabled(config_.convergence)) return false;
+        return completed_iterations % config_.convergence.check_interval == 0 ||
+            completed_iterations == config_.iterations;
+    }
+
+    float norm_(const float* data, size_t count) const
+    {
+        float squared = 0.f;
+        YK::Iter::dot_launch(data, data, count, &squared, stream_);
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        return std::sqrt(std::max(0.f, squared));
+    }
+
+    bool checkConvergence_(const float* measured, float* volume)
+    {
+        const auto& cfg = config_.convergence;
+        auto& stats = convergence_statistics_;
+        ++stats.convergence_checks;
+        bool residual_satisfied = false;
+        bool update_satisfied = false;
+        bool stagnation_satisfied = false;
+
+        if (d_projection_residual_) {
+            YK_CUDA_CHECK(cudaMemsetAsync(d_projection_residual_, 0,
+                projectionCount_() * sizeof(float), stream_));
+            if (!convergence_fp_.run(volume, params_, d_projection_residual_, stream_))
+                return false;
+            YK::Iter::residual_launch(measured, d_projection_residual_,
+                d_projection_residual_, projectionCount_(), stream_);
+            const float residual = norm_(d_projection_residual_, projectionCount_());
+            const float measured_norm = norm_(measured, projectionCount_());
+            stats.projection_residual_l2 = residual;
+            stats.relative_projection_residual = residual /
+                std::max(measured_norm, config_.epsilon);
+            YK_LOGI("[AlgebraicReconstructorEx] 第 {} 轮相对投影残差 {:.6e}",
+                stats.completed_iterations, stats.relative_projection_residual);
+            residual_satisfied = cfg.relative_residual_tolerance > 0.f &&
+                stats.relative_projection_residual <= cfg.relative_residual_tolerance;
+            if (std::isfinite(previous_residual_)) {
+                stats.relative_residual_improvement =
+                    (previous_residual_ - residual) /
+                    std::max(previous_residual_, config_.epsilon);
+                stagnation_satisfied = cfg.relative_improvement_tolerance > 0.f &&
+                    stats.relative_residual_improvement >= 0.f &&
+                    stats.relative_residual_improvement <=
+                        cfg.relative_improvement_tolerance;
+            }
+            previous_residual_ = residual;
+        }
+
+        if (d_previous_volume_) {
+            const float previous_norm = norm_(d_previous_volume_, volumeCount_());
+            YK::Iter::residual_launch(volume, d_previous_volume_,
+                d_previous_volume_, volumeCount_(), stream_);
+            stats.relative_volume_update = norm_(d_previous_volume_, volumeCount_()) /
+                std::max(previous_norm, config_.epsilon);
+            update_satisfied = stats.relative_volume_update <=
+                cfg.relative_update_tolerance;
+            YK_CUDA_CHECK(cudaMemcpyAsync(d_previous_volume_, volume,
+                volumeCount_() * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
+        }
+
+        const bool eligible = stats.completed_iterations >= cfg.minimum_iterations;
+        const bool satisfied = eligible &&
+            (residual_satisfied || update_satisfied || stagnation_satisfied);
+        convergence_patience_ = satisfied ? convergence_patience_ + 1 : 0;
+        if (convergence_patience_ < cfg.patience) return false;
+        stats.stopped_by_relative_residual = residual_satisfied;
+        stats.stopped_by_relative_update = update_satisfied;
+        stats.stopped_by_stagnation = stagnation_satisfied;
+        YK_LOGI("[AlgebraicReconstructorEx] 第 {} 轮满足收敛条件，提前停止",
+            stats.completed_iterations);
+        return true;
+    }
+
     bool iterateDataSubsets_(const float* d_measured_projection,
         float* d_volume, unsigned int iterations)
     {
@@ -229,7 +358,8 @@ private:
             static_cast<int>(geometry.size()) != params.iPAng ||
             config.iterations <= 0 || subsets <= 0 || subsets > params.iPAng ||
             config.relaxation <= 0.f || config.relaxation_reduction <= 0.f ||
-            config.epsilon <= 0.f || config.min_constraint > config.max_constraint) {
+            config.epsilon <= 0.f || config.min_constraint > config.max_constraint ||
+            !validConvergenceConfig(config.convergence)) {
             YK_LOGE("[AlgebraicReconstructorEx] 无效配置");
             return false;
         }
@@ -250,6 +380,7 @@ private:
     SCBCTParams params_{};
     AlgebraicReconstructionConfig config_{};
     cudaStream_t stream_ = nullptr;
+    std::vector<SConeProjGeomVec> geometry_{};
     int subset_count_ = 0;
     int actual_subset_count_ = 0;
     bool prepared_ = false;
@@ -257,6 +388,12 @@ private:
     AlgebraicDetailedWeightBackend detailed_weights_{};
     AlgebraicTigreBackend tigre_{};
     AlgebraicRegularizer regularizer_{};
+    ForwardOperatorAdapter convergence_fp_{};
+    float* d_projection_residual_ = nullptr;
+    float* d_previous_volume_ = nullptr;
+    float previous_residual_ = std::numeric_limits<float>::quiet_NaN();
+    int convergence_patience_ = 0;
+    IterativeConvergenceStatistics convergence_statistics_{};
 };
 
 // 标准圆轨迹便捷入口。它只负责由 SCBCTParams 生成逐视角 geometry，实际
@@ -292,6 +429,8 @@ public:
     int actualSubsetCount() const { return implementation_.actualSubsetCount(); }
     unsigned int totalSubsetUpdates() const
     { return implementation_.totalSubsetUpdates(); }
+    const IterativeConvergenceStatistics& convergenceStatistics() const
+    { return implementation_.convergenceStatistics(); }
 
 private:
     AlgebraicReconstructorEx implementation_{};

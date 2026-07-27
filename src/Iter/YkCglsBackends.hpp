@@ -8,11 +8,14 @@
 #include "global/YkLog.h"
 #include "util/YkCpuProfiler.hpp"
 #include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "Iter/YkIterativeConvergence.hpp"
 
 #include <cuda_runtime.h>
 #include <global/YkCBCTParams.h>
 #include <vector>
 #include <numeric>
+#include <limits>
+#include <cmath>
 
 namespace YK {
     class CglsAstraBackend {
@@ -206,6 +209,7 @@ namespace YK {
             float max_constraint = 1e30f;
             ETask fp_task = ETask::FP_Joseph;
             ETask bp_task = ETask::BP_Joseph_v2;
+            Iter::IterativeConvergenceConfig convergence{};
         };
 
         bool init(const SCBCTParams& params,
@@ -265,6 +269,12 @@ namespace YK {
 
             int re_init_at = -1;
             float l2_prev = std::numeric_limits<float>::max();
+            statistics_ = {};
+            int convergence_patience = 0;
+            float previous_checked_residual =
+                std::numeric_limits<float>::quiet_NaN();
+            const float measured_norm = std::sqrt(std::max(0.f,
+                dot_device_(d_sino_meas, d_sino_meas, sino_n, stream)));
 
             // ── 初始化 ───────────────────────────────────────────────
             initialize_(d_sino_meas, d_vol, params, stream, vol_n, sino_n);
@@ -290,6 +300,7 @@ namespace YK {
                 // alpha = gamma / ||q||^2
                 const float q_norm2 = dot_device_(d_q_, d_q_, sino_n, stream);
                 if (q_norm2 < cfg_.eps) {
+                    statistics_.stopped_by_breakdown = true;
                     YK_LOGI("[CglsRobustBackend] q_norm^2 too small, stop at iter {}", iter);
                     break;
                 }
@@ -323,6 +334,7 @@ namespace YK {
                     YK_LOGW("[CglsRobustBackend] divergence at iter {}, rollback", iter);
 
                     if (re_init_at + 1 == iter || !cfg_.restart) {
+                        statistics_.stopped_by_divergence = true;
                         YK_LOGW("[CglsRobustBackend] exited due to divergence");
                         break;
                     }
@@ -363,6 +375,11 @@ namespace YK {
                 if (cfg_.use_max)
                     YK::Iter::clamp_max_launch(
                         d_vol, vol_n, cfg_.max_constraint, stream);
+
+                statistics_.completed_iterations = iter + 1;
+                if (checkConvergence_(d_vol, l2_cur, measured_norm,
+                        previous_checked_residual, convergence_patience,
+                        vol_n, stream)) break;
             }
             return true;
         }
@@ -382,8 +399,61 @@ namespace YK {
         }
 
         ~CglsRobustBackend() { release(); }
+        const Iter::IterativeConvergenceStatistics& statistics() const
+        { return statistics_; }
 
     private:
+        bool checkConvergence_(float* volume, float residual,
+            float measured_norm, float& previous_residual, int& patience,
+            size_t vol_n, cudaStream_t stream)
+        {
+            const auto& config = cfg_.convergence;
+            if (!Iter::convergenceEnabled(config) ||
+                (statistics_.completed_iterations % config.check_interval != 0 &&
+                 statistics_.completed_iterations != cfg_.n_iter)) return false;
+            ++statistics_.convergence_checks;
+            statistics_.projection_residual_l2 = residual;
+            statistics_.relative_projection_residual = residual /
+                std::max(measured_norm, cfg_.eps);
+            const bool residual_ok = config.relative_residual_tolerance > 0.f &&
+                statistics_.relative_projection_residual <=
+                    config.relative_residual_tolerance;
+            bool stagnation_ok = false;
+            if (std::isfinite(previous_residual)) {
+                statistics_.relative_residual_improvement =
+                    (previous_residual - residual) /
+                    std::max(previous_residual, cfg_.eps);
+                stagnation_ok = config.relative_improvement_tolerance > 0.f &&
+                    statistics_.relative_residual_improvement >= 0.f &&
+                    statistics_.relative_residual_improvement <=
+                        config.relative_improvement_tolerance;
+            }
+            previous_residual = residual;
+
+            bool update_ok = false;
+            if (config.relative_update_tolerance > 0.f) {
+                const float previous_norm = std::sqrt(std::max(0.f,
+                    dot_device_(d_x_prev_, d_x_prev_, vol_n, stream)));
+                YK::Iter::residual_launch(volume, d_x_prev_, d_x_prev_, vol_n, stream);
+                statistics_.relative_volume_update = std::sqrt(std::max(0.f,
+                    dot_device_(d_x_prev_, d_x_prev_, vol_n, stream))) /
+                    std::max(previous_norm, cfg_.eps);
+                update_ok = statistics_.relative_volume_update <=
+                    config.relative_update_tolerance;
+            }
+            const bool satisfied = statistics_.completed_iterations >=
+                    config.minimum_iterations &&
+                (residual_ok || update_ok || stagnation_ok);
+            patience = satisfied ? patience + 1 : 0;
+            if (patience < config.patience) return false;
+            statistics_.stopped_by_relative_residual = residual_ok;
+            statistics_.stopped_by_relative_update = update_ok;
+            statistics_.stopped_by_stagnation = stagnation_ok;
+            YK_LOGI("[CglsRobustBackend] stop by convergence at iter {}",
+                statistics_.completed_iterations);
+            return true;
+        }
+
         void initialize_(
             const float* d_sino_meas,
             const float* d_vol,
@@ -440,6 +510,7 @@ namespace YK {
         float* d_s_ = nullptr;   // A^T*r（体积空间）
         float* d_x_prev_ = nullptr;   // x 备份
         float* d_ax_ = nullptr;   // 正投影临时缓冲
+        Iter::IterativeConvergenceStatistics statistics_{};
     };
 
     YK_INLINE bool cgls_robust_backend_reconstruct(

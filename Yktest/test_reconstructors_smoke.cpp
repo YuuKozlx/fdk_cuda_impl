@@ -258,6 +258,55 @@ int main_algebraic_smoke()
     });
 }
 
+int main_iterative_convergence_smoke()
+{
+    int result = executeReconstructorSmoke("OSSART-convergence", [](IterativeFixture& f) {
+        Iter::AlgebraicReconstructionConfig cfg{};
+        cfg.method = Iter::EAlgebraicMethod::Ossart;
+        cfg.weight_model = Iter::EAlgebraicWeightModel::DetailedSubset;
+        cfg.iterations = 4;
+        cfg.subset_count = 2;
+        cfg.relaxation = 0.2f;
+        cfg.use_min = true;
+        // 阈值大于 1，保证首轮检查即满足；验证提前停止的数据流与统计。
+        cfg.convergence.relative_residual_tolerance = 2.f;
+        cfg.convergence.minimum_iterations = 1;
+        cfg.convergence.check_interval = 1;
+        cfg.convergence.patience = 1;
+        cfg.fp_task = ETask::FP_Joseph;
+        cfg.bp_task = ETask::BP_Joseph_v3;
+        Iter::AlgebraicReconstructorEx recon;
+        const bool ok = recon.prepare(f.p, f.external_geometry, cfg, f.stream) &&
+            recon.reconstruct(f.d_sino.data(), f.d_recon.data());
+        const auto stats = recon.convergenceStatistics();
+        return ok && stats.completed_iterations == 1 &&
+            recon.totalSubsetUpdates() == 2 && stats.convergence_checks == 1 &&
+            stats.stopped_by_relative_residual &&
+            std::isfinite(stats.relative_projection_residual);
+    });
+    if (result) return result;
+
+    return executeReconstructorSmoke("CGLS-convergence", [](IterativeFixture& f) {
+        Iter::CglsReconstructionConfig cfg{};
+        cfg.strategy = Iter::ECglsStrategy::RobustRestart;
+        cfg.iterations = 4;
+        cfg.use_min = true;
+        cfg.convergence.relative_residual_tolerance = 2.f;
+        cfg.convergence.minimum_iterations = 1;
+        cfg.convergence.check_interval = 1;
+        cfg.convergence.patience = 1;
+        cfg.fp_task = ETask::FP_Joseph;
+        cfg.bp_task = ETask::BP_Joseph_v3;
+        Iter::CglsReconstructorEx recon;
+        const bool ok = recon.prepare(f.p, f.external_geometry, cfg, f.stream) &&
+            recon.reconstruct(f.d_sino.data(), f.d_recon.data());
+        const auto stats = recon.convergenceStatistics();
+        return ok && stats.completed_iterations == 1 &&
+            stats.convergence_checks == 1 && stats.stopped_by_relative_residual &&
+            std::isfinite(stats.relative_projection_residual);
+    });
+}
+
 int main_ossart_tv_smoke()
 {
     return executeReconstructorSmoke("OS-SART-Smoothed-TV", [](IterativeFixture& f) {

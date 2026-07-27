@@ -140,7 +140,72 @@ strength_reduction  0.95 ～ 1.0
 如果边缘过度平滑，优先减小 `strength` 或 `inner_iterations`。不要通过增加
 子集数补偿锐度，因为这会同时改变数据更新轨迹。
 
-## 3. CGLS
+## 3. 迭代收敛与提前停止
+
+`iterations` 始终是硬上限。默认收敛配置的所有浮点阈值均为 `0`，所以默认
+行为仍是完整执行指定外循环数。要开启提前停止，在统一代数重建或
+`RobustRestart` CGLS 的 `config.convergence` 中设置至少一个阈值：
+
+```cpp
+config.convergence.relative_residual_tolerance = 1e-2f;
+config.convergence.minimum_iterations = 3;
+config.convergence.check_interval = 1;
+config.convergence.patience = 1;
+```
+
+| 字段 | 含义 |
+|---|---|
+| `relative_residual_tolerance` | 相对投影残差 `||b-Ax||₂ / ||b||₂` 的上限；`0` 禁用 |
+| `relative_update_tolerance` | 相邻检查点体积相对变化量 `||x_k-x_{k-1}||₂ / ||x_{k-1}||₂` 上限；`0` 禁用 |
+| `relative_improvement_tolerance` | 相邻检查点残差相对改善量不超过该值时，视为停滞；`0` 禁用 |
+| `minimum_iterations` | 允许提前停止前最少完成的外循环数 |
+| `check_interval` | 每隔多少个外循环检查一次；必须大于 0 |
+| `patience` | 已启用条件连续满足多少次才停止；必须大于 0 |
+
+任一已启用条件满足即计一次；满足 `minimum_iterations` 且累计到 `patience`
+后停止。`convergenceStatistics()` 提供实际完成轮数、检查次数、绝对/相对
+投影残差、相对体积变化以及对应停止原因。
+
+OS-SART/SART/SIRT 在检查点额外执行一次全视角正投影，因此检查越频繁，
+额外耗时越多；大体积测试通常建议每 1～3 个外循环检查一次。`RobustRestart`
+CGLS 本来就每轮计算真实残差，启用残差阈值没有额外的正投影检查。旧
+`AstraClassic` CGLS 当前不支持这一统一收敛配置；如果设置了阈值，`prepare()`
+会失败而非静默忽略。
+
+### 3.1 FDK 初值水模实测
+
+水模参数为 `512×512×400`、`0.3 mm` 等体素、`1024×128` 平板探测器、
+720 个 360° 投影、SID/SDD=`440/770 mm`。FDK 作为非零初值，使用
+Detailed + GoldenRatio OS-SART，10 个子集，松弛因子 0.25。
+
+| 配置 | 实际外循环 | 子集更新 | 迭代耗时 | 中央有效层 NRMSE |
+|---|---:|---:|---:|---:|
+| 不启用提前停止（10 轮） | 10 | 100 | 18.80 s | 3.154% |
+| 相对残差 ≤ 1%，最少 3 轮 | 5 | 50 | 10.98 s | 3.222% |
+
+后者在第 5 轮达到 `0.9378%` 相对投影残差，较 10 轮基线节省约 41.6% 的
+迭代时间，NRMSE 增加 0.068 个百分点。该 NRMSE 是中央 `±12 mm` 有效轴向
+层的最佳缩放 NRMSE；它用于排除探测器轴向覆盖不足和整体标定比例的影响。
+
+可通过 Yktest 复现，程序会保存真值、投影、FDK 初值、最终重建、拼图及 JSON：
+
+```powershell
+out/build/x64-refactor-check/Yktest/Release/ykcbct_manual_tests.exe `
+  large/water-fdk-iterative `
+  --water-iterative-method ossart `
+  --water-iterative-iterations 10 `
+  --water-iterative-subsets 10 `
+  --water-iterative-relaxation 0.25 `
+  --water-iterative-relative-residual 0.01 `
+  --water-iterative-minimum-iterations 3 `
+  --water-iterative-check-interval 1 `
+  --water-iterative-patience 1
+```
+
+`--water-iterative-relative-residual 0` 为默认值，表示关闭提前停止。测试 JSON
+还会记录请求/实际迭代次数、残差、检查次数和停止原因。
+
+## 4. CGLS
 
 CGLS 同样把策略和几何入口分开：
 
@@ -166,7 +231,7 @@ reconstructor.reconstruct(d_projection, d_volume);
 
 显式几何使用 `CglsReconstructorEx`。`Ex` 与策略不绑定。
 
-## 4. PWLS
+## 5. PWLS
 
 `ParallelPwlsReconstructor` 提供并行 surrogate 更新，并支持无正则、二次先验
 和 Huber 先验。它与 OS-SART-TV 的交替式 TV 流程属于不同算法，不应只按
@@ -185,7 +250,7 @@ reconstructor.prepare(params, geometry, config, stream, device_id);
 reconstructor.reconstruct(d_projection, d_volume);
 ```
 
-## 5. 旧接口兼容关系
+## 6. 旧接口兼容关系
 
 旧 include 和类名仍作为适配器保留：
 
@@ -202,7 +267,7 @@ reconstructor.reconstruct(d_projection, d_volume);
 
 旧接口适合保持已有调用方源码兼容；新功能和正则化应通过统一门面配置。
 
-## 6. 测试命令
+## 7. 测试命令
 
 ```powershell
 cmake --build out/build/x64-refactor-check --config Release `
@@ -215,4 +280,4 @@ ctest --test-dir out/build/yktest --output-on-failure
 ```
 
 当前 `recon` 分类覆盖统一代数、旧代数适配器、OS-SART-TV、统一 CGLS 和旧
-CGLS 适配器。
+CGLS 适配器，以及 `recon/convergence` 的默认轮数/提前停止回归。

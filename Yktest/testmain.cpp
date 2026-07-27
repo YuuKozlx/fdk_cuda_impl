@@ -22,6 +22,7 @@ int main_operator_matrix_smoke(); int main_planar_geometry_operator_smoke();
 int main_ossart_tigre_smoke(); int main_ossart_smoke(); int main_ossart_ex_smoke();
 int main_algebraic_ex_smoke();
 int main_algebraic_smoke();
+int main_iterative_convergence_smoke();
 int main_ossart_tv_smoke();
 int main_tigre_gradient_family_smoke();
 int main_cgls_smoke(); int main_cgls_astra_smoke(); int main_cgls_ex_smoke();
@@ -29,6 +30,11 @@ int main_cgls_unified_smoke();
 int main_large_water_pwls();
 int main_large_water_ossart();
 int main_large_water_fdk();
+int main_large_water_fdk_iterative();
+void configure_large_water_fdk_iterative_test(const std::string& method,
+    int iterations, int subsets, float relaxation,
+    float relative_residual_tolerance, int minimum_iterations,
+    int convergence_check_interval, int convergence_patience);
 int main_large_arrow_tigre();
 void configure_large_arrow_test(const std::string& method, int iterations,
     int block_size, float lambda, int tv_iterations);
@@ -104,6 +110,7 @@ const TestEntry kTests[] = {
     TEST_INT("recon/ossart-ex", "recon", false, main_ossart_ex_smoke),
     TEST_INT("recon/algebraic-ex", "recon", false, main_algebraic_ex_smoke),
     TEST_INT("recon/algebraic", "recon", false, main_algebraic_smoke),
+    TEST_INT("recon/convergence", "recon", false, main_iterative_convergence_smoke),
     TEST_INT("recon/ossart-tv", "recon", false, main_ossart_tv_smoke),
     TEST_INT("recon/tigre-gradient-family", "recon", false,
         main_tigre_gradient_family_smoke),
@@ -116,6 +123,8 @@ const TestEntry kTests[] = {
     TEST_INT("large/water-pwls", "large", false, main_large_water_pwls),
     TEST_INT("large/water-ossart", "large", false, main_large_water_ossart),
     TEST_INT("large/water-fdk", "large", false, main_large_water_fdk),
+    TEST_INT("large/water-fdk-iterative", "large", false,
+        main_large_water_fdk_iterative),
     TEST_INT("large/arrow-tigre", "large", false, main_large_arrow_tigre),
 
     // Helical and cylindrical detector algorithms.
@@ -183,6 +192,14 @@ int main(int argc, char** argv)
     int arrow_block_size = 20;
     float arrow_lambda = 0.25f;
     int arrow_tv_iterations = 5;
+    std::string water_iterative_method = "ossart";
+    int water_iterative_iterations = 10;
+    int water_iterative_subsets = 10;
+    float water_iterative_relaxation = 0.25f;
+    float water_iterative_relative_residual = 0.f;
+    int water_iterative_minimum_iterations = 1;
+    int water_iterative_check_interval = 1;
+    int water_iterative_patience = 1;
     bool show_list = false;
     app.add_option("selection", selection, "测试名、测试分类、all-local 或 list");
     app.add_flag("-l,--list", show_list, "列出全部测试");
@@ -202,6 +219,27 @@ int main(int argc, char** argv)
         "大箭头模体数据更新初始步长")->check(CLI::PositiveNumber);
     app.add_option("--arrow-tv-iterations", arrow_tv_iterations,
         "POCS 方法每轮 TV 内迭代次数")->check(CLI::PositiveNumber);
+    app.add_option("--water-iterative-method", water_iterative_method,
+        "水模 FDK 初值后的迭代方法")
+        ->check(CLI::IsMember({"ossart", "cgls"}));
+    app.add_option("--water-iterative-iterations", water_iterative_iterations,
+        "水模 FDK 初值后的迭代次数")->check(CLI::PositiveNumber);
+    app.add_option("--water-iterative-subsets", water_iterative_subsets,
+        "水模 OSSART 子集数量")->check(CLI::PositiveNumber);
+    app.add_option("--water-iterative-relaxation", water_iterative_relaxation,
+        "水模 OSSART 松弛因子")->check(CLI::PositiveNumber);
+    app.add_option("--water-iterative-relative-residual",
+        water_iterative_relative_residual,
+        "水模相对投影残差阈值；0 表示关闭提前停止")
+        ->check(CLI::NonNegativeNumber);
+    app.add_option("--water-iterative-minimum-iterations",
+        water_iterative_minimum_iterations, "水模收敛前最少外循环数")
+        ->check(CLI::NonNegativeNumber);
+    app.add_option("--water-iterative-check-interval",
+        water_iterative_check_interval, "水模每隔几轮检查收敛")
+        ->check(CLI::PositiveNumber);
+    app.add_option("--water-iterative-patience", water_iterative_patience,
+        "水模连续满足次数")->check(CLI::PositiveNumber);
     app.footer(
         "示例:\n"
         "  ykcbct_manual_tests filter/discrete-ramlak-dc\n"
@@ -219,6 +257,11 @@ int main(int argc, char** argv)
     YK::Logger::instance().set_level(parseLogLevel(log_level));
     configure_large_arrow_test(arrow_method, arrow_iterations,
         arrow_block_size, arrow_lambda, arrow_tv_iterations);
+    configure_large_water_fdk_iterative_test(water_iterative_method,
+        water_iterative_iterations, water_iterative_subsets,
+        water_iterative_relaxation, water_iterative_relative_residual,
+        water_iterative_minimum_iterations, water_iterative_check_interval,
+        water_iterative_patience);
     if (show_list || selection == "list") {
         listTests();
         return 0;

@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "Iter/YkCglsBackends.hpp"
+#include "Iter/YkIterativeConvergence.hpp"
 
 namespace YK::Iter {
 
@@ -22,6 +23,7 @@ struct CglsReconstructionConfig {
     float max_constraint = 1e30f;
     ETask fp_task = ETask::FP_Joseph;
     ETask bp_task = ETask::BP_Joseph_v2;
+    IterativeConvergenceConfig convergence{};
 };
 
 // 显式逐视角 geometry 的 CGLS 门面。Ex 只描述 geometry 来源，和
@@ -43,7 +45,10 @@ public:
         if (!stream || params.iPAng <= 0 ||
             static_cast<int>(geometry.size()) != params.iPAng ||
             config.iterations <= 0 || config.epsilon <= 0.f ||
-            config.min_constraint > config.max_constraint) return false;
+            config.min_constraint > config.max_constraint ||
+            !validConvergenceConfig(config.convergence) ||
+            (config.strategy == ECglsStrategy::AstraClassic &&
+             convergenceEnabled(config.convergence))) return false;
         params_ = params;
         config_ = config;
         stream_ = stream;
@@ -71,6 +76,7 @@ public:
             backend.max_constraint = config.max_constraint;
             backend.fp_task = config.fp_task;
             backend.bp_task = config.bp_task;
+            backend.convergence = config.convergence;
             prepared_ = robust_.init(params_, backend, geometry, stream_, device_id);
         }
         if (!prepared_) release();
@@ -96,6 +102,8 @@ public:
     }
 
     bool isPrepared() const { return prepared_; }
+    const IterativeConvergenceStatistics& convergenceStatistics() const
+    { return robust_.statistics(); }
 
 private:
     SCBCTParams params_{};

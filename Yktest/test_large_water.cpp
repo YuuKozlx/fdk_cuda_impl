@@ -3,13 +3,16 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <vector>
 
 #include <cuda_runtime.h>
 
 #include "FDK/YkFdkPipeline.hpp"
 #include "Iter/YkAlgebraicReconstructor.hpp"
+#include "Iter/YkCglsReconstructor.hpp"
 #include "Iter/YkParallelPwlsReconstructor.hpp"
+#include "YkTestImage.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkMem3d.hpp"
@@ -17,6 +20,19 @@
 namespace {
 
 using namespace YK;
+
+struct WaterFdkIterativeOptions {
+    std::string method = "ossart";
+    int iterations = 10;
+    int subsets = 10;
+    float relaxation = 0.25f;
+    float relative_residual_tolerance = 0.f;
+    int minimum_iterations = 1;
+    int convergence_check_interval = 1;
+    int convergence_patience = 1;
+};
+
+WaterFdkIterativeOptions g_water_fdk_iterative_options{};
 
 bool writeFloatRaw(const std::filesystem::path& path,
     const std::vector<float>& values)
@@ -159,6 +175,23 @@ Metrics compareCentralSlab(const std::vector<float>& truth,
 }
 
 } // namespace
+
+void configure_large_water_fdk_iterative_test(const std::string& method,
+    int iterations, int subsets, float relaxation,
+    float relative_residual_tolerance, int minimum_iterations,
+    int convergence_check_interval, int convergence_patience)
+{
+    g_water_fdk_iterative_options.method = method;
+    g_water_fdk_iterative_options.iterations = iterations;
+    g_water_fdk_iterative_options.subsets = subsets;
+    g_water_fdk_iterative_options.relaxation = relaxation;
+    g_water_fdk_iterative_options.relative_residual_tolerance =
+        relative_residual_tolerance;
+    g_water_fdk_iterative_options.minimum_iterations = minimum_iterations;
+    g_water_fdk_iterative_options.convergence_check_interval =
+        convergence_check_interval;
+    g_water_fdk_iterative_options.convergence_patience = convergence_patience;
+}
 
 int main_large_water_pwls()
 {
@@ -563,6 +596,291 @@ int main_large_water_fdk()
         metrics.nrmse, material.water_mean, material.shell_mean,
         material.shell_peak, fp_ms, prepare_ms, recon_ms, used_mib,
         ok ? "PASS" : "FAIL");
+    std::printf("  artifacts: %s (%s)\n", artifact_dir.string().c_str(),
+        artifacts_ok ? "written" : "FAILED");
+    return ok ? 0 : 1;
+}
+
+int main_large_water_fdk_iterative()
+{
+    const SCBCTParams p = makeParams();
+    const auto truth = makeWaterPhantom(p);
+    std::vector<SConeProjGeomVec> geometry;
+    detail::buildCircularViews(p, geometry);
+    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
+    const size_t projection_count = static_cast<size_t>(p.iPU) * p.iPV * p.iPAng;
+    std::vector<float> projection(projection_count);
+    std::vector<float> fdk_initial(volume_count);
+    std::vector<float> reconstruction(volume_count);
+
+    size_t free_before = 0, total_memory = 0, free_during = 0;
+    bool ok = cudaMemGetInfo(&free_before, &total_memory) == cudaSuccess;
+    cudaStream_t stream = nullptr;
+    ok = ok && cudaStreamCreate(&stream) == cudaSuccess;
+    if (!ok) return 1;
+
+    float fp_ms = 0.f;
+    float fdk_prepare_ms = 0.f, fdk_recon_ms = 0.f;
+    float iterative_prepare_ms = 0.f, iterative_recon_ms = 0.f;
+    Metrics fdk_metrics{};
+    Metrics final_metrics{};
+    MaterialMetrics fdk_material{};
+    MaterialMetrics final_material{};
+    unsigned int subset_updates = 0;
+    Iter::IterativeConvergenceStatistics convergence_statistics{};
+    {
+        Mem::MemoryController memory;
+        auto d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
+        auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(p.iVX, p.iVY,
+            p.iVZ, 0);
+        ok = cudaMemcpyAsync(d_truth.data(), truth.data(),
+            volume_count * sizeof(float), cudaMemcpyHostToDevice, stream) ==
+            cudaSuccess;
+
+        ForwardOperatorAdapter fp;
+        FdkPipeline fdk;
+        cudaEvent_t start = nullptr, fp_stop = nullptr;
+        cudaEvent_t fdk_prepare_stop = nullptr, fdk_stop = nullptr;
+        cudaEvent_t iterative_prepare_stop = nullptr, iterative_stop = nullptr;
+        ok = ok && cudaEventCreate(&start) == cudaSuccess &&
+            cudaEventCreate(&fp_stop) == cudaSuccess &&
+            cudaEventCreate(&fdk_prepare_stop) == cudaSuccess &&
+            cudaEventCreate(&fdk_stop) == cudaSuccess &&
+            cudaEventCreate(&iterative_prepare_stop) == cudaSuccess &&
+            cudaEventCreate(&iterative_stop) == cudaSuccess &&
+            fp.init(p, geometry, ETask::FP_Joseph, 0, stream);
+        if (ok) {
+            cudaEventRecord(start, stream);
+            ok = fp.run(d_truth.data(), p, d_projection.data(), stream);
+            cudaEventRecord(fp_stop, stream);
+            ok = ok && cudaEventSynchronize(fp_stop) == cudaSuccess;
+            if (ok)
+                ok = cudaMemcpy(projection.data(), d_projection.data(),
+                    projection_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                    cudaSuccess;
+
+            ok = ok && fdk.prepareWithGeometry(p, geometry, 64, stream);
+            cudaEventRecord(fdk_prepare_stop, stream);
+            if (ok) {
+                const FdkProjectionBatch batch{
+                    projection.data(), &geometry, nullptr, p.iPAng
+                };
+                ok = fdk.processBatch(batch, d_reconstruction.data(), true);
+                cudaEventRecord(fdk_stop, stream);
+                ok = ok && cudaEventSynchronize(fdk_stop) == cudaSuccess;
+            }
+            if (ok) {
+                ok = cudaMemcpy(fdk_initial.data(), d_reconstruction.data(),
+                    volume_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                    cudaSuccess;
+                fdk_metrics = compareCentralSlab(truth, fdk_initial, p, 12.f);
+                fdk_material = measureMaterials(fdk_initial, p, fdk_metrics.scale);
+            }
+
+            if (ok && g_water_fdk_iterative_options.method == "ossart") {
+                Iter::AlgebraicReconstructionConfig config{};
+                config.method = Iter::EAlgebraicMethod::Ossart;
+                config.weight_model = Iter::EAlgebraicWeightModel::DetailedSubset;
+                config.subset_order = Iter::EAlgebraicSubsetOrder::GoldenRatio;
+                config.iterations = g_water_fdk_iterative_options.iterations;
+                config.subset_count = g_water_fdk_iterative_options.subsets;
+                config.relaxation = g_water_fdk_iterative_options.relaxation;
+                config.relaxation_reduction = 1.f;
+                config.convergence.relative_residual_tolerance =
+                    g_water_fdk_iterative_options.relative_residual_tolerance;
+                config.convergence.minimum_iterations =
+                    g_water_fdk_iterative_options.minimum_iterations;
+                config.convergence.check_interval =
+                    g_water_fdk_iterative_options.convergence_check_interval;
+                config.convergence.patience =
+                    g_water_fdk_iterative_options.convergence_patience;
+                config.use_min = true;
+                config.min_constraint = 0.f;
+                config.fp_task = ETask::FP_Joseph;
+                config.bp_task = ETask::BP_Joseph_v3;
+                Iter::AlgebraicReconstructorEx reconstructor;
+                ok = reconstructor.prepare(p, geometry, config, stream);
+                cudaEventRecord(iterative_prepare_stop, stream);
+                ok = ok && reconstructor.reconstruct(
+                    d_projection.data(), d_reconstruction.data());
+                cudaEventRecord(iterative_stop, stream);
+                ok = ok && cudaEventSynchronize(iterative_stop) == cudaSuccess;
+                subset_updates = reconstructor.totalSubsetUpdates();
+                convergence_statistics = reconstructor.convergenceStatistics();
+                reconstructor.release();
+            }
+            else if (ok) {
+                Iter::CglsReconstructionConfig config{};
+                config.strategy = Iter::ECglsStrategy::RobustRestart;
+                config.iterations = g_water_fdk_iterative_options.iterations;
+                config.epsilon = 1e-8f;
+                config.restart_on_divergence = true;
+                config.convergence.relative_residual_tolerance =
+                    g_water_fdk_iterative_options.relative_residual_tolerance;
+                config.convergence.minimum_iterations =
+                    g_water_fdk_iterative_options.minimum_iterations;
+                config.convergence.check_interval =
+                    g_water_fdk_iterative_options.convergence_check_interval;
+                config.convergence.patience =
+                    g_water_fdk_iterative_options.convergence_patience;
+                config.use_min = true;
+                config.min_constraint = 0.f;
+                config.fp_task = ETask::FP_Joseph;
+                config.bp_task = ETask::BP_Joseph_v3;
+                Iter::CglsReconstructorEx reconstructor;
+                ok = reconstructor.prepare(p, geometry, config, stream);
+                cudaEventRecord(iterative_prepare_stop, stream);
+                ok = ok && reconstructor.reconstruct(
+                    d_projection.data(), d_reconstruction.data());
+                cudaEventRecord(iterative_stop, stream);
+                ok = ok && cudaEventSynchronize(iterative_stop) == cudaSuccess;
+                convergence_statistics = reconstructor.convergenceStatistics();
+                reconstructor.release();
+            }
+
+            if (ok) {
+                cudaEventElapsedTime(&fp_ms, start, fp_stop);
+                cudaEventElapsedTime(&fdk_prepare_ms, fp_stop, fdk_prepare_stop);
+                cudaEventElapsedTime(&fdk_recon_ms, fdk_prepare_stop, fdk_stop);
+                cudaEventElapsedTime(&iterative_prepare_ms, fdk_stop,
+                    iterative_prepare_stop);
+                cudaEventElapsedTime(&iterative_recon_ms, iterative_prepare_stop,
+                    iterative_stop);
+                ok = cudaMemcpy(reconstruction.data(), d_reconstruction.data(),
+                    volume_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                    cudaSuccess;
+                if (ok) {
+                    final_metrics = compareCentralSlab(truth, reconstruction, p, 12.f);
+                    final_material = measureMaterials(reconstruction, p,
+                        final_metrics.scale);
+                    ok = std::all_of(reconstruction.begin(), reconstruction.end(),
+                            [](float value) { return std::isfinite(value); }) &&
+                        std::isfinite(final_metrics.correlation) &&
+                        std::isfinite(final_metrics.nrmse) &&
+                        final_metrics.correlation > 0.70 &&
+                        final_metrics.nrmse < 0.75;
+                }
+            }
+        }
+        cudaMemGetInfo(&free_during, &total_memory);
+        if (start) cudaEventDestroy(start);
+        if (fp_stop) cudaEventDestroy(fp_stop);
+        if (fdk_prepare_stop) cudaEventDestroy(fdk_prepare_stop);
+        if (fdk_stop) cudaEventDestroy(fdk_stop);
+        if (iterative_prepare_stop) cudaEventDestroy(iterative_prepare_stop);
+        if (iterative_stop) cudaEventDestroy(iterative_stop);
+        fdk.release();
+        fp.release();
+    }
+    cudaStreamDestroy(stream);
+
+    const std::string method = g_water_fdk_iterative_options.method;
+    const auto artifact_dir = std::filesystem::absolute(
+        std::string("out/test-artifacts/large-water-fdk-") + method);
+    const auto phantom_path = artifact_dir / "water_shell_f32_512x512x400.raw";
+    const auto projection_path = artifact_dir /
+        "water_projection_f32_1024x128x720.raw";
+    const auto fdk_path = artifact_dir /
+        "water_fdk_initial_f32_512x512x400.raw";
+    const auto reconstruction_path = artifact_dir /
+        (std::string("water_fdk_") + method + "_f32_512x512x400.raw");
+    bool artifacts_ok = writeFloatRaw(phantom_path, truth) &&
+        writeFloatRaw(projection_path, projection) &&
+        writeFloatRaw(fdk_path, fdk_initial) &&
+        writeFloatRaw(reconstruction_path, reconstruction);
+    std::vector<TestImage::GrayPanel> panels;
+    for (const int z : { p.iVZ / 2 - 20, p.iVZ / 2, p.iVZ / 2 + 20 }) {
+        panels.push_back({ &truth, p.iVX, p.iVY, p.iVZ, z,
+            1.f, 0.f, 0.045f, false });
+        panels.push_back({ &fdk_initial, p.iVX, p.iVY, p.iVZ, z,
+            fdk_metrics.scale, 0.f, 0.045f, false });
+        panels.push_back({ &reconstruction, p.iVX, p.iVY, p.iVZ, z,
+            final_metrics.scale, 0.f, 0.045f, false });
+    }
+    const auto montage_path = artifact_dir /
+        (std::string("water_truth_fdk_") + method + ".bmp");
+    artifacts_ok = artifacts_ok &&
+        TestImage::writeGrayMontageBmp(montage_path, panels, 3, 4, 1);
+    std::filesystem::create_directories(artifact_dir);
+    std::ofstream metadata(artifact_dir /
+        (std::string("water_fdk_") + method + ".json"));
+    const float total_recon_ms = fdk_prepare_ms + fdk_recon_ms +
+        iterative_prepare_ms + iterative_recon_ms;
+    metadata << "{\n"
+        << "  \"volume_xyz\": [512, 512, 400],\n"
+        << "  \"voxel_mm_xyz\": [0.3, 0.3, 0.3],\n"
+        << "  \"detector_uv\": [1024, 128], \"views\": 720,\n"
+        << "  \"sid_mm\": 440, \"sdd_mm\": 770, \"scan_degrees\": 360,\n"
+        << "  \"initialization\": \"FDK\", \"iterative_method\": \""
+        << method << "\",\n"
+        << "  \"iterations\": " << g_water_fdk_iterative_options.iterations
+        << ", \"subsets\": " << g_water_fdk_iterative_options.subsets
+        << ", \"relaxation\": " << g_water_fdk_iterative_options.relaxation
+        << ", \"relative_residual_tolerance\": "
+        << g_water_fdk_iterative_options.relative_residual_tolerance
+        << ", \"minimum_iterations\": "
+        << g_water_fdk_iterative_options.minimum_iterations
+        << ", \"convergence_check_interval\": "
+        << g_water_fdk_iterative_options.convergence_check_interval
+        << ", \"convergence_patience\": "
+        << g_water_fdk_iterative_options.convergence_patience
+        << ",\n"
+        << "  \"fp_ms\": " << fp_ms
+        << ", \"fdk_prepare_ms\": " << fdk_prepare_ms
+        << ", \"fdk_reconstruction_ms\": " << fdk_recon_ms
+        << ", \"iterative_prepare_ms\": " << iterative_prepare_ms
+        << ", \"iterative_reconstruction_ms\": " << iterative_recon_ms
+        << ", \"total_reconstruction_ms\": " << total_recon_ms << ",\n"
+        << "  \"subset_updates\": " << subset_updates << ",\n"
+        << "  \"completed_iterations\": "
+        << convergence_statistics.completed_iterations
+        << ", \"convergence_checks\": "
+        << convergence_statistics.convergence_checks
+        << ", \"projection_residual_l2\": "
+        << convergence_statistics.projection_residual_l2
+        << ", \"relative_projection_residual\": "
+        << convergence_statistics.relative_projection_residual
+        << ", \"stopped_by_relative_residual\": "
+        << (convergence_statistics.stopped_by_relative_residual ? "true" : "false")
+        << ", \"stopped_by_relative_update\": "
+        << (convergence_statistics.stopped_by_relative_update ? "true" : "false")
+        << ", \"stopped_by_stagnation\": "
+        << (convergence_statistics.stopped_by_stagnation ? "true" : "false")
+        << ",\n"
+        << "  \"fdk_correlation\": " << fdk_metrics.correlation
+        << ", \"fdk_nrmse\": " << fdk_metrics.nrmse << ",\n"
+        << "  \"final_correlation\": " << final_metrics.correlation
+        << ", \"final_nrmse\": " << final_metrics.nrmse << ",\n"
+        << "  \"fdk_water_mean\": " << fdk_material.water_mean
+        << ", \"fdk_shell_mean\": " << fdk_material.shell_mean << ",\n"
+        << "  \"final_water_mean\": " << final_material.water_mean
+        << ", \"final_shell_mean\": " << final_material.shell_mean << "\n"
+        << "}\n";
+    metadata.close();
+    artifacts_ok = artifacts_ok && metadata.good();
+    ok = ok && artifacts_ok;
+
+    const double used_mib = free_before >= free_during
+        ? (free_before - free_during) / (1024.0 * 1024.0) : 0.0;
+    std::printf("Large water FDK -> %s: FDK corr %.6f NRMSE %.6f, "
+        "final corr %.6f NRMSE %.6f\n", method.c_str(),
+        fdk_metrics.correlation, fdk_metrics.nrmse,
+        final_metrics.correlation, final_metrics.nrmse);
+    std::printf("  FP %.1f ms, FDK prepare %.1f ms recon %.1f ms, "
+        "iter prepare %.1f ms recon %.1f ms, total recon %.1f ms, "
+        "GPU %.1f MiB: %s\n", fp_ms, fdk_prepare_ms, fdk_recon_ms,
+        iterative_prepare_ms, iterative_recon_ms, total_recon_ms,
+        used_mib, ok ? "PASS" : "FAIL");
+    std::printf("  convergence: completed %d/%d, checks %d, rel-residual %.6g, "
+        "stopped(residual=%d, update=%d, stagnation=%d)\n",
+        convergence_statistics.completed_iterations,
+        g_water_fdk_iterative_options.iterations,
+        convergence_statistics.convergence_checks,
+        convergence_statistics.relative_projection_residual,
+        convergence_statistics.stopped_by_relative_residual,
+        convergence_statistics.stopped_by_relative_update,
+        convergence_statistics.stopped_by_stagnation);
     std::printf("  artifacts: %s (%s)\n", artifact_dir.string().c_str(),
         artifacts_ok ? "written" : "FAILED");
     return ok ? 0 : 1;
