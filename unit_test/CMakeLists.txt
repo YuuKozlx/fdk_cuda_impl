@@ -2,18 +2,12 @@ find_package(GTest CONFIG REQUIRED)
 
 add_executable(YKCBCT_unit_test
     ${CMAKE_CURRENT_SOURCE_DIR}/test_main.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_filter.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_fdk.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp 
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_logger.cpp
+    ${CMAKE_SOURCE_DIR}/src/global/YkLog.cpp
 )
 
 target_link_libraries(YKCBCT_unit_test PRIVATE
-    YKCBCT
     GTest::gtest
-    GTest::gtest_main
-    CUDA::cudart
-    CUDA::cufft
-    spdlog::spdlog
 )
 
 target_compile_options(YKCBCT_unit_test PRIVATE
@@ -31,6 +25,7 @@ target_compile_options(YKCBCT_unit_test PRIVATE
 target_include_directories(YKCBCT_unit_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/util
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}
 )

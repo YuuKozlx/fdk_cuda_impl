@@ -93,6 +93,7 @@ target_include_directories(YKCBCT
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/util
 )
 
 target_link_libraries(YKCBCT PRIVATE

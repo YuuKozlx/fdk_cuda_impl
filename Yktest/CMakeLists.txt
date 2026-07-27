@@ -3,6 +3,7 @@
 set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/testmain.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_validation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_helical_algorithms.cpp
@@ -21,6 +22,7 @@ target_link_libraries(ykcbct_manual_tests PRIVATE
 target_include_directories(ykcbct_manual_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/util
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_compile_options(ykcbct_manual_tests PRIVATE
