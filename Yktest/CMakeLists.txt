@@ -1,11 +1,17 @@
-# Manual integration tests are intentionally separate from CTest: most cases
-# consume large local raw-data files and are selected by a command-line group.
+# Yktest owns CUDA/integration/numerical-regression cases.  Keep source files
+# grouped by responsibility so a test has one obvious home.
 set(YKCBCT_MANUAL_TEST_SOURCES
+    # Runner and lightweight numerical validation
     ${CMAKE_CURRENT_SOURCE_DIR}/testmain.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_validation.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_forward_projectors.cpp
+
+    # Framework, geometry and reconstruction smoke tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
+
+    # Algorithm-specific and real-data diagnostics
     ${CMAKE_CURRENT_SOURCE_DIR}/test_helical_algorithms.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fpcyl.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp
