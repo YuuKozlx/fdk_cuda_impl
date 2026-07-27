@@ -1,7 +1,9 @@
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include <cuda_runtime.h>
+#include "CLI11/CLI11.hpp"
 #include "global/YkLog.h"
 
 // All manual integration entry points live in the existing module files.
@@ -50,6 +52,17 @@ int runVoid(void (*fn)()) { fn(); return 0; }
 #define TEST_VOID(name, category, real_data, fn) {name, category, real_data, []() { return runVoid(fn); }}
 
 struct TestEntry { const char* name; const char* category; bool needs_real_data; TestFn run; };
+
+YK::LogLevel parseLogLevel(const std::string& value)
+{
+    if (value == "trace") return YK::LogLevel::Trace;
+    if (value == "debug") return YK::LogLevel::Debug;
+    if (value == "info") return YK::LogLevel::Info;
+    if (value == "warn") return YK::LogLevel::Warn;
+    if (value == "error") return YK::LogLevel::Error;
+    if (value == "critical") return YK::LogLevel::Critical;
+    return YK::LogLevel::Off;
+}
 
 const TestEntry kTests[] = {
     // Framework and public data-flow contracts.
@@ -131,18 +144,37 @@ int runSelection(const char* selection)
 
 int main(int argc, char** argv)
 {
-    YK::Logger::instance().set_level(YK::LogLevel::Debug);
-    if (argc != 2 || std::strcmp(argv[1], "list") == 0) {
-        std::printf("Usage: %s list | all-local | <category> | <test-name>\n", argv[0]);
+    CLI::App app{"YKCBCT CUDA、算法集成和数值回归测试"};
+    std::string selection = "list";
+    std::string log_level = "debug";
+    bool show_list = false;
+    app.add_option("selection", selection, "测试名、测试分类、all-local 或 list");
+    app.add_flag("-l,--list", show_list, "列出全部测试");
+    app.add_option("--log-level", log_level, "日志等级")
+        ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error", "critical", "off"}));
+    app.footer(
+        "示例:\n"
+        "  ykcbct_manual_tests filter/discrete-ramlak-dc\n"
+        "  ykcbct_manual_tests filter\n"
+        "  ykcbct_manual_tests all-local\n"
+        "真实数据测试只能通过完整测试名显式运行。");
+    try {
+        app.parse(argc, argv);
+    } catch (const CLI::ParseError& error) {
+        return app.exit(error);
+    }
+
+    YK::Logger::instance().set_level(parseLogLevel(log_level));
+    if (show_list || selection == "list") {
         listTests();
-        return argc == 2 ? 0 : 2;
+        return 0;
     }
     for (const auto& test : kTests)
-        if (std::strcmp(argv[1], test.name) == 0)
+        if (selection == test.name)
             return test.run();
-    if (const int status = runSelection(argv[1]); status >= 0)
+    if (const int status = runSelection(selection.c_str()); status >= 0)
         return status;
-    std::fprintf(stderr, "Unknown manual test: %s\n", argv[1]);
+    std::fprintf(stderr, "Unknown test or category: %s\n", selection.c_str());
     listTests();
     return 2;
 }

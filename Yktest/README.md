@@ -20,6 +20,18 @@ ykcbct_manual_tests.exe fp
 
 # 运行所有不依赖真实数据的测试
 ykcbct_manual_tests.exe all-local
+
+# 调整日志等级
+ykcbct_manual_tests.exe filter --log-level info
+```
+
+命令行由 CLI11 解析，可通过 `ykcbct_manual_tests.exe --help` 查看完整帮助。
+
+轻量单元测试同样使用 CLI11 解析项目参数，并将 GoogleTest 参数原样转交。例如：
+
+```powershell
+YKCBCT_unit_test.exe --yk-log-level off `
+  --gtest_filter=LoggerTest.LevelFiltersLowerSeverity
 ```
 
 ## 分类约定

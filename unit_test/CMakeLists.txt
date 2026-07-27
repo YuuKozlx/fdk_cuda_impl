@@ -2,6 +2,7 @@ find_package(GTest CONFIG REQUIRED)
 
 # Keep this target lightweight. CUDA kernels and algorithm-level numerical
 # regressions belong to Yktest, whose target owns the required device link.
+# CLI11 is header-only and is available through src/util.
 add_executable(YKCBCT_unit_test
     ${CMAKE_CURRENT_SOURCE_DIR}/test_main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_logger.cpp
