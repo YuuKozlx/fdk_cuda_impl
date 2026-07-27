@@ -335,6 +335,23 @@ namespace YK
             });
         }
 
+        void subtract_launch(float* out, const float* a, const float* b,
+            size_t n, cudaStream_t stream)
+        {
+            YK::elemwise(out, n, stream, [a, b] __device__(float& value, size_t i) {
+                value = a[i] - b[i];
+            });
+        }
+
+        void linear_combination_launch(float* out, const float* a,
+            const float* b, float scale_b, size_t n, cudaStream_t stream)
+        {
+            YK::elemwise(out, n, stream,
+                [a, b, scale_b] __device__(float& value, size_t i) {
+                    value = a[i] + scale_b * b[i];
+                });
+        }
+
 
 
         __device__ __forceinline__ float warp_sum(float value)

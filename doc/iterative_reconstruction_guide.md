@@ -2,6 +2,8 @@
 
 本文说明当前统一迭代重建接口，包括 SIRT、SART、OS-SART、CGLS、
 PWLS 以及代数重建正则化。旧类仍可使用，但新代码建议优先使用统一门面。
+TIGRE 风格 ASD-POCS、PCSD、AwTV 和 Bregman 算法的完整状态机与参数映射
+见 [tigre_gradient_algorithms.md](tigre_gradient_algorithms.md)。
 
 ## 1. 统一代数重建的配置维度
 

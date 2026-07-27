@@ -311,6 +311,7 @@ namespace YK {
 
         unsigned int totalIterations() const { return iteration_; }
         int actualSubsetCount() const { return n_block_; }
+        void setRelaxation(float value) { lambda_cur_ = value; }
 
         void reset() { iteration_ = 0; lambda_cur_ = cfg_.lambda; }
 
@@ -857,6 +858,7 @@ namespace YK {
 
         unsigned int totalIterations() const { return iteration_; }
         int actualSubsetCount() const { return cfg_.n_subset; }
+        void setRelaxation(float value) { lambda_cur_ = value; }
         void reset() { iteration_ = 0; lambda_cur_ = cfg_.lambda; }
 
         void release()

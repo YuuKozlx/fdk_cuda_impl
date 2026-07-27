@@ -43,6 +43,14 @@ namespace YK {
         // ── scale：x *= alpha ─────────────────────────────────────────────
         void scale_launch(float* x, float alpha, size_t n, cudaStream_t stream);
 
+        // out = a - b；允许 out 与 a 或 b 指向同一缓冲。
+        void subtract_launch(float* out, const float* a, const float* b,
+            size_t n, cudaStream_t stream);
+
+        // out = a + scale_b * b；用于 Nesterov 和 Bregman 数据更新。
+        void linear_combination_launch(float* out, const float* a,
+            const float* b, float scale_b, size_t n, cudaStream_t stream);
+
         void dot_launch(const float* a, const float* b,
             size_t n, float* h_result, cudaStream_t stream);
 

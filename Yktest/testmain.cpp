@@ -23,11 +23,15 @@ int main_ossart_tigre_smoke(); int main_ossart_smoke(); int main_ossart_ex_smoke
 int main_algebraic_ex_smoke();
 int main_algebraic_smoke();
 int main_ossart_tv_smoke();
+int main_tigre_gradient_family_smoke();
 int main_cgls_smoke(); int main_cgls_astra_smoke(); int main_cgls_ex_smoke();
 int main_cgls_unified_smoke();
 int main_large_water_pwls();
 int main_large_water_ossart();
 int main_large_water_fdk();
+int main_large_arrow_tigre();
+void configure_large_arrow_test(const std::string& method, int iterations,
+    int block_size, float lambda, int tv_iterations);
 #if YKCBCT_TEST_HAS_HELICAL
 int main_helical_icd_smoke();
 int main_helical_wfbp_smoke();
@@ -101,6 +105,8 @@ const TestEntry kTests[] = {
     TEST_INT("recon/algebraic-ex", "recon", false, main_algebraic_ex_smoke),
     TEST_INT("recon/algebraic", "recon", false, main_algebraic_smoke),
     TEST_INT("recon/ossart-tv", "recon", false, main_ossart_tv_smoke),
+    TEST_INT("recon/tigre-gradient-family", "recon", false,
+        main_tigre_gradient_family_smoke),
     TEST_INT("recon/cgls", "recon", false, main_cgls_smoke),
     TEST_INT("recon/cgls-astra", "recon", false, main_cgls_astra_smoke),
     TEST_INT("recon/cgls-ex", "recon", false, main_cgls_ex_smoke),
@@ -110,6 +116,7 @@ const TestEntry kTests[] = {
     TEST_INT("large/water-pwls", "large", false, main_large_water_pwls),
     TEST_INT("large/water-ossart", "large", false, main_large_water_ossart),
     TEST_INT("large/water-fdk", "large", false, main_large_water_fdk),
+    TEST_INT("large/arrow-tigre", "large", false, main_large_arrow_tigre),
 
     // Helical and cylindrical detector algorithms.
 #if YKCBCT_TEST_HAS_HELICAL
@@ -171,16 +178,37 @@ int main(int argc, char** argv)
     CLI::App app{"YKCBCT CUDA、算法集成和数值回归测试"};
     std::string selection = "list";
     std::string log_level = "debug";
+    std::string arrow_method = "os-asd-pocs";
+    int arrow_iterations = 6;
+    int arrow_block_size = 20;
+    float arrow_lambda = 0.25f;
+    int arrow_tv_iterations = 5;
     bool show_list = false;
     app.add_option("selection", selection, "测试名、测试分类、all-local 或 list");
     app.add_flag("-l,--list", show_list, "列出全部测试");
     app.add_option("--log-level", log_level, "日志等级")
         ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error", "critical", "off"}));
+    app.add_option("--arrow-method", arrow_method, "大箭头模体重建方法")
+        ->check(CLI::IsMember({
+            "sart", "os-sart", "sirt",
+            "asd-pocs", "os-asd-pocs", "b-asd-pocs-beta",
+            "pcsd", "os-pcsd", "aw-pcsd", "os-aw-pcsd",
+            "aw-asd-pocs", "os-aw-asd-pocs"}));
+    app.add_option("--arrow-iterations", arrow_iterations,
+        "大箭头模体外循环次数")->check(CLI::PositiveNumber);
+    app.add_option("--arrow-block-size", arrow_block_size,
+        "OS 方法每个子集的视角数")->check(CLI::PositiveNumber);
+    app.add_option("--arrow-lambda", arrow_lambda,
+        "大箭头模体数据更新初始步长")->check(CLI::PositiveNumber);
+    app.add_option("--arrow-tv-iterations", arrow_tv_iterations,
+        "POCS 方法每轮 TV 内迭代次数")->check(CLI::PositiveNumber);
     app.footer(
         "示例:\n"
         "  ykcbct_manual_tests filter/discrete-ramlak-dc\n"
         "  ykcbct_manual_tests filter\n"
         "  ykcbct_manual_tests all-local\n"
+        "  ykcbct_manual_tests large/arrow-tigre "
+        "--arrow-method os-sart --arrow-iterations 20\n"
         "真实数据测试只能通过完整测试名显式运行。");
     try {
         app.parse(argc, argv);
@@ -189,6 +217,8 @@ int main(int argc, char** argv)
     }
 
     YK::Logger::instance().set_level(parseLogLevel(log_level));
+    configure_large_arrow_test(arrow_method, arrow_iterations,
+        arrow_block_size, arrow_lambda, arrow_tv_iterations);
     if (show_list || selection == "list") {
         listTests();
         return 0;

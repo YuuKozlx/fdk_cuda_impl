@@ -10,6 +10,7 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_water.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_large_arrow.cpp
 
     # 通用算法和真实数据诊断
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp

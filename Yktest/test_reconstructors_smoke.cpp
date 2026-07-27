@@ -11,6 +11,7 @@
 #include "Iter/YkCglsReconstructor.hpp"
 #include "Iter/YkOSSART.hpp"
 #include "Iter/YkSART.hpp"
+#include "Iter/YkTigreGradientReconstructor.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkMem3d.hpp"
@@ -23,13 +24,18 @@ using namespace YK;
 SCBCTParams makeIterativeParams()
 {
     SCBCTParams p{};
-    p.iPU = 28; p.iPV = 20;
+    // 32x24 同时覆盖迭代算子和 FDK 初始化路径；FDK 的纹理/FFT 工作区
+    // 使用这个已验证的最小探测器尺寸。
+    p.iPU = 32; p.iPV = 24;
     p.iPAng = 8; p.iPAngTotal = 8;
     p.iVX = 16; p.iVY = 16; p.iVZ = 12;
     p.du_mm = 1.f; p.dv_mm = 1.f;
     p.vox_x_mm = 1.f; p.vox_y_mm = 1.f; p.vox_z_mm = 1.f;
     p.SID = 80.f; p.SDD = 160.f;
     p.scan_range_rad = 2.f * CUDA_PI;
+    p.scan_start_angle_rad = 0.f;
+    p.nDirSign = 1;
+    p.bShortScan = false;
     p.angle_list.resize(p.iPAng);
     for (int i = 0; i < p.iPAng; ++i)
         p.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / p.iPAng;
@@ -276,6 +282,165 @@ int main_ossart_tv_smoke()
             recon.reconstruct(f.d_sino.data(), f.d_recon.data()) &&
             recon.totalSubsetUpdates() == 4;
     });
+}
+
+int main_tigre_gradient_family_smoke()
+{
+    using Algorithm = Iter::ETigreGradientAlgorithm;
+    struct Case { Algorithm algorithm; const char* name; int block_size; };
+    const Case cases[] = {
+        { Algorithm::Sart, "TIGRE-SART", 1 },
+        { Algorithm::OsSart, "TIGRE-OS-SART", 4 },
+        { Algorithm::Sirt, "TIGRE-SIRT", 8 },
+        { Algorithm::AsdPocs, "TIGRE-ASD-POCS", 1 },
+        { Algorithm::OsAsdPocs, "TIGRE-OS-ASD-POCS", 4 },
+        { Algorithm::BAsdPocsBeta, "TIGRE-B-ASD-POCS-beta", 1 },
+        { Algorithm::Pcsd, "TIGRE-PCSD", 1 },
+        { Algorithm::OsPcsd, "TIGRE-OS-PCSD", 4 },
+        { Algorithm::AwPcsd, "TIGRE-AwPCSD", 1 },
+        { Algorithm::OsAwPcsd, "TIGRE-OS-AwPCSD", 4 },
+        { Algorithm::AwAsdPocs, "TIGRE-Aw-ASD-POCS", 1 },
+        { Algorithm::OsAwAsdPocs, "TIGRE-OS-Aw-ASD-POCS", 4 }
+    };
+    for (const auto& item : cases) {
+        const int result = executeReconstructorSmoke(item.name,
+            [&](IterativeFixture& f) {
+                Iter::TigreGradientReconstructor::Config config{};
+                config.algorithm = item.algorithm;
+                config.iterations = 2;
+                config.block_size = item.block_size;
+                config.lambda = 0.2f;
+                config.lambda_reduction = 0.99f;
+                config.initialization = Iter::ETigreInitialization::Zero;
+                config.tv_iterations = 2;
+                config.alpha = 0.002f;
+                config.max_l2_error = 0.f;
+                config.bregman_interval = 1;
+                config.fp_task = ETask::FP_Joseph;
+                config.bp_task = ETask::BP_Joseph_v3;
+                Iter::TigreGradientReconstructor reconstructor;
+                const bool ok = reconstructor.prepare(
+                    f.p, config, f.stream) &&
+                    reconstructor.reconstruct(
+                        f.d_sino.data(), f.d_recon.data());
+                const auto statistics = reconstructor.statistics();
+                const bool finite_pocs_statistics =
+                    item.algorithm == Algorithm::Sart ||
+                    item.algorithm == Algorithm::OsSart ||
+                    item.algorithm == Algorithm::Sirt ||
+                    (std::isfinite(statistics.projection_l2) &&
+                        std::isfinite(statistics.data_update_l2) &&
+                        std::isfinite(statistics.regularization_update_l2) &&
+                        std::isfinite(statistics.direction_cosine) &&
+                        std::isfinite(statistics.tv_step));
+                return ok && statistics.completed_iterations >= 1 &&
+                    statistics.subset_updates >=
+                        static_cast<unsigned int>(reconstructor.actualSubsetCount()) &&
+                    std::isfinite(statistics.beta) &&
+                    finite_pocs_statistics;
+            });
+        if (result != 0) return result;
+    }
+
+    // MATLAB SART/SIRT/OS-SART 的 lambda='nesterov' 分支单独验证。
+    int result = executeReconstructorSmoke("TIGRE-OS-SART-Nesterov",
+        [](IterativeFixture& f) {
+            Iter::TigreGradientReconstructor::Config config{};
+            config.algorithm = Algorithm::OsSart;
+            config.iterations = 2;
+            config.block_size = 4;
+            config.relaxation_mode = Iter::ETigreRelaxationMode::Nesterov;
+            config.initialization = Iter::ETigreInitialization::Zero;
+            config.fp_task = ETask::FP_Joseph;
+            config.bp_task = ETask::BP_Joseph_v3;
+            Iter::TigreGradientReconstructor reconstructor;
+            return reconstructor.prepare(f.p, config, f.stream) &&
+                reconstructor.reconstruct(f.d_sino.data(), f.d_recon.data()) &&
+                reconstructor.statistics().completed_iterations >= 1;
+        });
+    if (result != 0) return result;
+
+    // Ex 只改变 geometry 的输入方式，不应绑定或削减算法能力。
+    result = executeReconstructorSmoke("TIGRE-Ex-OS-ASD-POCS",
+        [](IterativeFixture& f) {
+            Iter::TigreGradientReconstructorEx::Config config{};
+            config.algorithm = Algorithm::OsAsdPocs;
+            config.iterations = 2;
+            config.block_size = 4;
+            config.lambda = 0.2f;
+            config.tv_iterations = 2;
+            config.max_l2_error = 0.f;
+            config.fp_task = ETask::FP_Joseph;
+            config.bp_task = ETask::BP_Joseph_v3;
+            Iter::TigreGradientReconstructorEx reconstructor;
+            return reconstructor.prepare(f.p, f.external_geometry, config, f.stream) &&
+                reconstructor.reconstruct(f.d_sino.data(), f.d_recon.data()) &&
+                reconstructor.statistics().subset_updates == 4;
+        });
+    if (result != 0) return result;
+
+    result = executeReconstructorSmoke("TIGRE-FDK-initialization",
+        [](IterativeFixture& f) {
+            Iter::TigreGradientReconstructor::Config config{};
+            config.algorithm = Algorithm::OsSart;
+            config.iterations = 1;
+            config.block_size = 4;
+            config.lambda = 0.05f;
+            config.initialization = Iter::ETigreInitialization::Fdk;
+            config.fp_task = ETask::FP_Joseph;
+            config.bp_task = ETask::BP_Joseph_v3;
+            Iter::TigreGradientReconstructor reconstructor;
+            return reconstructor.prepare(f.p, config, f.stream) &&
+                reconstructor.reconstruct(f.d_sino.data(), f.d_recon.data());
+        });
+    if (result != 0) return result;
+
+    result = executeReconstructorSmoke("TIGRE-device-volume-initialization",
+        [](IterativeFixture& f) {
+            Iter::TigreGradientReconstructor::Config config{};
+            config.algorithm = Algorithm::Sirt;
+            config.iterations = 1;
+            config.lambda = 0.01f;
+            config.initialization = Iter::ETigreInitialization::DeviceVolume;
+            config.d_initial_volume = f.d_truth.data();
+            config.fp_task = ETask::FP_Joseph;
+            config.bp_task = ETask::BP_Joseph_v3;
+            Iter::TigreGradientReconstructor reconstructor;
+            return reconstructor.prepare(f.p, config, f.stream) &&
+                reconstructor.reconstruct(f.d_sino.data(), f.d_recon.data());
+        });
+    if (result != 0) return result;
+
+    // B-ASD-POCS-beta 只更新内部工作投影，调用者传入的测量必须保持只读。
+    return executeReconstructorSmoke("TIGRE-Bregman-projection-readonly",
+        [](IterativeFixture& f) {
+            const size_t count = static_cast<size_t>(f.p.iPAng) * f.p.iPU * f.p.iPV;
+            std::vector<float> before(count);
+            std::vector<float> after(count);
+            if (!cudaOk(cudaMemcpyAsync(before.data(), f.d_sino.data(),
+                    count * sizeof(float), cudaMemcpyDeviceToHost, f.stream),
+                    "download projection before Bregman"))
+                return false;
+            Iter::TigreGradientReconstructor::Config config{};
+            config.algorithm = Algorithm::BAsdPocsBeta;
+            config.iterations = 2;
+            config.lambda = 0.2f;
+            config.tv_iterations = 2;
+            config.max_l2_error = 0.f;
+            config.bregman_interval = 1;
+            config.fp_task = ETask::FP_Joseph;
+            config.bp_task = ETask::BP_Joseph_v3;
+            Iter::TigreGradientReconstructor reconstructor;
+            if (!reconstructor.prepare(f.p, config, f.stream) ||
+                !reconstructor.reconstruct(f.d_sino.data(), f.d_recon.data()))
+                return false;
+            if (!cudaOk(cudaMemcpyAsync(after.data(), f.d_sino.data(),
+                    count * sizeof(float), cudaMemcpyDeviceToHost, f.stream),
+                    "download projection after Bregman") ||
+                !cudaOk(cudaStreamSynchronize(f.stream), "compare Bregman projection"))
+                return false;
+            return before == after;
+        });
 }
 
 int main_cgls_smoke()
