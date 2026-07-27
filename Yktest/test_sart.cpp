@@ -1,6 +1,6 @@
 ﻿#include "test_common.hpp"
-#include "Iter/YkOSSART.hpp"
-#include "Iter/YkSART.hpp"
+#include "Iter/YkAlgebraicLegacyAdapters.hpp"
+#include "Iter/YkAlgebraicSartSirtAdapters.hpp"
 #include "common/YkProjectionOperators.hpp"
 
 #include <vector>
@@ -16,8 +16,10 @@
 #include "global/YkLog.h"
 #include "global/YkCBCTParams.h"
 #include "global/YkMacro.hpp"
-#include <Iter/YkCGLS.hpp>
+#include "Iter/YkCglsLegacyAdapters.hpp"
+#if YKCBCT_TEST_HAS_HELICAL
 #include <Heli/YkHelicalProjector.hpp>
+#endif
 #include "util/YkDeviceTensorDumper.hpp"
 
 
@@ -1403,6 +1405,8 @@ int main_cgls_realdata_test()
     return 0;
 }
 
+#if YKCBCT_TEST_HAS_HELICAL
+
 int main_helical_from_volume_cylinder_ossart_independent()
 {
     // ----------------------------------------------------------------
@@ -2137,3 +2141,5 @@ int main_helical_from_volume_cylinder_cgls()
     YK_CUDA_CHECK(cudaStreamDestroy(stream));
     return 0;
 }
+
+#endif // YKCBCT_TEST_HAS_HELICAL

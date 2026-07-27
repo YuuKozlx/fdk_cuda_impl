@@ -5,9 +5,9 @@
 #include <cuda_runtime.h>
 
 #include "FDK/YkFdkPipeline.hpp"
-#include "Iter/YkSART.hpp"
-#include "Iter/YkOSSART.hpp"
-#include "Iter/YkCGLS.hpp"
+#include "Iter/YkAlgebraicLegacyAdapters.hpp"
+#include "Iter/YkAlgebraicSartSirtAdapters.hpp"
+#include "Iter/YkCglsLegacyAdapters.hpp"
 #include "common/YkExecutionContext.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkCBCTParams.h"

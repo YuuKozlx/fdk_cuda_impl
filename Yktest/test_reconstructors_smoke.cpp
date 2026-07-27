@@ -6,7 +6,9 @@
 
 #include <cuda_runtime.h>
 
+#include "Iter/YkAlgebraicReconstructor.hpp"
 #include "Iter/YkCGLS.hpp"
+#include "Iter/YkCglsReconstructor.hpp"
 #include "Iter/YkOSSART.hpp"
 #include "Iter/YkSART.hpp"
 #include "YkTestPhantoms.hpp"
@@ -197,6 +199,85 @@ int main_ossart_ex_smoke()
     });
 }
 
+int main_algebraic_ex_smoke()
+{
+    const Iter::EAlgebraicMethod methods[] = {
+        Iter::EAlgebraicMethod::Sirt,
+        Iter::EAlgebraicMethod::Sart,
+        Iter::EAlgebraicMethod::Ossart,
+        Iter::EAlgebraicMethod::Ossart
+    };
+    const Iter::EAlgebraicWeightModel weights[] = {
+        Iter::EAlgebraicWeightModel::DetailedSubset,
+        Iter::EAlgebraicWeightModel::DetailedSubset,
+        Iter::EAlgebraicWeightModel::DetailedSubset,
+        Iter::EAlgebraicWeightModel::TigreApprox
+    };
+    const char* names[] = {
+        "SIRT-Ex-Detailed", "SART-Ex-Detailed",
+        "OSSART-Ex-Detailed", "OSSART-Ex-TIGRE"
+    };
+    for (int i = 0; i < 4; ++i) {
+        const int result = executeReconstructorSmoke(names[i], [&, i](IterativeFixture& f) {
+            Iter::AlgebraicReconstructionConfig cfg{};
+            cfg.method = methods[i];
+            cfg.weight_model = weights[i];
+            cfg.iterations = 1;
+            cfg.subset_count = 2;
+            cfg.relaxation = 0.2f;
+            cfg.use_min = true;
+            cfg.fp_task = ETask::FP_Joseph;
+            cfg.bp_task = ETask::BP_Joseph_v3;
+            Iter::AlgebraicReconstructorEx recon;
+            return recon.prepare(f.p, f.external_geometry, cfg, f.stream) &&
+                recon.reconstruct(f.d_sino.data(), f.d_recon.data());
+        });
+        if (result != 0) return result;
+    }
+    return 0;
+}
+
+int main_algebraic_smoke()
+{
+    return executeReconstructorSmoke("AlgebraicReconstructor", [](IterativeFixture& f) {
+        Iter::AlgebraicReconstructor::Config cfg{};
+        cfg.method = Iter::EAlgebraicMethod::Ossart;
+        cfg.iterations = 1;
+        cfg.subset_count = 2;
+        cfg.relaxation = 0.2f;
+        cfg.use_min = true;
+        Iter::AlgebraicReconstructor recon;
+        return recon.prepare(f.p, cfg, f.stream) &&
+            recon.reconstruct(f.d_sino.data(), f.d_recon.data());
+    });
+}
+
+int main_ossart_tv_smoke()
+{
+    return executeReconstructorSmoke("OS-SART-Smoothed-TV", [](IterativeFixture& f) {
+        Iter::AlgebraicReconstructorEx::Config cfg{};
+        cfg.method = Iter::EAlgebraicMethod::Ossart;
+        cfg.weight_model = Iter::EAlgebraicWeightModel::DetailedSubset;
+        cfg.iterations = 2;
+        cfg.subset_count = 2;
+        cfg.relaxation = 0.2f;
+        cfg.use_min = true;
+        cfg.min_constraint = 0.f;
+        cfg.regularization.type = Iter::EAlgebraicRegularizer::SmoothedTv;
+        cfg.regularization.tv_dimensionality = Iter::ETvDimensionality::Volume3D;
+        cfg.regularization.strength = 1e-3f;
+        cfg.regularization.inner_iterations = 2;
+        cfg.regularization.epsilon = 1e-4f;
+        cfg.regularization.strength_reduction = 0.95f;
+
+        Iter::AlgebraicReconstructorEx recon;
+        return recon.prepare(f.p, f.external_geometry, cfg, f.stream) &&
+            recon.actualSubsetCount() == 2 &&
+            recon.reconstruct(f.d_sino.data(), f.d_recon.data()) &&
+            recon.totalSubsetUpdates() == 4;
+    });
+}
+
 int main_cgls_smoke()
 {
     return executeReconstructorSmoke("CGLS", [](IterativeFixture& f) {
@@ -235,4 +316,38 @@ int main_cgls_ex_smoke()
         recon.release();
         return ok;
     });
+}
+
+int main_cgls_unified_smoke()
+{
+    const Iter::ECglsStrategy strategies[] = {
+        Iter::ECglsStrategy::RobustRestart,
+        Iter::ECglsStrategy::AstraClassic
+    };
+    const char* names[] = { "CGLS-Robust", "CGLS-Astra" };
+    for (int i = 0; i < 2; ++i) {
+        int result = executeReconstructorSmoke(names[i], [&, i](IterativeFixture& f) {
+            Iter::CglsReconstructor::Config cfg{};
+            cfg.strategy = strategies[i];
+            cfg.iterations = 1;
+            cfg.use_min = true;
+            Iter::CglsReconstructor recon;
+            return recon.prepare(f.p, cfg, f.stream) &&
+                recon.reconstruct(f.d_sino.data(), f.d_recon.data());
+        });
+        if (result) return result;
+        result = executeReconstructorSmoke(
+            i == 0 ? "CGLS-Ex-Robust" : "CGLS-Ex-Astra",
+            [&, i](IterativeFixture& f) {
+                Iter::CglsReconstructorEx::Config cfg{};
+                cfg.strategy = strategies[i];
+                cfg.iterations = 1;
+                cfg.use_min = true;
+                Iter::CglsReconstructorEx recon;
+                return recon.prepare(f.p, f.external_geometry, cfg, f.stream) &&
+                    recon.reconstruct(f.d_sino.data(), f.d_recon.data());
+            });
+        if (result) return result;
+    }
+    return 0;
 }

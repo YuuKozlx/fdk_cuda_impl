@@ -8,9 +8,12 @@
 
 #include <cuda_runtime.h>
 
+#include "CylFpBp/YkCylFpBpGeometry.hpp"
+#include "CylFpBp/YkCylFpBpOperator.hpp"
 #include "Heli/YkHelicalGeo.hpp"
 #include "Heli/YkHelicalIcdReconstructor.hpp"
 #include "Heli/wfbp/YkWfbpPipeline.hpp"
+#include "Iter/YkParallelPwlsReconstructor.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
@@ -48,6 +51,15 @@ SCBCTParams toCbct(const SHeliCTParam& h)
     p.vox_x_mm = h.vox_x_mm; p.vox_y_mm = h.vox_y_mm; p.vox_z_mm = h.vox_z_mm;
     p.scan_range_rad = h.angle_list.back() - h.angle_list.front();
     return p;
+}
+
+SVolGeom volumeGeometry(const SHeliCTParam& h)
+{
+    SVolGeom geometry = SVolGeom::make_centered(h.iVX, h.iVY, h.iVZ,
+        h.vox_x_mm, h.vox_y_mm, h.vox_z_mm);
+    geometry.center = make_float3(h.vol_offset_x_mm, h.vol_offset_y_mm,
+        h.vol_offset_z_mm);
+    return geometry;
 }
 
 double squaredNorm(const std::vector<float>& values)
@@ -94,6 +106,16 @@ ReconstructionMetrics compareReconstruction(const std::vector<float>& truth,
     metrics.slice_correlation = slice_dot /
         std::sqrt(std::max(slice_truth * slice_recon, 1e-30));
     return metrics;
+}
+
+bool writeFloatRaw(const std::filesystem::path& path,
+    const std::vector<float>& values)
+{
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(values.data()),
+        static_cast<std::streamsize>(values.size() * sizeof(float)));
+    return output.good();
 }
 
 float referenceSignedAngle(float x1, float x2, float y1, float y2)
@@ -720,4 +742,362 @@ int main_helical_wfbp_comparison()
         basic_image_ok && catphan_image_ok && metrics_ok ? "written" : "FAILED");
     cudaStreamDestroy(stream);
     return ok && basic_image_ok && catphan_image_ok && metrics_ok ? 0 : 1;
+}
+
+int main_helical_large_volume()
+{
+    // 该用例专门覆盖常规 smoke test 无法暴露的较大显存步长、三维索引和
+    // wFBP 中间缓冲区问题。规模明显大于功能测试，但仍控制在常见 8 GiB
+    // 显卡可运行的范围内；输入完全由合成模体生成，不依赖本地 RAW 数据。
+    SHeliCTParam h{};
+    h.iPU = 384; h.iPV = 80;
+    h.iVX = 160; h.iVY = 160; h.iVZ = 96;
+    h.du_mm = 1.f; h.dv_mm = 1.f;
+    h.vox_x_mm = 0.6f; h.vox_y_mm = 0.6f; h.vox_z_mm = 0.6f;
+    h.SID = 400.f; h.SDD = 800.f;
+    h.pitch_mm = 20.f;
+    h.views_per_rot = 192;
+    h.angle_list.resize(768); // 四圈，兼顾轴向覆盖和 FreeCT 首尾补帧。
+    for (int i = 0; i < static_cast<int>(h.angle_list.size()); ++i)
+        h.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) /
+            h.views_per_rot;
+    h.start_z_mm = -0.5f * h.pitch_mm * h.angle_list.back() /
+        (2.f * CUDA_PI);
+
+    const SCBCTParams p = toCbct(h);
+    const auto truth = TestPhantom::makeArrowDirections(p, true);
+    const size_t volume_count = static_cast<size_t>(h.iVX) * h.iVY * h.iVZ;
+    const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
+        h.angle_list.size();
+
+    size_t free_before = 0, total_memory = 0;
+    bool ok = cudaMemGetInfo(&free_before, &total_memory) == cudaSuccess;
+    cudaStream_t stream = nullptr;
+    ok = ok && cudaStreamCreate(&stream) == cudaSuccess;
+    if (!ok) {
+        if (stream) cudaStreamDestroy(stream);
+        std::printf("Helical large volume: CUDA initialization failed\n");
+        return 1;
+    }
+
+    float fp_ms = 0.f, recon_ms = 0.f;
+    ReconstructionMetrics metrics{};
+    std::vector<float> projection(projection_count);
+    std::vector<float> arc_backprojection(volume_count);
+    std::vector<float> reconstruction(volume_count);
+    size_t free_during = free_before;
+    {
+        Mem::MemoryController memory;
+        auto d_truth = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(h.iVX, h.iVY,
+            h.iVZ, 0);
+        auto d_arc_backprojection = memory.allocateDevice3D<float>(h.iVX, h.iVY,
+            h.iVZ, 0);
+        auto d_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+            static_cast<int>(h.angle_list.size()), 0);
+        ok = cudaMemcpyAsync(d_truth.data(), truth.data(),
+            volume_count * sizeof(float), cudaMemcpyHostToDevice, stream) ==
+            cudaSuccess;
+        ok = ok && cudaMemsetAsync(d_reconstruction.data(), 0,
+            volume_count * sizeof(float), stream) == cudaSuccess;
+
+        // 真实等角圆柱探测器：弧长为一个平板像素在探测器中心对应的
+        // 圆弧，CylFpBp 正投影输出可直接作为 wFBP 的弧面输入。
+        const float arc_step = 2.f * atanf(0.5f * h.du_mm / h.SDD);
+        const auto arc_geometry = CylFpBp::buildFreeCtArcGeometry(h, arc_step);
+        CylFpBp::Operator projector;
+        CylFpBp::Config projector_config{};
+        projector_config.samples_per_voxel = 2.f;
+        Helical::Wfbp::Config config{};
+        config.input_detector = Helical::Wfbp::EInputDetector::EquiangularArc;
+        config.arc_channel_angle_step_rad = arc_step;
+        config.arc_principal_channel = 0.5f * (h.iPU - 1) -
+            h.offsetU_mm / h.du_mm;
+        Helical::Wfbp::Pipeline pipeline;
+        cudaEvent_t fp_start = nullptr, fp_stop = nullptr;
+        cudaEvent_t recon_start = nullptr, recon_stop = nullptr;
+        ok = ok && cudaEventCreate(&fp_start) == cudaSuccess &&
+            cudaEventCreate(&fp_stop) == cudaSuccess &&
+            cudaEventCreate(&recon_start) == cudaSuccess &&
+            cudaEventCreate(&recon_stop) == cudaSuccess &&
+            projector.prepare(volumeGeometry(h), h.iPU, h.iPV, arc_geometry,
+                projector_config) &&
+            pipeline.prepare(h, config, stream);
+        if (ok) {
+            cudaEventRecord(fp_start, stream);
+            ok = projector.forward(d_truth.data(), d_projection.data(), stream);
+            cudaEventRecord(fp_stop, stream);
+            ok = ok && projector.backproject(d_projection.data(),
+                d_arc_backprojection.data(), stream);
+            cudaEventRecord(recon_start, stream);
+            ok = ok && pipeline.reconstruct(d_projection.data(),
+                d_reconstruction.data());
+            cudaEventRecord(recon_stop, stream);
+            ok = ok && cudaEventSynchronize(recon_stop) == cudaSuccess;
+            if (ok) {
+                cudaEventElapsedTime(&fp_ms, fp_start, fp_stop);
+                cudaEventElapsedTime(&recon_ms, recon_start, recon_stop);
+                ok = cudaMemcpy(projection.data(), d_projection.data(),
+                    projection_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                    cudaSuccess;
+                ok = ok && cudaMemcpy(arc_backprojection.data(),
+                    d_arc_backprojection.data(), volume_count * sizeof(float),
+                    cudaMemcpyDeviceToHost) == cudaSuccess;
+                ok = ok && cudaMemcpy(reconstruction.data(), d_reconstruction.data(),
+                    volume_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                    cudaSuccess;
+                if (ok) {
+                    metrics = compareReconstruction(truth, reconstruction,
+                        h.iVX, h.iVY, h.iVZ, h.iVZ / 2);
+                    ok = std::all_of(reconstruction.begin(), reconstruction.end(),
+                        [](float value) { return std::isfinite(value); }) &&
+                        std::all_of(arc_backprojection.begin(),
+                            arc_backprojection.end(), [](float value) {
+                                return std::isfinite(value);
+                            }) &&
+                        squaredNorm(arc_backprojection) > 1e-12 &&
+                        squaredNorm(reconstruction) > 1e-12 &&
+                        std::isfinite(metrics.correlation) &&
+                        std::isfinite(metrics.slice_correlation) &&
+                        std::isfinite(metrics.nrmse) &&
+                        // 箭头模体由细杆和尖锥组成，中心层只有很小的有效
+                        // 支撑区域，因此切片指标天然低于大圆柱模体。实测
+                        // 基线约为 0.831/0.342/0.556，门槛保留跨 GPU 余量，
+                        // 同时仍能拒绝方向错误、空输出和明显的数值退化。
+                        metrics.correlation > 0.75 &&
+                        metrics.slice_correlation > 0.25 &&
+                        metrics.nrmse < 0.70;
+                }
+            }
+        }
+        cudaMemGetInfo(&free_during, &total_memory);
+        if (fp_start) cudaEventDestroy(fp_start);
+        if (fp_stop) cudaEventDestroy(fp_stop);
+        if (recon_start) cudaEventDestroy(recon_start);
+        if (recon_stop) cudaEventDestroy(recon_stop);
+        pipeline.release();
+        projector.release();
+    }
+    cudaStreamDestroy(stream);
+
+    const std::filesystem::path artifact_dir = std::filesystem::absolute(
+        "out/test-artifacts/helical-large-volume");
+    const auto phantom_path = artifact_dir /
+        "arrow_phantom_f32_160x160x96.raw";
+    const auto projection_path = artifact_dir /
+        "arrow_arc_projection_f32_384x80x768.raw";
+    const auto backprojection_path = artifact_dir /
+        "arrow_arc_backprojection_f32_160x160x96.raw";
+    const auto reconstruction_path = artifact_dir /
+        "arrow_reconstruction_f32_160x160x96.raw";
+    const auto metadata_path = artifact_dir / "arrow_large_volume.json";
+    bool artifacts_ok = writeFloatRaw(phantom_path, truth) &&
+        writeFloatRaw(projection_path, projection) &&
+        writeFloatRaw(backprojection_path, arc_backprojection) &&
+        writeFloatRaw(reconstruction_path, reconstruction);
+    std::filesystem::create_directories(artifact_dir);
+    std::ofstream metadata(metadata_path);
+    metadata << "{\n"
+        << "  \"scalar_type\": \"float32-little-endian\",\n"
+        << "  \"storage_order\": \"x/u fastest, then y/v, then z/view\",\n"
+        << "  \"phantom\": {\"file\": \"" << phantom_path.filename().string()
+        << "\", \"dimensions_xyz\": [" << h.iVX << ", " << h.iVY << ", "
+        << h.iVZ << "], \"voxel_mm_xyz\": [" << h.vox_x_mm << ", "
+        << h.vox_y_mm << ", " << h.vox_z_mm
+        << "], \"arrow_mu_xyz\": [0.02, 0.04, 0.06], "
+        << "\"boundary_faces\": [\"+X\", \"-X\", \"+Y\", \"-Y\", "
+        << "\"+Z\", \"-Z\"], \"edge_axis_labels\": true, "
+        << "\"label_mu\": 0.01},\n"
+        << "  \"projection\": {\"file\": \""
+        << projection_path.filename().string() << "\", \"dimensions_uv_view\": ["
+        << h.iPU << ", " << h.iPV << ", " << h.angle_list.size() << "]},\n"
+        << "  \"arc_backprojection\": {\"file\": \""
+        << backprojection_path.filename().string()
+        << "\", \"dimensions_xyz\": [" << h.iVX << ", " << h.iVY << ", "
+        << h.iVZ << "], \"filtered\": false},\n"
+        << "  \"reconstruction\": {\"file\": \""
+        << reconstruction_path.filename().string()
+        << "\", \"dimensions_xyz\": [" << h.iVX << ", " << h.iVY << ", "
+        << h.iVZ << "]},\n"
+        << "  \"helical\": {\"sid_mm\": " << h.SID << ", \"sdd_mm\": "
+        << h.SDD << ", \"pitch_mm\": " << h.pitch_mm
+        << ", \"views_per_rotation\": " << h.views_per_rot
+        << ", \"detector\": \"equiangular-arc\", "
+        << "\"arc_channel_angle_step_rad\": "
+        << 2.f * atanf(0.5f * h.du_mm / h.SDD) << "}\n"
+        << "}\n";
+    metadata.close();
+    artifacts_ok = artifacts_ok && metadata.good();
+    ok = ok && artifacts_ok;
+
+    const double projection_mib = projection_count * sizeof(float) /
+        (1024.0 * 1024.0);
+    const double volume_mib = volume_count * sizeof(float) / (1024.0 * 1024.0);
+    const double used_mib = free_before >= free_during
+        ? (free_before - free_during) / (1024.0 * 1024.0) : 0.0;
+    std::printf("Helical large volume: volume %dx%dx%d (%.1f MiB), "
+        "projection %dx%dx%zu (%.1f MiB), GPU workspace %.1f MiB\n",
+        h.iVX, h.iVY, h.iVZ, volume_mib, h.iPU, h.iPV,
+        h.angle_list.size(), projection_mib, used_mib);
+    std::printf("  corr %.6f, slice-corr %.6f, NRMSE %.6f, "
+        "FP %.3f ms, recon %.3f ms: %s\n",
+        metrics.correlation, metrics.slice_correlation, metrics.nrmse,
+        fp_ms, recon_ms, ok ? "PASS" : "FAIL");
+    std::printf("  artifacts: %s (%s)\n", artifact_dir.string().c_str(),
+        artifacts_ok ? "written" : "FAILED");
+    return ok ? 0 : 1;
+}
+
+int main_helical_large_volume_icd()
+{
+    // 与弧面 wFBP 大体积用例保持相同体积、探测器和扫描轨迹，但使用
+    // 原生平板 vector geometry、Joseph FP/BP 和螺旋 PWLS-ICD。
+    SHeliCTParam h{};
+    h.iPU = 384; h.iPV = 80;
+    h.iVX = 160; h.iVY = 160; h.iVZ = 96;
+    h.du_mm = 1.f; h.dv_mm = 1.f;
+    h.vox_x_mm = 0.6f; h.vox_y_mm = 0.6f; h.vox_z_mm = 0.6f;
+    h.SID = 400.f; h.SDD = 800.f;
+    h.pitch_mm = 20.f;
+    h.views_per_rot = 192;
+    h.angle_list.resize(768);
+    for (int i = 0; i < static_cast<int>(h.angle_list.size()); ++i)
+        h.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) /
+            h.views_per_rot;
+    h.start_z_mm = -0.5f * h.pitch_mm * h.angle_list.back() /
+        (2.f * CUDA_PI);
+
+    const SCBCTParams p = toCbct(h);
+    std::vector<SConeProjGeomVec> geometry;
+    build_helical_vec_geometry(geometry, h);
+    const auto truth = TestPhantom::makeArrowDirections(p, true);
+    const size_t volume_count = static_cast<size_t>(h.iVX) * h.iVY * h.iVZ;
+    const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
+        h.angle_list.size();
+
+    size_t free_before = 0, total_memory = 0, free_during = 0;
+    bool ok = cudaMemGetInfo(&free_before, &total_memory) == cudaSuccess;
+    cudaStream_t stream = nullptr;
+    ok = ok && cudaStreamCreate(&stream) == cudaSuccess;
+    if (!ok) {
+        if (stream) cudaStreamDestroy(stream);
+        std::printf("Helical large ICD: CUDA initialization failed\n");
+        return 1;
+    }
+
+    std::vector<float> projection(projection_count);
+    std::vector<float> reconstruction(volume_count);
+    ReconstructionMetrics metrics{};
+    float fp_ms = 0.f, prepare_ms = 0.f, recon_ms = 0.f;
+    {
+        Mem::MemoryController memory;
+        auto d_truth = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+        auto d_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+            static_cast<int>(h.angle_list.size()), 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(h.iVX, h.iVY,
+            h.iVZ, 0);
+        ok = cudaMemcpyAsync(d_truth.data(), truth.data(),
+            volume_count * sizeof(float), cudaMemcpyHostToDevice, stream) ==
+            cudaSuccess;
+        ok = ok && cudaMemsetAsync(d_reconstruction.data(), 0,
+            volume_count * sizeof(float), stream) == cudaSuccess;
+
+        ForwardOperatorAdapter fp;
+        Iter::ParallelPwlsConfig config{};
+        config.iterations = 12;
+        config.relaxation = 0.7f;
+        config.regularization = 2e-3f;
+        config.fp_task = ETask::FP_Joseph;
+        config.bp_task = ETask::BP_Joseph_v3;
+        Iter::ParallelPwlsReconstructor pwls;
+        cudaEvent_t start = nullptr, fp_stop = nullptr;
+        cudaEvent_t prepare_stop = nullptr, recon_stop = nullptr;
+        ok = ok && cudaEventCreate(&start) == cudaSuccess &&
+            cudaEventCreate(&fp_stop) == cudaSuccess &&
+            cudaEventCreate(&prepare_stop) == cudaSuccess &&
+            cudaEventCreate(&recon_stop) == cudaSuccess &&
+            fp.init(p, geometry, ETask::FP_Joseph, 0, stream);
+        if (ok) {
+            cudaEventRecord(start, stream);
+            ok = fp.run(d_truth.data(), p, d_projection.data(), stream);
+            cudaEventRecord(fp_stop, stream);
+            ok = ok && pwls.prepare(p, geometry, config, stream);
+            cudaEventRecord(prepare_stop, stream);
+            ok = ok && pwls.reconstruct(d_projection.data(),
+                d_reconstruction.data());
+            cudaEventRecord(recon_stop, stream);
+            ok = ok && cudaEventSynchronize(recon_stop) == cudaSuccess;
+            if (ok) {
+                cudaEventElapsedTime(&fp_ms, start, fp_stop);
+                cudaEventElapsedTime(&prepare_ms, fp_stop, prepare_stop);
+                cudaEventElapsedTime(&recon_ms, prepare_stop, recon_stop);
+                ok = cudaMemcpy(projection.data(), d_projection.data(),
+                    projection_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                    cudaSuccess;
+                ok = ok && cudaMemcpy(reconstruction.data(),
+                    d_reconstruction.data(), volume_count * sizeof(float),
+                    cudaMemcpyDeviceToHost) == cudaSuccess;
+                if (ok) {
+                    metrics = compareReconstruction(truth, reconstruction,
+                        h.iVX, h.iVY, h.iVZ, h.iVZ / 2);
+                    ok = std::all_of(reconstruction.begin(), reconstruction.end(),
+                        [](float value) { return std::isfinite(value); }) &&
+                        squaredNorm(reconstruction) > 1e-12 &&
+                        std::isfinite(metrics.correlation) &&
+                        std::isfinite(metrics.slice_correlation) &&
+                        std::isfinite(metrics.nrmse) &&
+                        // 12 次迭代实测基线约 0.784/0.763/0.621。
+                        metrics.correlation > 0.70 &&
+                        metrics.slice_correlation > 0.65 &&
+                        metrics.nrmse < 0.75;
+                }
+            }
+        }
+        cudaMemGetInfo(&free_during, &total_memory);
+        if (start) cudaEventDestroy(start);
+        if (fp_stop) cudaEventDestroy(fp_stop);
+        if (prepare_stop) cudaEventDestroy(prepare_stop);
+        if (recon_stop) cudaEventDestroy(recon_stop);
+        pwls.release();
+        fp.release();
+    }
+    cudaStreamDestroy(stream);
+
+    const std::filesystem::path artifact_dir = std::filesystem::absolute(
+        "out/test-artifacts/helical-large-volume-icd");
+    const auto phantom_path = artifact_dir /
+        "arrow_phantom_f32_160x160x96.raw";
+    const auto projection_path = artifact_dir /
+        "arrow_flat_projection_f32_384x80x768.raw";
+    const auto reconstruction_path = artifact_dir /
+        "arrow_icd_reconstruction_f32_160x160x96.raw";
+    const auto metadata_path = artifact_dir / "arrow_large_volume_icd.json";
+    bool artifacts_ok = writeFloatRaw(phantom_path, truth) &&
+        writeFloatRaw(projection_path, projection) &&
+        writeFloatRaw(reconstruction_path, reconstruction);
+    std::ofstream metadata(metadata_path);
+    metadata << "{\n"
+        << "  \"scalar_type\": \"float32-little-endian\",\n"
+        << "  \"storage_order\": \"x/u fastest, then y/v, then z/view\",\n"
+        << "  \"detector\": \"flat-panel\",\n"
+        << "  \"phantom_dimensions_xyz\": [160, 160, 96],\n"
+        << "  \"projection_dimensions_uv_view\": [384, 80, 768],\n"
+        << "  \"iterations\": 12,\n"
+        << "  \"fp\": \"Joseph\",\n"
+        << "  \"bp\": \"Joseph-v3\"\n"
+        << "}\n";
+    metadata.close();
+    artifacts_ok = artifacts_ok && metadata.good();
+    ok = ok && artifacts_ok;
+
+    const double used_mib = free_before >= free_during
+        ? (free_before - free_during) / (1024.0 * 1024.0) : 0.0;
+    std::printf("Helical large ICD: corr %.6f, slice-corr %.6f, "
+        "NRMSE %.6f, FP %.3f ms, prepare %.3f ms, 12 iterations %.3f ms, "
+        "GPU workspace %.1f MiB: %s\n", metrics.correlation,
+        metrics.slice_correlation, metrics.nrmse, fp_ms, prepare_ms, recon_ms,
+        used_mib, ok ? "PASS" : "FAIL");
+    std::printf("  artifacts: %s (%s)\n", artifact_dir.string().c_str(),
+        artifacts_ok ? "written" : "FAILED");
+    return ok ? 0 : 1;
 }

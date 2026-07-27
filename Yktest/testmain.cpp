@@ -20,13 +20,24 @@ int main_fp_siddon_single_voxel_peak();
 int main_sart_smoke(); int main_sirt_smoke();
 int main_operator_matrix_smoke(); int main_planar_geometry_operator_smoke();
 int main_ossart_tigre_smoke(); int main_ossart_smoke(); int main_ossart_ex_smoke();
+int main_algebraic_ex_smoke();
+int main_algebraic_smoke();
+int main_ossart_tv_smoke();
 int main_cgls_smoke(); int main_cgls_astra_smoke(); int main_cgls_ex_smoke();
+int main_cgls_unified_smoke();
+int main_large_water_pwls();
+int main_large_water_ossart();
+int main_large_water_fdk();
+#if YKCBCT_TEST_HAS_HELICAL
 int main_helical_icd_smoke();
 int main_helical_wfbp_smoke();
 int main_helical_wfbp_ffs_smoke();
 int main_helical_wfbp_comparison();
+int main_helical_large_volume();
+int main_helical_large_volume_icd();
 int main_fpcyl_adjoint();
 int main_fpcyl_wfbp_comparison();
+#endif
 
 int main_ossart_test(); int main_ossart_ex_test(); int main_iter_recon_sim();
 int main_iter_sirt_recon_sim(); int main_cgls_test(); int main_ossart_realdata_test();
@@ -87,17 +98,30 @@ const TestEntry kTests[] = {
     TEST_INT("recon/ossart-tigre", "recon", false, main_ossart_tigre_smoke),
     TEST_INT("recon/ossart", "recon", false, main_ossart_smoke),
     TEST_INT("recon/ossart-ex", "recon", false, main_ossart_ex_smoke),
+    TEST_INT("recon/algebraic-ex", "recon", false, main_algebraic_ex_smoke),
+    TEST_INT("recon/algebraic", "recon", false, main_algebraic_smoke),
+    TEST_INT("recon/ossart-tv", "recon", false, main_ossart_tv_smoke),
     TEST_INT("recon/cgls", "recon", false, main_cgls_smoke),
     TEST_INT("recon/cgls-astra", "recon", false, main_cgls_astra_smoke),
     TEST_INT("recon/cgls-ex", "recon", false, main_cgls_ex_smoke),
+    TEST_INT("recon/cgls-unified", "recon", false, main_cgls_unified_smoke),
+
+    // 大体积性能与显存测试，单独分类避免混入常规重建冒烟项。
+    TEST_INT("large/water-pwls", "large", false, main_large_water_pwls),
+    TEST_INT("large/water-ossart", "large", false, main_large_water_ossart),
+    TEST_INT("large/water-fdk", "large", false, main_large_water_fdk),
 
     // Helical and cylindrical detector algorithms.
+#if YKCBCT_TEST_HAS_HELICAL
     TEST_INT("helical/icd", "helical", false, main_helical_icd_smoke),
     TEST_INT("helical/wfbp", "helical", false, main_helical_wfbp_smoke),
     TEST_INT("helical/wfbp-ffs", "helical", false, main_helical_wfbp_ffs_smoke),
     TEST_INT("helical/wfbp-compare", "helical", false, main_helical_wfbp_comparison),
+    TEST_INT("helical/large-volume", "helical", false, main_helical_large_volume),
+    TEST_INT("helical/large-volume-icd", "helical", false, main_helical_large_volume_icd),
     TEST_INT("fpcyl/adjoint", "fpcyl", false, main_fpcyl_adjoint),
     TEST_INT("fpcyl/wfbp-compare", "fpcyl", false, main_fpcyl_wfbp_comparison),
+#endif
     // Legacy diagnostic suites.  These consume files from a developer-local
     // data directory and are excluded from category/all-local runs.
     TEST_INT("fp/legacy-realdata", "fp", true, main_fp),
