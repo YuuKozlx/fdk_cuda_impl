@@ -128,7 +128,10 @@ int main_fpcyl_adjoint()
     cudaMemcpyAsync(d_y.data(), y.data(), projection_count * sizeof(float),
         cudaMemcpyHostToDevice, stream);
 
-    const auto geometry = CylFpBp::buildFreeCtArcGeometry(h);
+    // 非理想圆弧：SDD=150 mm，而曲率半径 R=120 mm。圆柱轴线不经过焦点。
+    const float curvature_radius_mm = 120.f;
+    const auto geometry = CylFpBp::buildCylindricalArcGeometry(
+        h, curvature_radius_mm);
     CylFpBp::Operator op;
     const bool launched = op.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry) &&
         op.forward(d_x.data(), d_ax.data(), stream) &&
@@ -148,7 +151,8 @@ int main_fpcyl_adjoint()
     const double relative_error = std::fabs(lhs - rhs) /
         std::max({ std::fabs(lhs), std::fabs(rhs), 1e-30 });
     const bool ok = launched && std::isfinite(relative_error) && relative_error < 2e-5;
-    std::printf("CylFpBp matched FP/BP: <Ax,y>=%.9e <x,ATy>=%.9e rel=%.3e %s\n",
+    std::printf("CylFpBp matched FP/BP (SDD=%.1f, R=%.1f): <Ax,y>=%.9e "
+        "<x,ATy>=%.9e rel=%.3e %s\n", h.SDD, curvature_radius_mm,
         lhs, rhs, relative_error, ok ? "PASS" : "FAIL");
     op.release();
     cudaStreamDestroy(stream);
@@ -157,12 +161,17 @@ int main_fpcyl_adjoint()
 
 int main_fpcyl_wfbp_comparison()
 {
-    struct TestCase { const char* name; bool catphan; float offset_v; };
+    struct TestCase {
+        const char* name;
+        bool catphan;
+        float offset_v;
+        float curvature_radius_mm;
+    };
     const TestCase cases[] = {
-        { "basic-v0", false, 0.f },
-        { "basic-v+1.5", false, 1.5f },
-        { "catphan-v0", true, 0.f },
-        { "catphan-v-1.5", true, -1.5f }
+        { "basic-R=SDD-v0", false, 0.f, 300.f },
+        { "basic-R240-v+1.5", false, 1.5f, 240.f },
+        { "catphan-R360-v0", true, 0.f, 360.f },
+        { "catphan-R240-v-1.5", true, -1.5f, 240.f }
     };
     struct Result {
         std::string name;
@@ -201,15 +210,16 @@ int main_fpcyl_wfbp_comparison()
         cudaMemcpyAsync(d_truth.data(), result.truth.data(),
             volume_count * sizeof(float), cudaMemcpyHostToDevice, stream);
 
-        const float arc_step = 2.f * atanf(0.5f * h.du_mm / h.SDD);
-        const auto geometry = CylFpBp::buildFreeCtArcGeometry(h, arc_step);
+        const float radius = test_case.curvature_radius_mm;
+        const auto geometry = CylFpBp::buildCylindricalArcGeometry(h, radius);
         CylFpBp::Operator projector;
         CylFpBp::Config projector_config{};
         projector_config.samples_per_voxel = 2.f;
         Helical::Wfbp::Config config{};
-        config.input_detector = Helical::Wfbp::EInputDetector::EquiangularArc;
-        config.arc_channel_angle_step_rad = arc_step;
         config.arc_principal_channel = 0.5f * (h.iPU - 1) - h.offsetU_mm / h.du_mm;
+        // R=SDD 也走新适配层，验证一般圆柱映射能严格退化为等角弧面。
+        config.input_detector = Helical::Wfbp::EInputDetector::CylindricalArc;
+        config.arc_curvature_radius_mm = radius;
         Helical::Wfbp::Pipeline wfbp;
         cudaEvent_t start = nullptr, fp_stop = nullptr, recon_stop = nullptr;
         bool case_ok = cudaEventCreate(&start) == cudaSuccess &&
@@ -239,7 +249,7 @@ int main_fpcyl_wfbp_comparison()
                 result.error[i] = result.metrics.scale * result.recon[i] - result.truth[i];
             case_ok = result.metrics.correlation > 0.80 && result.metrics.nrmse < 0.60;
         }
-        std::printf("CylFpBp -> wFBP %-15s corr %.6f NRMSE %.6f scale %.6f "
+        std::printf("CylFpBp -> wFBP %-22s corr %.6f NRMSE %.6f scale %.6f "
             "FP %.3f ms recon %.3f ms %s\n", result.name.c_str(),
             result.metrics.correlation, result.metrics.nrmse, result.metrics.scale,
             result.fp_ms, result.recon_ms, case_ok ? "PASS" : "FAIL");

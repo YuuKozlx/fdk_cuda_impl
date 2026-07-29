@@ -36,11 +36,20 @@ public:
             return false;
         }
 
-        if (config_.input_detector == EInputDetector::FlatPanel) {
+        if (config_.input_detector != EInputDetector::EquiangularArc) {
             d_arc_projection_ = memory_.allocateDevice3D<float>(
                 geometry_.input_channels, geometry_.input_rows,
                 geometry_.raw_views, device_id_);
+        }
+        if (config_.input_detector == EInputDetector::FlatPanel) {
             if (!flat_to_arc_.prepare(geometry_, params_.du_mm, config_)) {
+                release();
+                return false;
+            }
+        }
+        else if (config_.input_detector == EInputDetector::CylindricalArc) {
+            if (!cylindrical_to_arc_.prepare(geometry_,
+                config_.arc_curvature_radius_mm, params_.du_mm, config_)) {
                 release();
                 return false;
             }
@@ -68,6 +77,11 @@ public:
                 return false;
             arc_projection = d_arc_projection_.data();
         }
+        else if (config_.input_detector == EInputDetector::CylindricalArc) {
+            if (!cylindrical_to_arc_.apply(projection, d_arc_projection_.data(),
+                stream_)) return false;
+            arc_projection = d_arc_projection_.data();
+        }
         return rebin_.apply(arc_projection, d_rebinned_.data(), stream_) &&
             filter_.apply(d_rebinned_.data(), d_filtered_.data()) &&
             backproject_.apply(d_filtered_.data(), volume, stream_);
@@ -88,7 +102,7 @@ public:
     const Geometry& geometry() const { return geometry_; }
     const float* arcProjectionData() const
     {
-        return config_.input_detector == EInputDetector::FlatPanel
+        return config_.input_detector != EInputDetector::EquiangularArc
             ? d_arc_projection_.data() : nullptr;
     }
     const float* rebinnedData() const { return d_rebinned_.data(); }
@@ -128,6 +142,30 @@ private:
             YK_LOGE("[wFBP] arc input requires arc_channel_angle_step_rad");
             return false;
         }
+        if (c.input_detector == EInputDetector::CylindricalArc) {
+            if (!(c.arc_curvature_radius_mm > 0.f)) {
+                YK_LOGE("[wFBP] cylindrical arc input requires a positive curvature radius");
+                return false;
+            }
+            if (c.focal_spot_mode != EFocalSpotMode::None) {
+                YK_LOGE("[wFBP] non-concentric cylindrical arc input does not yet support FFS");
+                return false;
+            }
+            const float principal = principalChannel_(p, c);
+            const float radius = c.arc_curvature_radius_mm;
+            const float center_distance = p.SDD - radius;
+            const float left_alpha = -principal * p.du_mm / radius;
+            const float right_alpha = (p.iPU - 1.f - principal) * p.du_mm / radius;
+            const float left_radial = center_distance + radius * cosf(left_alpha);
+            const float right_radial = center_distance + radius * cosf(right_alpha);
+            const float left_monotonic = radius + center_distance * cosf(left_alpha);
+            const float right_monotonic = radius + center_distance * cosf(right_alpha);
+            if (!(left_radial > 0.f && right_radial > 0.f &&
+                left_monotonic > 0.f && right_monotonic > 0.f)) {
+                YK_LOGE("[wFBP] cylindrical detector fan range is not a visible monotonic branch");
+                return false;
+            }
+        }
         if (zSpotCount_(c.focal_spot_mode) == 2 &&
             !(c.anode_angle_rad > 0.f && c.anode_angle_rad < 0.5f * CUDA_PI)) {
             YK_LOGE("[wFBP] z-FFS requires a valid anode_angle_rad");
@@ -154,10 +192,7 @@ private:
             return false;
         }
 
-        const float principal_u = c.input_detector == EInputDetector::EquiangularArc
-            ? (c.arc_principal_channel >= 0.f ? c.arc_principal_channel
-                                               : 0.5f * (p.iPU - 1))
-            : 0.5f * (p.iPU - 1) - p.offsetU_mm / p.du_mm;
+        const float principal_u = principalChannel_(p, c);
         const float principal_v = 0.5f * (p.iPV - 1) - p.offsetV_mm / p.dv_mm;
         if (!(principal_u > 0.f && principal_u < p.iPU - 1.f) ||
             !(principal_v > 0.f && principal_v < p.iPV - 1.f)) {
@@ -185,14 +220,26 @@ private:
         g.angle_step = g.raw_angle_step * g.focal_spot_count;
         g.focal_spot_mode = c.focal_spot_mode;
         g.reverse_row_interleave = c.reverse_row_interleave ? 1 : 0;
-        g.central_channel = c.input_detector == EInputDetector::EquiangularArc
-            ? (c.arc_principal_channel >= 0.f ? c.arc_principal_channel
-                                               : 0.5f * (p.iPU - 1))
-            : 0.5f * (p.iPU - 1) - p.offsetU_mm / p.du_mm;
+        g.central_channel = principalChannel_(p, c);
         g.parallel_center = 2.f * g.central_channel;
 
         if (c.input_detector == EInputDetector::EquiangularArc) {
             g.fan_angle_step = c.arc_channel_angle_step_rad;
+        }
+        else if (c.input_detector == EInputDetector::CylindricalArc) {
+            // 将真实圆柱两端的射线方向换成焦点扇角，并选择左右两侧都
+            // 完整落在原始探测器内的最大均匀扇角步长。
+            const float radius = c.arc_curvature_radius_mm;
+            const float center_distance = p.SDD - radius;
+            const float left_alpha = -g.central_channel * p.du_mm / radius;
+            const float right_span = p.iPU - 1.f - g.central_channel;
+            const float right_alpha = right_span * p.du_mm / radius;
+            const float left_gamma = atan2f(radius * sinf(-left_alpha),
+                center_distance + radius * cosf(left_alpha));
+            const float right_gamma = atan2f(radius * sinf(right_alpha),
+                center_distance + radius * cosf(right_alpha));
+            g.fan_angle_step = std::min(left_gamma / g.central_channel,
+                right_gamma / right_span);
         }
         else {
             // 平板只作为输入适配：选择能完整落在物理探测器两端内的均匀弧网格。
@@ -253,6 +300,16 @@ private:
         return g;
     }
 
+    static float principalChannel_(const SHeliCTParam& p, const Config& c)
+    {
+        if (c.arc_principal_channel >= 0.f &&
+            c.input_detector != EInputDetector::FlatPanel)
+            return c.arc_principal_channel;
+        if (c.input_detector == EInputDetector::EquiangularArc)
+            return 0.5f * (p.iPU - 1);
+        return 0.5f * (p.iPU - 1) - p.offsetU_mm / p.du_mm;
+    }
+
     SHeliCTParam params_{};
     Config config_{};
     Geometry geometry_{};
@@ -265,6 +322,7 @@ private:
     Mem::DeviceLinearBuffer3D<float> d_filtered_{};
     RebinProcessor rebin_{};
     FlatToEquiangularArcProcessor flat_to_arc_{};
+    CylindricalToEquiangularArcProcessor cylindrical_to_arc_{};
     FilterProcessor filter_{};
     BackProjectProcessor backproject_{};
 };

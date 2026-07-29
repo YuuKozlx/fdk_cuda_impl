@@ -36,6 +36,36 @@ private:
     SKernelLaunchPolicy policy_{};
 };
 
+class CylindricalToEquiangularArcProcessor {
+public:
+    bool prepare(const Geometry& geometry, float curvature_radius_mm,
+        float arc_du_mm, const Config& config)
+    {
+        geometry_ = geometry;
+        curvature_radius_mm_ = curvature_radius_mm;
+        arc_du_mm_ = arc_du_mm;
+        policy_ = config.launch;
+        return geometry_.raw_views > 0 && geometry_.input_rows > 1 &&
+            geometry_.input_channels > 1 && geometry_.sdd > 0.f &&
+            curvature_radius_mm_ > 0.f && arc_du_mm_ > 0.f;
+    }
+
+    bool apply(const float* cylindrical, float* arc, cudaStream_t stream) const
+    {
+        if (!cylindrical || !arc || curvature_radius_mm_ <= 0.f ||
+            arc_du_mm_ <= 0.f) return false;
+        detail::launch_cylindrical_to_equiangular_arc(cylindrical, arc,
+            geometry_, curvature_radius_mm_, arc_du_mm_, policy_, stream);
+        return true;
+    }
+
+private:
+    Geometry geometry_{};
+    float curvature_radius_mm_ = 0.f;
+    float arc_du_mm_ = 0.f;
+    SKernelLaunchPolicy policy_{};
+};
+
 class RebinProcessor {
 public:
     bool prepare(const Geometry& geometry, const Config& config)

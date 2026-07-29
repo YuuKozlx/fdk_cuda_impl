@@ -10,7 +10,8 @@ namespace YK::CylFpBp {
 // - detector_principal 是主射线与圆柱表面的交点；
 // - detector_u_tangent 是主射线处沿圆周的一个像素弧长向量；
 // - detector_v 是一个 row 的轴向步长；
-// - radius_mm 是圆柱半径。圆柱轴线与 detector_v 平行。
+// - radius_mm 是圆柱半径。圆柱轴线与 detector_v 平行，且允许与源点偏离；
+//   因此 radius_mm 不等同于 source 到 detector_principal 的 SDD。
 //
 // 该结构独立于平面 SConeProjGeomVec，避免 detS/detU 在两种表面中
 // 出现不同含义。principal_u/v 允许主射线落在非整数像素位置。

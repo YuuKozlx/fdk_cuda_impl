@@ -27,8 +27,21 @@ D(u,v) = C
 ```
 
 其中 `C` 是圆柱轴线上与 principal point 同一 V 位置的点，`A` 是径向
-单位向量，`B` 是 U 切向单位向量。FreeCT 标准弧面使用 `radius=SDD`，
-圆柱轴线经过源点。
+单位向量，`B` 是 U 切向单位向量。`radius_mm` 与焦点到主射线落点的距离
+SDD 是独立量：主通道点为 `source + A*SDD`，圆柱轴线为
+`source + A*(SDD-radius_mm)`。所以 `radius_mm < SDD` 和
+`radius_mm > SDD` 都可表达。
+
+`buildCylindricalArcGeometry(p, radius_mm)` 用 `p.du_mm` 作为圆弧物理像素
+弧长，并由 `du_mm/radius_mm` 推导通道角度。`buildFreeCtArcGeometry(p)` 是
+兼容便捷函数，固定 `radius_mm=SDD`，其圆柱轴线经过焦点，适合 FreeCT 的
+源中心等角弧面数据。
+
+`Helical::Wfbp::EInputDetector::EquiangularArc` 仍表示源中心等角弧面，即
+`radius_mm=SDD`。非源中心圆柱（`radius_mm!=SDD`）应使用
+`EInputDetector::CylindricalArc` 并设置 `arc_curvature_radius_mm`；wFBP 会先
+按真实射线方向把通道和行二维插值到源中心等角弧面，再进入 FreeCT 重排。
+该适配目前不与 phi/z FFS 组合使用。
 
 ## 算子
 

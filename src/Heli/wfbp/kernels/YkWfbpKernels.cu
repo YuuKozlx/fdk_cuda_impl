@@ -63,6 +63,49 @@ __global__ void flat_to_arc_kernel(const float* flat, float* arc, Geometry g,
     }
 }
 
+__global__ void cylindrical_to_arc_kernel(const float* cylindrical, float* arc,
+    Geometry g, float radius, float arc_du_mm, size_t count)
+{
+    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+         index < count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
+        const int channel = static_cast<int>(index % g.input_channels);
+        const size_t t = index / g.input_channels;
+        const int row = static_cast<int>(t % g.input_rows);
+        const int view = static_cast<int>(t / g.input_rows);
+
+        // 目标点位于以焦点为圆心、半径 SDD 的虚拟等角柱面。只需在
+        // 横断面求射线与真实圆柱的交点；真实圆柱中心位于主射线方向
+        // c = SDD-R 处。选择在 beta=0 连续到 rho=SDD 的根。
+        const float beta = (channel - g.central_channel) * g.fan_angle_step;
+        const float center_distance = g.sdd - radius;
+        const float sine = sinf(beta);
+        const float cosine = cosf(beta);
+        const float discriminant = radius * radius -
+            center_distance * center_distance * sine * sine;
+        if (discriminant < 0.f) {
+            arc[index] = 0.f;
+            continue;
+        }
+        const float rho = center_distance * cosine + sqrtf(discriminant);
+        if (!(rho > 1e-6f)) {
+            arc[index] = 0.f;
+            continue;
+        }
+
+        const float surface_tangent = rho * sine;
+        const float surface_radial = rho * cosine - center_distance;
+        const float alpha = atan2f(surface_tangent, surface_radial);
+        const float raw_channel = g.central_channel + radius * alpha / arc_du_mm;
+
+        // 同一锥束射线上 z/rho 保持不变。虚拟等角柱面的轴向坐标位于
+        // rho=SDD，故映射回真实柱面时需按 rho/SDD 缩放行偏移。
+        const float raw_row = g.raw_central_row +
+            (static_cast<float>(row) - g.raw_central_row) * rho / g.sdd;
+        arc[index] = sample_projection(cylindrical, g.raw_views, g.input_rows,
+            g.input_channels, static_cast<float>(view), raw_row, raw_channel);
+    }
+}
+
 __device__ float signed_angle(float x1, float x2, float y1, float y2)
 {
     const float denominator = hypotf(x1, x2) * hypotf(y1, y2);
@@ -388,6 +431,18 @@ void launch_flat_to_equiangular_arc(const float* flat, float* arc,
     const auto launch = policy.make1D(count);
     flat_to_arc_kernel<<<launch.grid, launch.block, 0, stream>>>(
         flat, arc, geometry, flat_du_mm, count);
+    YK_CUDA_KERNEL_CHECK();
+}
+
+void launch_cylindrical_to_equiangular_arc(const float* cylindrical, float* arc,
+    const Geometry& geometry, float curvature_radius_mm, float arc_du_mm,
+    const SKernelLaunchPolicy& policy, cudaStream_t stream)
+{
+    const size_t count = static_cast<size_t>(geometry.raw_views) *
+        geometry.input_rows * geometry.input_channels;
+    const auto launch = policy.make1D(count);
+    cylindrical_to_arc_kernel<<<launch.grid, launch.block, 0, stream>>>(
+        cylindrical, arc, geometry, curvature_radius_mm, arc_du_mm, count);
     YK_CUDA_KERNEL_CHECK();
 }
 

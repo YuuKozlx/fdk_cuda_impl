@@ -11,7 +11,10 @@ namespace YK { namespace Helical { namespace Wfbp {
 // FreeCT 路径。
 enum class EInputDetector {
     FlatPanel,
-    EquiangularArc
+    EquiangularArc,
+    // 圆柱轴线与焦点不必重合。输入通道按圆柱表面物理弧长 p.du_mm
+    // 等距采样，进入 FreeCT 主链前会二维重采样到焦点中心等角柱面。
+    CylindricalArc
 };
 
 // 与 FreeCT_wFBP 的四条重排路径一一对应：n/p/z/a FFS。
@@ -41,9 +44,15 @@ struct Config {
     float redundancy_flat = 0.6f;
     float angle_tolerance = 1e-3f;
 
-    // 弧形输入的相邻通道扇角和主射线通道。负主通道表示使用探测器中心。
+    // EquiangularArc 输入的相邻通道扇角。CylindricalArc 的原始圆心角
+    // 由 p.du_mm / arc_curvature_radius_mm 得到，目标等扇角由可用视野推导。
     float arc_channel_angle_step_rad = 0.f;
+    // 两种弧形输入共用的主射线通道。负值时，EquiangularArc 使用数组中心；
+    // CylindricalArc 使用 p.offsetU_mm 推导出的主通道。
     float arc_principal_channel = -1.f;
+    // 仅 CylindricalArc 使用。它是物理圆柱曲率半径，不是 SDD；允许
+    // 小于或大于 SDD，但当前适配层不与焦点飞移模式组合。
+    float arc_curvature_radius_mm = 0.f;
 
     // z-FFS/联合 FFS 使用。FreeCT 根据阳极角与等中心层厚推导焦点 z 偏移。
     float anode_angle_rad = 0.f;

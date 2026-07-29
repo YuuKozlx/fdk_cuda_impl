@@ -11,6 +11,10 @@ void launch_flat_to_equiangular_arc(const float* flat, float* arc,
     const Geometry& geometry, float flat_du_mm,
     const SKernelLaunchPolicy& policy, cudaStream_t stream);
 
+void launch_cylindrical_to_equiangular_arc(const float* cylindrical, float* arc,
+    const Geometry& geometry, float curvature_radius_mm, float arc_du_mm,
+    const SKernelLaunchPolicy& policy, cudaStream_t stream);
+
 void launch_rebin(const float* input, float* output, const Geometry& geometry,
     const SKernelLaunchPolicy& policy, cudaStream_t stream);
 
