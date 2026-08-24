@@ -9,6 +9,7 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_victre_fdk.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_water.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_arrow.cpp
 
@@ -47,6 +48,7 @@ target_compile_options(ykcbct_manual_tests PRIVATE
 )
 target_compile_definitions(ykcbct_manual_tests PRIVATE
     YKCBCT_TEST_HAS_HELICAL=$<BOOL:${YKCBCT_BUILD_HELICAL}>
+    YKCBCT_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 set_target_properties(ykcbct_manual_tests PROPERTIES
     CXX_STANDARD 17

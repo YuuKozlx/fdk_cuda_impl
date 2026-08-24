@@ -12,7 +12,8 @@ int main_fp();
 int main_operator_roundtrip_smoke();
 int main_external_geometry_operator_smoke();
 int main_fdk_batch_consistency_smoke();
-int main_fdk_realdata();
+int main_fdk_synchronous_batch_smoke();
+int main_fdk_victre_breast();
 int main_catphan_phantom_smoke();
 int main_filter_spatial_ramp_validation();
 int main_filter_discrete_ramlak_dc_zero();
@@ -93,7 +94,8 @@ namespace {
 
         // FDK, filter and phantom numerical regressions.
         TEST_INT("fdk/batch-consistency", "fdk", false, main_fdk_batch_consistency_smoke),
-        TEST_INT("fdk/realdata", "fdk", true, main_fdk_realdata),
+        TEST_INT("fdk/synchronous-batch", "fdk", false, main_fdk_synchronous_batch_smoke),
+        TEST_INT("fdk/victre-breast", "fdk", true, main_fdk_victre_breast),
         TEST_INT("phantom/catphan-like", "phantom", false, main_catphan_phantom_smoke),
         TEST_INT("filter/spatial-ramp", "filter", false, main_filter_spatial_ramp_validation),
         TEST_INT("filter/discrete-ramlak-dc", "filter", false, main_filter_discrete_ramlak_dc_zero),

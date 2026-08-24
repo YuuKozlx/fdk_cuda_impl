@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -29,11 +30,105 @@ struct FdkViewRange {
 // 一个在线 FDK 批次的主机侧输入。投影内存布局为 [view][v][u]。
 // geometry 是执行阶段唯一的几何和角度来源；如果没有外部 geometry，调用方
 // 可给出 circular_angles，仅用于构造同一份圆轨迹 geometry。
+//
+// projection 是异步 H2D 的源缓冲：调用 enqueueBatch()/processBatch()
+// 成功返回后，它仍必须保持有效且内容不变，直到对应 FdkBatchFence
+// 完成，或调用方同步 pipeline 使用的 CUDA stream。在线采集建议
+// 使用项目 pinned host buffer，并以双缓冲 + fence 轮换。
 struct FdkProjectionBatch {
     const float* projection = nullptr;
     const std::vector<SConeProjGeomVec>* geometry = nullptr;
     const float* circular_angles = nullptr;
     int count = 0;
+};
+
+// 一次异步 FDK 批次的完成栅栏。它拥有一个禁用计时的 CUDA event，
+// 可重复记录，但在再次用于同一块主机输入缓冲前，调用方必须先 wait()。
+// fence 记录在本批次最后一个 kernel 之后，因此它同时保证 H2D 已结束
+// 且本批重建已累加到输出体。
+class FdkBatchFence {
+public:
+    FdkBatchFence() = default;
+    ~FdkBatchFence() { release_(); }
+
+    FdkBatchFence(const FdkBatchFence&) = delete;
+    FdkBatchFence& operator=(const FdkBatchFence&) = delete;
+
+    FdkBatchFence(FdkBatchFence&& other) noexcept
+        : event_(std::exchange(other.event_, nullptr)), recorded_(other.recorded_)
+    {
+        other.recorded_ = false;
+    }
+
+    FdkBatchFence& operator=(FdkBatchFence&& other) noexcept
+    {
+        if (this != &other) {
+            release_();
+            event_ = std::exchange(other.event_, nullptr);
+            recorded_ = other.recorded_;
+            other.recorded_ = false;
+        }
+        return *this;
+    }
+
+    bool valid() const { return event_ != nullptr && recorded_; }
+
+    bool wait() const
+    {
+        if (!valid()) return true;
+        const cudaError_t status = cudaEventSynchronize(event_);
+        if (status != cudaSuccess) {
+            YK_LOGE("[FdkBatchFence] 等待批次完成失败：{}", cudaGetErrorString(status));
+            return false;
+        }
+        return true;
+    }
+
+    // 非阻塞查询。未记录过的 fence 不代表任何批次，故返回 false。
+    bool ready() const
+    {
+        if (!valid()) return false;
+        const cudaError_t status = cudaEventQuery(event_);
+        if (status == cudaSuccess) return true;
+        if (status == cudaErrorNotReady) return false;
+        YK_LOGE("[FdkBatchFence] 查询批次状态失败：{}", cudaGetErrorString(status));
+        return false;
+    }
+
+private:
+    friend class FdkPipeline;
+
+    bool record_(cudaStream_t stream)
+    {
+        if (!event_) {
+            const cudaError_t status = cudaEventCreateWithFlags(
+                &event_, cudaEventDisableTiming);
+            if (status != cudaSuccess) {
+                YK_LOGE("[FdkBatchFence] 创建批次 event 失败：{}",
+                    cudaGetErrorString(status));
+                return false;
+            }
+        }
+        const cudaError_t status = cudaEventRecord(event_, stream);
+        if (status != cudaSuccess) {
+            YK_LOGE("[FdkBatchFence] 记录批次 event 失败：{}",
+                cudaGetErrorString(status));
+            recorded_ = false;
+            return false;
+        }
+        recorded_ = true;
+        return true;
+    }
+
+    void release_() noexcept
+    {
+        if (event_) cudaEventDestroy(event_);
+        event_ = nullptr;
+        recorded_ = false;
+    }
+
+    cudaEvent_t event_ = nullptr;
+    bool recorded_ = false;
 };
 
 // CUDA stage 实际消费的一个 chunk。它只引用已经准备好的数据：不保存批次
@@ -204,8 +299,11 @@ public:
         return prepareWithGeometry(params, geometry, requested_chunk, stream, device_id);
     }
 
-    bool processBatch(const FdkProjectionBatch& batch, float* d_volume,
-        bool clear_output)
+    // 高性能异步入口。返回 true 只表示本批 CUDA 工作已成功提交，
+    // 不表示执行已结束。completion 非空时，在本批最后记录 event；
+    // 调用方可在复用 batch.projection 或消费本批输出前 wait()。
+    bool enqueueBatch(const FdkProjectionBatch& batch, float* d_volume,
+        bool clear_output, FdkBatchFence* completion = nullptr)
     {
         if (!prepared_) {
             YK_LOGE("[FdkPipeline] processBatch 在 prepare 前调用。");
@@ -288,9 +386,35 @@ public:
             last_stage_ = { global_offset, count, gpu_.proj.chunk_in.data(),
                 gpu_.proj.chunk_pw.data(), gpu_.proj.chunk_flt.data(), stream_ };
         }
+        // event 必须在 commit 前成功提交；否则调用方无法证明主机
+        // 输入的异步生命期，不应提前推进在线位置。
+        if (completion && !completion->record_(stream_)) return false;
+
         // 所有 CUDA 工作均已成功提交到本 session 的同一 stream；在此之后该
-        // batch 才计入在线位置。异步 CUDA 执行错误仍按现有 CUDA 错误策略处理。
+        // batch 才计入在线位置。异步 CUDA 执行错误由 fence/stream 同步时报告。
         state_.commit(range);
+        return true;
+    }
+
+    // 兼容原有调用：仍是异步提交。如果调用方会立即复用主机输入，
+    // 应改用 enqueueBatch(..., &fence) 或 processBatchSync()。
+    bool processBatch(const FdkProjectionBatch& batch, float* d_volume,
+        bool clear_output)
+    {
+        return enqueueBatch(batch, d_volume, clear_output, nullptr);
+    }
+
+    // 易用的同步入口：返回前保证主机输入可复用、本批输出可消费，
+    // 并将异步 CUDA 错误转换为 false。在线高吞吐路径不应每批使用它。
+    bool processBatchSync(const FdkProjectionBatch& batch, float* d_volume,
+        bool clear_output)
+    {
+        if (!enqueueBatch(batch, d_volume, clear_output, nullptr)) return false;
+        const cudaError_t status = cudaStreamSynchronize(stream_);
+        if (status != cudaSuccess) {
+            YK_LOGE("[FdkPipeline] 同步批次执行失败：{}", cudaGetErrorString(status));
+            return false;
+        }
         return true;
     }
 

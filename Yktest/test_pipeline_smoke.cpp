@@ -229,85 +229,39 @@ int main_catphan_phantom_smoke()
     return ok ? 0 : 1;
 }
 
-const std::string test_data_dir = R"(H:\Code\fanproj\fdk-test\TestData\)";
-
-int main_fdk_realdata()
+// 同步便捷入口应在返回前完成 H2D 和全部 FDK kernel。这里在
+// processBatchSync() 返回后立即改写主机投影，再下载体数据，
+// 用于回归“输入可复用，输出可消费”的同步契约。
+int main_fdk_synchronous_batch_smoke()
 {
-    SCBCTParams p;
-    p.iPU = 1024;
-    p.iPV = 1024;
-    p.iPAng = 420;
-    p.iPAngTotal = 420;
-    p.iVX = 512;
-    p.iVY = 512;
-    p.iVZ = 400;
-    p.du_mm = 0.417;
-    p.dv_mm = 0.417;
-    p.vox_x_mm = 0.4495;
-    p.vox_y_mm = 0.4495;
-    p.vox_z_mm = 0.4495;
-    p.bShortScan = true;
-    p.scan_range_rad = 210.f / 180.f * CUDA_PI;
-    p.scan_start_angle_rad = 48.f / 180.f * CUDA_PI;
-
-    p.SID = 430.f; p.SDD = 769.579468f;
-    p.offsetU_mm = 1.52205f;
-    p.offsetV_mm = 40.32f;
-    p.vol_offset_z_mm = p.offsetV_mm * p.SID / p.SDD; // 体积中心相对于等距圆心的偏移，近似按探测器中心偏移计算
-
-    p.desc = YK::SFilterKernelDesc::RamLak(EWeightsBuildSource::DiscreteRLFFT, 1.0);
-
-    std::vector<float> angle_list(p.iPAngTotal);
-    for (int i = 0; i < p.iPAngTotal; ++i) {
-        angle_list[i] = 48.f / 180.f * CUDA_PI + i * 0.5f / 180.f * CUDA_PI;
-    }
-
-    p.angle_list = std::move(angle_list);
-
-    p.nDirSign = 1;
-
-
-    const size_t view_n = static_cast<size_t>(p.iPU) * p.iPV;
-    const size_t sino_n = static_cast<size_t>(p.iPAng) * view_n;
-    const size_t volume_n = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    std::vector<float> h_projection(sino_n);
-
-    read_raw_float((test_data_dir + "Dump_Data_BeamHCed_1024_1024.raw").c_str(), h_projection);
+    const SCBCTParams p = makeFdkSmokeParams();
+    const size_t projection_count = static_cast<size_t>(p.iPU) * p.iPV * p.iPAng;
+    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
+    std::vector<float> projection(projection_count, 0.03f);
+    Mem::MemoryController memory;
+    auto device_volume = memory.allocateDevice3D<float>(
+        p.iVX, p.iVY, p.iVZ, 0, false);
+    auto host_volume = memory.allocateCpu3D<float>(
+        p.iVX, p.iVY, p.iVZ, false);
 
     cudaStream_t stream = nullptr;
-    float* d_full = nullptr; float* d_split = nullptr;
-    bool ok = checkCuda(cudaStreamCreate(&stream), "create stream") &&
-        checkCuda(cudaMalloc(&d_full, volume_n * sizeof(float)), "allocate full volume") &&
-        checkCuda(cudaMalloc(&d_split, volume_n * sizeof(float)), "allocate split volume");
-    FdkPipeline full, split;
-    ok = ok && full.prepareWithAngles(p, p.angle_list, 32, stream) &&
-        split.prepareWithAngles(p, p.angle_list, 32, stream);
+    bool ok = checkCuda(cudaStreamCreate(&stream), "create sync FDK stream");
+    FdkPipeline pipeline;
+    ok = ok && pipeline.prepareWithAngles(p, p.angle_list, 4, stream);
     if (ok) {
-        const FdkProjectionBatch all{ h_projection.data(), nullptr, nullptr, p.iPAng };
-        const int first_count = 5;
-        const FdkProjectionBatch first{ h_projection.data(), nullptr, nullptr, first_count };
-        const FdkProjectionBatch second{ h_projection.data() + first_count * view_n,
-            nullptr, nullptr, p.iPAng - first_count };
-        ok = full.processBatch(all, d_full, true) &&
-            split.processBatch(first, d_split, true) &&
-            split.processBatch(second, d_split, false) && split.complete() &&
-            checkCuda(cudaStreamSynchronize(stream), "FDK synchronize");
+        const FdkProjectionBatch batch{ projection.data(), nullptr, nullptr, p.iPAng };
+        ok = pipeline.processBatchSync(batch, device_volume.data(), true) &&
+            pipeline.complete();
+        std::fill(projection.begin(), projection.end(), 0.f);
+        // processBatchSync() 返回后本批输出可直接下载，无需额外同步。
+        if (ok) memory.download3D(host_volume, device_volume);
+        const std::vector<float> volume(host_volume.cdata(),
+            host_volume.cdata() + volume_count);
+        ok = ok && hasSignal(volume);
     }
-    std::vector<float> h_full(volume_n), h_split(volume_n);
-    ok = ok && checkCuda(cudaMemcpy(h_full.data(), d_full, volume_n * sizeof(float),
-        cudaMemcpyDeviceToHost), "download full FDK") &&
-        checkCuda(cudaMemcpy(h_split.data(), d_split, volume_n * sizeof(float),
-            cudaMemcpyDeviceToHost), "download split FDK");
-    const float diff = ok ? maxAbsDiff(h_full, h_split) : INFINITY;
-    ok = ok && diff < 1e-4f;
-    std::printf("FDK batch consistency: max diff = %.8g, %s\n", diff, ok ? "PASS" : "FAIL");
+    std::printf("FDK synchronous batch contract: %s\n", ok ? "PASS" : "FAIL");
 
-    write_raw_float((test_data_dir + "new_fdk_offline_realdata.raw").c_str(), h_full);
-    write_raw_float((test_data_dir + "new_fdk_online_realdata.raw").c_str(), h_split);
-
-    full.release(); split.release();
-    if (d_split) cudaFree(d_split);
-    if (d_full) cudaFree(d_full);
+    pipeline.release();
     if (stream) cudaStreamDestroy(stream);
     return ok ? 0 : 1;
 }
