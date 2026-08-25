@@ -102,7 +102,12 @@ public:
 
     ~IterativeFixture()
     {
-        if (stream) cudaStreamDestroy(stream);
+        // fixture 也覆盖失败路径；即使某个测试提前返回，仍先闭合该 stream 上
+        // 的异步上传/kernel，再销毁 stream 和随后析构的设备缓冲。
+        if (stream) {
+            cudaStreamSynchronize(stream);
+            cudaStreamDestroy(stream);
+        }
     }
 
     SCBCTParams p{};

@@ -102,6 +102,9 @@ int main_ossart_test()
         OSSART_TIGRE recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("OSSART init failed");
+            // init 失败前也可能已经向 stream 提交工作；先让重建器完成清理，
+            // 再销毁其绑定的 stream，避免析构阶段访问失效句柄。
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -260,6 +263,7 @@ int main_ossart_ex_test()
         OSSARTEx recon;
         if (!recon.init(params, cfg, h_views, s)) {
             YK_LOGE("OSSARTEx init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -419,6 +423,7 @@ int main_iter_recon_sim()
         OSSART recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("OSSART init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -460,6 +465,7 @@ int main_iter_recon_sim()
         SIRT recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("SIRT init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -586,6 +592,7 @@ int main_iter_sirt_recon_sim()
         SIRT recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("SIRT init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -645,7 +652,7 @@ int main_iter_sirt_recon_sim()
 }
 
 
-void test_flat_detector_roty_fp_ossart(cudaStream_t stream)
+int test_flat_detector_roty_fp_ossart(cudaStream_t stream)
 {
     auto params = make_default_params();
     params.SDD = 300; params.SID = 200;
@@ -668,7 +675,8 @@ void test_flat_detector_roty_fp_ossart(cudaStream_t stream)
         params.SID, params.SDD - params.SID, R);
 
     // ---- 正投影 ─────────────────────────────────────────────────
-    run_fp(params, h_views, "fp_flat_det_roty_sino2.raw", "pcb_phantom.raw", stream);
+    if (!run_fp(params, h_views, "fp_flat_det_roty_sino.raw", "pcb_phantom.raw", stream))
+        return 1;
 
     // ---- 重建参数 ───────────────────────────────────────────────
     params.iVX = 512;
@@ -688,7 +696,7 @@ void test_flat_detector_roty_fp_ossart(cudaStream_t stream)
     std::vector<float> h_sino(proj_elems);
     if (!read_raw_float((test_data_dir + "fp_flat_det_roty_sino.raw").c_str(), h_sino)) {
         YK_LOGE("cannot read fp_flat_det_roty_sino.raw");
-        return;
+        return 1;
     }
 
     Mem::MemoryController ctrl;
@@ -717,12 +725,16 @@ void test_flat_detector_roty_fp_ossart(cudaStream_t stream)
         OSSARTEx recon;
         if (!recon.init(params, cfg, h_views, stream)) {
             YK_LOGE("OSSARTEx init failed");
-            return;
+            recon.release();
+            return 1;
         }
 
         YK_LOGI("OSSARTEx start: {} iters x {} subsets", cfg.n_iter, cfg.n_subset);
         YK::Util::CudaTimer timer("ossart_flat_det_roty", stream);
-        recon.run(d_sino.data(), d_vol.data(), stream);
+        if (!recon.run(d_sino.data(), d_vol.data(), stream)) {
+            recon.release();
+            return 1;
+        }
         YK_CUDA_CHECK(cudaStreamSynchronize(stream));
         YK_LOGI("OSSARTEx done, total iterations={}", recon.totalIterations());
         recon.release();
@@ -742,9 +754,10 @@ void test_flat_detector_roty_fp_ossart(cudaStream_t stream)
         YK_LOGI("saved: recon_flat_det_roty_ossart.raw ({}x{}x{})",
             params.iVX, params.iVY, params.iVZ);
     }
+    return 0;
 }
 
-void test_flat_detector_roty_fp_independent(cudaStream_t stream)
+int test_flat_detector_roty_fp_independent(cudaStream_t stream)
 {
     auto params = make_default_params();
     params.SDD = 300; params.SID = 200;
@@ -767,7 +780,8 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
         params.SID, params.SDD - params.SID, R);
 
     // ---- 正投影 ─────────────────────────────────────────────────
-    run_fp(params, h_views, "fp_flat_det_roty_sino.raw", "pcb_phantom.raw", stream);
+    if (!run_fp(params, h_views, "fp_flat_det_roty_sino.raw", "pcb_phantom.raw", stream))
+        return 1;
 
     // ---- 重建参数 ───────────────────────────────────────────────
     params.iVX = 512;
@@ -785,7 +799,7 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
     std::vector<float> h_sino(proj_elems);
     if (!read_raw_float((test_data_dir + "fp_flat_det_roty_sino.raw").c_str(), h_sino)) {
         YK_LOGE("cannot read fp_flat_det_roty_sino.raw");
-        return;
+        return 1;
     }
 
     Mem::MemoryController ctrl;
@@ -823,21 +837,19 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
             subsets[s].push_back(i);
 
     // 分配buffer
-    float* d_sino_sub = nullptr, * d_sino_fwd = nullptr;
-    float* d_residual = nullptr, * d_row_w = nullptr;
-    float* d_bp = nullptr, * d_ones_vol = nullptr, * d_col_w = nullptr;
-    const size_t max_sino = max_K * view_elems;
-    YK_CUDA_CHECK(cudaMalloc(&d_sino_sub, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_sino_fwd, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_residual, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_row_w, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_bp, vol_elems * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_ones_vol, vol_elems * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_col_w, vol_elems * sizeof(float)));
+    // 手写测试也使用公共分配器，缓冲由 RAII 管理，失败退出不会遗留裸指针。
+    auto d_sino_sub = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_sino_fwd = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_residual = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_row_w = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_bp = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0);
+    auto d_ones_vol = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0);
+    auto d_col_w = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0);
 
-    YK::Iter::fill_ones_launch(d_ones_vol, vol_elems, stream);
+    YK::Iter::fill_ones_launch(d_ones_vol.data(), vol_elems, stream);
     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
+    bool loop_ok = true;
     {
         YK::Util::CudaTimer timer("ossart_flat_det_roty", stream);
 
@@ -859,44 +871,48 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
             }
 
             // 行权重：A_s · 1_vol
-            YK_CUDA_CHECK(cudaMemsetAsync(d_row_w, 0, sino_n * sizeof(float), stream));
+            YK_CUDA_CHECK(cudaMemsetAsync(d_row_w.data(), 0, sino_n * sizeof(float), stream));
             auto geometry = detail::makeSubsetGeometry(ps, sub_views);
             ResourceContext resources;
             resources.attach(stream, 0);
             auto fp = makeForwardOperator(cfg.fp_task);
             auto bp = makeBackOperator(cfg.bp_task);
-            if (!fp->prepare(geometry, resources) || !bp->prepare(geometry, resources)) return;
-            fp->apply(d_ones_vol, ps, d_row_w, resources);
+            if (!fp->prepare(geometry, resources) || !bp->prepare(geometry, resources)) {
+                YK_LOGE("flat detector OSSART operator prepare failed at subset {}", s);
+                loop_ok = false;
+                break;
+            }
+            fp->apply(d_ones_vol.data(), ps, d_row_w.data(), resources);
 
             // 列权重：A_s^T · 1_proj
-            YK::Iter::fill_ones_launch(d_residual, sino_n, stream);
-            bp->apply(d_residual, ps, d_col_w, true, resources);
+            YK::Iter::fill_ones_launch(d_residual.data(), sino_n, stream);
+            bp->apply(d_residual.data(), ps, d_col_w.data(), true, resources);
 
             // 收集子集正弦图
             for (int i = 0; i < K; ++i)
                 YK_CUDA_CHECK(cudaMemcpyAsync(
-                    d_sino_sub + i * view_elems,
+                    d_sino_sub.data() + i * view_elems,
                     d_sino.data() + idx[i] * view_elems,
                     view_elems * sizeof(float),
                     cudaMemcpyDeviceToDevice, stream));
 
             // 正投影
-            YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd, 0, sino_n * sizeof(float), stream));
-            fp->apply(d_vol.data(), ps, d_sino_fwd, resources);
+            YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd.data(), 0, sino_n * sizeof(float), stream));
+            fp->apply(d_vol.data(), ps, d_sino_fwd.data(), resources);
 
             // 残差
-            YK::Iter::residual_launch(d_sino_sub, d_sino_fwd, d_residual, sino_n, stream);
+            YK::Iter::residual_launch(d_sino_sub.data(), d_sino_fwd.data(), d_residual.data(), sino_n, stream);
 
             // R行归一化
-            YK::Iter::divide_launch(d_residual, d_row_w, cfg.eps, sino_n, stream);
+            YK::Iter::divide_launch(d_residual.data(), d_row_w.data(), cfg.eps, sino_n, stream);
 
             // 反投影
-            bp->apply(d_residual, ps, d_bp, true, resources);
+            bp->apply(d_residual.data(), ps, d_bp.data(), true, resources);
             fp->release();
             bp->release();
 
             // 更新
-            YK::Iter::update_launch(d_vol.data(), d_bp, d_col_w,
+            YK::Iter::update_launch(d_vol.data(), d_bp.data(), d_col_w.data(),
                 cfg.lambda, cfg.eps, vol_elems, stream);
 
             if (cfg.use_min)
@@ -907,6 +923,7 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
 
         YK_CUDA_CHECK(cudaStreamSynchronize(stream));
     }
+    if (!loop_ok) return 1;
 
     // 保存
     {
@@ -923,9 +940,7 @@ void test_flat_detector_roty_fp_independent(cudaStream_t stream)
             params.iVX, params.iVY, params.iVZ);
     }
 
-    cudaFree(d_sino_sub); cudaFree(d_sino_fwd);
-    cudaFree(d_residual); cudaFree(d_row_w);
-    cudaFree(d_bp);       cudaFree(d_ones_vol); cudaFree(d_col_w);
+    return 0;
 }
 
 
@@ -998,6 +1013,7 @@ int main_cgls_test()
         CGLS recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("CGLS init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -1133,6 +1149,7 @@ int main_ossart_realdata_test()
         OSSART_TIGRE recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("OSSART init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -1241,6 +1258,7 @@ int main_ossart_mcgpu_cylinder_test()
         OSSART recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("OSSART init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -1373,6 +1391,7 @@ int main_cgls_realdata_test()
         CGLS recon;
         if (!recon.init(params, cfg, s)) {
             YK_LOGE("CGLS init failed");
+            recon.release();
             YK_CUDA_CHECK(cudaStreamDestroy(s));
             return -1;
         }
@@ -1580,21 +1599,18 @@ int main_helical_from_volume_cylinder_ossart_independent()
             subsets[s].push_back(i);
 
     // 分配buffer
-    float* d_sino_sub = nullptr, * d_sino_fwd = nullptr;
-    float* d_residual = nullptr, * d_row_w = nullptr;
-    float* d_bp = nullptr, * d_ones_vol = nullptr, * d_col_w = nullptr;
-    const size_t max_sino = max_K * view_elems;
-    YK_CUDA_CHECK(cudaMalloc(&d_sino_sub, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_sino_fwd, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_residual, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_row_w, max_sino * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_bp, vol_elems * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_ones_vol, vol_elems * sizeof(float)));
-    YK_CUDA_CHECK(cudaMalloc(&d_col_w, vol_elems * sizeof(float)));
-
-    YK::Iter::fill_ones_launch(d_ones_vol, vol_elems, stream);
+    // 手写测试也使用公共分配器，缓冲由 RAII 管理，失败退出不会遗留裸指针。
+    auto d_sino_sub = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_sino_fwd = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_residual = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_row_w = ctrl.allocateDevice3D<float>(params.iPU, params.iPV, static_cast<int>(max_K), 0);
+    auto d_bp = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0);
+    auto d_ones_vol = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0);
+    auto d_col_w = ctrl.allocateDevice3D<float>(params.iVX, params.iVY, params.iVZ, 0);
+    YK::Iter::fill_ones_launch(d_ones_vol.data(), vol_elems, stream);
     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
 
+    bool loop_ok = true;
     {
         YK::Util::CudaTimer timer("helical_ossart_cylinder_independent", stream);
 
@@ -1617,44 +1633,48 @@ int main_helical_from_volume_cylinder_ossart_independent()
             }
 
             // 行权重：A_s · 1_vol
-            YK_CUDA_CHECK(cudaMemsetAsync(d_row_w, 0, sino_n * sizeof(float), stream));
+            YK_CUDA_CHECK(cudaMemsetAsync(d_row_w.data(), 0, sino_n * sizeof(float), stream));
             auto geometry = detail::makeSubsetGeometry(ps, sub_views);
             ResourceContext resources;
             resources.attach(stream, 0);
             auto fp = makeForwardOperator(cfg.fp_task);
             auto bp = makeBackOperator(cfg.bp_task);
-            if (!fp->prepare(geometry, resources) || !bp->prepare(geometry, resources)) return -1;
-            fp->apply(d_ones_vol, ps, d_row_w, resources);
+            if (!fp->prepare(geometry, resources) || !bp->prepare(geometry, resources)) {
+                YK_LOGE("helical OSSART operator prepare failed at subset {}", s);
+                loop_ok = false;
+                break;
+            }
+            fp->apply(d_ones_vol.data(), ps, d_row_w.data(), resources);
 
             // 列权重：A_s^T · 1_proj
-            YK::Iter::fill_ones_launch(d_residual, sino_n, stream);
-            bp->apply(d_residual, ps, d_col_w, true, resources);
+            YK::Iter::fill_ones_launch(d_residual.data(), sino_n, stream);
+            bp->apply(d_residual.data(), ps, d_col_w.data(), true, resources);
 
             // 收集子集正弦图
             for (int i = 0; i < K; ++i)
                 YK_CUDA_CHECK(cudaMemcpyAsync(
-                    d_sino_sub + i * view_elems,
+                    d_sino_sub.data() + i * view_elems,
                     d_sino.data() + idx[i] * view_elems,
                     view_elems * sizeof(float),
                     cudaMemcpyDeviceToDevice, stream));
 
             // 正投影
-            YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd, 0, sino_n * sizeof(float), stream));
-            fp->apply(d_vol.data(), ps, d_sino_fwd, resources);
+            YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd.data(), 0, sino_n * sizeof(float), stream));
+            fp->apply(d_vol.data(), ps, d_sino_fwd.data(), resources);
 
             // 残差
-            YK::Iter::residual_launch(d_sino_sub, d_sino_fwd, d_residual, sino_n, stream);
+            YK::Iter::residual_launch(d_sino_sub.data(), d_sino_fwd.data(), d_residual.data(), sino_n, stream);
 
             // R行归一化
-            YK::Iter::divide_launch(d_residual, d_row_w, cfg.eps, sino_n, stream);
+            YK::Iter::divide_launch(d_residual.data(), d_row_w.data(), cfg.eps, sino_n, stream);
 
             // 反投影
-            bp->apply(d_residual, ps, d_bp, true, resources);
+            bp->apply(d_residual.data(), ps, d_bp.data(), true, resources);
             fp->release();
             bp->release();
 
             // 更新
-            YK::Iter::update_launch(d_vol.data(), d_bp, d_col_w,
+            YK::Iter::update_launch(d_vol.data(), d_bp.data(), d_col_w.data(),
                 cfg.lambda, cfg.eps, vol_elems, stream);
 
             if (cfg.use_min)
@@ -1665,6 +1685,11 @@ int main_helical_from_volume_cylinder_ossart_independent()
         }
 
         YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
+    if (!loop_ok) {
+        projector.release();
+        YK_CUDA_CHECK(cudaStreamDestroy(stream));
+        return 1;
     }
 
     // ----------------------------------------------------------------
@@ -1698,10 +1723,6 @@ int main_helical_from_volume_cylinder_ossart_independent()
 
     printf("Done: helical_from_volume_cylinder_ossart_independent  views=%d\n",
         projector.totalViews());
-
-    cudaFree(d_sino_sub); cudaFree(d_sino_fwd);
-    cudaFree(d_residual); cudaFree(d_row_w);
-    cudaFree(d_bp);       cudaFree(d_ones_vol); cudaFree(d_col_w);
 
     projector.release();
     YK_CUDA_CHECK(cudaStreamDestroy(stream));
@@ -1876,6 +1897,7 @@ int main_helical_from_volume_cylinder_ossart()
         OSSARTEx recon;
         if (!recon.init(params, cfg, h_views, stream)) {
             YK_LOGE("OSSARTEx init failed");
+            recon.release();
             projector.release();
             YK_CUDA_CHECK(cudaStreamDestroy(stream));
             return -1;
@@ -2094,6 +2116,7 @@ int main_helical_from_volume_cylinder_cgls()
         CGLSEx recon;
         if (!recon.init(params, cfg, h_views, stream)) {
             YK_LOGE("CGLSEx init failed");
+            recon.release();
             projector.release();
             YK_CUDA_CHECK(cudaStreamDestroy(stream));
             return -1;

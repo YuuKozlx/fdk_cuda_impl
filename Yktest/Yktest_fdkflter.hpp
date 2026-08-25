@@ -9,6 +9,7 @@
 #include "Filter/YkCreateFilterKernel.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
+#include "global/YkMem3d.hpp"
 
 
 namespace YKTest {
@@ -102,21 +103,16 @@ namespace YKTest {
             Nu, paddedN, n_complex, (int)bake_invN);
 
         // ---- 分配设备内存 ----
-        float* d_w_A = nullptr;
-        float* d_w_B = nullptr;
-        float* d_w_I = nullptr;
-        YK_CUDA_CHECK(cudaMalloc(&d_w_A, (size_t)n_complex * sizeof(float)));
-        YK_CUDA_CHECK(cudaMalloc(&d_w_B, (size_t)n_complex * sizeof(float)));
-        YK_CUDA_CHECK(cudaMalloc(&d_w_I, (size_t)n_complex * sizeof(float)));
+        Mem::MemoryController memory;
+        auto d_w_A = memory.allocateDevice3D<float>(n_complex, 1, 1, 0);
+        auto d_w_B = memory.allocateDevice3D<float>(n_complex, 1, 1, 0);
+        auto d_w_I = memory.allocateDevice3D<float>(n_complex, 1, 1, 0);
 
         Filter::CreateFilterKernelFromFFT kernel;
         kernel.prepare(paddedN, stream);
 
         // RAII cleanup，替代 goto
         auto cleanup = [&]() {
-            cudaFree(d_w_A);
-            cudaFree(d_w_B);
-            cudaFree(d_w_I);
             kernel.release();
             };
 
@@ -127,7 +123,7 @@ namespace YKTest {
             descI.gain = 1.0f;
             descI.cutoff = 0.5f;
             descI.source = EWeightsBuildSource::AnalyticFreq;
-            kernel.build_weights(d_w_I, descI, /*du_real=*/1.0f, bake_invN);
+            kernel.build_weights(d_w_I.data(), descI, /*du_real=*/1.0f, bake_invN);
         }
 
         // ---- AnalyticFreq RamLak ----
@@ -137,23 +133,25 @@ namespace YKTest {
         descA.gain = 1.0f;
         descA.source = EWeightsBuildSource::AnalyticFreq;
         descA.extract_mode = ERampExtractMode::Magnitude;
-        kernel.build_weights(d_w_A, descA, /*du_real=*/1.0f, bake_invN);
+        kernel.build_weights(d_w_A.data(), descA, /*du_real=*/1.0f, bake_invN);
 
         // ---- DiscreteRLFFT RamLak ----
         SFilterKernelDesc descB = descA;
         descB.source = EWeightsBuildSource::DiscreteRLFFT;
         // DiscreteRLFFT always suppresses DC as fixed algorithm behavior.
-        kernel.build_weights(d_w_B, descB, /*du_real=*/1.0f, bake_invN);
+        kernel.build_weights(d_w_B.data(), descB, /*du_real=*/1.0f, bake_invN);
 
         // ---- Copy back ----
+        // 这里使用普通 std::vector，测试也不会与 CPU 工作重叠；同步拷贝能准确
+        // 表达生命周期。pageable host 内存配合 cudaMemcpyAsync 既不提供稳定的
+        // 真异步语义，也容易让后续代码误以为必须额外维护 host buffer fence。
         std::vector<float> hA(n_complex), hB(n_complex), hI(n_complex);
-        YK_CUDA_CHECK(cudaMemcpyAsync(hA.data(), d_w_A,
-            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost, stream));
-        YK_CUDA_CHECK(cudaMemcpyAsync(hB.data(), d_w_B,
-            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost, stream));
-        YK_CUDA_CHECK(cudaMemcpyAsync(hI.data(), d_w_I,
-            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost, stream));
-        YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+        YK_CUDA_CHECK(cudaMemcpy(hA.data(), d_w_A.data(),
+            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost));
+        YK_CUDA_CHECK(cudaMemcpy(hB.data(), d_w_B.data(),
+            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost));
+        YK_CUDA_CHECK(cudaMemcpy(hI.data(), d_w_I.data(),
+            (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost));
 
         // ---- Sanity checks ----
         if (!is_finite_vec(hA) || !is_finite_vec(hB) || !is_finite_vec(hI)) {
@@ -247,16 +245,16 @@ namespace YKTest {
             }
         }
 
-        float* d_w = nullptr;
-        YK_CUDA_CHECK(cudaMalloc(&d_w, (size_t)n_complex * sizeof(float)));
+        Mem::MemoryController memory;
+        auto d_w = memory.allocateDevice3D<float>(n_complex, 1, 1, 0);
         Filter::CreateFilterKernelFromFFT kernel;
         kernel.prepare(paddedN, 0);
 
         SFilterKernelDesc desc = SFilterKernelDesc::SpatialRamp(h_ramp);
-        kernel.build_weights(d_w, desc, 1.0f, bake_invN);
+        kernel.build_weights(d_w.data(), desc, 1.0f, bake_invN);
 
         std::vector<float> h_w(n_complex);
-        YK_CUDA_CHECK(cudaMemcpy(h_w.data(), d_w,
+        YK_CUDA_CHECK(cudaMemcpy(h_w.data(), d_w.data(),
             (size_t)n_complex * sizeof(float), cudaMemcpyDeviceToHost));
 
         bool pass = is_finite_vec(h_w);
@@ -274,7 +272,6 @@ namespace YKTest {
                 k, (float)k / paddedN, h_w[k]);
         std::printf("[testSpatialRamp] %s\n", pass ? "PASS" : "FAIL");
 
-        cudaFree(d_w);
         kernel.release();
         return pass;
     }

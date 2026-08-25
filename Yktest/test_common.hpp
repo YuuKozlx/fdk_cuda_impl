@@ -275,7 +275,7 @@ YK_INLINE SimGeoConfig make_random_config(
 
 
 
-YK_INLINE void run_fp(
+YK_INLINE bool run_fp(
     const SCBCTParams& params,
     const GeoSource& geo_src,
     const std::string& sino_path,
@@ -293,7 +293,7 @@ YK_INLINE void run_fp(
     auto h_vol = mc.allocateCpu3D<float>(Nx, Ny, Nz);
     if (!read_raw_float((datapath::test_data_dir + phantom_path).c_str(),
         h_vol.data(), 1LL * Nx * Ny * Nz)) {
-        YK_LOGE("recon_raw_save.raw not found"); return;
+        YK_LOGE("recon_raw_save.raw not found"); return false;
     }
     auto d_vol = mc.allocateDevice3D<float>(Nx, Ny, Nz, 0);
     auto d_sino = mc.allocateDevice3D<float>(params.iPU, params.iPV, Na, 0);
@@ -302,24 +302,29 @@ YK_INLINE void run_fp(
 
     GeometryContext geometry;
     ResourceContext resources;
-    if (!geometry.initialize(params, h_views)) { YK_LOGE("FP geometry init failed"); return; }
+    if (!geometry.initialize(params, h_views)) { YK_LOGE("FP geometry init failed"); return false; }
     resources.attach(stream, 0);
     auto fp = makeForwardOperator(ETask::FP_Joseph);
     if (!fp->prepare(geometry, resources) ||
         !fp->apply(d_vol.data(), params, d_sino.data(), resources)) {
         YK_LOGE("FP operator execution failed");
-        return;
+        return false;
     }
-    fp->release();
+    // run_fp 是离线 helper：明确等待输出完成后再释放算子并下载。
+    // “异步 apply 后直接 release”只在 operator-release-fence 回归中验证。
     YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+    fp->release();
 
     std::vector<float> h_sino(view_elems * Na);
     {
         auto borrow_sino = mc.borrowCpu3D(h_sino.data(), params.iPU, params.iPV, Na);
         mc.download3D(borrow_sino, d_sino);
     }
-    write_raw_float((datapath::test_data_dir + sino_path).c_str(), h_sino.data(), h_sino.size());
+    if (!write_raw_float((datapath::test_data_dir + sino_path).c_str(),
+        h_sino.data(), h_sino.size()))
+        return false;
     YK_LOGI("saved: {}", sino_path);
+    return true;
 }
 
 YK_INLINE void run_recon(
@@ -353,7 +358,10 @@ YK_INLINE void run_recon(
             return;
         }
         const FdkProjectionBatch batch{ h_sino.data(), &h_views_recon, nullptr, Na };
-        if (!pipeline.processBatch(batch, d_vol_buf.data(), true)) {
+        // 这是离线单批测试：函数返回后马上退出 pipeline 作用域并下载结果，
+        // 使用同步入口可以明确闭合 host 投影、内部工作区和输出体的生命周期。
+        // 在线分包测试应使用 enqueueBatch() 配合 pinned 双缓冲和 FdkBatchFence。
+        if (!pipeline.processBatchSync(batch, d_vol_buf.data(), true)) {
             YK_LOGE("FDK geometry pipeline execution failed");
             return;
         }
@@ -372,7 +380,8 @@ YK_INLINE void run_fp_and_recon(
     const std::string& vol_path,
     cudaStream_t                    stream)
 {
-    run_fp(params, geo_cfg, sino_path, "recon_raw_save.raw", stream);
+    if (!run_fp(params, geo_cfg, sino_path, "recon_raw_save.raw", stream))
+        return;
     run_recon(params, recon_cfg, sino_path, vol_path, stream);
 }
 

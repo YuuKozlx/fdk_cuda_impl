@@ -55,19 +55,22 @@ int main_fpcyl_wfbp_comparison();
 int main_ossart_test(); int main_ossart_ex_test(); int main_iter_recon_sim();
 int main_iter_sirt_recon_sim(); int main_cgls_test(); int main_ossart_realdata_test();
 int main_ossart_mcgpu_cylinder_test(); int main_cgls_realdata_test();
-void test_flat_detector_roty_fp_ossart(cudaStream_t); void test_flat_detector_roty_fp_independent(cudaStream_t);
+int test_flat_detector_roty_fp_ossart(cudaStream_t); int test_flat_detector_roty_fp_independent(cudaStream_t);
 
 
 namespace {
     using TestFn = int (*)();
 
-    int runWithStream(void (*fn)(cudaStream_t)) {
+    int runWithStream(int (*fn)(cudaStream_t)) {
         cudaStream_t stream = nullptr;
         if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
-        fn(stream);
+        const int test_status = fn(stream);
+        // TEST_STREAM 中的测试允许使用底层异步接口；统一在测试函数返回后
+        // 闭合 stream，既检查延迟 CUDA 错误，也保证局部 host/device 数据不被
+        // 下一项测试提前复用。在线并发行为由专门的 fence 测试覆盖。
         const cudaError_t status = cudaStreamSynchronize(stream);
         cudaStreamDestroy(stream);
-        return status == cudaSuccess ? 0 : 1;
+        return test_status == 0 && status == cudaSuccess ? 0 : 1;
     }
     int runVoid(void (*fn)()) { fn(); return 0; }
 
