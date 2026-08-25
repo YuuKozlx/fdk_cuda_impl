@@ -89,6 +89,10 @@ public:
 
     void release()
     {
+        // reconstruct() 有意只负责入队。释放或重新 prepare 会覆盖内部工作区，
+        // 因此必须先等待绑定 stream，不能依赖 cudaFree 的隐式同步行为。
+        if (stream_)
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
         filter_.release();
         d_arc_projection_ = {};
         d_rebinned_ = {};

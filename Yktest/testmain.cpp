@@ -10,6 +10,7 @@
 // Keep registration here so adding a test never requires editing main().
 int main_fp();
 int main_operator_roundtrip_smoke();
+int main_operator_release_fence_smoke();
 int main_external_geometry_operator_smoke();
 int main_fdk_batch_consistency_smoke();
 int main_fdk_synchronous_batch_smoke();
@@ -90,6 +91,7 @@ namespace {
     const TestEntry kTests[] = {
         // Framework and public data-flow contracts.
         TEST_INT("framework/operator-roundtrip", "framework", false, main_operator_roundtrip_smoke),
+        TEST_INT("framework/operator-release-fence", "framework", false, main_operator_release_fence_smoke),
         TEST_INT("framework/external-geometry", "framework", false, main_external_geometry_operator_smoke),
 
         // FDK, filter and phantom numerical regressions.

@@ -186,6 +186,9 @@ namespace YK {
     // reset() 前 session 会拒绝继续提交 FDK 批次。clear_output 仅允许用于
     // initialize() 或 reset() 后的首批，防止意外清掉此前的在线累积结果。
     // 对迭代管线，K 必须等于 SessionDesc::scan.NAng，projection 包含全视图。
+    // 公共 Session 的 execute() 采用同步请求语义：返回 true 后本次 GPU 工作
+    // 已完成，输入缓冲可立即复用，输出缓冲可立即读取。需要跨请求流水并行时，
+    // 应使用各算法底层的异步接口及其 completion fence/event。
     struct ExecuteRequest {
         const float* angles = nullptr; // host-resident radians
         int K = 0;

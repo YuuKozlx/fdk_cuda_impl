@@ -23,6 +23,11 @@ public:
 
     bool init(const SCBCTParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
+    { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
+
+    bool init(const SCBCTParams& params, const Config& cfg,
+        const std::vector<SConeProjGeomVec>& geometry,
+        cudaStream_t stream, int device_id = 0)
     {
         Iter::AlgebraicReconstructor::Config unified{};
         unified.method = Iter::EAlgebraicMethod::Sart;
@@ -36,7 +41,9 @@ public:
         unified.max_constraint = cfg.max_constraint;
         unified.fp_task = cfg.fp_task;
         unified.bp_task = cfg.bp_task;
-        return implementation_.prepare(params, unified, stream, device_id);
+        std::vector<SConeProjGeomVec> resolved = geometry;
+        if (resolved.empty()) YK::detail::buildCircularViews(params, resolved);
+        return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
 
     bool run(const float* measured, float* volume,
@@ -47,7 +54,7 @@ public:
     void release() { implementation_.release(); }
 
 private:
-    Iter::AlgebraicReconstructor implementation_{};
+    Iter::AlgebraicReconstructorEx implementation_{};
 };
 
 inline bool sart_reconstruct(const float* measured, float* volume,
@@ -80,6 +87,11 @@ public:
 
     bool init(const SCBCTParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
+    { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
+
+    bool init(const SCBCTParams& params, const Config& cfg,
+        const std::vector<SConeProjGeomVec>& geometry,
+        cudaStream_t stream, int device_id = 0)
     {
         Iter::AlgebraicReconstructor::Config unified{};
         unified.method = Iter::EAlgebraicMethod::Sirt;
@@ -93,7 +105,9 @@ public:
         unified.max_constraint = cfg.max_constraint;
         unified.fp_task = cfg.fp_task;
         unified.bp_task = cfg.bp_task;
-        return implementation_.prepare(params, unified, stream, device_id);
+        std::vector<SConeProjGeomVec> resolved = geometry;
+        if (resolved.empty()) YK::detail::buildCircularViews(params, resolved);
+        return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
 
     bool iterate(const float* measured, float* volume,
@@ -108,7 +122,7 @@ public:
     void release() { implementation_.release(); }
 
 private:
-    Iter::AlgebraicReconstructor implementation_{};
+    Iter::AlgebraicReconstructorEx implementation_{};
 };
 
 inline bool sirt_reconstruct(const float* measured, float* volume,

@@ -9,6 +9,7 @@
 #include "Filter/YkFFT.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
+#include "global/YkMem3d.hpp"
 
 #include "FDK/kernels/YkFDKFilterHelpers.cuh"  // normalizeFilterPolicy / fp_computePaddedN / fp_computeStartU
 #include "FDK/kernels/YkFDKFilterLaunch.cuh"   // fp_launchPad / fp_launchFilter / fp_launchCrop
@@ -63,6 +64,9 @@ namespace YK {
                 YK_CUDA_CHECK(cudaMalloc(&d_weights_, static_cast<size_t>(n_cmplx_) * sizeof(float)));
                 YK_CUDA_CHECK(cudaMalloc(&d_complex_buf_,
                     static_cast<size_t>(K_) * Nv_ * n_cmplx_ * sizeof(cufftComplex)));
+                host_startu_ = memory_.allocatePinnedCpu3D<int>(K_, 1, 1);
+                YK_CUDA_CHECK(cudaEventCreateWithFlags(
+                    &startu_upload_done_, cudaEventDisableTiming));
                 fft_batch_.init(paddedN_, K_ * Nv_, stream_);
                 kernel_fft_.prepare(paddedN_, stream_);
                 is_initialized_ = true;
@@ -85,14 +89,22 @@ namespace YK {
                 if (stream != 0 && stream != stream_) setStream_(stream);
 
                 current_K_ = context.K;
-                host_startu_.resize(current_K_);
+                // startU 使用固定 pinned staging。这里只等待上一轮 startU 的 H2D，
+                // 不等待后续 FFT/反投影，从而既避免 CPU 覆盖尚在传输的内存，
+                // 又不把整个 FDK chunk 强制变成同步执行。
+                if (startu_upload_recorded_) {
+                    YK_CUDA_CHECK(cudaEventSynchronize(startu_upload_done_));
+                    startu_upload_recorded_ = false;
+                }
                 for (int i = 0; i < current_K_; ++i) {
-                    host_startu_[i] = detail::fp_computeStartU(
+                    host_startu_.data()[i] = detail::fp_computeStartU(
                         Nu_, paddedN_, context.h_gv[i].offsetU_pix);
                 }
                 YK_CUDA_CHECK(cudaMemcpyAsync(d_startu_, host_startu_.data(),
                     static_cast<size_t>(current_K_) * sizeof(int),
                     cudaMemcpyHostToDevice, stream_));
+                YK_CUDA_CHECK(cudaEventRecord(startu_upload_done_, stream_));
+                startu_upload_recorded_ = true;
                 du_real_ = context.h_gv[0].du_mm > 0.f ? context.h_gv[0].du_mm : 1.f;
 
                 ensureWeights_();
@@ -108,6 +120,9 @@ namespace YK {
 
             void release()
             {
+                // pinned staging 释放前必须确认最后一次异步 H2D 已结束。
+                if (startu_upload_recorded_ && startu_upload_done_)
+                    cudaEventSynchronize(startu_upload_done_);
                 fft_batch_.release();
                 kernel_fft_.release();
 
@@ -116,7 +131,12 @@ namespace YK {
                 if (d_weights_) { cudaFree(d_weights_);     d_weights_ = nullptr; }
                 if (d_complex_buf_) { cudaFree(d_complex_buf_); d_complex_buf_ = nullptr; }
 
-                host_startu_.clear();
+                host_startu_ = {};
+                if (startu_upload_done_) {
+                    cudaEventDestroy(startu_upload_done_);
+                    startu_upload_done_ = nullptr;
+                }
+                startu_upload_recorded_ = false;
 
                 Nu_ = Nv_ = K_ = paddedN_ = n_cmplx_ = 0;
                 du_real_ = 1.0f;
@@ -174,7 +194,10 @@ namespace YK {
 
             CudaFFT         fft_batch_;
             YK::Filter::CreateFilterKernelFromFFT kernel_fft_;
-            std::vector<int> host_startu_;
+            Mem::MemoryController memory_{};
+            Mem::HostPinnedBuffer3D<int> host_startu_{};
+            cudaEvent_t startu_upload_done_ = nullptr;
+            bool startu_upload_recorded_ = false;
 
             bool is_initialized_ = false;
             bool weights_ready_ = false;

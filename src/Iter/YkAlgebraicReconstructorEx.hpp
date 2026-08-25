@@ -183,6 +183,10 @@ public:
 
     void release()
     {
+        // reconstruct()/iterate() 保持异步；只有销毁或重新 prepare 时才等待，
+        // 防止下方工作区在最后一批 kernel 尚未完成时被释放。
+        if (stream_)
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
         detailed_weights_.release();
         tigre_.release();
         regularizer_.release();

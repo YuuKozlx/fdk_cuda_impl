@@ -173,6 +173,8 @@ public:
 
     void release()
     {
+        if (stream_)
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
         data_backend_.release();
         fp_.release();
         d_projection_model_.reset();

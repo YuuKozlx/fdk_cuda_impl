@@ -93,6 +93,8 @@ public:
 
     void release()
     {
+        if (stream_)
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
         robust_.release();
         astra_.release();
         params_ = {};

@@ -16,9 +16,9 @@
 
 namespace YK {
 
-// FP/BP are computation operators, not reconstruction runners.  They own no
-// host buffers, do not synchronize, and never invoke callbacks: callers own
-// the output device buffer and may dump it explicitly through DeviceTensorDumper.
+// FP/BP 是计算算子，不是重建 runner。调用返回后 kernel 仍可在绑定 stream 上
+// 执行；算子只保留 kernel 依赖的纹理和几何设备缓冲，并用完成事件管理其生命周期。
+// 输入输出设备缓冲仍由调用方持有，必要时可通过 DeviceTensorDumper 显式导出。
 class IForwardOperator {
 public:
     virtual ~IForwardOperator() = default;
@@ -103,10 +103,16 @@ inline GeometryContext makeSubsetGeometry(const SCBCTParams& batch,
 class ForwardOperator final : public IForwardOperator {
 public:
     explicit ForwardOperator(ETask kind) : kind_(kind) {}
+    ~ForwardOperator() override { release(); }
 
-    bool prepare(const GeometryContext& geometry, ResourceContext&) override
+    bool prepare(const GeometryContext& geometry, ResourceContext& resources) override
     {
         if (!detail::isForwardTask(kind_)) return false;
+        release();
+        device_id_ = resources.device();
+        stream_ = resources.stream();
+        YK_CUDA_CHECK(cudaSetDevice(device_id_));
+        YK_CUDA_CHECK(cudaEventCreateWithFlags(&completion_, cudaEventDisableTiming));
         geometry_ = geometry;
         prepared_ = true;
         return true;
@@ -116,40 +122,78 @@ public:
         float* d_projection, ResourceContext& resources) override
     {
         if (!prepared_ || !d_volume || !d_projection || batch.iPAng <= 0) return false;
+        if (resources.device() != device_id_ || resources.stream() != stream_) return false;
+        retireContext_();
         std::vector<SConeProjGeomVec> views;
         if (!detail::resolveViews(geometry_.allGeometry(), batch, views)) return false;
 
         const SVolGeom vol = geometry_.volumeGeometry();
-        Fp::FpGpuContext gpu;
-        gpu.init(d_volume, vol, views, resources.device());
+        gpu_ = std::make_unique<Fp::FpGpuContext>();
+        gpu_->init(d_volume, vol, views, resources.device());
         const size_t count = static_cast<size_t>(batch.iPAng) * batch.iPV * batch.iPU;
         YK_CUDA_CHECK(cudaMemsetAsync(d_projection, 0, count * sizeof(float), resources.stream()));
         if (kind_ == ETask::FP_Joseph) {
-            Fp::fp_joseph_launch(gpu.volTex.tex, gpu.geo.h_views_vec(), gpu.geo.d_views_vox(),
+            Fp::fp_joseph_launch(gpu_->volTex.tex, gpu_->geo.h_views_vec(), gpu_->geo.d_views_vox(),
                 d_projection, vol, batch.iPAng, batch.iPU, batch.iPV, false,
                 resources.stream(), Fp::FpStepSuperSample::x1);
         } else {
-            Fp::fp_siddon_launch(gpu.volTex.tex, d_projection, gpu.geo.d_views(), vol,
+            Fp::fp_siddon_launch(gpu_->volTex.tex, d_projection, gpu_->geo.d_views(), vol,
                 batch.iPU, batch.iPV, batch.iPAng, false, resources.stream());
         }
+        YK_CUDA_CHECK(cudaEventRecord(completion_, stream_));
+        completion_recorded_ = true;
         return true;
     }
 
-    void release() override { prepared_ = false; geometry_ = {}; }
+    void release() override
+    {
+        if (completion_) {
+            YK_CUDA_CHECK(cudaSetDevice(device_id_));
+            if (completion_recorded_) YK_CUDA_CHECK(cudaEventSynchronize(completion_));
+        }
+        gpu_.reset();
+        if (completion_) YK_CUDA_CHECK(cudaEventDestroy(completion_));
+        completion_ = nullptr;
+        completion_recorded_ = false;
+        stream_ = nullptr;
+        prepared_ = false;
+        geometry_ = {};
+    }
 
 private:
+    void retireContext_()
+    {
+        if (!gpu_) return;
+        // 只等待本算子上一次 kernel 的完成点，不会等待随后排入同一 stream 的
+        // 其他工作；因此可以安全销毁旧纹理/几何缓冲而不引入全流栅栏。
+        if (completion_recorded_) YK_CUDA_CHECK(cudaEventSynchronize(completion_));
+        gpu_.reset();
+        completion_recorded_ = false;
+    }
+
     ETask kind_;
     GeometryContext geometry_{};
+    std::unique_ptr<Fp::FpGpuContext> gpu_{};
+    cudaEvent_t completion_ = nullptr;
+    cudaStream_t stream_ = nullptr;
+    int device_id_ = 0;
+    bool completion_recorded_ = false;
     bool prepared_ = false;
 };
 
 class BackOperator final : public IBackOperator {
 public:
     explicit BackOperator(ETask kind) : kind_(kind) {}
+    ~BackOperator() override { release(); }
 
-    bool prepare(const GeometryContext& geometry, ResourceContext&) override
+    bool prepare(const GeometryContext& geometry, ResourceContext& resources) override
     {
         if (!detail::isBackTask(kind_)) return false;
+        release();
+        device_id_ = resources.device();
+        stream_ = resources.stream();
+        YK_CUDA_CHECK(cudaSetDevice(device_id_));
+        YK_CUDA_CHECK(cudaEventCreateWithFlags(&completion_, cudaEventDisableTiming));
         geometry_ = geometry;
         prepared_ = true;
         return true;
@@ -159,6 +203,8 @@ public:
         float* d_volume, bool clear_volume, ResourceContext& resources) override
     {
         if (!prepared_ || !d_projection || !d_volume || batch.iPAng <= 0) return false;
+        if (resources.device() != device_id_ || resources.stream() != stream_) return false;
+        retireContext_();
         std::vector<SConeProjGeomVec> views;
         if (!detail::resolveViews(geometry_.allGeometry(), batch, views)) return false;
 
@@ -166,8 +212,8 @@ public:
         GeoDerivedManagerVec{}.build_geo_params(batch.iPU, batch.iPV,
             batch.scan_range_rad, views, derived);
         const SVolGeom vol = geometry_.volumeGeometry();
-        Bp::BpSiddonGpuContext gpu;
-        gpu.initNoTex(d_projection, vol, views, derived, resources.stream(), resources.device());
+        gpu_ = std::make_unique<Bp::BpSiddonGpuContext>();
+        gpu_->initNoTex(d_projection, vol, views, derived, resources.stream(), resources.device());
         const bool accumulate = !clear_volume;
         const int na = batch.iPAng;
 
@@ -175,52 +221,86 @@ public:
         case ETask::BP_Siddon_RayDriven:
             if (clear_volume) YK_CUDA_CHECK(cudaMemsetAsync(d_volume, 0,
                 static_cast<size_t>(batch.iVX) * batch.iVY * batch.iVZ * sizeof(float), resources.stream()));
-            Bp::bp_siddon_launch(gpu.d_sino_raw, d_volume, gpu.geo.d_views_world(), vol,
+            Bp::bp_siddon_launch(gpu_->d_sino_raw, d_volume, gpu_->geo.d_views_world(), vol,
                 batch.iPU, batch.iPV, na, resources.stream());
             break;
         case ETask::BP_Siddon_VoxDriven:
-            Bp::bp_siddon_voxel_launch(d_projection, d_volume, gpu.geo.d_views_world(), vol,
+            Bp::bp_siddon_voxel_launch(d_projection, d_volume, gpu_->geo.d_views_world(), vol,
                 batch.iPU, batch.iPV, na, accumulate, resources.stream());
             break;
         case ETask::BP_Joseph: {
-            auto tex = Mem::TextureController::createTex3DFromDevice(gpu.d_sino_raw, batch.iPU, batch.iPV, na);
-            Bp::joseph_bp_launch(tex.tex, gpu.geo.h_views_world_vec(), gpu.geo.d_views_vox(), d_volume,
+            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
+                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
+            Bp::joseph_bp_launch(gpu_->sinoTex.tex, gpu_->geo.h_views_world_vec(), gpu_->geo.d_views_vox(), d_volume,
                 vol, na, batch.iPU, batch.iPV, accumulate, resources.stream());
             break;
         }
         case ETask::BP_Joseph_v2: {
-            auto tex = Mem::TextureController::createTex3DFromDevice(gpu.d_sino_raw, batch.iPU, batch.iPV, na);
-            Bp::joseph_bp_v2_launch(tex.tex, gpu.geo.d_views_world(), d_volume, vol,
+            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
+                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
+            Bp::joseph_bp_v2_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), d_volume, vol,
                 na, batch.iPU, batch.iPV, accumulate, resources.stream());
             break;
         }
         case ETask::BP_Joseph_v3: {
-            auto tex = Mem::TextureController::createTex3DFromDevice(gpu.d_sino_raw, batch.iPU, batch.iPV, na);
-            Bp::joseph_bp_v3_launch(tex.tex, gpu.geo.d_views_world(), gpu.geo.d_coeffs_data(),
+            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
+                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
+            Bp::joseph_bp_v3_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                 d_volume, vol, na, accumulate, resources.stream());
             break;
         }
         case ETask::BP_FDK:
         case ETask::BP_FDK_matched: {
-            auto tex = Mem::TextureController::createTex3DFromDevice(gpu.d_sino_raw, batch.iPU, batch.iPV, na);
+            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
+                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
             if (kind_ == ETask::BP_FDK)
-                Bp::fdk_bp_launch(tex.tex, gpu.geo.d_views_world(), gpu.geo.d_coeffs_data(),
+                Bp::fdk_bp_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                     d_volume, vol, na, accumulate, resources.stream());
             else
-                Bp::fdk_matched_bp_launch(tex.tex, gpu.geo.d_views_world(), gpu.geo.d_coeffs_data(),
+                Bp::fdk_matched_bp_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                     d_volume, vol, na, accumulate, resources.stream());
             break;
         }
         default: return false;
         }
+        YK_CUDA_CHECK(cudaEventRecord(completion_, stream_));
+        completion_recorded_ = true;
         return true;
     }
 
-    void release() override { prepared_ = false; geometry_ = {}; }
+    void release() override
+    {
+        if (completion_) {
+            YK_CUDA_CHECK(cudaSetDevice(device_id_));
+            if (completion_recorded_) YK_CUDA_CHECK(cudaEventSynchronize(completion_));
+        }
+        gpu_.reset();
+        if (completion_) YK_CUDA_CHECK(cudaEventDestroy(completion_));
+        completion_ = nullptr;
+        completion_recorded_ = false;
+        stream_ = nullptr;
+        prepared_ = false;
+        geometry_ = {};
+    }
 
 private:
+    void retireContext_()
+    {
+        if (!gpu_) return;
+        // texture object、cudaArray 和预计算几何均由 gpu_ 持有；必须等上一次
+        // 反投 kernel 越过完成事件后才能复用或释放。
+        if (completion_recorded_) YK_CUDA_CHECK(cudaEventSynchronize(completion_));
+        gpu_.reset();
+        completion_recorded_ = false;
+    }
+
     ETask kind_;
     GeometryContext geometry_{};
+    std::unique_ptr<Bp::BpSiddonGpuContext> gpu_{};
+    cudaEvent_t completion_ = nullptr;
+    cudaStream_t stream_ = nullptr;
+    int device_id_ = 0;
+    bool completion_recorded_ = false;
     bool prepared_ = false;
 };
 

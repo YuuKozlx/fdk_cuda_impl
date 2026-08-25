@@ -51,13 +51,20 @@ public:
 
     bool init(const SCBCTParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
+    { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
+
+    bool init(const SCBCTParams& params, const Config& cfg,
+        const std::vector<SConeProjGeomVec>& geometry,
+        cudaStream_t stream, int device_id = 0)
     {
         auto unified = detail::makeLegacyAlgebraicConfig(
             Iter::EAlgebraicMethod::Ossart, cfg.n_iter, cfg.n_subset,
             cfg.lambda, cfg.lambda_red, cfg.eps, cfg.use_min, cfg.min_constraint,
             cfg.use_max, cfg.max_constraint, cfg.fp_task, cfg.bp_task, false);
         unified.weight_model = Iter::EAlgebraicWeightModel::TigreApprox;
-        return implementation_.prepare(params, unified, stream, device_id);
+        std::vector<SConeProjGeomVec> resolved = geometry;
+        if (resolved.empty()) YK::detail::buildCircularViews(params, resolved);
+        return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
     bool iterate(const float* measured, float* volume, const SCBCTParams&,
         cudaStream_t, unsigned int iterations)
@@ -70,7 +77,7 @@ public:
     void release() { implementation_.release(); }
 
 private:
-    Iter::AlgebraicReconstructor implementation_{};
+    Iter::AlgebraicReconstructorEx implementation_{};
 };
 
 class OSSART {
@@ -91,13 +98,20 @@ public:
 
     bool init(const SCBCTParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
+    { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
+
+    bool init(const SCBCTParams& params, const Config& cfg,
+        const std::vector<SConeProjGeomVec>& geometry,
+        cudaStream_t stream, int device_id = 0)
     {
         auto unified = detail::makeLegacyAlgebraicConfig(
             Iter::EAlgebraicMethod::Ossart, cfg.n_iter, cfg.n_subset,
             cfg.lambda, cfg.lambda_red, cfg.eps, cfg.use_min, cfg.min_constraint,
             cfg.use_max, cfg.max_constraint, cfg.fp_task, cfg.bp_task, true);
         unified.subset_order = Iter::EAlgebraicSubsetOrder::GoldenRatio;
-        return implementation_.prepare(params, unified, stream, device_id);
+        std::vector<SConeProjGeomVec> resolved = geometry;
+        if (resolved.empty()) YK::detail::buildCircularViews(params, resolved);
+        return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
     bool iterate(const float* measured, float* volume, const SCBCTParams&,
         cudaStream_t, unsigned int iterations)
@@ -110,7 +124,7 @@ public:
     void release() { implementation_.release(); }
 
 private:
-    Iter::AlgebraicReconstructor implementation_{};
+    Iter::AlgebraicReconstructorEx implementation_{};
 };
 
 class OSSARTEx {

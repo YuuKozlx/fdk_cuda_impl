@@ -324,6 +324,10 @@ public:
         // 完整静态几何优先；动态 geometry 作为次优兼容路径；两者均未提供时
         // 才由角度构造圆轨迹几何。
         const bool use_static_geometry = !static_geometry_.empty();
+        // 动态 geometry/angles 是兼容路径，内部 host vector 会被下一批覆盖。
+        // 在改写前等待上一批完成，保证其异步几何上传和所有主机几何只读访问
+        // 已经结束。正式在线路径应优先在 prepare 阶段提供完整静态 geometry。
+        if (!use_static_geometry && !dynamic_geometry_fence_.wait()) return false;
         if (!use_static_geometry && batch.geometry) {
             if (static_cast<int>(batch.geometry->size()) != batch.count) {
                 YK_LOGE("[FdkPipeline] 当前批次 geometry 数量与 count 不一致。");
@@ -388,6 +392,8 @@ public:
         }
         // event 必须在 commit 前成功提交；否则调用方无法证明主机
         // 输入的异步生命期，不应提前推进在线位置。
+        if (!use_static_geometry && !dynamic_geometry_fence_.record_(stream_))
+            return false;
         if (completion && !completion->record_(stream_)) return false;
 
         // 所有 CUDA 工作均已成功提交到本 session 的同一 stream；在此之后该
@@ -427,6 +433,13 @@ public:
 
     void release()
     {
+        // 动态几何的内部主机数组可能仍被异步 CUDA 工作引用，先闭合其事件；
+        // 随后等待绑定 stream，保证所有静态/动态路径的工作区都不会在最后一批
+        // kernel 尚未完成时被释放。正常 processBatch() 主路径不会因此同步。
+        dynamic_geometry_fence_.wait();
+        dynamic_geometry_fence_ = {};
+        if (stream_)
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
         preweight_.release();
         parker_.release();
         filter_.release();
@@ -543,6 +556,7 @@ private:
     std::vector<SFDKGeoParamPerView> host_derived_geometry_{};
     std::vector<SConeProjGeomVec> static_geometry_{};
     std::vector<SFDKGeoParamPerView> static_derived_geometry_{};
+    FdkBatchFence dynamic_geometry_fence_{};
     FdkStageView last_stage_{};
 };
 

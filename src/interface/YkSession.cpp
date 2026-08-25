@@ -86,7 +86,8 @@ public:
             c.lambda = desc.algorithm.iterative.relaxation;
             c.fp_task = desc.algorithm.forward_projector;
             c.bp_task = desc.algorithm.back_projector;
-            ok = sirt_.init(params_, c, resources_.stream(), device_);
+            ok = sirt_.init(params_, c, geometry_.allGeometry(),
+                resources_.stream(), device_);
             break;
         }
         case EPipeline::OSSART: {
@@ -97,7 +98,8 @@ public:
             c.lambda = desc.algorithm.iterative.relaxation;
             c.fp_task = desc.algorithm.forward_projector;
             c.bp_task = desc.algorithm.back_projector;
-            ok = ossart_.init(params_, c, resources_.stream(), device_);
+            ok = ossart_.init(params_, c, geometry_.allGeometry(),
+                resources_.stream(), device_);
             break;
         }
         case EPipeline::CGLS: {
@@ -106,7 +108,8 @@ public:
             c.n_iter = desc.algorithm.iterative.iterations;
             c.fp_task = desc.algorithm.forward_projector;
             c.bp_task = desc.algorithm.back_projector;
-            ok = cgls_.init(params_, c, resources_.stream(), device_);
+            ok = cgls_.init(params_, c, geometry_.allGeometry(),
+                resources_.stream(), device_);
             break;
         }
         }
@@ -159,8 +162,8 @@ public:
 private:
     bool hasCompleteAngles_() const
     {
-        if (static_cast<int>(desc_.angles.size()) != desc_.scan.NAng) {
-            YK_LOGE("[Session] iterative pipelines require SessionDesc::angles for every view.");
+        if (static_cast<int>(params_.angle_list.size()) != desc_.scan.NAng) {
+            YK_LOGE("[Session] iterative pipelines require complete angles or per-view geometry.");
             return false;
         }
         return true;
@@ -186,7 +189,11 @@ private:
         // 投影。圆轨迹模式的 angles 只用于 fallback geometry 构造。
         const FdkProjectionBatch batch{ r.projection.data, nullptr,
             geometry_.hasExternalGeometry() ? nullptr : r.angles, r.K };
-        if (!fdk_.processBatch(batch, d_out, r.clear_output)) return false;
+        // 当前 DLL ExecuteRequest 没有向调用方暴露 CUDA event/fence，因此
+        // execute() 必须采用同步批次语义：返回后 projection 主机缓冲即可
+        // 释放或写入下一批。需要 CPU/GPU 重叠的内部调用应直接使用
+        // FdkPipeline::enqueueBatch() 和双 pinned buffer。
+        if (!fdk_.processBatchSync(batch, d_out, r.clear_output)) return false;
         // A host output only becomes a complete reconstruction after the
         // final FDK batch.  Copying earlier would expose a partial volume and
         // adds an unnecessary device synchronization for every batch.
@@ -201,19 +208,38 @@ private:
 
     bool executeFp_(const ExecuteRequest& r)
     {
-        if (!r.angles || r.K <= 0 || !r.projection.data || !r.volume.data) return false;
+        if (r.K <= 0 || !r.projection.data || !r.volume.data) return false;
+        // 外部 geometry 模式下 angle.x 已是唯一角度来源。当前 ExecuteRequest
+        // 没有 batch offset，因此只允许一次提交完整序列，避免用另一份 angles
+        // 去猜测子集并造成几何/角度分叉。
+        if (geometry_.hasExternalGeometry() && r.K != params_.iPAngTotal) {
+            YK_LOGE("[Session] external-geometry FP currently requires the complete view sequence.");
+            return false;
+        }
+        if (!geometry_.hasExternalGeometry() && !r.angles) {
+            YK_LOGE("[Session] circular FP requires ExecuteRequest::angles.");
+            return false;
+        }
         const float* d_volume = r.volume.location == EMemoryLocation::Device
             ? r.volume.data : uploadVolume_(r.volume.data);
         float* d_projection = r.projection.location == EMemoryLocation::Device
             ? r.projection.data : ensureProjectionScratch_(r.K);
         if (!d_volume || !d_projection) return false;
-        SCBCTParams batch = geometry_.batch(r.angles, r.K);
+        const float* batch_angles = geometry_.hasExternalGeometry()
+            ? geometry_.allAngles().data() : r.angles;
+        SCBCTParams batch = geometry_.batch(batch_angles, r.K);
         batch.iPAngTotal = r.K;
         if (!forward_ || !forward_->apply(d_volume, batch, d_projection, resources_)) return false;
         if (r.projection.location == EMemoryLocation::Host) {
             const size_t bytes = static_cast<size_t>(r.K) * params_.iPU * params_.iPV * sizeof(float);
             YK_CUDA_CHECK(cudaMemcpyAsync(r.projection.data, d_projection, bytes,
                 cudaMemcpyDeviceToHost, resources_.stream()));
+            YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+        }
+        else {
+            // 公共 Session 当前没有完成事件可返回。即使输入和输出都位于
+            // device，execute() 也必须在正投 kernel 完成后才能返回，避免调用方
+            // 立即复用 volume 或读取 projection 时与本次计算竞争。
             YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
         }
         return true;
@@ -226,21 +252,30 @@ private:
             YK_LOGE("[Session] iterative pipelines currently require device projection and volume buffers.");
             return false;
         }
+        bool ok = false;
         switch (desc_.algorithm.pipeline) {
         case EPipeline::SIRT:
-            return r.iteration_count > 0
+            ok = r.iteration_count > 0
                 ? sirt_.iterate(r.projection.data, r.volume.data, params_, resources_.stream(), r.iteration_count)
                 : sirt_.run(r.projection.data, r.volume.data, params_, resources_.stream());
+            break;
         case EPipeline::OSSART:
-            return r.iteration_count > 0
+            ok = r.iteration_count > 0
                 ? ossart_.iterate(r.projection.data, r.volume.data, params_, resources_.stream(), r.iteration_count)
                 : ossart_.run(r.projection.data, r.volume.data, params_, resources_.stream());
+            break;
         case EPipeline::CGLS:
             if (r.iteration_count > 0)
                 YK_LOGW("[Session] CGLS iteration_count is fixed at initialize time.");
-            return cgls_.run(r.projection.data, r.volume.data, params_, resources_.stream());
+            ok = cgls_.run(r.projection.data, r.volume.data, params_, resources_.stream());
+            break;
         default: return false;
         }
+        if (!ok) return false;
+        // 与 FDK/FP 保持同一公共契约：execute() 返回即表示本次请求完成。
+        // 底层重建器仍然使用异步 stream，算法内部不会因此逐 kernel 同步。
+        YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+        return true;
     }
 
     float* ensureVolumeScratch_()

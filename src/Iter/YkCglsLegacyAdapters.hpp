@@ -38,17 +38,23 @@ public:
     using Config = CglsLegacyConfig;
     bool init(const SCBCTParams& params, const Config& config,
         cudaStream_t stream, int device_id = 0)
+    { return init(params, config, std::vector<SConeProjGeomVec>{}, stream, device_id); }
+
+    bool init(const SCBCTParams& params, const Config& config,
+        const std::vector<SConeProjGeomVec>& geometry,
+        cudaStream_t stream, int device_id = 0)
     {
-        return implementation_.prepare(params,
-            makeCglsConfig(config, Iter::ECglsStrategy::RobustRestart),
-            stream, device_id);
+        const auto unified = makeCglsConfig(config, Iter::ECglsStrategy::RobustRestart);
+        std::vector<SConeProjGeomVec> resolved = geometry;
+        if (resolved.empty()) YK::detail::buildCircularViews(params, resolved);
+        return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
     bool run(const float* measured, float* volume,
         const SCBCTParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
     void release() { implementation_.release(); }
 private:
-    Iter::CglsReconstructor implementation_{};
+    Iter::CglsReconstructorEx implementation_{};
 };
 
 class CGLSEx {

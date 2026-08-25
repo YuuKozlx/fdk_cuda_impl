@@ -146,6 +146,8 @@ public:
 
     void release()
     {
+        if (stream_)
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
         fp_.release();
         bp_.release();
         d_forward_ = {};

@@ -113,6 +113,52 @@ int main_operator_roundtrip_smoke()
     return ok ? 0 : 1;
 }
 
+// FP/BP 的 apply() 是异步接口，但算子拥有 kernel 使用的纹理和几何缓冲。
+// 本测试不做外部 stream 同步，直接 release()，用于验证内部完成事件会先等待
+// kernel，再销毁这些资源；release() 返回后结果应可立即下载。
+int main_operator_release_fence_smoke()
+{
+    const SCBCTParams p = makeSmallParams();
+    const size_t volume_n = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
+    const size_t sino_n = static_cast<size_t>(p.iPAng) * p.iPU * p.iPV;
+    const std::vector<float> h_volume = TestPhantom::makeBasic(p);
+
+    cudaStream_t stream = nullptr;
+    float* d_volume = nullptr; float* d_sino = nullptr; float* d_backprojection = nullptr;
+    bool ok = checkCuda(cudaStreamCreate(&stream), "create release-fence stream") &&
+        checkCuda(cudaMalloc(&d_volume, volume_n * sizeof(float)), "allocate fence volume") &&
+        checkCuda(cudaMalloc(&d_sino, sino_n * sizeof(float)), "allocate fence projection") &&
+        checkCuda(cudaMalloc(&d_backprojection, volume_n * sizeof(float)), "allocate fence backprojection") &&
+        checkCuda(cudaMemcpyAsync(d_volume, h_volume.data(), volume_n * sizeof(float),
+            cudaMemcpyHostToDevice, stream), "upload fence volume");
+
+    GeometryContext geometry;
+    ResourceContext resources;
+    ok = ok && geometry.initialize(p);
+    resources.attach(stream, 0);
+    auto fp = makeForwardOperator(ETask::FP_Joseph);
+    auto bp = makeBackOperator(ETask::BP_Joseph_v3);
+    ok = ok && fp->prepare(geometry, resources) && bp->prepare(geometry, resources) &&
+        fp->apply(d_volume, p, d_sino, resources);
+    if (ok) fp->release();
+    ok = ok && bp->apply(d_sino, p, d_backprojection, true, resources);
+    if (ok) bp->release();
+
+    std::vector<float> h_sino(sino_n), h_backprojection(volume_n);
+    ok = ok && checkCuda(cudaMemcpy(h_sino.data(), d_sino, sino_n * sizeof(float),
+        cudaMemcpyDeviceToHost), "download fenced projection") &&
+        checkCuda(cudaMemcpy(h_backprojection.data(), d_backprojection, volume_n * sizeof(float),
+            cudaMemcpyDeviceToHost), "download fenced backprojection") &&
+        hasSignal(h_sino) && hasSignal(h_backprojection);
+    std::printf("operator release fence: %s\n", ok ? "PASS" : "FAIL");
+
+    if (d_backprojection) cudaFree(d_backprojection);
+    if (d_sino) cudaFree(d_sino);
+    if (d_volume) cudaFree(d_volume);
+    if (stream) cudaStreamDestroy(stream);
+    return ok ? 0 : 1;
+}
+
 // 同一圆轨迹以“内部角度构造”和“外部逐视图 geometry”两种方式进入 operator，
 // 结果应一致。这是 geometry 为唯一真源的基础回归。
 int main_external_geometry_operator_smoke()

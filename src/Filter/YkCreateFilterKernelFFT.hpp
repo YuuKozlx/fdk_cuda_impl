@@ -294,7 +294,10 @@ namespace YK {
                         YK_CUDA_KERNEL_CHECK();
                     }
 
-
+                    // custom_weights 属于调用方的普通 host vector。这里是滤波核
+                    // 的一次性准备阶段，没有完成事件对外返回，因此必须等上传及
+                    // 后续缩放结束后再返回，调用方随后修改或销毁 desc 才是安全的。
+                    YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
                     return true;
                 }
                 return false;
