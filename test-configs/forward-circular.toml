@@ -1,0 +1,79 @@
+# 圆锥束圆扫描前投。一个文件可放同类几何的多个 projector case。
+task = "forward-projection"
+
+[[case]]
+name = "circular-catphan-joseph"
+device = 0
+
+[case.scan]
+nu = 48
+nv = 32
+views = 48
+du_mm = 1.0
+dv_mm = 1.0
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 80.0
+sdd_mm = 160.0
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+direction = 1
+
+[case.volume]
+nx = 32
+ny = 32
+nz = 24
+voxel_mm = [1.0, 1.0, 1.0]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.geometry]
+model = "circular"
+
+[case.projector]
+model = "joseph"
+
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+
+[case.output]
+projection = "output/forward-circular/catphan-joseph.raw"
+preview = "output/forward-circular/catphan-joseph-view0.bmp"
+preview_view = 0
+
+[[case]]
+name = "circular-arrow-siddon"
+device = 0
+
+[case.scan]
+nu = 48
+nv = 32
+views = 48
+du_mm = 1.0
+dv_mm = 1.0
+sid_mm = 80.0
+sdd_mm = 160.0
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+direction = 1
+
+[case.volume]
+nx = 32
+ny = 32
+nz = 24
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.geometry]
+model = "circular"
+
+[case.projector]
+model = "siddon"
+
+[case.input]
+mode = "phantom"
+phantom = "arrow"
+
+[case.output]
+projection = "output/forward-circular/arrow-siddon.raw"
+preview = "output/forward-circular/arrow-siddon-view12.bmp"
+preview_view = 12

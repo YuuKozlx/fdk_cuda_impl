@@ -1,0 +1,29 @@
+[[case]]
+name = "basic-sart"
+pipeline = "sart"
+
+[case.scan]
+nu = 32
+nv = 24
+views = 8
+sid_mm = 80.0
+sdd_mm = 160.0
+
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.input]
+mode = "phantom"
+phantom = "basic"
+
+[case.algorithm]
+iterations = 1
+relaxation = 0.2
+forward = "joseph"
+back = "joseph-v3"
+
+[case.output]
+volume = "output/sart/basic.raw"

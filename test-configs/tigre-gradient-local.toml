@@ -1,0 +1,53 @@
+# 本 pipeline 是对 TIGRE 公布算法流程的本地复现，不链接或调用官方 TIGRE。
+# 当前仅做过仓库内数值/冒烟测试，不能当作与官方实现逐项等价的声明。
+# method 可改为 sart、os-sart、sirt、asd-pocs、os-asd-pocs、
+# b-asd-pocs-beta、pcsd、os-pcsd、aw-pcsd、os-aw-pcsd、
+# aw-asd-pocs 或 os-aw-asd-pocs。
+[[case]]
+name = "basic-local-os-asd-pocs"
+pipeline = "tigre-gradient-local"
+
+[case.scan]
+nu = 32
+nv = 24
+views = 8
+sid_mm = 80.0
+sdd_mm = 160.0
+
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.input]
+mode = "phantom"
+phantom = "basic"
+
+[case.algorithm]
+iterations = 2
+forward = "joseph"
+back = "joseph-v3"
+
+[case.tigre]
+method = "os-asd-pocs"
+block_size = 4
+lambda = 0.2
+lambda_reduction = 0.99
+relaxation_mode = "scalar"
+initialization = "zero"
+non_negative = true
+tv_iterations = 2
+alpha = 0.002
+alpha_reduction = 0.95
+maximum_update_ratio = 0.95
+max_l2_error = 0.0
+minimum_beta = 0.005
+tv_epsilon = 1e-8
+adaptive_delta = -0.005
+bregman_beta = 1.0
+bregman_beta_reduction = 0.75
+bregman_interval = 1
+
+[case.output]
+volume = "output/tigre-local/basic-os-asd-pocs.raw"

@@ -2,6 +2,8 @@
 set(YKCBCT_MANUAL_TEST_SOURCES
     # 测试入口与轻量数值验证
     ${CMAKE_CURRENT_SOURCE_DIR}/testmain.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredReconstruction.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredForwardProjection.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_validation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_forward_projectors.cpp
 
@@ -9,7 +11,6 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_victre_fdk.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_water.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_arrow.cpp
 
@@ -31,6 +32,23 @@ add_executable(ykcbct_manual_tests
     ${YKCBCT_MANUAL_TEST_SOURCES}
     ${YKCBCT_MANUAL_SUPPORT_SOURCES_ABS}
 )
+
+# toml++ 优先由 vcpkg/CMake package 提供。对于已有的单头文件发行版，可在
+# 配置阶段传入 -DYKCBCT_TOMLPLUSPLUS_INCLUDE_DIR=<包含 toml.hpp 的目录>。
+# 这里不记录开发机绝对路径，保证测试工程可以被其他机器和 CI 复现。
+set(YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR "" CACHE PATH
+    "包含 toml.hpp 的 toml++ 单头文件目录")
+find_package(tomlplusplus CONFIG QUIET)
+if(TARGET tomlplusplus::tomlplusplus)
+    target_link_libraries(ykcbct_manual_tests PRIVATE tomlplusplus::tomlplusplus)
+elseif(EXISTS "${YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR}/toml.hpp")
+    target_include_directories(ykcbct_manual_tests PRIVATE
+        "${YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR}")
+else()
+    message(FATAL_ERROR
+        "BUILD_TESTS=ON 需要 toml++。请启用 vcpkg manifest，或设置 "
+        "YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR 指向包含 toml.hpp 的目录。")
+endif()
 target_link_libraries(ykcbct_manual_tests PRIVATE
     CUDA::cudart CUDA::cufft OpenMP::OpenMP_CXX)
 target_include_directories(ykcbct_manual_tests PRIVATE

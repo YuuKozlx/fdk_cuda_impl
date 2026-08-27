@@ -1,0 +1,44 @@
+# 平面探测器螺旋锥束前投。pitch_mm 是源点每旋转一整圈的 Z 位移。
+task = "forward-projection"
+
+[[case]]
+name = "helical-catphan-joseph"
+device = 0
+
+[case.scan]
+nu = 48
+nv = 32
+views = 64
+du_mm = 1.0
+dv_mm = 1.0
+offset_u_mm = 0.25
+offset_v_mm = -0.5
+sid_mm = 80.0
+sdd_mm = 160.0
+start_angle_deg = 0.0
+scan_range_deg = 720.0
+direction = 1
+
+[case.volume]
+nx = 32
+ny = 32
+nz = 32
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.geometry]
+model = "helical"
+pitch_mm = 8.0
+start_z_mm = -8.0
+views_per_rotation = 32
+
+[case.projector]
+model = "joseph"
+
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+
+[case.output]
+projection = "output/forward-helical/catphan-joseph.raw"
+preview = "output/forward-helical/catphan-joseph-view32.bmp"
+preview_view = 32

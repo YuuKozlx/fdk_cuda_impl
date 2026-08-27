@@ -1,0 +1,202 @@
+# VICTRE 乳腺圆轨迹 FDK。
+#
+# 数据说明文件描述的是绕世界 X 轴采集；旧测试没有解析该 TXT，而是按库内圆轨迹
+# vector 约定重建。本配置保持旧测试的同一数值路径，避免迁移时改变重建方向。
+# projection/air 均为 float32。projection 布局为 [view][v][u]，air 为 [v][u]。
+
+[[case]]
+name = "total-brain-recon"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 720
+du_mm = 0.787654
+dv_mm = 0.787654
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 600
+ny = 600
+nz = 600
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/brainweb_normal_1mm_20260827/brainweb_normal_1mm_cbct_z720_1024_frame0_1024x1024pixels_720proj.raw"
+air = "../example/brainweb_normal_1mm_20260827/brainweb_normal_1mm_cbct_z720_1024_air_frame0_1024x1024pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/brainweb_normal_1mm_20260827/brain_total_600_600_600_f32.raw"
+preview = "../example/brainweb_normal_1mm_20260827/brain_total_central_world_x_slice.bmp"
+
+
+
+[[case]]
+name = "primary-brain-recon"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 720
+du_mm = 0.787654
+dv_mm = 0.787654
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 600
+ny = 600
+nz = 600
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/brainweb_normal_1mm_20260827/brainweb_normal_1mm_cbct_z720_1024_frame1_1024x1024pixels_720proj.raw"
+air = "../example/brainweb_normal_1mm_20260827/brainweb_normal_1mm_cbct_z720_1024_air_frame0_1024x1024pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/brainweb_normal_1mm_20260827/brain_primary_600_600_600_f32.raw"
+preview = "../example/brainweb_normal_1mm_20260827/brain_primary_central_world_x_slice.bmp"
+
+
+[[case]]
+name = "total-brain-recon-360"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1536
+nv = 128
+views = 360
+du_mm = 0.3150619
+dv_mm = 0.3150619
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 600
+ny = 600
+nz = 40
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brainweb_normal_1mm_cbct_z360_1536x128_frame0_1536x128pixels_360proj.raw"
+air = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brainweb_normal_1mm_cbct_z360_1536x128_air_frame0_1536x128pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brain_total_600_600_40_f32.raw"
+preview = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brain_total_central_world_x_slice.bmp"
+
+
+
+[[case]]
+name = "primary-brain-recon-360"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1536
+nv = 128
+views = 360
+du_mm = 0.3150619
+dv_mm = 0.3150619
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 600
+ny = 600
+nz = 40
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brainweb_normal_1mm_cbct_z360_1536x128_frame1_1536x128pixels_360proj.raw"
+air = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brainweb_normal_1mm_cbct_z360_1536x128_air_frame0_1536x128pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brain_primary_600_600_40_f32.raw"
+preview = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brain_primary_central_world_x_slice.bmp"

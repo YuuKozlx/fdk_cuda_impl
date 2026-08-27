@@ -1,9 +1,17 @@
-#include <cstdio>
+#include <clocale>
 #include <cstring>
 #include <string>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <cuda_runtime.h>
 #include "CLI11/CLI11.hpp"
+#include "config/YkConfiguredReconstruction.hpp"
 #include "global/YkLog.h"
 
 // All manual integration entry points live in the existing module files.
@@ -14,7 +22,6 @@ int main_operator_release_fence_smoke();
 int main_external_geometry_operator_smoke();
 int main_fdk_batch_consistency_smoke();
 int main_fdk_synchronous_batch_smoke();
-int main_fdk_victre_breast();
 int main_catphan_phantom_smoke();
 int main_filter_spatial_ramp_validation();
 int main_filter_discrete_ramlak_dc_zero();
@@ -91,6 +98,17 @@ namespace {
         return YK::LogLevel::Off;
     }
 
+    void configureUtf8Console()
+    {
+        // 源码、CLI11 文案和日志消息统一使用 UTF-8。Windows 控制台默认仍
+        // 可能采用系统 ANSI 代码页，必须在 CLI11 输出 help 之前完成切换。
+        std::setlocale(LC_ALL, ".UTF-8");
+#ifdef _WIN32
+        SetConsoleCP(CP_UTF8);
+        SetConsoleOutputCP(CP_UTF8);
+#endif
+    }
+
     const TestEntry kTests[] = {
         // Framework and public data-flow contracts.
         TEST_INT("framework/operator-roundtrip", "framework", false, main_operator_roundtrip_smoke),
@@ -100,7 +118,6 @@ namespace {
         // FDK, filter and phantom numerical regressions.
         TEST_INT("fdk/batch-consistency", "fdk", false, main_fdk_batch_consistency_smoke),
         TEST_INT("fdk/synchronous-batch", "fdk", false, main_fdk_synchronous_batch_smoke),
-        TEST_INT("fdk/victre-breast", "fdk", true, main_fdk_victre_breast),
         TEST_INT("phantom/catphan-like", "phantom", false, main_catphan_phantom_smoke),
         TEST_INT("filter/spatial-ramp", "filter", false, main_filter_spatial_ramp_validation),
         TEST_INT("filter/discrete-ramlak-dc", "filter", false, main_filter_discrete_ramlak_dc_zero),
@@ -166,7 +183,7 @@ namespace {
 
     void listTests() {
         for (const auto& test : kTests)
-            std::printf("%-38s %-6s %s\n", test.name, test.category,
+            YK_LOGI("{:<38} {:<6} {}", test.name, test.category,
                 test.needs_real_data ? "real-data" : "synthetic/local");
     }
 
@@ -179,13 +196,13 @@ namespace {
             const bool category_match = std::strcmp(selection, test.category) == 0;
             if ((!all_local && !category_match) || test.needs_real_data) continue;
             ++selected;
-            std::printf("\n=== RUN  %s ===\n", test.name);
+            YK_LOGI("=== RUN  {} ===", test.name);
             const int status = test.run();
             failed += status != 0;
-            std::printf("=== %s %s ===\n", status == 0 ? "PASS" : "FAIL", test.name);
+            YK_LOGI("=== {} {} ===", status == 0 ? "PASS" : "FAIL", test.name);
         }
         if (selected == 0) return -1;
-        std::printf("\nSummary: selected=%d passed=%d failed=%d\n",
+        YK_LOGI("Summary: selected={} passed={} failed={}",
             selected, selected - failed, failed);
         return failed == 0 ? 0 : 1;
     }
@@ -193,6 +210,7 @@ namespace {
 
 int main(int argc, char** argv)
 {
+    configureUtf8Console();
     CLI::App app{ "YKCBCT CUDA、算法集成和数值回归测试" };
     std::string selection = "list";
     std::string log_level = "debug";
@@ -210,8 +228,14 @@ int main(int argc, char** argv)
     int water_iterative_check_interval = 1;
     int water_iterative_patience = 1;
     bool show_list = false;
+    std::string config_file;
+    std::string config_case;
     app.add_option("selection", selection, "测试名、测试分类、all-local 或 list");
     app.add_flag("-l,--list", show_list, "列出全部测试");
+    app.add_option("--config", config_file,
+        "从 TOML 文件运行配置化重建或前投任务");
+    app.add_option("--case", config_case,
+        "仅运行 TOML 中指定名称的 case（默认运行全部）");
     app.add_option("--log-level", log_level, "日志等级")
         ->check(CLI::IsMember({ "trace", "debug", "info", "warn", "error", "critical", "off" }));
     app.add_option("--arrow-method", arrow_method, "大箭头模体重建方法")
@@ -254,6 +278,9 @@ int main(int argc, char** argv)
         "  ykcbct_manual_tests filter/discrete-ramlak-dc\n"
         "  ykcbct_manual_tests filter\n"
         "  ykcbct_manual_tests all-local\n"
+        "  ykcbct_manual_tests --config test-configs/fdk.toml\n"
+        "  ykcbct_manual_tests --config test-configs/ossart.toml "
+        "--case catphan-ossart-tv\n"
         "  ykcbct_manual_tests large/arrow-tigre "
         "--arrow-method os-sart --arrow-iterations 20\n"
         "真实数据测试只能通过完整测试名显式运行。");
@@ -272,6 +299,12 @@ int main(int argc, char** argv)
         water_iterative_relaxation, water_iterative_relative_residual,
         water_iterative_minimum_iterations, water_iterative_check_interval,
         water_iterative_patience);
+    if (!config_file.empty())
+        return YK::TestConfig::runConfiguredReconstruction(config_file, config_case);
+    if (!config_case.empty()) {
+        YK_LOGE("--case 必须与 --config 一起使用");
+        return 2;
+    }
     if (show_list || selection == "list") {
         listTests();
         return 0;
@@ -281,7 +314,7 @@ int main(int argc, char** argv)
             return test.run();
     if (const int status = runSelection(selection.c_str()); status >= 0)
         return status;
-    std::fprintf(stderr, "Unknown test or category: %s\n", selection.c_str());
+    YK_LOGE("未知测试名或分类: {}", selection);
     listTests();
     return 2;
 }

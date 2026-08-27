@@ -1,0 +1,80 @@
+# 固定平面探测器 CT：探测器位于固定平面，源点在该平面前方运动。
+task = "forward-projection"
+
+[[case]]
+name = "planar-offset-source-joseph"
+device = 0
+
+[case.scan]
+nu = 48
+nv = 32
+views = 48
+du_mm = 1.0
+dv_mm = 1.0
+sid_mm = 80.0
+sdd_mm = 160.0
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+direction = 1
+
+[case.volume]
+nx = 32
+ny = 32
+nz = 24
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.geometry]
+model = "planar"
+# 源点绕 Y 轴方向的横向运动半径；0 表示源点固定。
+source_lateral_mm = 12.0
+
+[case.projector]
+model = "joseph"
+
+[case.input]
+mode = "phantom"
+phantom = "basic"
+
+[case.output]
+projection = "output/forward-planar/basic-joseph.raw"
+preview = "output/forward-planar/basic-joseph-view12.bmp"
+preview_view = 12
+
+[[case]]
+name = "planar-ellipse-catphan-siddon"
+device = 0
+
+[case.scan]
+nu = 48
+nv = 32
+views = 48
+du_mm = 1.0
+dv_mm = 1.0
+sid_mm = 80.0
+sdd_mm = 160.0
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+direction = 1
+
+[case.volume]
+nx = 32
+ny = 32
+nz = 24
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.geometry]
+model = "planar-ellipse"
+source_axis_x_mm = 14.0
+source_axis_z_mm = 8.0
+
+[case.projector]
+model = "siddon"
+
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+
+[case.output]
+projection = "output/forward-planar/catphan-ellipse-siddon.raw"
+preview = "output/forward-planar/catphan-ellipse-siddon-view12.bmp"
+preview_view = 12

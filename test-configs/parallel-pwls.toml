@@ -1,0 +1,40 @@
+# 当前实现是同步更新全部体素的并行 PWLS，可选择全批量或 ordered subsets。
+# 它不是串行逐体素 PWLS/ICD。
+[[case]]
+name = "basic-parallel-pwls-huber"
+pipeline = "parallel-pwls"
+
+[case.scan]
+nu = 32
+nv = 24
+views = 8
+sid_mm = 80.0
+sdd_mm = 160.0
+
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.input]
+mode = "phantom"
+phantom = "basic"
+
+[case.algorithm]
+iterations = 2
+forward = "joseph"
+back = "joseph-v3"
+
+[case.parallel_pwls]
+subsets = 2
+relaxation = 0.4
+regularizer = "huber"
+regularization = 1e-3
+huber_delta = 3e-3
+epsilon = 1e-6
+lower_bound = 0.0
+upper_bound = 1.0
+
+[case.output]
+volume = "output/parallel-pwls/basic-huber.raw"

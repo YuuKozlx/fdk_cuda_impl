@@ -1,0 +1,199 @@
+# VICTRE 乳腺圆轨迹 FDK。
+#
+# 数据说明文件描述的是绕世界 X 轴采集；旧测试没有解析该 TXT，而是按库内圆轨迹
+# vector 约定重建。本配置保持旧测试的同一数值路径，避免迁移时改变重建方向。
+# projection/air 均为 float32。projection 布局为 [view][v][u]，air 为 [v][u]。
+
+[[case]]
+name = "total-chest-recon"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 720
+du_mm = 0.787654
+dv_mm = 0.787654
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 768
+ny = 768
+nz = 768
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/ICRP_female_chest_no_arm_20260827/icrp145_female_chest_no_arm_cbct_z720_1024_frame0_1024x1024pixels_720proj.raw"
+air = "../example/ICRP_female_chest_no_arm_20260827/icrp145_female_chest_no_arm_cbct_z720_1024_air_frame0_1024x1024pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/ICRP_female_chest_no_arm_20260827/chest_total_768_768_768_f32.raw"
+preview = "../example/ICRP_female_chest_no_arm_20260827/chest_total_central_world_x_slice.bmp"
+
+
+[[case]]
+name = "primary-chest-recon"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 720
+du_mm = 0.787654
+dv_mm = 0.787654
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 768
+ny = 768
+nz = 768
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/ICRP_female_chest_no_arm_20260827/icrp145_female_chest_no_arm_cbct_z720_1024_frame1_1024x1024pixels_720proj.raw"
+air = "../example/ICRP_female_chest_no_arm_20260827/icrp145_female_chest_no_arm_cbct_z720_1024_air_frame0_1024x1024pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/ICRP_female_chest_no_arm_20260827/chest_primary_768_768_768_f32.raw"
+preview = "../example/ICRP_female_chest_no_arm_20260827/chest_primary_central_world_x_slice.bmp"
+
+[[case]]
+name = "total-head-recon"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 720
+du_mm = 0.787654
+dv_mm = 0.787654
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 768
+ny = 768
+nz = 768
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/ICRP_female_head_20260827/icrp145_female_head_cbct_z720_1024_frame0_1024x1024pixels_720proj.raw"
+air = "../example/ICRP_female_head_20260827/icrp145_female_head_cbct_z720_1024_air_frame0_1024x1024pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/ICRP_female_head_20260827/head_total_768_768_768_f32.raw"
+preview = "../example/ICRP_female_head_20260827/head_total_central_world_x_slice.bmp"
+
+
+[[case]]
+name = "primary-head-recon"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 32
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 32
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 720
+du_mm = 0.787654
+dv_mm = 0.787654
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 709.000000
+sdd_mm = 1143.699951
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 768
+ny = 768
+nz = 768
+voxel_mm = [0.5, 0.5, 0.5]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/ICRP_female_head_20260827/icrp145_female_head_cbct_z720_1024_frame1_1024x1024pixels_720proj.raw"
+air = "../example/ICRP_female_head_20260827/icrp145_female_head_cbct_z720_1024_air_frame0_1024x1024pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../example/ICRP_female_head_20260827/head_primary_768_768_768_f32.raw"
+preview = "../example/ICRP_female_head_20260827/head_primary_central_world_x_slice.bmp"

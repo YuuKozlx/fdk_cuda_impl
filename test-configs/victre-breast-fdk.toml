@@ -1,0 +1,98 @@
+# VICTRE 乳腺圆轨迹 FDK。
+#
+# 数据说明文件描述的是绕世界 X 轴采集；旧测试没有解析该 TXT，而是按库内圆轨迹
+# vector 约定重建。本配置保持旧测试的同一数值路径，避免迁移时改变重建方向。
+# projection/air 均为 float32。projection 布局为 [view][v][u]，air 为 [v][u]。
+
+[[case]]
+name = "victre-breast-fdk-360"
+pipeline = "fdk"
+device = 0
+# batch_views 是磁盘读取和在线提交批量；两个 pinned buffer 交替使用。
+batch_views = 8
+# chunk_views 是 FDK 内部 kernel/FFT 工作区分块，可与 batch_views 不同。
+chunk_views = 8
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 360
+du_mm = 0.2490234375
+dv_mm = 0.2490234375
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 600.0
+sdd_mm = 1000.0
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 390
+ny = 188
+nz = 256
+voxel_mm = [0.25, 0.25, 0.25]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/360/victre_breast_cbct_x360_1024_frame0_1024x1024pixels_360proj.raw"
+air = "../example/360/victre_breast_cbct_x360_1024_air_frame0_1024x1024pixels_1proj.raw"
+# I/I0 低于此值时截断，避免 -log(0)；1e-6 对应最大线积分约 13.8155。
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../out/test-artifacts/victre-breast-fdk-360/reconstruction_390x188x256_f32.raw"
+preview = "../out/test-artifacts/victre-breast-fdk-360/central_world_x_slice.bmp"
+
+[[case]]
+name = "victre-breast-fdk-720"
+pipeline = "fdk"
+device = 0
+batch_views = 8
+chunk_views = 8
+
+[case.scan]
+nu = 1024
+nv = 1024
+views = 720
+du_mm = 0.2490234375
+dv_mm = 0.2490234375
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+sid_mm = 600.0
+sdd_mm = 1000.0
+start_angle_deg = 0.0
+scan_range_deg = 360.0
+short_scan = false
+direction = 1
+
+[case.volume]
+nx = 390
+ny = 188
+nz = 256
+voxel_mm = [0.25, 0.25, 0.25]
+offset_mm = [0.0, 0.0, 0.0]
+
+[case.input]
+mode = "projection-raw"
+projection = "../example/720/victre_breast_cbct_x720_1024_frame0_1024x1024pixels_720proj.raw"
+air = "../example/720/victre_breast_cbct_x720_1024_air_frame0_1024x1024pixels_1proj.raw"
+minimum_ratio = 1e-6
+
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+cutoff = 0.5
+gain = 1.0
+
+[case.output]
+volume = "../out/test-artifacts/victre-breast-fdk-720/reconstruction_390x188x256_f32.raw"
+preview = "../out/test-artifacts/victre-breast-fdk-720/central_world_x_slice.bmp"

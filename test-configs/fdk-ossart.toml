@@ -1,0 +1,40 @@
+[[case]]
+name = "catphan-fdk-ossart"
+pipeline = "fdk-ossart"
+chunk_views = 8
+
+[case.scan]
+nu = 32
+nv = 24
+views = 16
+sid_mm = 80.0
+sdd_mm = 160.0
+
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+
+[case.filter]
+kernel = "hann"
+source = "discrete-fft"
+cutoff = 0.5
+
+[case.algorithm]
+iterations = 2
+subsets = 4
+relaxation = 0.1
+weight_model = "detailed"
+subset_order = "golden-ratio"
+use_min = true
+minimum = 0.0
+forward = "joseph"
+back = "joseph-v3"
+
+[case.output]
+volume = "output/fdk-ossart/catphan.raw"
