@@ -8,6 +8,7 @@
 #include "../Filter/YkFFT.hpp"
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
+#include "../global/YkFilterTypes.hpp"
 #include "YkCreateFilterKernelLaunch.cuh"
 
 namespace YK {

@@ -172,7 +172,7 @@ namespace YK {
                     fabsf(c.Cu_z) > kEps || fabsf(c.Cu_w) > kEps ||
                     fabsf(c.Cd_x) > kEps || fabsf(c.Cd_y) > kEps ||
                     fabsf(c.Cd_z) > kEps || fabsf(c.Cd_w) > kEps ||
-                    fabsf(c.dtheta) > kEps || fabsf(c.SID2) > kEps ||
+                    fabsf(c.dtheta) > kEps || fabsf(c.source_to_axis_sq) > kEps ||
                     fabsf(c.fScaleDTheta - 1.f) > kEps) {
                     all_zero = false;
                     break;
@@ -187,13 +187,13 @@ namespace YK {
                 YK_LOGD("verifyGCCoeffs: gC_coeffs[0] Cu=({:.4f},{:.4f},{:.4f},{:.4f}) "
                     "dtheta={:.4f} SID2={:.4f}",
                     h[0].Cu_x, h[0].Cu_y, h[0].Cu_z, h[0].Cu_w,
-                    h[0].dtheta, h[0].SID2);
+                    h[0].dtheta, h[0].source_to_axis_sq);
                 if (K > 1)
                     YK_LOGD("verifyGCCoeffs: gC_coeffs[{}] Cu=({:.4f},{:.4f},{:.4f},{:.4f}) "
                         "dtheta={:.4f} SID2={:.4f}",
                         K - 1,
                         h[K - 1].Cu_x, h[K - 1].Cu_y, h[K - 1].Cu_z, h[K - 1].Cu_w,
-                        h[K - 1].dtheta, h[K - 1].SID2);
+                        h[K - 1].dtheta, h[K - 1].source_to_axis_sq);
             }
         }
 

@@ -34,10 +34,13 @@ YK_INLINE void build_helical_vec_geometry(
         det_v = f3_rot_axis(det_v, normal, params.tiltn_angle_rad);
     }
 
-    const float3 source0 = make_float3(0.f, -params.SID, 0.f);
-    const float3 detector0 = make_float3(
-        params.offsetU_mm, idd, params.offsetV_mm);
-    const float3 principal0 = make_float3(0.f, 1.f, 0.f);
+    const float3 source0 = make_float3(
+        params.sourceOffsetX_mm,
+        -params.SID + params.sourceOffsetY_mm,
+        params.sourceOffsetZ_mm);
+    // offset 沿倾斜后的探测器 U/V 轴烘焙，和圆轨迹 builder 保持一致。
+    const float3 detector0 = make_float3(0.f, idd, 0.f) +
+        det_u * params.offsetU_mm + det_v * params.offsetV_mm;
     const float center_u = 0.5f * (params.iPU - 1);
     const float center_v = 0.5f * (params.iPV - 1);
 
@@ -48,13 +51,12 @@ YK_INLINE void build_helical_vec_geometry(
         const float3 z_shift = make_float3(0.f, 0.f, z);
         const float3 source = f3_rotz(source0, theta) + z_shift;
         const float3 detector_center = f3_rotz(detector0, theta) + z_shift;
-        const float3 principal = f3_rotz(principal0, theta);
         const float3 u = f3_rotz(det_u, theta) * params.du_mm;
         const float3 v = f3_rotz(det_v, theta) * params.dv_mm;
         const float3 detector_start = detector_center - u * center_u - v * center_v;
 
         geometry[i] = SConeProjGeomVec{
-            f3_to_f4(source), f3_to_f4(principal), f3_to_f4(detector_start),
+            f3_to_f4(source), f3_to_f4(detector_start),
             f3_to_f4(u), f3_to_f4(v), make_float4(theta, 0.f, 0.f, 0.f)
         };
     }

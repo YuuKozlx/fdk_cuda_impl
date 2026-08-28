@@ -257,14 +257,17 @@ private:
         // FreeCT setup.cu: 扇角重排在两端各多拉 add_projections 帧，重排后
         // reshape_out 再将其裁掉。这既避免边界纹理夹取，也保证 BP 的首帧
         // 对应真实可插值的平行束角度。
-        g.add_projections = static_cast<int>(
+        const int boundary_views = static_cast<int>(
             (g.fan_angle_step * g.input_channels * 0.5f) / g.angle_step) + 10;
-        const int available_views = g.sequence_views - 2 * g.add_projections;
+        const int available_views = g.sequence_views - 2 * boundary_views;
         const int half_turn_views = g.views_per_turn / 2;
-        // FreeCT backproject.cu 以整数 n_half_turns 工作，尾部不足半圈的
-        // 重排帧不会进入 BP。这里在分配前即裁齐，避免滤波无效尾段。
+        // FreeCT backproject.cu 以整数 n_half_turns 工作。可用帧数不是半圈
+        // 整数倍时，必须从两端近似对称地裁掉余量；若总是只裁尾部，有效
+        // 螺旋轨迹会相对目标体积发生 Z 偏移，材料值也会被错误层面混合。
         g.views = available_views > 0
             ? (available_views / half_turn_views) * half_turn_views : 0;
+        const int unused_views = available_views - g.views;
+        g.add_projections = boundary_views + unused_views / 2;
         g.first_angle = p.angle_list.front() + g.add_projections * g.angle_step;
 
         g.raw_central_row = 0.5f * (p.iPV - 1) - p.offsetV_mm / p.dv_mm;

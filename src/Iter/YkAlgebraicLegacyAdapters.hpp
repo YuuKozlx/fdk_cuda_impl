@@ -49,11 +49,11 @@ public:
         ETask bp_task = ETask::BP_Joseph_v2;
     };
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
     { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         const std::vector<SConeProjGeomVec>& geometry,
         cudaStream_t stream, int device_id = 0)
     {
@@ -66,10 +66,10 @@ public:
         if (resolved.empty()) YK::detail::buildCircularViews(params, resolved);
         return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
-    bool iterate(const float* measured, float* volume, const SCBCTParams&,
+    bool iterate(const float* measured, float* volume, const SReconstructionParams&,
         cudaStream_t, unsigned int iterations)
     { return implementation_.iterateSubsetUpdates(measured, volume, iterations); }
-    bool run(const float* measured, float* volume, const SCBCTParams&, cudaStream_t)
+    bool run(const float* measured, float* volume, const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
     unsigned int totalIterations() const
     { return implementation_.totalSubsetUpdates(); }
@@ -96,11 +96,11 @@ public:
         ETask bp_task = ETask::BP_Joseph_v2;
     };
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
     { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         const std::vector<SConeProjGeomVec>& geometry,
         cudaStream_t stream, int device_id = 0)
     {
@@ -113,10 +113,10 @@ public:
         if (resolved.empty()) YK::detail::buildCircularViews(params, resolved);
         return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
-    bool iterate(const float* measured, float* volume, const SCBCTParams&,
+    bool iterate(const float* measured, float* volume, const SReconstructionParams&,
         cudaStream_t, unsigned int iterations)
     { return implementation_.iterateSubsetUpdates(measured, volume, iterations); }
-    bool run(const float* measured, float* volume, const SCBCTParams&, cudaStream_t)
+    bool run(const float* measured, float* volume, const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
     unsigned int totalIterations() const
     { return implementation_.totalSubsetUpdates(); }
@@ -131,7 +131,7 @@ class OSSARTEx {
 public:
     using Config = OSSART::Config;
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         const std::vector<SConeProjGeomVec>& geometry,
         cudaStream_t stream, int device_id = 0)
     {
@@ -157,7 +157,7 @@ private:
 };
 
 inline bool ossart_tigre_reconstruct(const float* measured, float* volume,
-    const SCBCTParams& params, cudaStream_t stream, OSSART_TIGRE::Config cfg = {})
+    const SReconstructionParams& params, cudaStream_t stream, OSSART_TIGRE::Config cfg = {})
 {
     OSSART_TIGRE recon;
     return recon.init(params, cfg, stream) &&
@@ -165,7 +165,7 @@ inline bool ossart_tigre_reconstruct(const float* measured, float* volume,
 }
 
 inline bool ossart_reconstruct(const float* measured, float* volume,
-    const SCBCTParams& params, cudaStream_t stream, OSSART::Config cfg = {})
+    const SReconstructionParams& params, cudaStream_t stream, OSSART::Config cfg = {})
 {
     OSSART recon;
     return recon.init(params, cfg, stream) &&
@@ -173,7 +173,7 @@ inline bool ossart_reconstruct(const float* measured, float* volume,
 }
 
 inline bool ossart_reconstruct_ex(const float* measured, float* volume,
-    const SCBCTParams& params, const std::vector<SConeProjGeomVec>& geometry,
+    const SReconstructionParams& params, const std::vector<SConeProjGeomVec>& geometry,
     cudaStream_t stream, OSSARTEx::Config cfg = {})
 {
     OSSARTEx recon;

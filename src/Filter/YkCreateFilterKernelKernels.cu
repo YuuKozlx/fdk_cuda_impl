@@ -8,6 +8,7 @@
 #include <vector_types.h>
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
+#include "../global/YkKernelLaunchPolicy.hpp"
 #include "YkCreateFilterKernelHelpers.cuh"
 #include "YkCreateFilterKernelLaunch.cuh"
 

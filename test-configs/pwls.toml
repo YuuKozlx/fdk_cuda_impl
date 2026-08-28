@@ -1,8 +1,8 @@
-# 当前实现是同步更新全部体素的并行 PWLS，可选择全批量或 ordered subsets。
-# 它不是串行逐体素 PWLS/ICD。
+# 通用 PWLS，可选择全批量或 ordered subsets。当前实现使用同步全体素
+# 更新，不是串行逐体素 ICD；扫描轨迹由 geometry 决定。
 [[case]]
-name = "basic-parallel-pwls-huber"
-pipeline = "parallel-pwls"
+name = "basic-pwls-huber"
+pipeline = "pwls"
 
 [case.scan]
 nu = 32
@@ -24,9 +24,9 @@ phantom = "basic"
 [case.algorithm]
 iterations = 2
 forward = "joseph"
-back = "joseph-v3"
+back = "joseph"
 
-[case.parallel_pwls]
+[case.pwls]
 subsets = 2
 relaxation = 0.4
 regularizer = "huber"
@@ -37,4 +37,4 @@ lower_bound = 0.0
 upper_bound = 1.0
 
 [case.output]
-volume = "output/parallel-pwls/basic-huber.raw"
+volume = "output/pwls/basic-huber.raw"

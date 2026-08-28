@@ -71,6 +71,10 @@ namespace YK {
         float dv_mm = 1.f;
         float offsetU_mm = 0.f;
         float offsetV_mm = 0.f;
+        // 源端校准偏移，只用于前端构造 geometry，不由 kernel 解释。
+        float sourceOffsetX_mm = 0.f;
+        float sourceOffsetY_mm = 0.f;
+        float sourceOffsetZ_mm = 0.f;
         float tiltN_rad = 0.f;
         float tiltU_rad = 0.f;
         float tiltV_rad = 0.f;
@@ -169,6 +173,11 @@ namespace YK {
         // 角度来源，长度必须等于 scan.NAng；当前公开 FDK 仅接受初始化时的
         // 完整 geometry，不接受 execute() 逐批改变几何。
         std::vector<SConeProjGeomVec> geometry{};
+        // 将 Scanner 坐标下的逐视图几何转换到固定 Object 坐标系。
+        // 空数组表示恒等变换；长度 1 表示所有视图共用；否则必须等于 NAng。
+        // 模体体素数组不会被重采样，volume.offsetX/Y/Z 仍是 Object 坐标系下
+        // 的真实体积中心。若输入的是 scannerFromObject，请先调用 inverse()。
+        std::vector<SRigidTransform> objectFromScanner{};
         // 圆轨迹回退输入；geometry 为空时，FDK 用它构造完整 geometry。
         // 迭代管线当前仍需要完整 angles 建立工作区。
         std::vector<float> angles{};

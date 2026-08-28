@@ -29,8 +29,10 @@ inline std::vector<SCylConeProjGeomVec> buildCylindricalArcGeometry(
 {
     if (!(curvature_radius_mm > 0.f)) return {};
     std::vector<SCylConeProjGeomVec> geometry(p.angle_list.size());
-    const float principal_u = 0.5f * (p.iPU - 1) - p.offsetU_mm / p.du_mm;
-    const float principal_v = 0.5f * (p.iPV - 1) - p.offsetV_mm / p.dv_mm;
+    const float center_u = 0.5f * (p.iPU - 1);
+    const float center_v = 0.5f * (p.iPV - 1);
+    const float principal_u = center_u - p.offsetU_mm / p.du_mm;
+    const float principal_v = center_v - p.offsetV_mm / p.dv_mm;
     const float angle_step = channel_angle_step_rad > 0.f
         ? channel_angle_step_rad
         : p.du_mm / curvature_radius_mm;
@@ -44,12 +46,26 @@ inline std::vector<SCylConeProjGeomVec> buildCylindricalArcGeometry(
         const float3 radial = make_float3(-sinf(theta), cosf(theta), 0.f);
         const float3 tangent = make_float3(cosf(theta), sinf(theta), 0.f);
         // detector_principal 是圆柱面的中心通道点，与源点相距 SDD。
-        const float3 center = add3(source, scale3(radial, p.SDD));
+        const float3 principal = add3(source, scale3(radial, p.SDD));
+        // ASTRA vector geometry 存储探测器数组中心，而不是主射线通道。
+        // 将 U/V offset 烘焙进中心表面点和该点切向，后续不再传 principal_*。
+        const float center_delta = (center_u - principal_u) * angle_step;
+        const float sine = std::sin(center_delta);
+        const float cosine = std::cos(center_delta);
+        const float3 cylinder_center = add3(principal,
+            scale3(radial, -curvature_radius_mm));
+        float3 detector_center = add3(cylinder_center,
+            add3(scale3(radial, curvature_radius_mm * cosine),
+                scale3(tangent, curvature_radius_mm * sine)));
+        detector_center = add3(detector_center,
+            make_float3(0.f, 0.f, (center_v - principal_v) * p.dv_mm));
+        const float3 center_tangent = add3(scale3(radial, -sine),
+            scale3(tangent, cosine));
         geometry[i] = {
-            point4(source), point4(center), point4(scale3(tangent, arc_pixel)),
+            point4(source), point4(detector_center),
+            point4(scale3(center_tangent, arc_pixel)),
             make_float4(0.f, 0.f, p.dv_mm, 0.f),
-            make_float4(theta, 0.f, 0.f, 0.f),
-            curvature_radius_mm, principal_u, principal_v, 0.f
+            make_float4(theta, curvature_radius_mm, 0.f, 0.f)
         };
     }
     return geometry;

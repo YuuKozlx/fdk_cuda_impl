@@ -1,4 +1,6 @@
-﻿#include "YkFPSiddonLaunch.cuh"
+﻿#include "YkFlatSiddonFpLaunch.cuh"
+#include "global/YkMacro.hpp"
+#include "global/YkKernelLaunchPolicy.hpp"
 #include <algorithm>
 
 #define AABB_LO(o, v)      ((o) - 0.5f * (v))
@@ -218,12 +220,6 @@ namespace YK {
                 {
                     const float t_next = fminf(fminf(tX, tY), fminf(tZ, tmax));
 
-                    /*const float t_mid = 0.5f * (t_cur + t_next);
-                    const float fx = (v.src.x + t_mid * ray.x - vol_origin.x) * rcp_vox_x + 0.5f;
-                    const float fy = (v.src.y + t_mid * ray.y - vol_origin.y) * rcp_vox_y + 0.5f;
-                    const float fz = (v.src.z + t_mid * ray.z - vol_origin.z) * rcp_vox_z + 0.5f;
-
-                    fVal += tex3D<float>(tex, fx, fy, fz) * (t_next - t_cur) * ray_len;*/
                     fVal += tex3D<float>(tex, ix + 0.5f, iy + 0.5f, iz + 0.5f)
                         * (t_next - t_cur) * ray_len;
                     t_cur = t_next;
@@ -496,6 +492,7 @@ namespace YK {
                     accumulate);
                 base += count;
             }
+            YK_CUDA_KERNEL_CHECK();
         }
 
 
@@ -535,6 +532,7 @@ namespace YK {
                     accumulate);
                 base += count;
             }
+            YK_CUDA_KERNEL_CHECK();
         }
     } // namespace Fp
 } // namespace YK

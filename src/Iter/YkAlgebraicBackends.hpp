@@ -1,4 +1,4 @@
-﻿// YkOSSART.hpp
+// YkOSSART.hpp
 #pragma once
 #include "common/YkProjectionOperators.hpp"
 #include "kernels/YkIterLaunch.cuh"
@@ -83,7 +83,7 @@ namespace YK {
             ETask bp_task = ETask::BP_Joseph_v2;
         };
 
-        bool init(const SCBCTParams& params, const Config& cfg,
+        bool init(const SReconstructionParams& params, const Config& cfg,
             cudaStream_t stream, int deviceId = 0)
         {
             std::vector<SConeProjGeomVec> geometry;
@@ -91,11 +91,11 @@ namespace YK {
             return init(params, cfg, geometry, stream, deviceId);
         }
 
-        bool init(const SCBCTParams& params, const Config& cfg,
+        bool init(const SReconstructionParams& params, const Config& cfg,
             const std::vector<SConeProjGeomVec>& geometry,
             cudaStream_t stream, int deviceId = 0)
         {
-            if (static_cast<int>(geometry.size()) != params.iPAng) {
+            if (static_cast<int>(geometry.size()) != params.scan.NAng) {
                 YK_LOGE("[AlgebraicTigreBackend] geometry size mismatch");
                 return false;
             }
@@ -104,10 +104,10 @@ namespace YK {
             iteration_ = 0;
             lambda_cur_ = cfg.lambda;
 
-            const int    Na = params.iPAng;
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t slice_n = (size_t)params.iVX * params.iVY;
-            const size_t view_n = (size_t)params.iPU * params.iPV;
+            const int    Na = params.scan.NAng;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t slice_n = (size_t)params.volume.Nx * params.volume.Ny;
+            const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
 
             // ── 连续分块 (= TIGRE 'ordered'):blocksize = ceil(Na/n_subset) ──
             const int blocksize = (Na + cfg.n_subset - 1) / cfg.n_subset;
@@ -127,9 +127,9 @@ namespace YK {
 
                 auto& ps = block_params_[b];
                 ps = params;
-                ps.iPAng = K;
-                ps.angle_list.assign(params.angle_list.begin() + start,
-                    params.angle_list.begin() + start + K);
+                ps.scan.NAng = K;
+                ps.scan.angles.assign(params.scan.angles.begin() + start,
+                    params.scan.angles.begin() + start + K);
             }
 
             const size_t max_sino = max_K * view_n;
@@ -144,26 +144,26 @@ namespace YK {
 
             // W is projected from a 2x2x2 temporary volume.  Keep a distinct
             // FP operator so texture dimensions always match that buffer.
-            const float sVolX = params.iVX * params.vox_x_mm;
-            const float sVolY = params.iVY * params.vox_y_mm;
-            const float sVolZ = params.iVZ * params.vox_z_mm;
-            const float sDetZ = params.iPV * params.dv_mm;
+            const float sVolX = params.volume.Nx * params.volume.voxelX_mm;
+            const float sVolY = params.volume.Ny * params.volume.voxelY_mm;
+            const float sVolZ = params.volume.Nz * params.volume.voxelZ_mm;
+            const float sDetZ = params.scan.Nv * params.scan.dv_mm;
             params_lo_ = params;
-            params_lo_.iVX = 2; params_lo_.iVY = 2; params_lo_.iVZ = 2;
-            params_lo_.vox_x_mm = sVolX * 1.1f / 2.f;
-            params_lo_.vox_y_mm = sVolY * 1.1f / 2.f;
-            params_lo_.vox_z_mm = std::max(sDetZ, sVolZ) / 2.f;
+            params_lo_.volume.Nx = 2; params_lo_.volume.Ny = 2; params_lo_.volume.Nz = 2;
+            params_lo_.volume.voxelX_mm = sVolX * 1.1f / 2.f;
+            params_lo_.volume.voxelY_mm = sVolY * 1.1f / 2.f;
+            params_lo_.volume.voxelZ_mm = std::max(sDetZ, sVolZ) / 2.f;
             fp_lo_.init(params_lo_, geometry, cfg.fp_task, deviceId, stream);
 
             // ── W:全角度一次预计算 (= TIGRE set_w) ─────────────────────
             // 粗网格 2x2x2;x/y 扩 1.1;z = max(探测器高, 体积高),不扩
             {
-                const float sVolX = params.iVX * params.vox_x_mm;
-                const float sVolY = params.iVY * params.vox_y_mm;
-                const float sVolZ = params.iVZ * params.vox_z_mm;
-                const float sDetZ = params.iPV * params.dv_mm;
+                const float sVolX = params.volume.Nx * params.volume.voxelX_mm;
+                const float sVolY = params.volume.Ny * params.volume.voxelY_mm;
+                const float sVolZ = params.volume.Nz * params.volume.voxelZ_mm;
+                const float sDetZ = params.scan.Nv * params.scan.dv_mm;
 
-                SCBCTParams ps_w = params_lo_;        // 全角度列表
+                SReconstructionParams ps_w = params_lo_;        // 全角度列表
 
                 const size_t w_n = (size_t)Na * view_n;
                 YK_CUDA_CHECK(cudaMalloc(&d_row_w_full_, w_n * sizeof(float)));
@@ -180,7 +180,7 @@ namespace YK {
 
                 // W[W <= min(真实体素)/2] = inf; W = 1/W (inf → 0)
                 const float real_min_vox = std::min({
-                    params.vox_x_mm, params.vox_y_mm, params.vox_z_mm });
+                    params.volume.voxelX_mm, params.volume.voxelY_mm, params.volume.voxelZ_mm });
                 YK::Iter::threshold_inf_launch(
                     d_row_w_full_, w_n, real_min_vox / 2.f, stream);
                 YK::Iter::rcp_launch(d_row_w_full_, w_n, stream);
@@ -192,8 +192,8 @@ namespace YK {
             // 沿 Z 取平均 → 2D,零值 → inf
             d_col_w_all_.resize(n_block_, nullptr);
             {
-                const float sVolX = params.iVX * params.vox_x_mm;
-                const float sVolY = params.iVY * params.vox_y_mm;
+                const float sVolX = params.volume.Nx * params.volume.voxelX_mm;
+                const float sVolY = params.volume.Ny * params.volume.voxelY_mm;
                 const float norm_xy = std::sqrt(sVolX * sVolX + sVolY * sVolY);
                 const float scale = (norm_xy > 1e-8f)
                     ? std::max(sVolX, sVolY) / norm_xy * 0.9f
@@ -203,10 +203,10 @@ namespace YK {
                     const int    K = block_size_[b];
                     const size_t sino_n = (size_t)K * view_n;
 
-                    SCBCTParams ps_c = block_params_[b];
-                    ps_c.vox_x_mm *= scale;
-                    ps_c.vox_y_mm *= scale;
-                    ps_c.vox_z_mm *= scale;
+                    SReconstructionParams ps_c = block_params_[b];
+                    ps_c.volume.voxelX_mm *= scale;
+                    ps_c.volume.voxelY_mm *= scale;
+                    ps_c.volume.voxelZ_mm *= scale;
 
                     YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
                     bp_.run(d_residual_, ps_c, d_bp_, stream, /*clear_vol=*/true);
@@ -215,7 +215,7 @@ namespace YK {
                         slice_n * sizeof(float)));
                     YK::Iter::mean_z_to_2d_launch(
                         d_bp_, d_col_w_all_[b],
-                        params.iVX, params.iVY, params.iVZ, stream);
+                        params.volume.Nx, params.volume.Ny, params.volume.Nz, stream);
 
                     // V[V == 0] = inf
                     YK::Iter::threshold_inf_launch(
@@ -234,14 +234,14 @@ namespace YK {
         bool iterate(
             const float* d_sino_meas,
             float* d_vol,
-            const SCBCTParams& params,
+            const SReconstructionParams& params,
             cudaStream_t       stream,
             unsigned int       iterations)
         {
             if (!is_initialized_) return false;
 
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t view_n = (size_t)params.iPU * params.iPV;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
 
             for (unsigned int iter = 0; iter < iterations; ++iter)
             {
@@ -251,7 +251,7 @@ namespace YK {
                 const int    start = block_start_[b];
                 const int    K = block_size_[b];
                 const size_t sino_n = (size_t)K * view_n;
-                const SCBCTParams& ps = block_params_[b];
+                const SReconstructionParams& ps = block_params_[b];
 
                 // 连续切片:测量与 W 直接指针偏移,零拷贝
                 const float* d_meas_blk = d_sino_meas + (size_t)start * view_n;
@@ -277,7 +277,7 @@ namespace YK {
                 YK::Iter::update_v2d_launch(
                     d_vol, d_bp_, d_col_w_all_[b],
                     lambda_cur_, cfg_.eps,
-                    params.iVX, params.iVY, params.iVZ, stream);
+                    params.volume.Nx, params.volume.Ny, params.volume.Nz, stream);
 
                 // Step5: 约束(每块更新后;= TIGRE noneg 位置)
                 if (cfg_.use_min)
@@ -299,7 +299,7 @@ namespace YK {
 
         bool run(const float* d_sino_meas,
             float* d_vol,
-            const SCBCTParams& params,
+            const SReconstructionParams& params,
             cudaStream_t       stream)
         {
             if (!is_initialized_) return false;
@@ -344,8 +344,8 @@ namespace YK {
         bool         is_initialized_ = false;
         unsigned int iteration_ = 0;
         float        lambda_cur_ = 1.0f;
-        SCBCTParams  params_;
-        SCBCTParams  params_lo_;
+        SReconstructionParams  params_;
+        SReconstructionParams  params_lo_;
         Config       cfg_;
 
         ForwardOperatorAdapter fp_;
@@ -355,7 +355,7 @@ namespace YK {
         int                      n_block_ = 0;
         std::vector<int>         block_start_;
         std::vector<int>         block_size_;
-        std::vector<SCBCTParams> block_params_;
+        std::vector<SReconstructionParams> block_params_;
 
         float* d_sino_fwd_ = nullptr;
         float* d_residual_ = nullptr;
@@ -369,7 +369,7 @@ namespace YK {
     YK_INLINE bool algebraic_tigre_backend_reconstruct(
         const float* d_sino_meas,
         float* d_vol,
-        const SCBCTParams& params,
+        const SReconstructionParams& params,
         cudaStream_t       stream,
         AlgebraicTigreBackend::Config cfg = {})
     {
@@ -428,7 +428,7 @@ namespace YK {
             ETask bp_task = ETask::BP_FDK_matched;
         };
 
-        bool init(const SCBCTParams& params, const Config& cfg,
+        bool init(const SReconstructionParams& params, const Config& cfg,
             cudaStream_t stream, int deviceId = 0)
         {
             params_ = params;
@@ -436,9 +436,9 @@ namespace YK {
             iteration_ = 0;
             lambda_cur_ = cfg.lambda;
 
-            const int    Na = params.iPAng;
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t view_n = (size_t)params.iPU * params.iPV;
+            const int    Na = params.scan.NAng;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
 
             // ── 构建子集 (交错采样) 并预缓存子集参数 ─────────────────
             subsets_.resize(cfg.n_subset);
@@ -453,10 +453,10 @@ namespace YK {
 
                 auto& ps = subset_params_[s];
                 ps = params;
-                ps.iPAng = (int)idx.size();
-                ps.angle_list.resize(idx.size());
+                ps.scan.NAng = (int)idx.size();
+                ps.scan.angles.resize(idx.size());
                 for (int i = 0; i < (int)idx.size(); ++i)
-                    ps.angle_list[i] = params.angle_list[idx[i]];
+                    ps.scan.angles[i] = params.scan.angles[idx[i]];
             }
 
             // ── 生成子集遍历顺序：黄金角步进，相邻迭代角度尽量正交 ──
@@ -511,14 +511,14 @@ namespace YK {
         bool iterate(
             const float* d_sino_meas,
             float* d_vol,
-            const SCBCTParams& params,
+            const SReconstructionParams& params,
             cudaStream_t       stream,
             unsigned int       iterations)
         {
             if (!is_initialized_) return false;
 
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t view_n = (size_t)params.iPU * params.iPV;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
 
             for (unsigned int iter = 0; iter < iterations; ++iter)
             {
@@ -530,7 +530,7 @@ namespace YK {
                 const int    K = (int)subset.size();
                 const size_t sino_n = (size_t)K * view_n;
 
-                const SCBCTParams& ps = subset_params_[subset_idx];
+                const SReconstructionParams& ps = subset_params_[subset_idx];
 
                 // ── 现算 R: d_row_w_ = A_s · 1_vol ──
                 YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_, 0, sino_n * sizeof(float), stream));
@@ -588,7 +588,7 @@ namespace YK {
 
         bool run(const float* d_sino_meas,
             float* d_vol,
-            const SCBCTParams& params,
+            const SReconstructionParams& params,
             cudaStream_t       stream)
         {
             if (!is_initialized_) return false;
@@ -627,14 +627,14 @@ namespace YK {
         bool         is_initialized_ = false;
         unsigned int iteration_ = 0;
         float        lambda_cur_ = 1.0f;
-        SCBCTParams  params_;
+        SReconstructionParams  params_;
         Config       cfg_;
 
         ForwardOperatorAdapter fp_;
         BackOperatorAdapter bp_;
 
         std::vector<std::vector<int>> subsets_;
-        std::vector<SCBCTParams>      subset_params_;
+        std::vector<SReconstructionParams>      subset_params_;
         std::vector<int>              subset_order_;   // 黄金角遍历顺序
 
         float* d_sino_meas_sub_ = nullptr;
@@ -651,7 +651,7 @@ namespace YK {
     YK_INLINE bool algebraic_golden_subset_backend_reconstruct(
         const float* d_sino_meas,
         float* d_vol,
-        const SCBCTParams& params,
+        const SReconstructionParams& params,
         cudaStream_t       stream,
         AlgebraicGoldenSubsetBackend::Config cfg = {})
     {
@@ -681,7 +681,7 @@ namespace YK {
             bool golden_subset_order = false;
         };
 
-        bool init(const SCBCTParams& params,
+        bool init(const SReconstructionParams& params,
             const Config& cfg,
             const std::vector<SConeProjGeomVec>& h_views,
             cudaStream_t stream,
@@ -694,14 +694,14 @@ namespace YK {
             lambda_cur_ = cfg.lambda;
             deviceId_ = deviceId;
 
-            if ((int)h_views.size() != params.iPAng) {
+            if ((int)h_views.size() != params.scan.NAng) {
                 YK_LOGE("[AlgebraicDetailedWeightBackend] geometry size mismatch");
                 return false;
             }
 
-            const int    Na = params.iPAng;
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t view_n = (size_t)params.iPU * params.iPV;
+            const int    Na = params.scan.NAng;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
 
             // 构建子集
             subsets_.resize(cfg.n_subset);
@@ -719,10 +719,10 @@ namespace YK {
                 // 子集参数
                 auto& ps = subset_params_[s];
                 ps = params;
-                ps.iPAng = (int)idx.size();
-                ps.angle_list.resize(idx.size());
+                ps.scan.NAng = (int)idx.size();
+                ps.scan.angles.resize(idx.size());
                 for (int i = 0; i < (int)idx.size(); ++i)
-                    ps.angle_list[i] = params.angle_list[idx[i]];
+                    ps.scan.angles[i] = params.scan.angles[idx[i]];
 
                 // 子集几何
                 auto& sv = subset_views_[s];
@@ -783,8 +783,8 @@ namespace YK {
         {
             if (!is_initialized_) return false;
 
-            const size_t vol_n = (size_t)params_.iVX * params_.iVY * params_.iVZ;
-            const size_t view_n = (size_t)params_.iPU * params_.iPV;
+            const size_t vol_n = (size_t)params_.volume.Nx * params_.volume.Ny * params_.volume.Nz;
+            const size_t view_n = (size_t)params_.scan.Nu * params_.scan.Nv;
 
             for (unsigned int iter = 0; iter < iterations; ++iter)
             {
@@ -794,7 +794,7 @@ namespace YK {
                 const int   K = (int)idx.size();
                 const size_t sino_n = (size_t)K * view_n;
 
-                const SCBCTParams& ps = subset_params_[subset_idx];
+                const SReconstructionParams& ps = subset_params_[subset_idx];
                 const std::vector<SConeProjGeomVec>& sv = subset_views_[subset_idx];
 
                 // 行权重：A_s · 1_vol
@@ -890,12 +890,12 @@ namespace YK {
         unsigned int iteration_ = 0;
         float        lambda_cur_ = 1.0f;
         int          deviceId_ = 0;
-        SCBCTParams  params_;
+        SReconstructionParams  params_;
         Config       cfg_;
 
         std::vector<SConeProjGeomVec>        h_views_;
         std::vector<std::vector<int>>        subsets_;
-        std::vector<SCBCTParams>             subset_params_;
+        std::vector<SReconstructionParams>             subset_params_;
         std::vector<std::vector<SConeProjGeomVec>> subset_views_;
         std::vector<int> subset_order_;
 
@@ -916,7 +916,7 @@ namespace YK {
     YK_INLINE bool algebraic_ex_backend_reconstruct(
         const float* d_sino_meas,
         float* d_vol,
-        const SCBCTParams& params,
+        const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& h_views,
         cudaStream_t                         stream,
         AlgebraicDetailedWeightBackend::Config cfg = {})

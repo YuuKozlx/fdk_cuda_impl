@@ -23,7 +23,7 @@ class IForwardOperator {
 public:
     virtual ~IForwardOperator() = default;
     virtual bool prepare(const GeometryContext&, ResourceContext&) = 0;
-    virtual bool apply(const float* d_volume, const SCBCTParams& batch,
+    virtual bool apply(const float* d_volume, const SReconstructionParams& batch,
         float* d_projection, ResourceContext&) = 0;
     virtual void release() = 0;
 };
@@ -32,7 +32,7 @@ class IBackOperator {
 public:
     virtual ~IBackOperator() = default;
     virtual bool prepare(const GeometryContext&, ResourceContext&) = 0;
-    virtual bool apply(const float* d_projection, const SCBCTParams& batch,
+    virtual bool apply(const float* d_projection, const SReconstructionParams& batch,
         float* d_volume, bool clear_volume, ResourceContext&) = 0;
     virtual void release() = 0;
 };
@@ -52,36 +52,37 @@ inline bool isBackTask(ETask task)
         task == ETask::BP_FDK_matched;
 }
 
-inline void buildCircularViews(const SCBCTParams& p, std::vector<SConeProjGeomVec>& views)
+inline void buildCircularViews(const SReconstructionParams& p, std::vector<SConeProjGeomVec>& views)
 {
     const auto rad2deg = [](float r) { return r * 180.f / CUDA_PI; };
-    views.resize(p.iPAng);
-    build_circular_vec_geometry_from_theta(views, p.angle_list, p.iPAng,
-        p.iPU, p.iPV, p.du_mm, p.dv_mm, p.SID, p.SDD - p.SID,
-        f3(p.offsetU_mm, 0.f, p.offsetV_mm),
-        f3(rad2deg(p.tiltu_angle_rad), rad2deg(p.tiltn_angle_rad),
-           rad2deg(p.tiltv_angle_rad)));
+    views.resize(p.scan.NAng);
+    buildCircularConeGeometry(views, p.scan.angles, p.scan.NAng,
+        p.scan.Nu, p.scan.Nv, p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
+        f3(p.scan.offsetU_mm, 0.f, p.scan.offsetV_mm),
+        f3(rad2deg(p.scan.tiltU_rad), rad2deg(p.scan.tiltN_rad),
+           rad2deg(p.scan.tiltV_rad)),
+        f3(p.scan.sourceOffsetX_mm, p.scan.sourceOffsetY_mm, p.scan.sourceOffsetZ_mm));
 }
 
 // External geometry is immutable session data.  A regular FP/BP call may use
 // the whole sequence, or a contiguous angle-identifiable subset.  Iterative
-// algorithms currently use circular SCBCTParams and therefore take the other
+// algorithms currently use circular SReconstructionParams and therefore take the other
 // branch; this avoids silently inventing geometry for arbitrary trajectories.
 inline bool resolveViews(const std::vector<SConeProjGeomVec>& all,
-    const SCBCTParams& p, std::vector<SConeProjGeomVec>& out)
+    const SReconstructionParams& p, std::vector<SConeProjGeomVec>& out)
 {
     if (all.empty()) {
         buildCircularViews(p, out);
         return true;
     }
-    if (static_cast<int>(all.size()) == p.iPAng) {
+    if (static_cast<int>(all.size()) == p.scan.NAng) {
         out = all;
         return true;
     }
-    if (static_cast<int>(p.angle_list.size()) != p.iPAng) return false;
+    if (static_cast<int>(p.scan.angles.size()) != p.scan.NAng) return false;
     out.clear();
     size_t cursor = 0;
-    for (float angle : p.angle_list) {
+    for (float angle : p.scan.angles) {
         while (cursor < all.size() && std::fabs(all[cursor].angle.x - angle) > 1e-6f)
             ++cursor;
         if (cursor == all.size()) return false;
@@ -90,7 +91,7 @@ inline bool resolveViews(const std::vector<SConeProjGeomVec>& all,
     return true;
 }
 
-inline GeometryContext makeSubsetGeometry(const SCBCTParams& batch,
+inline GeometryContext makeSubsetGeometry(const SReconstructionParams& batch,
     const std::vector<SConeProjGeomVec>& views)
 {
     GeometryContext geometry;
@@ -118,10 +119,10 @@ public:
         return true;
     }
 
-    bool apply(const float* d_volume, const SCBCTParams& batch,
+    bool apply(const float* d_volume, const SReconstructionParams& batch,
         float* d_projection, ResourceContext& resources) override
     {
-        if (!prepared_ || !d_volume || !d_projection || batch.iPAng <= 0) return false;
+        if (!prepared_ || !d_volume || !d_projection || batch.scan.NAng <= 0) return false;
         if (resources.device() != device_id_ || resources.stream() != stream_) return false;
         retireContext_();
         std::vector<SConeProjGeomVec> views;
@@ -129,16 +130,18 @@ public:
 
         const SVolGeom vol = geometry_.volumeGeometry();
         gpu_ = std::make_unique<Fp::FpGpuContext>();
-        gpu_->init(d_volume, vol, views, resources.device());
-        const size_t count = static_cast<size_t>(batch.iPAng) * batch.iPV * batch.iPU;
+        gpu_->init(d_volume, vol, views, resources.device(),
+            kind_ == ETask::FP_Siddon ? cudaFilterModePoint :
+                cudaFilterModeLinear, resources.stream());
+        const size_t count = static_cast<size_t>(batch.scan.NAng) * batch.scan.Nv * batch.scan.Nu;
         YK_CUDA_CHECK(cudaMemsetAsync(d_projection, 0, count * sizeof(float), resources.stream()));
         if (kind_ == ETask::FP_Joseph) {
             Fp::fp_joseph_launch(gpu_->volTex.tex, gpu_->geo.h_views_vec(), gpu_->geo.d_views_vox(),
-                d_projection, vol, batch.iPAng, batch.iPU, batch.iPV, false,
+                d_projection, vol, batch.scan.NAng, batch.scan.Nu, batch.scan.Nv, false,
                 resources.stream(), Fp::FpStepSuperSample::x1);
         } else {
             Fp::fp_siddon_launch(gpu_->volTex.tex, d_projection, gpu_->geo.d_views(), vol,
-                batch.iPU, batch.iPV, batch.iPAng, false, resources.stream());
+                batch.scan.Nu, batch.scan.Nv, batch.scan.NAng, false, resources.stream());
         }
         YK_CUDA_CHECK(cudaEventRecord(completion_, stream_));
         completion_recorded_ = true;
@@ -199,60 +202,70 @@ public:
         return true;
     }
 
-    bool apply(const float* d_projection, const SCBCTParams& batch,
+    bool apply(const float* d_projection, const SReconstructionParams& batch,
         float* d_volume, bool clear_volume, ResourceContext& resources) override
     {
-        if (!prepared_ || !d_projection || !d_volume || batch.iPAng <= 0) return false;
+        if (!prepared_ || !d_projection || !d_volume || batch.scan.NAng <= 0) return false;
         if (resources.device() != device_id_ || resources.stream() != stream_) return false;
         retireContext_();
         std::vector<SConeProjGeomVec> views;
         if (!detail::resolveViews(geometry_.allGeometry(), batch, views)) return false;
 
         std::vector<SFDKGeoParamPerView> derived(views.size());
-        GeoDerivedManagerVec{}.build_geo_params(batch.iPU, batch.iPV,
-            batch.scan_range_rad, views, derived);
+        GeoDerivedManagerVec{}.build_geo_params(batch.scan.Nu, batch.scan.Nv,
+            batch.scan.range_rad, views, derived);
         const SVolGeom vol = geometry_.volumeGeometry();
         gpu_ = std::make_unique<Bp::BpSiddonGpuContext>();
         gpu_->initNoTex(d_projection, vol, views, derived, resources.stream(), resources.device());
         const bool accumulate = !clear_volume;
-        const int na = batch.iPAng;
+        const int na = batch.scan.NAng;
+        const auto makeProjectionTexture = [&](cudaTextureFilterMode filter) {
+            auto texture = Mem::TextureController::createEmptyTex3D(
+                batch.scan.Nu, batch.scan.Nv, na, filter, cudaAddressModeBorder);
+            // 与上游投影写入和下游 BP 位于同一 stream，避免同步拷贝依赖
+            // 默认流语义，也明确表明 cudaArray 是此时刻的数据快照。
+            Mem::TextureController::updateTex3DFromDeviceAsync(texture,
+                gpu_->d_sino_raw, batch.scan.Nu, batch.scan.Nv, na, resources.stream());
+            return texture;
+        };
 
         switch (kind_) {
-        case ETask::BP_Siddon_RayDriven:
+        case ETask::BP_Siddon_RayDriven: {
             if (clear_volume) YK_CUDA_CHECK(cudaMemsetAsync(d_volume, 0,
-                static_cast<size_t>(batch.iVX) * batch.iVY * batch.iVZ * sizeof(float), resources.stream()));
-            Bp::bp_siddon_launch(gpu_->d_sino_raw, d_volume, gpu_->geo.d_views_world(), vol,
-                batch.iPU, batch.iPV, na, resources.stream());
+                static_cast<size_t>(batch.volume.Nx) * batch.volume.Ny * batch.volume.Nz * sizeof(float), resources.stream()));
+            // RayDriven 只读取离散投影样本；Point 避免任何隐式插值或
+            // 硬件插值权重量化，Border 保证越界为 0。
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModePoint);
+            Bp::bp_siddon_launch(gpu_->sinoTex.tex, d_volume,
+                gpu_->geo.d_views_world(), vol,
+                batch.scan.Nu, batch.scan.Nv, na, resources.stream());
             break;
+        }
         case ETask::BP_Siddon_VoxDriven:
             Bp::bp_siddon_voxel_launch(d_projection, d_volume, gpu_->geo.d_views_world(), vol,
-                batch.iPU, batch.iPV, na, accumulate, resources.stream());
+                batch.scan.Nu, batch.scan.Nv, na, accumulate, resources.stream());
             break;
         case ETask::BP_Joseph: {
-            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
-                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModePoint);
             Bp::joseph_bp_launch(gpu_->sinoTex.tex, gpu_->geo.h_views_world_vec(), gpu_->geo.d_views_vox(), d_volume,
-                vol, na, batch.iPU, batch.iPV, accumulate, resources.stream());
+                vol, na, batch.scan.Nu, batch.scan.Nv, accumulate, resources.stream());
             break;
         }
         case ETask::BP_Joseph_v2: {
-            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
-                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModeLinear);
             Bp::joseph_bp_v2_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), d_volume, vol,
-                na, batch.iPU, batch.iPV, accumulate, resources.stream());
+                na, batch.scan.Nu, batch.scan.Nv, accumulate, resources.stream());
             break;
         }
         case ETask::BP_Joseph_v3: {
-            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
-                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModeLinear);
             Bp::joseph_bp_v3_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                 d_volume, vol, na, accumulate, resources.stream());
             break;
         }
         case ETask::BP_FDK:
         case ETask::BP_FDK_matched: {
-            gpu_->sinoTex = Mem::TextureController::createTex3DFromDevice(
-                gpu_->d_sino_raw, batch.iPU, batch.iPV, na);
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModeLinear);
             if (kind_ == ETask::BP_FDK)
                 Bp::fdk_bp_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                     d_volume, vol, na, accumulate, resources.stream());
@@ -313,14 +326,14 @@ inline std::unique_ptr<IBackOperator> makeBackOperator(ETask kind)
 // actual dispatch is now performed by the common operators above.
 class ForwardOperatorAdapter {
 public:
-    bool init(const SCBCTParams& params, ETask kind, int device, cudaStream_t stream)
+    bool init(const SReconstructionParams& params, ETask kind, int device, cudaStream_t stream)
     {
         if (!geometry_.initialize(params)) return false;
         resources_.attach(stream, device);
         op_ = makeForwardOperator(kind);
         return op_->prepare(geometry_, resources_);
     }
-    bool init(const SCBCTParams& params, const std::vector<SConeProjGeomVec>& geometry,
+    bool init(const SReconstructionParams& params, const std::vector<SConeProjGeomVec>& geometry,
         ETask kind, int device, cudaStream_t stream)
     {
         if (!geometry_.initialize(params, geometry)) return false;
@@ -328,7 +341,7 @@ public:
         op_ = makeForwardOperator(kind);
         return op_->prepare(geometry_, resources_);
     }
-    bool run(const float* d_volume, const SCBCTParams& batch, float* d_projection, cudaStream_t)
+    bool run(const float* d_volume, const SReconstructionParams& batch, float* d_projection, cudaStream_t)
     { return op_ && op_->apply(d_volume, batch, d_projection, resources_); }
     void release() { if (op_) op_->release(); op_.reset(); resources_.release(); }
 private:
@@ -339,14 +352,14 @@ private:
 
 class BackOperatorAdapter {
 public:
-    bool init(const SCBCTParams& params, ETask kind, int device, cudaStream_t stream)
+    bool init(const SReconstructionParams& params, ETask kind, int device, cudaStream_t stream)
     {
         if (!geometry_.initialize(params)) return false;
         resources_.attach(stream, device);
         op_ = makeBackOperator(kind);
         return op_->prepare(geometry_, resources_);
     }
-    bool init(const SCBCTParams& params, const std::vector<SConeProjGeomVec>& geometry,
+    bool init(const SReconstructionParams& params, const std::vector<SConeProjGeomVec>& geometry,
         ETask kind, int device, cudaStream_t stream)
     {
         if (!geometry_.initialize(params, geometry)) return false;
@@ -354,7 +367,7 @@ public:
         op_ = makeBackOperator(kind);
         return op_->prepare(geometry_, resources_);
     }
-    bool run(const float* d_projection, const SCBCTParams& batch, float* d_volume,
+    bool run(const float* d_projection, const SReconstructionParams& batch, float* d_volume,
         cudaStream_t, bool clear_volume)
     { return op_ && op_->apply(d_projection, batch, d_volume, clear_volume, resources_); }
     void release() { if (op_) op_->release(); op_.reset(); resources_.release(); }

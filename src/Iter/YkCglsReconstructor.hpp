@@ -9,7 +9,7 @@ class CglsReconstructor {
 public:
     using Config = CglsReconstructionConfig;
 
-    bool prepare(const SCBCTParams& params, const Config& config,
+    bool prepare(const SReconstructionParams& params, const Config& config,
         cudaStream_t stream, int device_id = 0)
     {
         std::vector<SConeProjGeomVec> geometry;

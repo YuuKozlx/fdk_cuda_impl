@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cuda_runtime.h>
 #include "global/YkGlobals.h"
+#include "global/YkKernelLaunchPolicy.hpp"
 
 namespace YK {
 

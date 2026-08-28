@@ -1,5 +1,6 @@
 ﻿// YkBpFdkKernel.cu
-#include "YkBpFdkLaunch.cuh"
+#include "YkFlatFdkBpLaunch.cuh"
+#include "common/cuda/operators/YkOperatorKernelTypes.cuh"
 #include "../../global/YkMacro.hpp"
 #include "YkBPHelpers.cuh"
 #include <BP/YkBPCommon.cuh>
@@ -279,17 +280,17 @@ namespace YK {
                         const float vNumStep = c.Cv_z * vg.vox_z;
 
                         // denom_c系数：Cc_w/x/y/z
-                        const float rcp_SOD = __frsqrt_rn(c.SID2);  // 1/SOD，用SID2避免重复sqrt
+                        const float rcp_SOD = __frsqrt_rn(c.source_to_axis_sq);
                         const float Cc_x = -v.src.x * rcp_SOD;
                         const float Cc_y = -v.src.y * rcp_SOD;
                         const float Cc_z = -v.src.z * rcp_SOD;
-                        const float Cc_w = __fsqrt_rn(c.SID2);   // SOD
+                        const float Cc_w = __fsqrt_rn(c.source_to_axis_sq);
 
                         const float cNumXY = Cc_w + Cc_x * fX + Cc_y * fY;
                         const float cNumStep = Cc_z * vg.vox_z;
 
                         // FDK权重基础值
-                        const float w_base = c.SID2 * c.dtheta * c.fScaleDTheta;
+                        const float w_base = c.source_to_axis_sq * c.dtheta * c.fScaleDTheta;
 
                         // 初始值退一步
                         const float fZ0 = vg.origin().z + (startZ - 1) * vg.vox_z;
@@ -439,8 +440,8 @@ namespace YK {
                             if (lsq < 1e-8f) continue;
 
                             // ── matched weight = L³ / (SDD_plane · lsq) ──────
-                            // inv_SDD_plane uses the same SDD2 convention as
-                            // the former sqrt(c.SDD2) code; only operation order
+                            // inv_SDD_plane 与派生的实际探测器平面距离使用同一约定；
+                            // 相比旧实现只改变运算顺序，
                             // and repeated geometry work have changed.
                             const float w_matched =
                                 __fdividef(L2 * L, lsq) * c.inv_SDD_plane * scale;
@@ -525,13 +526,13 @@ namespace YK {
             bool accumulate,
             cudaStream_t stream)
         {
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)vg.Nx * vg.Ny * vg.Nz * sizeof(float), stream));
-            }
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(vg.Nx) * vg.Ny * vg.Nz,
+                CudaOp::writeMode(accumulate), stream);
             detail::fdk_bp_launch_impl<4, 32>(
                 sinoTex, d_views_world, d_coeffs, d_vol, vg,
                 0, Na, stream);
+            YK_CUDA_KERNEL_CHECK();
         }
 
 
@@ -545,13 +546,13 @@ namespace YK {
             bool accumulate,
             cudaStream_t stream)
         {
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)vg.Nx * vg.Ny * vg.Nz * sizeof(float), stream));
-            }
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(vg.Nx) * vg.Ny * vg.Nz,
+                CudaOp::writeMode(accumulate), stream);
             detail::fdk_matched_bp_launch_impl<4, 32>(
                 sinoTex, d_views_world, d_coeffs, d_vol, vg,
                 0, Na, stream);
+            YK_CUDA_KERNEL_CHECK();
         }
 
     } // namespace Bp

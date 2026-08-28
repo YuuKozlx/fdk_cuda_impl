@@ -7,6 +7,7 @@
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
 #include "../global/YkMem3d.hpp"
+#include "../common/YkProjectionGeometryCache.hpp"
 #include "YkFp.cuh"
 #include "kernels/YkFPHelpers.cuh"
 
@@ -22,36 +23,7 @@ namespace YK {
         // ================================================================
         // FpGeoData
         // ================================================================
-        struct FpGeoData {
-        private:
-            DeviceLinearBuffer<SConeProjGeomVec> d_projgeom_vox_;
-            DeviceLinearBuffer<SConeProjGeomVec> d_projgeom_;     // ← 新增，世界坐标
-            std::vector<SConeProjGeomVec>        h_projgeom_;
-            std::vector<SConeProjGeomVec>        h_projgeom_vox_;
-            SVolGeom                             h_volgeom_;
-
-        public:
-            void init(const std::vector<SConeProjGeomVec>& h_projgeom,
-                const SVolGeom& vol_geom, int deviceId = 0)
-            {
-                h_projgeom_ = h_projgeom;
-                h_projgeom_vox_ = Fp::normalizeToVoxelBatch(h_projgeom, vol_geom);
-
-                PodDataController dc;
-                d_projgeom_ = dc.allocateAndUpload(h_projgeom_, deviceId);  // ← 新增
-                d_projgeom_vox_ = dc.allocateAndUpload(h_projgeom_vox_, deviceId);
-
-                h_volgeom_ = vol_geom;
-            }
-
-            SConeProjGeomVec* d_views()     const { return d_projgeom_.data(); }  // 世界坐标，Siddon/CVP
-            SConeProjGeomVec* d_views_vox() const { return d_projgeom_vox_.data(); }  // 体素坐标，Joseph
-            const SConeProjGeomVec* h_views()     const { return h_projgeom_.data(); }
-            const SConeProjGeomVec* h_views_vox() const { return h_projgeom_vox_.data(); }
-            const std::vector<SConeProjGeomVec> h_views_vec() const { return h_projgeom_; }
-            const std::vector<SConeProjGeomVec> h_views_vox_vec() const { return h_projgeom_vox_; }
-            const SVolGeom& h_volgeom() const { return h_volgeom_; }
-        };
+        using FpGeoData = CudaOp::ProjectionGeometryCache;
 
         // ================================================================
         // FpGpuContext
@@ -62,6 +34,7 @@ namespace YK {
             Mem::Tex3DHandle volTex;   // CVP 路径下保持默认（无效句柄）
             FpGeoData        geo;
             const float* d_vol_raw = nullptr;  // 无纹理路径使用
+            cudaTextureFilterMode texture_filter = cudaFilterModeLinear;
 
             FpGpuContext() = default;
             FpGpuContext(const FpGpuContext&) = delete;
@@ -72,9 +45,22 @@ namespace YK {
                 const float* d_vol,
                 const SVolGeom& vol_geom,
                 const std::vector<SConeProjGeomVec>& h_projgeom,
-                int deviceId = 0)
+                int deviceId = 0,
+                cudaTextureFilterMode filter = cudaFilterModeLinear,
+                cudaStream_t stream = nullptr)
             {
-                volTex = Mem::TextureController::createTex3DFromDevice(d_vol, vol_geom);
+                texture_filter = filter;
+                if (stream) {
+                    volTex = Mem::TextureController::createEmptyTex3D(
+                        vol_geom.Nx, vol_geom.Ny, vol_geom.Nz, filter,
+                        cudaAddressModeBorder);
+                    Mem::TextureController::updateTex3DFromDeviceAsync(volTex,
+                        d_vol, vol_geom.Nx, vol_geom.Ny, vol_geom.Nz, stream);
+                }
+                else {
+                    volTex = Mem::TextureController::createTex3DFromDevice(d_vol,
+                        vol_geom, filter, cudaAddressModeBorder);
+                }
                 geo.init(h_projgeom, vol_geom, deviceId);
             }
 
@@ -120,7 +106,8 @@ namespace YK {
                 }
                 else {
                     volTex.destroy();
-                    volTex = Mem::TextureController::createTex3DFromDevice(d_vol, vol_geom);
+                    volTex = Mem::TextureController::createTex3DFromDevice(d_vol,
+                        vol_geom, texture_filter, cudaAddressModeBorder);
                 }
             }
 

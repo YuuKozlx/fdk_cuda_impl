@@ -69,23 +69,23 @@ MethodSpec resolveMethod(const std::string& method)
         "TIGRE OS-ASD-POCS", true, true };
 }
 
-SCBCTParams makeLargeArrowParams()
+SReconstructionParams makeLargeArrowParams()
 {
-    SCBCTParams p{};
-    p.iVX = 160; p.iVY = 160; p.iVZ = 96;
-    p.vox_x_mm = 0.6f; p.vox_y_mm = 0.6f; p.vox_z_mm = 0.6f;
-    p.iPU = 384; p.iPV = 128;
-    p.du_mm = 1.f; p.dv_mm = 1.f;
-    p.SID = 400.f; p.SDD = 800.f;
-    p.iPAng = 360; p.iPAngTotal = 360;
-    p.scan_start_angle_rad = 0.f;
-    p.scan_range_rad = 2.f * CUDA_PI;
-    p.nDirSign = 1;
-    p.bShortScan = false;
-    p.offsetU_mm = 0.f; p.offsetV_mm = 0.f;
-    p.angle_list.resize(p.iPAng);
-    for (int i = 0; i < p.iPAng; ++i)
-        p.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / p.iPAng;
+    SReconstructionParams p{};
+    p.volume.Nx = 160; p.volume.Ny = 160; p.volume.Nz = 96;
+    p.volume.voxelX_mm = 0.6f; p.volume.voxelY_mm = 0.6f; p.volume.voxelZ_mm = 0.6f;
+    p.scan.Nu = 384; p.scan.Nv = 128;
+    p.scan.du_mm = 1.f; p.scan.dv_mm = 1.f;
+    p.scan.sid_mm = 400.f; p.scan.sdd_mm = 800.f;
+    p.scan.NAng = 360; p.scan.totalViews = 360;
+    p.scan.start_angle_rad = 0.f;
+    p.scan.range_rad = 2.f * CUDA_PI;
+    p.scan.direction = 1;
+    p.scan.short_scan = false;
+    p.scan.offsetU_mm = 0.f; p.scan.offsetV_mm = 0.f;
+    p.scan.angles.resize(p.scan.NAng);
+    for (int i = 0; i < p.scan.NAng; ++i)
+        p.scan.angles[i] = 2.f * CUDA_PI * static_cast<float>(i) / p.scan.NAng;
     return p;
 }
 
@@ -144,10 +144,10 @@ void configure_large_arrow_test(const std::string& method, int iterations,
 int main_large_arrow_tigre()
 {
     const MethodSpec method = resolveMethod(g_options.method);
-    const SCBCTParams p = makeLargeArrowParams();
+    const SReconstructionParams p = makeLargeArrowParams();
     const auto truth = TestPhantom::makeArrowDirections(p, true);
-    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    const size_t projection_count = static_cast<size_t>(p.iPU) * p.iPV * p.iPAng;
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.Nu) * p.scan.Nv * p.scan.NAng;
     std::vector<float> projection(projection_count);
     std::vector<float> reconstruction(volume_count);
     std::vector<float> error(volume_count);
@@ -163,10 +163,10 @@ int main_large_arrow_tigre()
     Metrics metrics{};
     {
         Mem::MemoryController memory;
-        auto d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
-        auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-        auto d_reconstruction = memory.allocateDevice3D<float>(p.iVX, p.iVY,
-            p.iVZ, 0);
+        auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
+        auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny,
+            p.volume.Nz, 0);
         ok = cudaMemcpyAsync(d_truth.data(), truth.data(),
             volume_count * sizeof(float), cudaMemcpyHostToDevice, stream) ==
             cudaSuccess;
@@ -268,12 +268,12 @@ int main_large_arrow_tigre()
         writeFloatRaw(error_path, error);
 
     std::vector<TestImage::GrayPanel> panels;
-    for (const int z : { 2, p.iVZ / 2, p.iVZ - 3 }) {
-        panels.push_back({ &truth, p.iVX, p.iVY, p.iVZ, z,
+    for (const int z : { 2, p.volume.Nz / 2, p.volume.Nz - 3 }) {
+        panels.push_back({ &truth, p.volume.Nx, p.volume.Ny, p.volume.Nz, z,
             1.f, 0.f, 0.06f, false });
-        panels.push_back({ &reconstruction, p.iVX, p.iVY, p.iVZ, z,
+        panels.push_back({ &reconstruction, p.volume.Nx, p.volume.Ny, p.volume.Nz, z,
             metrics.scale, 0.f, 0.06f, false });
-        panels.push_back({ &error, p.iVX, p.iVY, p.iVZ, z,
+        panels.push_back({ &error, p.volume.Nx, p.volume.Ny, p.volume.Nz, z,
             1.f, 0.f, 0.03f, true });
     }
     const auto montage_path = artifact_dir / "arrow_z_slices_truth_recon_error.bmp";
@@ -303,7 +303,7 @@ int main_large_arrow_tigre()
         << "  \"iterations\": " << g_options.iterations
         << ", \"block_size_views\": "
         << (method.uses_os_block ? g_options.block_size :
-            (method.algorithm == Iter::ETigreGradientAlgorithm::Sirt ? p.iPAng : 1))
+            (method.algorithm == Iter::ETigreGradientAlgorithm::Sirt ? p.scan.NAng : 1))
         << ",\n"
         << "  \"lambda\": " << g_options.lambda
         << ", \"lambda_reduction\": 0.98,\n"
@@ -337,8 +337,8 @@ int main_large_arrow_tigre()
         ? (free_before - free_during) / (1024.0 * 1024.0) : 0.0;
     std::printf("Large arrow %s: volume %dx%dx%d (%.1f MiB), "
         "projection %dx%dx%d (%.1f MiB), GPU workspace %.1f MiB\n",
-        method.display_name, p.iVX, p.iVY, p.iVZ, volume_mib,
-        p.iPU, p.iPV, p.iPAng,
+        method.display_name, p.volume.Nx, p.volume.Ny, p.volume.Nz, volume_mib,
+        p.scan.Nu, p.scan.Nv, p.scan.NAng,
         projection_mib, used_mib);
     std::printf("  corr %.6f NRMSE %.6f scale %.6f, FP %.1f ms, "
         "prepare %.1f ms, recon %.1f ms, subset updates %u: %s\n",

@@ -36,11 +36,11 @@ inline Iter::CglsReconstructionConfig makeCglsConfig(
 class CGLS {
 public:
     using Config = CglsLegacyConfig;
-    bool init(const SCBCTParams& params, const Config& config,
+    bool init(const SReconstructionParams& params, const Config& config,
         cudaStream_t stream, int device_id = 0)
     { return init(params, config, std::vector<SConeProjGeomVec>{}, stream, device_id); }
 
-    bool init(const SCBCTParams& params, const Config& config,
+    bool init(const SReconstructionParams& params, const Config& config,
         const std::vector<SConeProjGeomVec>& geometry,
         cudaStream_t stream, int device_id = 0)
     {
@@ -50,7 +50,7 @@ public:
         return implementation_.prepare(params, resolved, unified, stream, device_id);
     }
     bool run(const float* measured, float* volume,
-        const SCBCTParams&, cudaStream_t)
+        const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
     void release() { implementation_.release(); }
 private:
@@ -60,7 +60,7 @@ private:
 class CGLSEx {
 public:
     using Config = CglsLegacyConfig;
-    bool init(const SCBCTParams& params, const Config& config,
+    bool init(const SReconstructionParams& params, const Config& config,
         const std::vector<SConeProjGeomVec>& geometry,
         cudaStream_t stream, int device_id = 0)
     {
@@ -69,7 +69,7 @@ public:
             stream, device_id);
     }
     bool run(const float* measured, float* volume,
-        const SCBCTParams&, cudaStream_t)
+        const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
     void release() { implementation_.release(); }
 private:
@@ -88,7 +88,7 @@ public:
         ETask fp_task = ETask::FP_Joseph;
         ETask bp_task = ETask::BP_FDK_matched;
     };
-    bool init(const SCBCTParams& params, const Config& old,
+    bool init(const SReconstructionParams& params, const Config& old,
         cudaStream_t stream, int device_id = 0)
     {
         CglsLegacyConfig common{};
@@ -101,7 +101,7 @@ public:
             stream, device_id);
     }
     bool run(const float* measured, float* volume,
-        const SCBCTParams&, cudaStream_t)
+        const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
     void release() { implementation_.release(); }
 private:
@@ -109,14 +109,14 @@ private:
 };
 
 inline bool cgls_reconstruct(const float* measured, float* volume,
-    const SCBCTParams& params, cudaStream_t stream, CGLS::Config config = {})
+    const SReconstructionParams& params, cudaStream_t stream, CGLS::Config config = {})
 {
     CGLS recon;
     return recon.init(params, config, stream) &&
         recon.run(measured, volume, params, stream);
 }
 inline bool cgls_ex_reconstruct(const float* measured, float* volume,
-    const SCBCTParams& params, const std::vector<SConeProjGeomVec>& geometry,
+    const SReconstructionParams& params, const std::vector<SConeProjGeomVec>& geometry,
     cudaStream_t stream, CGLSEx::Config config = {})
 {
     CGLSEx recon;
@@ -124,7 +124,7 @@ inline bool cgls_ex_reconstruct(const float* measured, float* volume,
         recon.run(measured, volume, params, stream);
 }
 inline bool cgls_astra_reconstruct(const float* measured, float* volume,
-    const SCBCTParams& params, cudaStream_t stream, CGLSAstra::Config config = {})
+    const SReconstructionParams& params, cudaStream_t stream, CGLSAstra::Config config = {})
 {
     CGLSAstra recon;
     return recon.init(params, config, stream) &&

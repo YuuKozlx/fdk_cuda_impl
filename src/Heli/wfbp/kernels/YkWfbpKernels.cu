@@ -224,7 +224,10 @@ __device__ float sample_intermediate(const float* input, const Geometry& g,
     const int spot = focal_spot_index(g, phi_spot, z_spot);
     // FreeCT 先按 spot 拆分序列，再在该序列内插值。sequence_view 的
     // -spot/n_ffs 项对应官方 p2/a2/a3/a4 中的 -1/-2/-3 相位项。
-    const float sequence_view = sequence_output_view -
+    // 本工程圆轨迹在 theta=0 时源点位于 -Y，且探测器 +U 指向 +X。
+    // 因此平行束方向角 phi 对应的原始扇束角为 alpha=phi+beta；FreeCT
+    // 源码中的减号属于其 +X 起始、相反通道约定，不能原样套用。
+    const float sequence_view = sequence_output_view +
         (beta + focal_alpha_shift(g.sid, da, dr)) / g.angle_step -
         static_cast<float>(spot) / g.focal_spot_count;
     if (sequence_view < 0.f || sequence_view > g.sequence_views - 1.f) return 0.f;
@@ -396,14 +399,16 @@ __global__ void backproject_kernel(const float* filtered, float* volume,
             float weights = 0.f;
             for (int view = phase; view < g.views; view += half_turn) {
                 const float theta = g.first_angle + view * g.angle_step;
-                const float p = x * sinf(theta) - y * cosf(theta);
+                // 与 build_helical_vec_geometry() 使用同一坐标系。theta=0 时
+                // 中心射线沿 +Y，平行坐标轴沿 +X，故 p=x 而不是 -y。
+                const float p = x * cosf(theta) + y * sinf(theta);
                 if (fabsf(p) >= g.sid) continue;
                 const float p_index = p / g.parallel_spacing + g.parallel_center;
                 const float l = sqrtf(g.sid * g.sid - p * p) -
-                    x * cosf(theta) - y * sinf(theta);
+                    x * sinf(theta) + y * cosf(theta);
                 if (l <= 1e-6f || g.cone_half_angle <= 1e-6f) continue;
                 const float table_z = g.start_z + g.pitch * theta / (2.f * CUDA_PI);
-                const float q = (z - table_z +
+                const float q = (z - table_z -
                     g.pitch * asinf(p / g.sid) / (2.f * CUDA_PI)) /
                     (l * tanf(g.cone_half_angle));
                 const float w = redundancy_weight(q, flat);

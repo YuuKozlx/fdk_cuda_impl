@@ -20,7 +20,7 @@
 | `AwPcsd` / `OsAwPcsd` | AwPCSD / OS-AwPCSD | SART / OS-SART | 自适应加权 TV |
 | `AwAsdPocs` / `OsAwAsdPocs` | Aw-ASD-POCS / OS-Aw-ASD-POCS | SART / OS-SART | 自适应加权 TV + POCS |
 
-`TigreGradientReconstructor` 根据 `SCBCTParams` 构造标准圆轨迹；
+`TigreGradientReconstructor` 根据 `SReconstructionParams::scan` 构造标准圆轨迹；
 `TigreGradientReconstructorEx` 接受逐视角 `SConeProjGeomVec`。`Ex` 只代表
 geometry 输入方式，算法和调参能力完全相同。
 

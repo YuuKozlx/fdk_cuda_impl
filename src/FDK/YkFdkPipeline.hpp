@@ -27,6 +27,23 @@ struct FdkViewRange {
     int count = 0;
 };
 
+// 校准 geometry 相对理想圆轨迹的统计，只用于报告近似程度。FDK 各阶段
+// 始终消费从最终逐视图 geometry 派生的实际几何量。
+struct FdkGeometryDiagnostics {
+    float min_source_to_axis_mm = 0.f;
+    float max_source_to_axis_mm = 0.f;
+    float min_source_to_detector_mm = 0.f;
+    float max_source_to_detector_mm = 0.f;
+    float min_source_to_plane_mm = 0.f;
+    float max_source_to_plane_mm = 0.f;
+    float max_abs_source_axis_mm = 0.f;
+    float max_detector_skew = 0.f;
+    float max_abs_principal_u_pix = 0.f;
+    float max_abs_principal_v_pix = 0.f;
+    float max_normal_misalignment = 0.f;
+    bool approximate = false;
+};
+
 // 一个在线 FDK 批次的主机侧输入。投影内存布局为 [view][v][u]。
 // geometry 是执行阶段唯一的几何和角度来源；如果没有外部 geometry，调用方
 // 可给出 circular_angles，仅用于构造同一份圆轨迹 geometry。
@@ -210,7 +227,7 @@ private:
 // 数据，避免隐式状态跨批次泄漏。
 class FdkPipeline {
 public:
-    bool prepare(const SCBCTParams& params, int requested_chunk,
+    bool prepare(const SReconstructionParams& params, int requested_chunk,
         cudaStream_t stream, int device_id = 0)
     {
         release();
@@ -220,8 +237,8 @@ public:
         chunk_size_ = std::min(requested_chunk, kMaxChunkAng);
         stream_ = stream;
 
-        const SProjDims chunk_dims{ params_.iPU, params_.iPV, chunk_size_ };
-        gpu_.init(chunk_dims, params_.iPAngTotal, stream_, device_id);
+        const SProjDims chunk_dims{ params_.scan.Nu, params_.scan.Nv, chunk_size_ };
+        gpu_.init(chunk_dims, params_.scan.totalViews, stream_, device_id);
 
         PreweightConfig preweight_config{};
         preweight_config.dims = chunk_dims;
@@ -229,69 +246,70 @@ public:
 
         FdkFilterConfig filter_config{};
         filter_config.dims = chunk_dims;
-        filter_config.desc = params_.desc;
+        filter_config.desc = params_.reconstruction.filter;
         filter_config.stream = stream_;
         if (!filter_.prepare(filter_config)) { release(); return false; }
 
-        if (params_.bShortScan) {
+        if (params_.scan.short_scan) {
             ParkerWeightConfig parker_config{};
             parker_config.dims = chunk_dims;
-            parker_config.fDetUSize = params_.du_mm;
-            parker_config.fSrcOrigin = params_.SID;
-            parker_config.fDetOrigin = params_.SDD - params_.SID;
-            parker_config.iPAnglesTotal = params_.iPAngTotal;
-            parker_config.fScanRangeRad = params_.scan_range_rad;
-            parker_config.fStartAngleRad = params_.scan_start_angle_rad;
-            parker_config.nDirSign = params_.nDirSign;
+            parker_config.iPAnglesTotal = params_.scan.totalViews;
+            parker_config.fScanRangeRad = params_.scan.range_rad;
+            parker_config.fStartAngleRad = params_.scan.start_angle_rad;
+            parker_config.nDirSign = params_.scan.direction;
             if (!parker_.prepare(parker_config)) { release(); return false; }
         }
 
         BpConfig bp_config{};
-        bp_config.vol_geom = SVolGeom::make_centered(params_.iVX, params_.iVY,
-            params_.iVZ, params_.vox_x_mm, params_.vox_y_mm, params_.vox_z_mm);
-        bp_config.vol_geom.center = make_float3(params_.vol_offset_x_mm,
-            params_.vol_offset_y_mm, params_.vol_offset_z_mm);
+        bp_config.vol_geom = SVolGeom::make_centered(params_.volume.Nx, params_.volume.Ny,
+            params_.volume.Nz, params_.volume.voxelX_mm, params_.volume.voxelY_mm, params_.volume.voxelZ_mm);
+        bp_config.vol_geom.center = make_float3(params_.volume.centerX_mm,
+            params_.volume.centerY_mm, params_.volume.centerZ_mm);
         bp_config.use_precomputed = true;
         bp_config.max_chunk_views = chunk_size_;
         if (!backproject_.prepare(bp_config)) { release(); return false; }
 
-        state_.prepare(params_.iPAngTotal);
+        state_.prepare(params_.scan.totalViews);
         prepared_ = true;
         return true;
     }
 
     // 任意几何的首选初始化入口。geometry 的顺序就是采集顺序，长度必须等于
     // iPAngTotal；派生几何在此一次性生成，保证跨 batch/chunk 的 dtheta 连续。
-    bool prepareWithGeometry(const SCBCTParams& params,
+    bool prepareWithGeometry(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry, int requested_chunk,
         cudaStream_t stream, int device_id = 0)
     {
-        if (static_cast<int>(geometry.size()) != params.iPAngTotal) {
+        if (static_cast<int>(geometry.size()) != params.scan.totalViews) {
             YK_LOGE("[FdkPipeline] 完整 geometry 数量 {} 与 iPAngTotal {} 不一致。",
-                geometry.size(), params.iPAngTotal);
+                geometry.size(), params.scan.totalViews);
             return false;
         }
-        if (!validateCircularFdkGeometry_(geometry)) return false;
+        std::vector<SFDKGeoParamPerView> derived;
+        if (!GeoDerivedManagerVec{}.build_geo_params(params.scan.Nu, params.scan.Nv,
+            params.scan.range_rad, geometry, derived)) {
+            YK_LOGE("[FdkPipeline] 完整 geometry 的派生参数预计算失败。");
+            return false;
+        }
+        FdkGeometryDiagnostics diagnostics{};
+        if (!validateApproximateFdkGeometry_(geometry, derived, diagnostics)) return false;
         if (!prepare(params, requested_chunk, stream, device_id)) return false;
         static_geometry_ = geometry;
-        if (!GeoDerivedManagerVec{}.build_geo_params(params_.iPU, params_.iPV,
-            params_.scan_range_rad, static_geometry_, static_derived_geometry_)) {
-            YK_LOGE("[FdkPipeline] 完整 geometry 的派生参数预计算失败。");
-            release();
-            return false;
-        }
+        static_derived_geometry_ = std::move(derived);
+        geometry_diagnostics_ = diagnostics;
         return true;
     }
 
     // 圆轨迹只是 geometry 的一种来源。完整角度已知时同样在初始化阶段构造
     // 全量 geometry，后续与任意外部 geometry 共用同一预计算和执行路径。
-    bool prepareWithAngles(const SCBCTParams& params,
+    bool prepareWithAngles(const SReconstructionParams& params,
         const std::vector<float>& angles, int requested_chunk,
         cudaStream_t stream, int device_id = 0)
     {
-        if (static_cast<int>(angles.size()) != params.iPAngTotal) {
+        if (!validateCircularBuilderInput_(params)) return false;
+        if (static_cast<int>(angles.size()) != params.scan.totalViews) {
             YK_LOGE("[FdkPipeline] 完整角度数量 {} 与 iPAngTotal {} 不一致。",
-                angles.size(), params.iPAngTotal);
+                angles.size(), params.scan.totalViews);
             return false;
         }
         std::vector<SConeProjGeomVec> geometry;
@@ -333,29 +351,26 @@ public:
                 YK_LOGE("[FdkPipeline] 当前批次 geometry 数量与 count 不一致。");
                 return false;
             }
-            buildDerivedGeometry_(*batch.geometry);
+            if (!buildDerivedGeometry_(*batch.geometry)) return false;
         }
         else if (!use_static_geometry) {
             if (!batch.circular_angles) {
                 YK_LOGE("[FdkPipeline] 未提供 geometry 时必须提供圆轨迹角度数组。");
                 return false;
             }
+            if (!validateCircularBuilderInput_(params_)) return false;
             buildCircularGeometry_(params_, std::vector<float>(batch.circular_angles,
                 batch.circular_angles + batch.count), host_geometry_);
-            if (!GeoDerivedManagerVec{}.build_geo_params(params_.iPU, params_.iPV,
-                params_.scan_range_rad, host_geometry_, host_derived_geometry_)) {
-                YK_LOGE("[FdkPipeline] 圆轨迹 geometry 的派生参数预计算失败。");
-                return false;
-            }
+            if (!buildDerivedGeometry_(host_geometry_)) return false;
         }
 
         if (clear_output) {
-            const size_t volume_bytes = static_cast<size_t>(params_.iVX) * params_.iVY *
-                params_.iVZ * sizeof(float);
+            const size_t volume_bytes = static_cast<size_t>(params_.volume.Nx) * params_.volume.Ny *
+                params_.volume.Nz * sizeof(float);
             YK_CUDA_CHECK(cudaMemsetAsync(d_volume, 0, volume_bytes, stream_));
         }
 
-        const size_t view_elements = static_cast<size_t>(params_.iPU) * params_.iPV;
+        const size_t view_elements = static_cast<size_t>(params_.scan.Nu) * params_.scan.Nv;
         for (int base = 0; base < batch.count; base += chunk_size_) {
             const int count = std::min(chunk_size_, batch.count - base);
             const int global_offset = range.offset + base;
@@ -377,9 +392,10 @@ public:
 
             if (!preweight_.apply(gpu_.proj.chunk_in.data(), gpu_.proj.chunk_pw.data(),
                 { chunk.d_geometry, chunk.d_derived_geometry, chunk.count }, stream_)) return false;
-            if (params_.bShortScan) {
+            if (params_.scan.short_scan) {
                 if (!parker_.apply(gpu_.proj.chunk_pw.data(),
-                    { chunk.h_geometry, chunk.count }, stream_)) return false;
+                    { chunk.h_geometry, chunk.d_geometry,
+                      chunk.d_derived_geometry, chunk.count }, stream_)) return false;
             }
             if (!filter_.apply(gpu_.proj.chunk_pw.data(), gpu_.proj.chunk_flt.data(),
                 { chunk.h_derived_geometry, chunk.count }, stream_)) return false;
@@ -450,6 +466,7 @@ public:
         static_derived_geometry_.clear();
         host_geometry_.clear();
         host_derived_geometry_.clear();
+        geometry_diagnostics_ = {};
         last_stage_ = {};
         chunk_size_ = 0;
         stream_ = nullptr;
@@ -461,24 +478,42 @@ public:
     int receivedViews() const { return state_.receivedViews(); }
     bool complete() const { return state_.complete(); }
     const FdkStageView& lastStage() const { return last_stage_; }
+    const FdkGeometryDiagnostics& geometryDiagnostics() const
+    { return geometry_diagnostics_; }
 
 private:
-    bool validateStatic_(const SCBCTParams& p, int requested_chunk, cudaStream_t stream) const
+    bool validateStatic_(const SReconstructionParams& p, int requested_chunk, cudaStream_t stream) const
     {
-        if (!stream || requested_chunk <= 0 || p.iPAngTotal <= 0 || p.iPU <= 0 ||
-            p.iPV <= 0 || p.iVX <= 0 || p.iVY <= 0 || p.iVZ <= 0 || p.du_mm <= 0.f ||
-            p.dv_mm <= 0.f || p.SID <= 0.f || p.SDD <= p.SID ||
-            (p.nDirSign != 1 && p.nDirSign != -1)) {
+        if (!stream || requested_chunk <= 0 || p.scan.totalViews <= 0 || p.scan.Nu <= 0 ||
+            p.scan.Nv <= 0 || p.volume.Nx <= 0 || p.volume.Ny <= 0 || p.volume.Nz <= 0 ||
+            !std::isfinite(p.scan.range_rad) ||
+            p.scan.range_rad <= 0.f ||
+            (p.scan.direction != 1 && p.scan.direction != -1)) {
             YK_LOGE("[FdkPipeline] 静态 FDK 配置无效。");
             return false;
         }
         return true;
     }
 
-    // 当前实现是圆轨迹、等像素尺寸的 FDK。向量 geometry 支持每视图的
-    // 探测器平移和姿态校正，但尚未实现变 SID/SDD、变 du/dv 或任意轨迹的
-    // 专用滤波/冗余权重模型，因此必须在初始化时明确拒绝这些输入。
-    bool validateCircularFdkGeometry_(const std::vector<SConeProjGeomVec>& geometry) const
+    // 标称 SID/SDD 和像素尺寸只属于默认圆轨迹构造器。外部逐视图 geometry
+    // 已经包含实际源点和探测器像素基向量，不应再受这些标称字段约束。
+    static bool validateCircularBuilderInput_(const SReconstructionParams& p)
+    {
+        if (!std::isfinite(p.scan.du_mm) || !std::isfinite(p.scan.dv_mm) ||
+            !std::isfinite(p.scan.sid_mm) || !std::isfinite(p.scan.sdd_mm) ||
+            p.scan.du_mm <= 0.f || p.scan.dv_mm <= 0.f || p.scan.sid_mm <= 0.f || p.scan.sdd_mm <= p.scan.sid_mm) {
+            YK_LOGE("[FdkPipeline] 默认圆轨迹构造器的标称 SID/SDD 或像素尺寸无效。");
+            return false;
+        }
+        return true;
+    }
+
+    // 近似 FDK 接受校准后的非理想圆 geometry。这里仅拒绝数学上不可计算的
+    // 输入；SOD/SDD、源轴向漂移和探测器姿态偏离通过 diagnostics 报告。
+    bool validateApproximateFdkGeometry_(
+        const std::vector<SConeProjGeomVec>& geometry,
+        const std::vector<SFDKGeoParamPerView>& derived,
+        FdkGeometryDiagnostics& diagnostics) const
     {
         constexpr float kRelativeTolerance = 1e-3f;
         constexpr float kAngleTolerance = 1e-5f;
@@ -488,29 +523,64 @@ private:
         const auto dot = [](const float4& a, const float4& b) {
             return a.x * b.x + a.y * b.y + a.z * b.z;
         };
-        const float du0 = length(geometry.front().detU);
-        const float dv0 = length(geometry.front().detV);
-        const float sid0 = std::sqrt(geometry.front().src.x * geometry.front().src.x +
-            geometry.front().src.y * geometry.front().src.y);
-        if (du0 <= 0.f || dv0 <= 0.f || sid0 <= 0.f) {
-            YK_LOGE("[FdkPipeline] geometry 含有零长度探测器轴或无效 SID。");
+        if (geometry.empty() || derived.size() != geometry.size()) return false;
+        diagnostics.min_source_to_axis_mm = diagnostics.max_source_to_axis_mm =
+            derived.front().source_to_axis_mm;
+        diagnostics.min_source_to_detector_mm = diagnostics.max_source_to_detector_mm =
+            derived.front().source_to_radial_detector_mm;
+        diagnostics.min_source_to_plane_mm = diagnostics.max_source_to_plane_mm =
+            derived.front().source_to_detector_plane_mm;
+        const float du0 = derived.front().du_mm;
+        const float dv0 = derived.front().dv_mm;
+        if (du0 <= 0.f || dv0 <= 0.f) {
+            YK_LOGE("[FdkPipeline] geometry 含有无效探测器像素轴。");
             return false;
         }
-        for (const auto& view : geometry) {
+        for (size_t i = 0; i < geometry.size(); ++i) {
+            const auto& view = geometry[i];
+            const auto& actual = derived[i];
             const float du = length(view.detU);
             const float dv = length(view.detV);
-            const float sid = std::sqrt(view.src.x * view.src.x + view.src.y * view.src.y);
-            if (std::abs(du - du0) > du0 * kRelativeTolerance ||
-                std::abs(dv - dv0) > dv0 * kRelativeTolerance ||
-                std::abs(sid - sid0) > sid0 * kRelativeTolerance) {
-                YK_LOGE("[FdkPipeline] 当前 FDK 不支持变 SID 或变 du/dv 的 geometry。");
+            if (du <= 0.f || dv <= 0.f || actual.source_to_axis_mm <= 0.f ||
+                actual.source_to_radial_detector_mm <= 0.f ||
+                actual.source_to_detector_plane_mm <= 0.f ||
+                !std::isfinite(view.angle.x)) {
+                YK_LOGE("[FdkPipeline] geometry 含有不可计算的逐视图参数。");
                 return false;
             }
-            if (std::abs(dot(view.detU, view.detV)) > du * dv * kRelativeTolerance ||
-                !std::isfinite(view.angle.x) || std::abs(view.src.z) > sid0 * kRelativeTolerance) {
-                YK_LOGE("[FdkPipeline] geometry 不满足当前圆轨迹 FDK 的正交探测器或平面源轨迹约束。");
-                return false;
-            }
+            diagnostics.min_source_to_axis_mm = std::min(
+                diagnostics.min_source_to_axis_mm, actual.source_to_axis_mm);
+            diagnostics.max_source_to_axis_mm = std::max(
+                diagnostics.max_source_to_axis_mm, actual.source_to_axis_mm);
+            diagnostics.min_source_to_detector_mm = std::min(
+                diagnostics.min_source_to_detector_mm,
+                actual.source_to_radial_detector_mm);
+            diagnostics.max_source_to_detector_mm = std::max(
+                diagnostics.max_source_to_detector_mm,
+                actual.source_to_radial_detector_mm);
+            diagnostics.min_source_to_plane_mm = std::min(
+                diagnostics.min_source_to_plane_mm,
+                actual.source_to_detector_plane_mm);
+            diagnostics.max_source_to_plane_mm = std::max(
+                diagnostics.max_source_to_plane_mm,
+                actual.source_to_detector_plane_mm);
+            diagnostics.max_abs_source_axis_mm = std::max(
+                diagnostics.max_abs_source_axis_mm, std::abs(view.src.z));
+            diagnostics.max_detector_skew = std::max(diagnostics.max_detector_skew,
+                std::abs(dot(view.detU, view.detV)) / (du * dv));
+            diagnostics.max_abs_principal_u_pix = std::max(
+                diagnostics.max_abs_principal_u_pix, std::abs(actual.offsetU_pix));
+            diagnostics.max_abs_principal_v_pix = std::max(
+                diagnostics.max_abs_principal_v_pix, std::abs(actual.offsetV_pix));
+            const float normalAlignment = std::abs(
+                actual.radial_ray.x * actual.det_n.x +
+                actual.radial_ray.y * actual.det_n.y +
+                actual.radial_ray.z * actual.det_n.z);
+            diagnostics.max_normal_misalignment = std::max(
+                diagnostics.max_normal_misalignment, 1.f - normalAlignment);
+            diagnostics.approximate = diagnostics.approximate ||
+                std::abs(du - du0) > du0 * kRelativeTolerance ||
+                std::abs(dv - dv0) > dv0 * kRelativeTolerance;
         }
         // 外部 geometry 的 angle.x 是唯一角度来源。相邻角度重复将使 dtheta
         // 不可定义，提前拒绝可避免后续滤波/反投影出现 NaN。
@@ -520,29 +590,65 @@ private:
                 return false;
             }
         }
+        const auto relativeSpread = [](float low, float high) {
+            return high > 0.f ? (high - low) / high : 0.f;
+        };
+        diagnostics.approximate = diagnostics.approximate ||
+            relativeSpread(diagnostics.min_source_to_axis_mm,
+                diagnostics.max_source_to_axis_mm) > kRelativeTolerance ||
+            relativeSpread(diagnostics.min_source_to_detector_mm,
+                diagnostics.max_source_to_detector_mm) > kRelativeTolerance ||
+            diagnostics.max_abs_source_axis_mm >
+                diagnostics.max_source_to_axis_mm * kRelativeTolerance ||
+            diagnostics.max_detector_skew > kRelativeTolerance ||
+            diagnostics.max_abs_principal_u_pix > kRelativeTolerance ||
+            diagnostics.max_abs_principal_v_pix > kRelativeTolerance ||
+            diagnostics.max_normal_misalignment > kRelativeTolerance;
+        if (diagnostics.approximate) {
+            YK_LOGW("[FdkPipeline] 使用校准 geometry 的近似 FDK：SOD=[{:.4f}, {:.4f}] mm，"
+                "SDD=[{:.4f}, {:.4f}] mm，plane=[{:.4f}, {:.4f}] mm，"
+                "source-axis-z(max)={:.4f} mm，principal=({:.4f}, {:.4f}) pix，"
+                "normal-error(max)={:.6f}，detector-skew(max)={:.6f}。",
+                diagnostics.min_source_to_axis_mm, diagnostics.max_source_to_axis_mm,
+                diagnostics.min_source_to_detector_mm, diagnostics.max_source_to_detector_mm,
+                diagnostics.min_source_to_plane_mm, diagnostics.max_source_to_plane_mm,
+                diagnostics.max_abs_source_axis_mm,
+                diagnostics.max_abs_principal_u_pix,
+                diagnostics.max_abs_principal_v_pix,
+                diagnostics.max_normal_misalignment,
+                diagnostics.max_detector_skew);
+        }
         return true;
     }
 
-    static void buildCircularGeometry_(const SCBCTParams& params,
+    static void buildCircularGeometry_(const SReconstructionParams& params,
         const std::vector<float>& angles, std::vector<SConeProjGeomVec>& geometry)
     {
         const auto rad2deg = [](float radians) { return radians * 180.f / CUDA_PI; };
         geometry.resize(angles.size());
-        build_circular_vec_geometry_from_theta(geometry, angles, static_cast<int>(angles.size()),
-            params.iPU, params.iPV, params.du_mm, params.dv_mm, params.SID,
-            params.SDD - params.SID, f3(params.offsetU_mm, 0.f, params.offsetV_mm),
-            f3(rad2deg(params.tiltu_angle_rad), rad2deg(params.tiltn_angle_rad),
-                rad2deg(params.tiltv_angle_rad)));
+        buildCircularConeGeometry(geometry, angles, static_cast<int>(angles.size()),
+            params.scan.Nu, params.scan.Nv, params.scan.du_mm, params.scan.dv_mm, params.scan.sid_mm,
+            params.scan.sdd_mm - params.scan.sid_mm, f3(params.scan.offsetU_mm, 0.f, params.scan.offsetV_mm),
+            f3(rad2deg(params.scan.tiltU_rad), rad2deg(params.scan.tiltN_rad),
+                rad2deg(params.scan.tiltV_rad)),
+            f3(params.scan.sourceOffsetX_mm, params.scan.sourceOffsetY_mm,
+                params.scan.sourceOffsetZ_mm));
     }
 
-    void buildDerivedGeometry_(const std::vector<SConeProjGeomVec>& geometry)
+    bool buildDerivedGeometry_(const std::vector<SConeProjGeomVec>& geometry)
     {
         host_geometry_ = geometry;
-        GeoDerivedManagerVec{}.build_geo_params(params_.iPU, params_.iPV,
-            params_.scan_range_rad, host_geometry_, host_derived_geometry_);
+        if (!GeoDerivedManagerVec{}.build_geo_params(params_.scan.Nu, params_.scan.Nv,
+            params_.scan.range_rad, host_geometry_, host_derived_geometry_)) {
+            YK_LOGE("[FdkPipeline] 当前批次 geometry 的派生参数预计算失败。");
+            return false;
+        }
+        FdkGeometryDiagnostics diagnostics{};
+        return validateApproximateFdkGeometry_(
+            host_geometry_, host_derived_geometry_, diagnostics);
     }
 
-    SCBCTParams params_{};
+    SReconstructionParams params_{};
     int chunk_size_ = 0;
     cudaStream_t stream_ = nullptr;
     bool prepared_ = false;
@@ -556,6 +662,7 @@ private:
     std::vector<SFDKGeoParamPerView> host_derived_geometry_{};
     std::vector<SConeProjGeomVec> static_geometry_{};
     std::vector<SFDKGeoParamPerView> static_derived_geometry_{};
+    FdkGeometryDiagnostics geometry_diagnostics_{};
     FdkBatchFence dynamic_geometry_fence_{};
     FdkStageView last_stage_{};
 };

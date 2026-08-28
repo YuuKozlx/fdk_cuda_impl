@@ -6,7 +6,9 @@
 #include <vector_functions.hpp>
 
 #include "common/YkVecGeo.hpp"
+#include "global/YkFdkKernelTypes.hpp"
 #include "global/YkGlobals.h"
+#include "global/YkMacro.hpp"
 #include "util/YkVecOperation.hpp" // f3_len, f3_cross, f3_dot, f3_sub, f3_mul, f3_add
 #include "util/helper_math.h"
 
@@ -17,9 +19,9 @@ namespace YK {
     // 目标：只写 gv（引用赋值），不返回冗余 result 结构体,用于FDK的Kernel参数的中间参数计算
     //
     // 关键约束/定义：
-    //   - 世界中心固定为 (0,0,0)（isocenter 目前仅保留字段，不参与计算）
-    //   - 主射线始终在 XY 平面：d(theta)=(cos, sin, 0)
-    //   - principal point：主射线与探测器平面的交点
+    //   - FDK 径向射线由源点和旋转轴派生，不属于公共投影 geometry
+    //   - detector normal 只由 detU/detV 派生
+    //   - FDK 中心点是径向射线与探测器平面的交点
     //   - offsetU/V：principal point 对应像素坐标相对中心像素的偏移（pixel）
     //
     // SID（你固定的定义）：
@@ -45,6 +47,7 @@ struct GeoDerivedOptions
 {
     float dtheta_eps = 1e-8f;
     float3 isocenter = make_float3(0.0f, 0.0f, 0.0f);
+    float3 rotation_axis_direction = make_float3(0.0f, 0.0f, 1.0f);
     bool force_DSD_positive = false;
 };
 
@@ -99,10 +102,16 @@ GeoDerivedManagerVec();
                 gv.inv_dv_mm = 1.0f / gv.dv_mm;
 
                 // =========================================================
-                // 4) (1) central ray dir + SID
+                // 4) FDK 径向射线、探测器坐标架和 SID
                 // =========================================================
-                const float3 central_ray_dir = f4_to_f3(geo.srcCR);
-                gv.SOD_mm = sid_mm_from_source_to_zaxis(f4_to_f3(geo.src)); // SOD_mm field stores SID by your definition
+                SProjectionFrame frame{};
+                if (!deriveProjectionFrame(geo, detector_pixels_u,
+                    detector_pixels_v, frame))
+                    return false;
+                float3 radial_ray{};
+                if (!compute_radial_ray(f4_to_f3(geo.src), opt_.isocenter,
+                    opt_.rotation_axis_direction, radial_ray, gv.source_to_axis_mm))
+                    return false;
 
                 // =========================================================
                 // 4) (2) principal point -> SDD + offsetU/V + ray0hat
@@ -111,13 +120,14 @@ GeoDerivedManagerVec();
                 //   - We compute principal point by intersecting central ray with detector plane.
                 //   - We compute pixel coordinate (u,v) of that point and offsets from detector center pixel.
                 //   - ray0hat is unit vector from source to principal point.
-                compute_SDD_offsets(
-                    geo,
+                if (!compute_SDD_offsets(
+                    geo, frame, radial_ray,
                     detector_pixels_u, detector_pixels_v,
                     gv.offsetU_pix,
                     gv.offsetV_pix,
-                    gv.SDD_mm,
-                    gv.SDD_plane_mm);
+                    gv.source_to_radial_detector_mm,
+                    gv.source_to_detector_plane_mm))
+                    return false;
 
 
 
@@ -126,8 +136,8 @@ GeoDerivedManagerVec();
                     geo,
                     gv.UU, gv.VV, gv.UV, gv.invDetUV);
 
-                gv.ray_center = geo.srcCR;
-                gv.det_n = f4_normalize(f4_cross(geo.detV, geo.detU));
+                gv.radial_ray = f3_to_f4(radial_ray);
+                gv.det_n = f3_to_f4(frame.detectorNormal);
                 gv.det_u = f4_normalize(geo.detU);
                 gv.det_v = f4_normalize(geo.detV);
                 float3 detS_src = f4_to_f3(geo.detS) - f4_to_f3(geo.src);
@@ -178,12 +188,24 @@ GeoDerivedManagerVec();
 
 
         // -----------------------------
-        // SID by your definition: SID = | d · src |
-        // (plane through Z-axis with normal || d, and |d|=1)
+        // 源点到旋转轴的最短方向和距离。它属于 FDK 轨迹约束，不再作为
+        // 每视图公共 geometry 的冗余输入。
         // -----------------------------
-        static float sid_mm_from_source_to_zaxis(const float3& src)
+        static bool compute_radial_ray(const float3& source,
+            const float3& axisPoint, const float3& axisDirection,
+            float3& outRay, float& outDistance)
         {
-            return f3_len(f3(src.x, src.y, 0.f));
+            const float axisLength2 = dot(axisDirection, axisDirection);
+            if (axisLength2 <= 1e-20f) return false;
+            const float3 axis = axisDirection * rsqrtf(axisLength2);
+            const float3 relative = source - axisPoint;
+            const float3 closest = axisPoint + axis * dot(relative, axis);
+            const float3 ray = closest - source;
+            const float rayLength2 = dot(ray, ray);
+            if (rayLength2 <= 1e-20f) return false;
+            outDistance = sqrtf(rayLength2);
+            outRay = ray * (1.f / outDistance);
+            return true;
         }
 
 
@@ -220,7 +242,7 @@ GeoDerivedManagerVec();
         //   3. offsetU/V    — principal point 相对探测器物理中心的像素偏移
         //
         // 输入：
-        //   geo                — 向量几何参数（src, srcCR, detS, detU, detV）
+        //   geo                — 向量几何参数（src, detS, detU, detV）
         //   detector_pixels_u  — 探测器 U 方向像素数
         //   detector_pixels_v  — 探测器 V 方向像素数
         //
@@ -234,6 +256,8 @@ GeoDerivedManagerVec();
         // ----------------------------------------------------------------
         static bool compute_SDD_offsets(
             const SConeProjGeomVec& geo,
+            const SProjectionFrame& frame,
+            const float3& radialRay,
             int detector_pixels_u, int detector_pixels_v,
             float& out_offsetU_pix, float& out_offsetV_pix,
             float& out_SDD_mm, float& out_SDD_plane_mm)
@@ -245,23 +269,12 @@ GeoDerivedManagerVec();
             const float3 detU = f4_to_f3(geo.detU);
             const float3 detV = f4_to_f3(geo.detV);
 
-            // 探测器法向量
-            float3 n = cross(detV, detU);
-            const float n2 = dot(n, n);
-            if (n2 < 1e-24f) return false;
-            const float3 det_n = n * rsqrtf(n2);
-
-            // 求交参数
-            const float denom = dot(det_n, det_n);
-            if (fabsf(denom) < 1e-24f) return false;
-
-            const float numer = dot(detS - src, det_n);
-            out_SDD_plane_mm = numer;
-
-            // principal point
-            float3 P = make_float3(0.f, 0.f, src.z);
-            float t = out_SDD_plane_mm / dot(P - src, det_n);
-            const float3 principal_point = src + (P - src) * t;
+            out_SDD_plane_mm = frame.planeDistance;
+            const float denominator = dot(radialRay, frame.detectorNormal);
+            if (fabsf(denominator) < 1e-12f) return false;
+            const float t = out_SDD_plane_mm / denominator;
+            if (t <= 0.f) return false;
+            const float3 principal_point = src + radialRay * t;
 
             // SDD_mm
             const float3 ray0 = principal_point - src;

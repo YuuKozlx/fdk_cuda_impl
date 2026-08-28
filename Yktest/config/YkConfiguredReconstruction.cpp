@@ -1,5 +1,6 @@
 #include "config/YkConfiguredReconstruction.hpp"
 #include "config/YkConfiguredForwardProjection.hpp"
+#include "config/YkConfiguredWfbp.hpp"
 
 #include <algorithm>
 #include <array>
@@ -16,7 +17,7 @@
 #include "FDK/YkFdkPipeline.hpp"
 #include "Iter/YkAlgebraicReconstructorEx.hpp"
 #include "Iter/YkCglsReconstructorEx.hpp"
-#include "Iter/YkParallelPwlsReconstructor.hpp"
+#include "Iter/YkPwlsReconstructor.hpp"
 #include "Iter/YkTigreGradientReconstructorEx.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
@@ -71,7 +72,7 @@ Pipeline parsePipeline(const std::string& text)
     if (text == "ossart") return Pipeline::Ossart;
     if (text == "cgls") return Pipeline::Cgls;
     if (text == "tigre-gradient-local") return Pipeline::TigreGradientLocal;
-    if (text == "parallel-pwls") return Pipeline::ParallelPwls;
+    if (text == "pwls") return Pipeline::Pwls;
     if (text == "fdk-ossart") return Pipeline::FdkOssart;
     if (text == "fdk-cgls") return Pipeline::FdkCgls;
     throw std::runtime_error("未知 pipeline: " + text);
@@ -185,43 +186,46 @@ ReconstructionCase parseCase(const toml::table& table,
 
     const auto& scan = requiredTable(table, "scan", result.name);
     auto& p = result.params;
-    p.iPU = static_cast<int>(required<int64_t>(scan, "nu", "scan"));
-    p.iPV = static_cast<int>(required<int64_t>(scan, "nv", "scan"));
-    p.iPAng = static_cast<int>(required<int64_t>(scan, "views", "scan"));
-    p.iPAngTotal = p.iPAng;
-    p.du_mm = static_cast<float>(optional<double>(scan, "du_mm", 1.0));
-    p.dv_mm = static_cast<float>(optional<double>(scan, "dv_mm", 1.0));
-    p.offsetU_mm = static_cast<float>(optional<double>(scan, "offset_u_mm", 0.0));
-    p.offsetV_mm = static_cast<float>(optional<double>(scan, "offset_v_mm", 0.0));
-    p.SID = static_cast<float>(required<double>(scan, "sid_mm", "scan"));
-    p.SDD = static_cast<float>(required<double>(scan, "sdd_mm", "scan"));
-    p.scan_start_angle_rad = static_cast<float>(
+    p.scan.Nu = static_cast<int>(required<int64_t>(scan, "nu", "scan"));
+    p.scan.Nv = static_cast<int>(required<int64_t>(scan, "nv", "scan"));
+    p.scan.NAng = static_cast<int>(required<int64_t>(scan, "views", "scan"));
+    p.scan.totalViews = p.scan.NAng;
+    p.scan.du_mm = static_cast<float>(optional<double>(scan, "du_mm", 1.0));
+    p.scan.dv_mm = static_cast<float>(optional<double>(scan, "dv_mm", 1.0));
+    p.scan.offsetU_mm = static_cast<float>(optional<double>(scan, "offset_u_mm", 0.0));
+    p.scan.offsetV_mm = static_cast<float>(optional<double>(scan, "offset_v_mm", 0.0));
+    p.scan.sourceOffsetX_mm = static_cast<float>(optional<double>(scan, "source_offset_x_mm", 0.0));
+    p.scan.sourceOffsetY_mm = static_cast<float>(optional<double>(scan, "source_offset_y_mm", 0.0));
+    p.scan.sourceOffsetZ_mm = static_cast<float>(optional<double>(scan, "source_offset_z_mm", 0.0));
+    p.scan.sid_mm = static_cast<float>(required<double>(scan, "sid_mm", "scan"));
+    p.scan.sdd_mm = static_cast<float>(required<double>(scan, "sdd_mm", "scan"));
+    p.scan.start_angle_rad = static_cast<float>(
         optional<double>(scan, "start_angle_deg", 0.0) * kPi / 180.0);
-    p.scan_range_rad = static_cast<float>(
+    p.scan.range_rad = static_cast<float>(
         optional<double>(scan, "scan_range_deg", 360.0) * kPi / 180.0);
-    p.bShortScan = optional<bool>(scan, "short_scan", false);
-    p.nDirSign = static_cast<int>(optional<int64_t>(scan, "direction", 1));
-    p.angle_list.resize(p.iPAng);
+    p.scan.short_scan = optional<bool>(scan, "short_scan", false);
+    p.scan.direction = static_cast<int>(optional<int64_t>(scan, "direction", 1));
+    p.scan.angles.resize(p.scan.NAng);
     // scan_range 表示整个扫描覆盖范围；均匀圆轨迹不重复采集终点。
-    for (int i = 0; i < p.iPAng; ++i)
-        p.angle_list[i] = p.scan_start_angle_rad + p.nDirSign *
-            p.scan_range_rad * static_cast<float>(i) / p.iPAng;
+    for (int i = 0; i < p.scan.NAng; ++i)
+        p.scan.angles[i] = p.scan.start_angle_rad + p.scan.direction *
+            p.scan.range_rad * static_cast<float>(i) / p.scan.NAng;
 
     const auto& volume = requiredTable(table, "volume", result.name);
-    p.iVX = static_cast<int>(required<int64_t>(volume, "nx", "volume"));
-    p.iVY = static_cast<int>(required<int64_t>(volume, "ny", "volume"));
-    p.iVZ = static_cast<int>(required<int64_t>(volume, "nz", "volume"));
+    p.volume.Nx = static_cast<int>(required<int64_t>(volume, "nx", "volume"));
+    p.volume.Ny = static_cast<int>(required<int64_t>(volume, "ny", "volume"));
+    p.volume.Nz = static_cast<int>(required<int64_t>(volume, "nz", "volume"));
     const auto* voxel = volume["voxel_mm"].as_array();
     if (!voxel || voxel->size() != 3)
         throw std::runtime_error("volume.voxel_mm 必须包含 3 个数");
-    p.vox_x_mm = static_cast<float>(required<double>(*voxel, 0, "volume.voxel_mm"));
-    p.vox_y_mm = static_cast<float>(required<double>(*voxel, 1, "volume.voxel_mm"));
-    p.vox_z_mm = static_cast<float>(required<double>(*voxel, 2, "volume.voxel_mm"));
+    p.volume.voxelX_mm = static_cast<float>(required<double>(*voxel, 0, "volume.voxel_mm"));
+    p.volume.voxelY_mm = static_cast<float>(required<double>(*voxel, 1, "volume.voxel_mm"));
+    p.volume.voxelZ_mm = static_cast<float>(required<double>(*voxel, 2, "volume.voxel_mm"));
     if (const auto* offset = volume["offset_mm"].as_array()) {
         if (offset->size() != 3) throw std::runtime_error("volume.offset_mm 必须包含 3 个数");
-        p.vol_offset_x_mm = static_cast<float>(required<double>(*offset, 0, "volume.offset_mm"));
-        p.vol_offset_y_mm = static_cast<float>(required<double>(*offset, 1, "volume.offset_mm"));
-        p.vol_offset_z_mm = static_cast<float>(required<double>(*offset, 2, "volume.offset_mm"));
+        p.volume.centerX_mm = static_cast<float>(required<double>(*offset, 0, "volume.offset_mm"));
+        p.volume.centerY_mm = static_cast<float>(required<double>(*offset, 1, "volume.offset_mm"));
+        p.volume.centerZ_mm = static_cast<float>(required<double>(*offset, 2, "volume.offset_mm"));
     }
 
     const auto& input = requiredTable(table, "input", result.name);
@@ -341,34 +345,34 @@ ReconstructionCase parseCase(const toml::table& table,
         parseTigreMethod(result.tigre.method);
     }
 
-    if (const auto* pwls = table["parallel_pwls"].as_table()) {
-        result.parallel_pwls.subsets = static_cast<int>(
+    if (const auto* pwls = table["pwls"].as_table()) {
+        result.pwls.subsets = static_cast<int>(
             optional<int64_t>(*pwls, "subsets", 1));
-        result.parallel_pwls.relaxation = static_cast<float>(
+        result.pwls.relaxation = static_cast<float>(
             optional<double>(*pwls, "relaxation", 0.8));
-        result.parallel_pwls.regularizer = optional<std::string>(*pwls,
+        result.pwls.regularizer = optional<std::string>(*pwls,
             "regularizer", "quadratic");
-        result.parallel_pwls.regularization = static_cast<float>(
+        result.pwls.regularization = static_cast<float>(
             optional<double>(*pwls, "regularization", 1e-3));
-        result.parallel_pwls.huber_delta = static_cast<float>(
+        result.pwls.huber_delta = static_cast<float>(
             optional<double>(*pwls, "huber_delta", 3e-3));
-        result.parallel_pwls.epsilon = static_cast<float>(
+        result.pwls.epsilon = static_cast<float>(
             optional<double>(*pwls, "epsilon", 1e-6));
-        result.parallel_pwls.lower_bound = static_cast<float>(
+        result.pwls.lower_bound = static_cast<float>(
             optional<double>(*pwls, "lower_bound", 0.0));
-        result.parallel_pwls.upper_bound = static_cast<float>(
+        result.pwls.upper_bound = static_cast<float>(
             optional<double>(*pwls, "upper_bound", 1e30));
-        parsePwlsRegularizer(result.parallel_pwls.regularizer);
+        parsePwlsRegularizer(result.pwls.regularizer);
     }
 
     if (const auto* filter = table["filter"].as_table()) {
-        p.desc.kind = parseFilterKernel(optional<std::string>(*filter, "kernel", "ramlak"));
-        p.desc.source = parseFilterSource(optional<std::string>(*filter, "source", "discrete-fft"));
-        p.desc.cutoff = static_cast<float>(optional<double>(*filter, "cutoff", 0.5));
-        p.desc.gain = static_cast<float>(optional<double>(*filter, "gain", 1.0));
-        p.desc.order = static_cast<float>(optional<double>(*filter, "order", 2.0));
-        p.desc.beta = static_cast<float>(optional<double>(*filter, "beta", 8.6));
-        p.desc.tukey_alpha = static_cast<float>(
+        p.reconstruction.filter.kind = parseFilterKernel(optional<std::string>(*filter, "kernel", "ramlak"));
+        p.reconstruction.filter.source = parseFilterSource(optional<std::string>(*filter, "source", "discrete-fft"));
+        p.reconstruction.filter.cutoff = static_cast<float>(optional<double>(*filter, "cutoff", 0.5));
+        p.reconstruction.filter.gain = static_cast<float>(optional<double>(*filter, "gain", 1.0));
+        p.reconstruction.filter.order = static_cast<float>(optional<double>(*filter, "order", 2.0));
+        p.reconstruction.filter.beta = static_cast<float>(optional<double>(*filter, "beta", 8.6));
+        p.reconstruction.filter.tukey_alpha = static_cast<float>(
             optional<double>(*filter, "tukey_alpha", 0.5));
     }
     const auto& output = requiredTable(table, "output", result.name);
@@ -377,10 +381,12 @@ ReconstructionCase parseCase(const toml::table& table,
     result.preview = resolvePath(base,
         optional<std::string>(output, "preview", ""));
 
-    if (p.iPU <= 0 || p.iPV <= 0 || p.iPAng <= 0 || p.iVX <= 0 || p.iVY <= 0 ||
-        p.iVZ <= 0 || p.du_mm <= 0 || p.dv_mm <= 0 || p.vox_x_mm <= 0 ||
-        p.vox_y_mm <= 0 || p.vox_z_mm <= 0 || p.SID <= 0 || p.SDD <= p.SID ||
-        p.scan_range_rad <= 0 || (p.nDirSign != 1 && p.nDirSign != -1))
+    if (p.scan.Nu <= 0 || p.scan.Nv <= 0 || p.scan.NAng <= 0 ||
+        p.volume.Nx <= 0 || p.volume.Ny <= 0 || p.volume.Nz <= 0 ||
+        p.scan.du_mm <= 0 || p.scan.dv_mm <= 0 || p.volume.voxelX_mm <= 0 ||
+        p.volume.voxelY_mm <= 0 || p.volume.voxelZ_mm <= 0 ||
+        p.scan.sid_mm <= 0 || p.scan.sdd_mm <= p.scan.sid_mm ||
+        p.scan.range_rad <= 0 || (p.scan.direction != 1 && p.scan.direction != -1))
         throw std::runtime_error(result.name + " 的尺寸或几何参数无效");
     const bool uses_subsets = result.pipeline == Pipeline::Ossart ||
         result.pipeline == Pipeline::FdkOssart;
@@ -388,7 +394,7 @@ ReconstructionCase parseCase(const toml::table& table,
         result.input.minimum_ratio <= 0.f || result.input.minimum_ratio > 1.f ||
         result.algorithm.iterations <= 0 ||
         (uses_subsets && (result.algorithm.subsets <= 0 ||
-            result.algorithm.subsets > p.iPAng)) ||
+            result.algorithm.subsets > p.scan.NAng)) ||
         result.algorithm.relaxation <= 0.f ||
         result.algorithm.relaxation_reduction <= 0.f ||
         result.algorithm.epsilon <= 0 ||
@@ -421,18 +427,19 @@ ReconstructionCase parseCase(const toml::table& table,
          result.tigre.bregman_beta_reduction <= 0.f ||
          result.tigre.bregman_interval <= 0))
         throw std::runtime_error(result.name + " 的 TIGRE 参数无效");
-    if (result.pipeline == Pipeline::ParallelPwls &&
-        (result.parallel_pwls.subsets <= 0 ||
-         result.parallel_pwls.subsets > p.iPAng ||
-         result.parallel_pwls.relaxation <= 0.f ||
-         result.parallel_pwls.regularization < 0.f ||
-         result.parallel_pwls.huber_delta <= 0.f ||
-         result.parallel_pwls.epsilon <= 0.f ||
-         result.parallel_pwls.lower_bound > result.parallel_pwls.upper_bound))
+    if (result.pipeline == Pipeline::Pwls &&
+        (result.pwls.subsets <= 0 ||
+         result.pwls.subsets > p.scan.NAng ||
+         result.pwls.relaxation <= 0.f ||
+         result.pwls.regularization < 0.f ||
+         result.pwls.huber_delta <= 0.f ||
+         result.pwls.epsilon <= 0.f ||
+         result.pwls.lower_bound > result.pwls.upper_bound))
         throw std::runtime_error(result.name + " 的 PWLS 参数无效");
-    if (!(p.desc.cutoff > 0.f && p.desc.cutoff <= 0.5f) ||
-        !std::isfinite(p.desc.gain) || p.desc.order <= 0.f || p.desc.beta < 0.f ||
-        p.desc.tukey_alpha < 0.f || p.desc.tukey_alpha > 1.f)
+    if (!(p.reconstruction.filter.cutoff > 0.f && p.reconstruction.filter.cutoff <= 0.5f) ||
+        !std::isfinite(p.reconstruction.filter.gain) || p.reconstruction.filter.order <= 0.f ||
+        p.reconstruction.filter.beta < 0.f || p.reconstruction.filter.tukey_alpha < 0.f ||
+        p.reconstruction.filter.tukey_alpha > 1.f)
         throw std::runtime_error(result.name + " 的滤波参数无效");
     return result;
 }
@@ -545,7 +552,7 @@ bool writePreview(const ReconstructionCase& config,
     const float display_max = static_cast<float>(std::max(
         std::fabs(stats.minimum), std::fabs(stats.maximum)));
     const std::vector<TestImage::GrayPanel> panels{
-        { &volume, p.iVX, p.iVY, p.iVZ, p.iVZ / 2,
+        { &volume, p.volume.Nx, p.volume.Ny, p.volume.Nz, p.volume.Nz / 2,
           1.f, 0.f, display_max, false }
     };
     return TestImage::writeGrayMontageBmp(config.preview, panels, 1, 0, 2);
@@ -556,7 +563,7 @@ bool runStreamingRawFdk(const ReconstructionCase& config,
     cudaStream_t stream, Mem::MemoryController& memory)
 {
     const auto& p = config.params;
-    const size_t view_elements = static_cast<size_t>(p.iPU) * p.iPV;
+    const size_t view_elements = static_cast<size_t>(p.scan.Nu) * p.scan.Nv;
     std::ifstream projection_input(config.input.projection, std::ios::binary);
     if (!projection_input) return false;
 
@@ -565,8 +572,8 @@ bool runStreamingRawFdk(const ReconstructionCase& config,
         !readFloatFile(config.input.air, view_elements, air)) return false;
 
     std::array<Mem::HostPinnedBuffer3D<float>, 2> batches{
-        memory.allocatePinnedCpu3D<float>(p.iPU, p.iPV, config.batch_views),
-        memory.allocatePinnedCpu3D<float>(p.iPU, p.iPV, config.batch_views)
+        memory.allocatePinnedCpu3D<float>(p.scan.Nu, p.scan.Nv, config.batch_views),
+        memory.allocatePinnedCpu3D<float>(p.scan.Nu, p.scan.Nv, config.batch_views)
     };
     std::array<FdkBatchFence, 2> fences;
     FdkPipeline pipeline;
@@ -574,11 +581,11 @@ bool runStreamingRawFdk(const ReconstructionCase& config,
         stream, config.device);
     ValueStatistics projection_stats;
 
-    for (int base = 0; ok && base < p.iPAng; base += config.batch_views) {
+    for (int base = 0; ok && base < p.scan.NAng; base += config.batch_views) {
         const size_t slot = static_cast<size_t>(
             (base / config.batch_views) % batches.size());
         ok = fences[slot].wait();
-        const int count = std::min(config.batch_views, p.iPAng - base);
+        const int count = std::min(config.batch_views, p.scan.NAng - base);
         const size_t elements = view_elements * static_cast<size_t>(count);
         ok = ok && readFloats(projection_input, batches[slot].data(), elements);
         if (ok && !air.empty())
@@ -605,9 +612,9 @@ bool runStreamingRawFdk(const ReconstructionCase& config,
 bool runCase(const ReconstructionCase& config)
 {
     const auto& p = config.params;
-    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    const size_t view_elements = static_cast<size_t>(p.iPU) * p.iPV;
-    const size_t projection_count = view_elements * p.iPAng;
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t view_elements = static_cast<size_t>(p.scan.Nu) * p.scan.Nv;
+    const size_t projection_count = view_elements * p.scan.NAng;
     std::vector<SConeProjGeomVec> geometry;
     detail::buildCircularViews(p, geometry);
 
@@ -626,7 +633,7 @@ bool runCase(const ReconstructionCase& config)
     std::vector<float> output(volume_count);
     {
         Mem::MemoryController memory;
-        auto d_volume = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ,
+        auto d_volume = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz,
             config.device);
 
         if (config.pipeline == Pipeline::Fdk &&
@@ -634,8 +641,8 @@ bool runCase(const ReconstructionCase& config)
             ok = runStreamingRawFdk(config, geometry, d_volume.data(), stream, memory);
         }
         else {
-            auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV,
-                p.iPAng, config.device);
+            auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv,
+                p.scan.NAng, config.device);
             std::vector<float> projection;
             if (config.input.mode == InputMode::ProjectionRaw) {
                 ok = readFloatFile(config.input.projection, projection_count, projection);
@@ -644,7 +651,7 @@ bool runCase(const ReconstructionCase& config)
                     ValueStatistics unused;
                     ok = readFloatFile(config.input.air, view_elements, air) &&
                         applyAirCorrection(air, projection.data(), view_elements,
-                            p.iPAng, config.input.minimum_ratio, unused);
+                            p.scan.NAng, config.input.minimum_ratio, unused);
                 }
                 ok = ok && cudaMemcpyAsync(d_projection.data(), projection.data(),
                     projection_count * sizeof(float), cudaMemcpyHostToDevice,
@@ -653,7 +660,7 @@ bool runCase(const ReconstructionCase& config)
             else {
                 const std::vector<float> phantom = config.input.phantom == "basic" ?
                     TestPhantom::makeBasic(p) : TestPhantom::makeCatphanLike(p);
-                auto d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ,
+                auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz,
                     config.device);
                 ok = cudaMemcpyAsync(d_truth.data(), phantom.data(),
                     volume_count * sizeof(float), cudaMemcpyHostToDevice,
@@ -681,7 +688,7 @@ bool runCase(const ReconstructionCase& config)
                     stream) == cudaSuccess && cudaStreamSynchronize(stream) == cudaSuccess;
                 FdkPipeline pipeline;
                 const FdkProjectionBatch batch{
-                    projection.data(), nullptr, nullptr, p.iPAng };
+                    projection.data(), nullptr, nullptr, p.scan.NAng };
                 ok = ok && pipeline.prepareWithGeometry(p, geometry,
                     config.chunk_views, stream, config.device) &&
                     pipeline.processBatchSync(batch, d_volume.data(), true) &&
@@ -730,7 +737,7 @@ bool runCase(const ReconstructionCase& config)
                     Iter::EAlgebraicMethod::Sart : Iter::EAlgebraicMethod::Ossart;
                 algorithm.iterations = config.algorithm.iterations;
                 algorithm.subset_count = config.pipeline == Pipeline::Sirt ? 1 :
-                    config.pipeline == Pipeline::Sart ? p.iPAng :
+                    config.pipeline == Pipeline::Sart ? p.scan.NAng :
                     config.algorithm.subsets;
                 algorithm.weight_model = parseWeightModel(
                     config.algorithm.weight_model);
@@ -826,23 +833,23 @@ bool runCase(const ReconstructionCase& config)
                     config.device) && reconstructor.reconstruct(
                         d_projection.data(), d_volume.data());
             }
-            else if (ok && config.pipeline == Pipeline::ParallelPwls) {
-                Iter::ParallelPwlsConfig algorithm{};
+            else if (ok && config.pipeline == Pipeline::Pwls) {
+                Iter::PwlsConfig algorithm{};
                 algorithm.iterations = config.algorithm.iterations;
-                algorithm.subset_count = config.parallel_pwls.subsets;
-                algorithm.relaxation = config.parallel_pwls.relaxation;
+                algorithm.subset_count = config.pwls.subsets;
+                algorithm.relaxation = config.pwls.relaxation;
                 algorithm.regularizer = parsePwlsRegularizer(
-                    config.parallel_pwls.regularizer);
-                algorithm.regularization = config.parallel_pwls.regularization;
-                algorithm.huber_delta = config.parallel_pwls.huber_delta;
-                algorithm.epsilon = config.parallel_pwls.epsilon;
-                algorithm.lower_bound = config.parallel_pwls.lower_bound;
-                algorithm.upper_bound = config.parallel_pwls.upper_bound;
+                    config.pwls.regularizer);
+                algorithm.regularization = config.pwls.regularization;
+                algorithm.huber_delta = config.pwls.huber_delta;
+                algorithm.epsilon = config.pwls.epsilon;
+                algorithm.lower_bound = config.pwls.lower_bound;
+                algorithm.upper_bound = config.pwls.upper_bound;
                 algorithm.fp_task = parseForwardProjector(
                     config.algorithm.forward_projector);
                 algorithm.bp_task = parseBackProjector(
                     config.algorithm.back_projector);
-                Iter::ParallelPwlsReconstructor reconstructor;
+                Iter::PwlsReconstructor reconstructor;
                 ok = reconstructor.prepare(p, geometry, algorithm, stream,
                     config.device) && reconstructor.reconstruct(
                         d_projection.data(), d_volume.data());
@@ -896,8 +903,10 @@ int runConfiguredReconstruction(const std::filesystem::path& file,
     try {
         const toml::table document = toml::parse_file(file.string());
         const std::string task = document["task"].value_or(std::string("reconstruction"));
-        if (task == "forward-projection")
+        if (task == "forward-projection" || task == "cyl-fp-bp")
             return runConfiguredForwardProjection(file, case_name);
+        if (task == "wfbp-reconstruction" || task == "helical-reconstruction")
+            return runConfiguredWfbp(file, case_name);
         if (task != "reconstruction") {
             YK_LOGE("未知配置任务类型: {}", task);
             return 2;

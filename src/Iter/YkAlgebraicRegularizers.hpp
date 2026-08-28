@@ -46,7 +46,7 @@ struct AlgebraicRegularizationContext {
 class IAlgebraicRegularizer {
 public:
     virtual ~IAlgebraicRegularizer() = default;
-    virtual bool prepare(const SCBCTParams& params,
+    virtual bool prepare(const SReconstructionParams& params,
         const AlgebraicRegularizationConfig& config,
         cudaStream_t stream, int device_id) = 0;
     virtual bool apply(float* d_volume,
@@ -60,7 +60,7 @@ class SmoothedTvRegularizer final : public IAlgebraicRegularizer {
 public:
     ~SmoothedTvRegularizer() override { release(); }
 
-    bool prepare(const SCBCTParams& params,
+    bool prepare(const SReconstructionParams& params,
         const AlgebraicRegularizationConfig& config,
         cudaStream_t stream, int device_id) override
     {
@@ -69,8 +69,8 @@ public:
         config_ = config;
         stream_ = stream;
         strength_ = config.strength;
-        volume_elements_ = static_cast<size_t>(params.iVX) *
-            params.iVY * params.iVZ;
+        volume_elements_ = static_cast<size_t>(params.volume.Nx) *
+            params.volume.Ny * params.volume.Nz;
         if (cudaSetDevice(device_id) != cudaSuccess ||
             cudaMalloc(&d_gradient_, volume_elements_ * sizeof(float)) != cudaSuccess) {
             release();
@@ -86,8 +86,8 @@ public:
         if (!prepared_ || !d_volume) return false;
         for (int iteration = 0; iteration < config_.inner_iterations; ++iteration) {
             tv_gradient_launch(d_volume, d_gradient_,
-                params_.iVX, params_.iVY, params_.iVZ,
-                params_.vox_x_mm, params_.vox_y_mm, params_.vox_z_mm,
+                params_.volume.Nx, params_.volume.Ny, params_.volume.Nz,
+                params_.volume.voxelX_mm, params_.volume.voxelY_mm, params_.volume.voxelZ_mm,
                 config_.epsilon,
                 static_cast<int>(config_.tv_dimensionality), stream_);
             axpy_launch(d_volume, d_gradient_, -strength_,
@@ -112,7 +112,7 @@ public:
     }
 
 private:
-    SCBCTParams params_{};
+    SReconstructionParams params_{};
     AlgebraicRegularizationConfig config_{};
     cudaStream_t stream_ = nullptr;
     float* d_gradient_ = nullptr;
@@ -125,7 +125,7 @@ private:
 // 辅助变量或历史体积；统一代数重建器只负责固定的外循环调度协议。
 class AlgebraicRegularizer {
 public:
-    bool prepare(const SCBCTParams& params,
+    bool prepare(const SReconstructionParams& params,
         const AlgebraicRegularizationConfig& config,
         cudaStream_t stream, int device_id)
     {

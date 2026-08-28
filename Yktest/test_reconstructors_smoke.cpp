@@ -7,10 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "Iter/YkAlgebraicReconstructor.hpp"
-#include "Iter/YkCGLS.hpp"
 #include "Iter/YkCglsReconstructor.hpp"
-#include "Iter/YkOSSART.hpp"
-#include "Iter/YkSART.hpp"
 #include "Iter/YkTigreGradientReconstructor.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
@@ -21,24 +18,24 @@ namespace {
 
 using namespace YK;
 
-SCBCTParams makeIterativeParams()
+SReconstructionParams makeIterativeParams()
 {
-    SCBCTParams p{};
+    SReconstructionParams p{};
     // 32x24 同时覆盖迭代算子和 FDK 初始化路径；FDK 的纹理/FFT 工作区
     // 使用这个已验证的最小探测器尺寸。
-    p.iPU = 32; p.iPV = 24;
-    p.iPAng = 8; p.iPAngTotal = 8;
-    p.iVX = 16; p.iVY = 16; p.iVZ = 12;
-    p.du_mm = 1.f; p.dv_mm = 1.f;
-    p.vox_x_mm = 1.f; p.vox_y_mm = 1.f; p.vox_z_mm = 1.f;
-    p.SID = 80.f; p.SDD = 160.f;
-    p.scan_range_rad = 2.f * CUDA_PI;
-    p.scan_start_angle_rad = 0.f;
-    p.nDirSign = 1;
-    p.bShortScan = false;
-    p.angle_list.resize(p.iPAng);
-    for (int i = 0; i < p.iPAng; ++i)
-        p.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / p.iPAng;
+    p.scan.Nu = 32; p.scan.Nv = 24;
+    p.scan.NAng = 8; p.scan.totalViews = 8;
+    p.volume.Nx = 16; p.volume.Ny = 16; p.volume.Nz = 12;
+    p.scan.du_mm = 1.f; p.scan.dv_mm = 1.f;
+    p.volume.voxelX_mm = 1.f; p.volume.voxelY_mm = 1.f; p.volume.voxelZ_mm = 1.f;
+    p.scan.sid_mm = 80.f; p.scan.sdd_mm = 160.f;
+    p.scan.range_rad = 2.f * CUDA_PI;
+    p.scan.start_angle_rad = 0.f;
+    p.scan.direction = 1;
+    p.scan.short_scan = false;
+    p.scan.angles.resize(p.scan.NAng);
+    for (int i = 0; i < p.scan.NAng; ++i)
+        p.scan.angles[i] = 2.f * CUDA_PI * static_cast<float>(i) / p.scan.NAng;
     return p;
 }
 
@@ -67,13 +64,13 @@ public:
     bool prepare()
     {
         p = makeIterativeParams();
-        volume_n = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-        sino_n = static_cast<size_t>(p.iPAng) * p.iPU * p.iPV;
+        volume_n = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+        sino_n = static_cast<size_t>(p.scan.NAng) * p.scan.Nu * p.scan.Nv;
         const auto h_truth = TestPhantom::makeCatphanLike(p);
         if (!cudaOk(cudaStreamCreate(&stream), "create stream")) return false;
-        d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
-        d_sino = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-        d_recon = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
+        d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
+        d_sino = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+        d_recon = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
         if (!cudaOk(cudaMemcpyAsync(d_truth.data(), h_truth.data(), volume_n * sizeof(float),
             cudaMemcpyHostToDevice, stream), "upload phantom"))
             return false;
@@ -110,7 +107,7 @@ public:
         }
     }
 
-    SCBCTParams p{};
+    SReconstructionParams p{};
     std::vector<SConeProjGeomVec> external_geometry{};
     cudaStream_t stream = nullptr;
     Mem::DeviceLinearBuffer3D<float> d_truth{};
@@ -143,72 +140,6 @@ int executeReconstructorSmoke(const char* name, Run&& run)
 }
 
 } // namespace
-
-int main_sart_smoke()
-{
-    return executeReconstructorSmoke("SART", [](IterativeFixture& f) {
-        SART recon;
-        SART::Config cfg{};
-        cfg.n_iter = 1; cfg.lambda = 0.2f; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v2;
-        const bool ok = recon.init(f.p, cfg, f.stream) && recon.run(f.d_sino.data(), f.d_recon.data(), f.p, f.stream);
-        recon.release();
-        return ok;
-    });
-}
-
-int main_sirt_smoke()
-{
-    return executeReconstructorSmoke("SIRT", [](IterativeFixture& f) {
-        SIRT recon;
-        SIRT::Config cfg{};
-        cfg.n_iter = 1; cfg.n_batch = 2; cfg.lambda = 0.2f; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v3;
-        const bool ok = recon.init(f.p, cfg, f.stream) && recon.run(f.d_sino.data(), f.d_recon.data(), f.p, f.stream);
-        recon.release();
-        return ok;
-    });
-}
-
-int main_ossart_tigre_smoke()
-{
-    return executeReconstructorSmoke("OSSART_TIGRE", [](IterativeFixture& f) {
-        OSSART_TIGRE recon;
-        OSSART_TIGRE::Config cfg{};
-        cfg.n_iter = 1; cfg.n_subset = 2; cfg.lambda = 0.2f; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v2;
-        const bool ok = recon.init(f.p, cfg, f.stream) && recon.run(f.d_sino.data(), f.d_recon.data(), f.p, f.stream);
-        recon.release();
-        return ok;
-    });
-}
-
-int main_ossart_smoke()
-{
-    return executeReconstructorSmoke("OSSART", [](IterativeFixture& f) {
-        OSSART recon;
-        OSSART::Config cfg{};
-        cfg.n_iter = 1; cfg.n_subset = 2; cfg.lambda = 0.2f; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v2;
-        const bool ok = recon.init(f.p, cfg, f.stream) && recon.run(f.d_sino.data(), f.d_recon.data(), f.p, f.stream);
-        recon.release();
-        return ok;
-    });
-}
-
-int main_ossart_ex_smoke()
-{
-    return executeReconstructorSmoke("OSSARTEx", [](IterativeFixture& f) {
-        OSSARTEx recon;
-        OSSARTEx::Config cfg{};
-        cfg.n_iter = 1; cfg.n_subset = 2; cfg.lambda = 0.2f; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v2;
-        const bool ok = recon.init(f.p, cfg, f.external_geometry, f.stream) &&
-            recon.run(f.d_sino.data(), f.d_recon.data(), f.stream);
-        recon.release();
-        return ok;
-    });
-}
 
 int main_algebraic_ex_smoke()
 {
@@ -246,21 +177,6 @@ int main_algebraic_ex_smoke()
         if (result != 0) return result;
     }
     return 0;
-}
-
-int main_algebraic_smoke()
-{
-    return executeReconstructorSmoke("AlgebraicReconstructor", [](IterativeFixture& f) {
-        Iter::AlgebraicReconstructor::Config cfg{};
-        cfg.method = Iter::EAlgebraicMethod::Ossart;
-        cfg.iterations = 1;
-        cfg.subset_count = 2;
-        cfg.relaxation = 0.2f;
-        cfg.use_min = true;
-        Iter::AlgebraicReconstructor recon;
-        return recon.prepare(f.p, cfg, f.stream) &&
-            recon.reconstruct(f.d_sino.data(), f.d_recon.data());
-    });
 }
 
 int main_iterative_convergence_smoke()
@@ -468,7 +384,7 @@ int main_tigre_gradient_family_smoke()
     // B-ASD-POCS-beta 只更新内部工作投影，调用者传入的测量必须保持只读。
     return executeReconstructorSmoke("TIGRE-Bregman-projection-readonly",
         [](IterativeFixture& f) {
-            const size_t count = static_cast<size_t>(f.p.iPAng) * f.p.iPU * f.p.iPV;
+            const size_t count = static_cast<size_t>(f.p.scan.NAng) * f.p.scan.Nu * f.p.scan.Nv;
             std::vector<float> before(count);
             std::vector<float> after(count);
             if (!cudaOk(cudaMemcpyAsync(before.data(), f.d_sino.data(),
@@ -495,46 +411,6 @@ int main_tigre_gradient_family_smoke()
                 return false;
             return before == after;
         });
-}
-
-int main_cgls_smoke()
-{
-    return executeReconstructorSmoke("CGLS", [](IterativeFixture& f) {
-        CGLS recon;
-        CGLS::Config cfg{};
-        cfg.n_iter = 1; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v2;
-        const bool ok = recon.init(f.p, cfg, f.stream) && recon.run(f.d_sino.data(), f.d_recon.data(), f.p, f.stream);
-        recon.release();
-        return ok;
-    });
-}
-
-int main_cgls_astra_smoke()
-{
-    return executeReconstructorSmoke("CGLSAstra", [](IterativeFixture& f) {
-        CGLSAstra recon;
-        CGLSAstra::Config cfg{};
-        cfg.n_iter = 1; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v2;
-        const bool ok = recon.init(f.p, cfg, f.stream) && recon.run(f.d_sino.data(), f.d_recon.data(), f.p, f.stream);
-        recon.release();
-        return ok;
-    });
-}
-
-int main_cgls_ex_smoke()
-{
-    return executeReconstructorSmoke("CGLSEx", [](IterativeFixture& f) {
-        CGLSEx recon;
-        CGLSEx::Config cfg{};
-        cfg.n_iter = 1; cfg.use_min = true;
-        cfg.fp_task = ETask::FP_Joseph; cfg.bp_task = ETask::BP_Joseph_v2;
-        const bool ok = recon.init(f.p, cfg, f.external_geometry, f.stream) &&
-            recon.run(f.d_sino.data(), f.d_recon.data(), f.p, f.stream);
-        recon.release();
-        return ok;
-    });
 }
 
 int main_cgls_unified_smoke()

@@ -1,6 +1,9 @@
 ﻿#pragma once
 #include "Filter/YkCreateFilterKernel.cuh"
 #include "global/YkGlobals.h"
+#include "global/YkFdkKernelTypes.hpp"
+#include "global/YkFilterTypes.hpp"
+#include "global/YkKernelLaunchPolicy.hpp"
 #include "global/YkMacro.hpp"
 #include "common/YkVecGeo.hpp"
 
@@ -40,9 +43,6 @@ namespace YK {
 // ============================================================
     struct ParkerWeightConfig {
         SProjDims    dims = {};
-        float        fDetUSize = 1.f;
-        float        fSrcOrigin = 0.f;
-        float        fDetOrigin = 0.f;
         int          iPAnglesTotal = 0; // 整个扫描的总视角数（非 chunk 内），用于计算相对角度
         float        fScanRangeRad = 2.f * CUDA_PI; // 扫描范围（弧度），短扫描时 < 2Pi
         float        fStartAngleRad;     // 全局起始角度
@@ -51,6 +51,8 @@ namespace YK {
 
     struct ParkerWeightChunk {
         const SConeProjGeomVec* h_geometry = nullptr; // 当前 chunk 的唯一角度来源
+        const SConeProjGeomVec* d_geometry = nullptr; // 每像素真实扇角的几何来源
+        const SFDKGeoParamPerView* d_gv = nullptr; // 每视图真实距离、主点和像素尺寸
         int          K = 0;
     };
 

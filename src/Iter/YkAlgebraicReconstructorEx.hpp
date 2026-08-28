@@ -60,7 +60,7 @@ struct AlgebraicReconstructionConfig {
 //
 // SIRT/SART/OSSART 共用 OSSARTEx 的任意 cone-vector geometry 数据流，
 // 只改变子集数，因此其投影、归一化、约束和生命周期完全一致。
-// TIGRE 风格后端目前仍只支持 SCBCTParams 可表达的圆轨迹；prepare() 会
+// TIGRE 风格后端目前仍只支持 SReconstructionParams 可表达的圆轨迹；prepare() 会
 // 校验传入 geometry 与该圆轨迹一致，拒绝静默丢弃任意几何信息。
 class AlgebraicReconstructorEx {
 public:
@@ -70,7 +70,7 @@ public:
     AlgebraicReconstructorEx(const AlgebraicReconstructorEx&) = delete;
     AlgebraicReconstructorEx& operator=(const AlgebraicReconstructorEx&) = delete;
 
-    bool prepare(const SCBCTParams& params,
+    bool prepare(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry,
         const AlgebraicReconstructionConfig& config,
         cudaStream_t stream, int device_id = 0)
@@ -221,12 +221,12 @@ public:
 private:
     size_t volumeCount_() const
     {
-        return static_cast<size_t>(params_.iVX) * params_.iVY * params_.iVZ;
+        return static_cast<size_t>(params_.volume.Nx) * params_.volume.Ny * params_.volume.Nz;
     }
 
     size_t projectionCount_() const
     {
-        return static_cast<size_t>(params_.iPAng) * params_.iPU * params_.iPV;
+        return static_cast<size_t>(params_.scan.NAng) * params_.scan.Nu * params_.scan.Nv;
     }
 
     bool prepareConvergence_(const std::vector<SConeProjGeomVec>& geometry,
@@ -335,8 +335,8 @@ private:
 
     void applyConstraints_(float* d_volume)
     {
-        const size_t count = static_cast<size_t>(params_.iVX) *
-            params_.iVY * params_.iVZ;
+        const size_t count = static_cast<size_t>(params_.volume.Nx) *
+            params_.volume.Ny * params_.volume.Nz;
         if (config_.use_min)
             YK::Iter::clamp_min_launch(
                 d_volume, count, config_.min_constraint, stream_);
@@ -345,22 +345,22 @@ private:
                 d_volume, count, config_.max_constraint, stream_);
     }
 
-    static int resolvedSubsetCount_(const SCBCTParams& params,
+    static int resolvedSubsetCount_(const SReconstructionParams& params,
         const AlgebraicReconstructionConfig& config)
     {
         if (config.method == EAlgebraicMethod::Sirt) return 1;
-        if (config.method == EAlgebraicMethod::Sart) return params.iPAng;
+        if (config.method == EAlgebraicMethod::Sart) return params.scan.NAng;
         return config.subset_count;
     }
 
-    static bool validate_(const SCBCTParams& params,
+    static bool validate_(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry,
         const AlgebraicReconstructionConfig& config, cudaStream_t stream)
     {
         const int subsets = resolvedSubsetCount_(params, config);
-        if (!stream || params.iPAng <= 0 || params.iPAngTotal < params.iPAng ||
-            static_cast<int>(geometry.size()) != params.iPAng ||
-            config.iterations <= 0 || subsets <= 0 || subsets > params.iPAng ||
+        if (!stream || params.scan.NAng <= 0 || params.scan.totalViews < params.scan.NAng ||
+            static_cast<int>(geometry.size()) != params.scan.NAng ||
+            config.iterations <= 0 || subsets <= 0 || subsets > params.scan.NAng ||
             config.relaxation <= 0.f || config.relaxation_reduction <= 0.f ||
             config.epsilon <= 0.f || config.min_constraint > config.max_constraint ||
             !validConvergenceConfig(config.convergence)) {
@@ -373,15 +373,15 @@ private:
              regularization.inner_iterations <= 0 ||
              regularization.epsilon <= 0.f ||
              regularization.strength_reduction <= 0.f ||
-             params.vox_x_mm <= 0.f || params.vox_y_mm <= 0.f ||
-             params.vox_z_mm <= 0.f)) {
+             params.volume.voxelX_mm <= 0.f || params.volume.voxelY_mm <= 0.f ||
+             params.volume.voxelZ_mm <= 0.f)) {
             YK_LOGE("[AlgebraicReconstructorEx] 无效正则化配置");
             return false;
         }
         return true;
     }
 
-    SCBCTParams params_{};
+    SReconstructionParams params_{};
     AlgebraicReconstructionConfig config_{};
     cudaStream_t stream_ = nullptr;
     std::vector<SConeProjGeomVec> geometry_{};
@@ -400,13 +400,13 @@ private:
     IterativeConvergenceStatistics convergence_statistics_{};
 };
 
-// 标准圆轨迹便捷入口。它只负责由 SCBCTParams 生成逐视角 geometry，实际
+// 标准圆轨迹便捷入口。它只负责由 SReconstructionParams 生成逐视角 geometry，实际
 // 重建仍由 Ex 类完成，因此普通版与显式几何版不会形成两套算法实现。
 class AlgebraicReconstructor {
 public:
     using Config = AlgebraicReconstructionConfig;
 
-    bool prepare(const SCBCTParams& params, const Config& config,
+    bool prepare(const SReconstructionParams& params, const Config& config,
         cudaStream_t stream, int device_id = 0)
     {
         std::vector<SConeProjGeomVec> geometry;

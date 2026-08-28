@@ -37,13 +37,13 @@ public:
     CglsReconstructorEx(const CglsReconstructorEx&) = delete;
     CglsReconstructorEx& operator=(const CglsReconstructorEx&) = delete;
 
-    bool prepare(const SCBCTParams& params,
+    bool prepare(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry,
         const Config& config, cudaStream_t stream, int device_id = 0)
     {
         release();
-        if (!stream || params.iPAng <= 0 ||
-            static_cast<int>(geometry.size()) != params.iPAng ||
+        if (!stream || params.scan.NAng <= 0 ||
+            static_cast<int>(geometry.size()) != params.scan.NAng ||
             config.iterations <= 0 || config.epsilon <= 0.f ||
             config.min_constraint > config.max_constraint ||
             !validConvergenceConfig(config.convergence) ||
@@ -108,7 +108,7 @@ public:
     { return robust_.statistics(); }
 
 private:
-    SCBCTParams params_{};
+    SReconstructionParams params_{};
     Config config_{};
     cudaStream_t stream_ = nullptr;
     bool prepared_ = false;

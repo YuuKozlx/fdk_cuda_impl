@@ -21,7 +21,7 @@ enum class EPwlsRegularizer : int {
     Huber = 2
 };
 
-struct ParallelPwlsConfig {
+struct PwlsConfig {
     int iterations = 10;
     // 1 表示全批量更新；大于 1 时按 view_index % subset_count 构造
     // 交错 ordered subsets。iterations 表示完整遍历全部子集的外循环数。
@@ -36,10 +36,13 @@ struct ParallelPwlsConfig {
     float lower_bound = 0.f;
     float upper_bound = std::numeric_limits<float>::max();
     ETask fp_task = ETask::FP_Joseph;
-    ETask bp_task = ETask::BP_Joseph_v3;
+    // PWLS 的 residual BP 是数据项梯度 A^T(Ax-b)，必须选择 FP 的伴随。
+    // 数值内积测试中 Joseph/Joseph 的相对误差约 1e-4，而 Joseph-v3
+    // 约为 0.72；后者适合经验性体素反投，但不能作为 PWLS 默认梯度。
+    ETask bp_task = ETask::BP_Joseph;
 };
 
-// 通用全批量并行 PWLS 重建器。
+// 通用 PWLS 重建器。
 //
 //   min_x 0.5 ||Ax-b||^2 + 0.5 beta sum_(j in N(i)) (x_i-x_j)^2
 //
@@ -47,16 +50,16 @@ struct ParallelPwlsConfig {
 // 同步更新全部体素。它执行的是 SIRT 风格的全批量并行更新，不是逐体素
 // 立即传播残差的串行 ICD。几何由调用者显式传入，可用于圆轨迹、螺旋轨迹
 // 或其他由当前 FP/BP 算子支持的 cone_vec 几何。
-class ParallelPwlsReconstructor {
+class PwlsReconstructor {
 public:
-    ~ParallelPwlsReconstructor() { release(); }
-    ParallelPwlsReconstructor() = default;
-    ParallelPwlsReconstructor(const ParallelPwlsReconstructor&) = delete;
-    ParallelPwlsReconstructor& operator=(const ParallelPwlsReconstructor&) = delete;
+    ~PwlsReconstructor() { release(); }
+    PwlsReconstructor() = default;
+    PwlsReconstructor(const PwlsReconstructor&) = delete;
+    PwlsReconstructor& operator=(const PwlsReconstructor&) = delete;
 
-    bool prepare(const SCBCTParams& params,
+    bool prepare(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry,
-        const ParallelPwlsConfig& config, cudaStream_t stream, int device_id = 0)
+        const PwlsConfig& config, cudaStream_t stream, int device_id = 0)
     {
         release();
         if (!validate_(params, geometry, config, stream)) return false;
@@ -68,22 +71,22 @@ public:
 
         const size_t volume_count = volumeCount_();
         buildSubsets_();
-        const size_t max_subset_projection_count = static_cast<size_t>(params_.iPU) *
-            params_.iPV * max_subset_views_;
+        const size_t max_subset_projection_count = static_cast<size_t>(params_.scan.Nu) *
+            params_.scan.Nv * max_subset_views_;
         // 曲率预计算 A^T(A1) 仍使用完整投影，因此 forward 缓冲保留全尺寸；
         // measured/residual 仅需容纳最大的单个子集。
-        d_forward_ = memory_.allocateDevice3D<float>(params_.iPU, params_.iPV,
-            params_.iPAng, device_id_);
-        d_residual_ = memory_.allocateDevice3D<float>(params_.iPU, params_.iPV,
+        d_forward_ = memory_.allocateDevice3D<float>(params_.scan.Nu, params_.scan.Nv,
+            params_.scan.NAng, device_id_);
+        d_residual_ = memory_.allocateDevice3D<float>(params_.scan.Nu, params_.scan.Nv,
             max_subset_views_, device_id_);
-        d_measured_subset_ = memory_.allocateDevice3D<float>(params_.iPU,
-            params_.iPV, max_subset_views_, device_id_);
-        d_gradient_ = memory_.allocateDevice3D<float>(params_.iVX, params_.iVY,
-            params_.iVZ, device_id_);
-        d_curvature_ = memory_.allocateDevice3D<float>(params_.iVX, params_.iVY,
-            params_.iVZ, device_id_);
-        d_ones_ = memory_.allocateDevice3D<float>(params_.iVX, params_.iVY,
-            params_.iVZ, device_id_);
+        d_measured_subset_ = memory_.allocateDevice3D<float>(params_.scan.Nu,
+            params_.scan.Nv, max_subset_views_, device_id_);
+        d_gradient_ = memory_.allocateDevice3D<float>(params_.volume.Nx, params_.volume.Ny,
+            params_.volume.Nz, device_id_);
+        d_curvature_ = memory_.allocateDevice3D<float>(params_.volume.Nx, params_.volume.Ny,
+            params_.volume.Nz, device_id_);
+        d_ones_ = memory_.allocateDevice3D<float>(params_.volume.Nx, params_.volume.Ny,
+            params_.volume.Nz, device_id_);
 
         if (!fp_.init(params_, geometry_, config_.fp_task, device_id_, stream_) ||
             !bp_.init(params_, geometry_, config_.bp_task, device_id_, stream_)) {
@@ -111,11 +114,11 @@ public:
     bool reconstruct(const float* d_measured_projection, float* d_volume)
     {
         if (!prepared_ || !d_measured_projection || !d_volume) return false;
-        const size_t view_size = static_cast<size_t>(params_.iPU) * params_.iPV;
+        const size_t view_size = static_cast<size_t>(params_.scan.Nu) * params_.scan.Nv;
         for (int iteration = 0; iteration < config_.iterations; ++iteration) {
             for (size_t subset = 0; subset < subset_indices_.size(); ++subset) {
                 const auto& indices = subset_indices_[subset];
-                const SCBCTParams& subset_params = subset_params_[subset];
+                const SReconstructionParams& subset_params = subset_params_[subset];
                 const size_t projection_count = indices.size() * view_size;
                 for (size_t local_view = 0; local_view < indices.size(); ++local_view) {
                     YK_CUDA_CHECK(cudaMemcpyAsync(
@@ -133,7 +136,7 @@ public:
                 const float subset_scale = 1.f /
                     static_cast<float>(subset_indices_.size());
                 parallel_pwls_update_launch(d_volume, d_gradient_.data(),
-                    d_curvature_.data(), params_.iVX, params_.iVY, params_.iVZ,
+                    d_curvature_.data(), params_.volume.Nx, params_.volume.Ny, params_.volume.Nz,
                     config_.relaxation, subset_scale,
                     static_cast<int>(config_.regularizer),
                     config_.regularization * subset_scale, config_.huber_delta,
@@ -168,25 +171,25 @@ public:
     bool isPrepared() const { return prepared_; }
 
 private:
-    static bool validate_(const SCBCTParams& params,
+    static bool validate_(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry,
-        const ParallelPwlsConfig& config, cudaStream_t stream)
+        const PwlsConfig& config, cudaStream_t stream)
     {
-        if (!stream || params.iPU <= 0 || params.iPV <= 0 || params.iPAng <= 0 ||
-            params.iPAngTotal < params.iPAng || params.iVX <= 0 || params.iVY <= 0 ||
-            params.iVZ <= 0 || static_cast<int>(geometry.size()) != params.iPAng ||
+        if (!stream || params.scan.Nu <= 0 || params.scan.Nv <= 0 || params.scan.NAng <= 0 ||
+            params.scan.totalViews < params.scan.NAng || params.volume.Nx <= 0 || params.volume.Ny <= 0 ||
+            params.volume.Nz <= 0 || static_cast<int>(geometry.size()) != params.scan.NAng ||
             config.iterations <= 0 || config.relaxation <= 0.f ||
-            config.subset_count <= 0 || config.subset_count > params.iPAng ||
+            config.subset_count <= 0 || config.subset_count > params.scan.NAng ||
             config.regularization < 0.f || config.epsilon <= 0.f ||
             (config.regularizer == EPwlsRegularizer::Huber &&
                 config.huber_delta <= 0.f) ||
             config.lower_bound > config.upper_bound) {
-            YK_LOGE("[Iter::ParallelPwlsReconstructor] invalid configuration");
+            YK_LOGE("[Iter::PwlsReconstructor] invalid configuration");
             return false;
         }
         for (const auto& view : geometry) {
             if (!std::isfinite(view.angle.x)) {
-                YK_LOGE("[Iter::ParallelPwlsReconstructor] non-finite geometry");
+                YK_LOGE("[Iter::PwlsReconstructor] non-finite geometry");
                 return false;
             }
         }
@@ -194,9 +197,9 @@ private:
     }
 
     size_t volumeCount_() const
-    { return static_cast<size_t>(params_.iVX) * params_.iVY * params_.iVZ; }
+    { return static_cast<size_t>(params_.volume.Nx) * params_.volume.Ny * params_.volume.Nz; }
     size_t projectionCount_() const
-    { return static_cast<size_t>(params_.iPAng) * params_.iPU * params_.iPV; }
+    { return static_cast<size_t>(params_.scan.NAng) * params_.scan.Nu * params_.scan.Nv; }
 
     void buildSubsets_()
     {
@@ -205,33 +208,33 @@ private:
         max_subset_views_ = 0;
         for (int subset = 0; subset < config_.subset_count; ++subset) {
             auto& indices = subset_indices_[subset];
-            for (int view = subset; view < params_.iPAng; view += config_.subset_count)
+            for (int view = subset; view < params_.scan.NAng; view += config_.subset_count)
                 indices.push_back(view);
             max_subset_views_ = std::max(max_subset_views_,
                 static_cast<int>(indices.size()));
             auto& subset_params = subset_params_[subset];
             subset_params = params_;
-            subset_params.iPAng = static_cast<int>(indices.size());
-            subset_params.angle_list.resize(indices.size());
+            subset_params.scan.NAng = static_cast<int>(indices.size());
+            subset_params.scan.angles.resize(indices.size());
             for (size_t i = 0; i < indices.size(); ++i)
-                subset_params.angle_list[i] = params_.angle_list[indices[i]];
-            if (subset_params.angle_list.size() > 1) {
-                subset_params.scan_start_angle_rad = subset_params.angle_list.front();
-                subset_params.scan_range_rad = subset_params.angle_list.back() -
-                    subset_params.angle_list.front();
+                subset_params.scan.angles[i] = params_.scan.angles[indices[i]];
+            if (subset_params.scan.angles.size() > 1) {
+                subset_params.scan.start_angle_rad = subset_params.scan.angles.front();
+                subset_params.scan.range_rad = subset_params.scan.angles.back() -
+                    subset_params.scan.angles.front();
             }
         }
     }
 
-    SCBCTParams params_{};
+    SReconstructionParams params_{};
     std::vector<SConeProjGeomVec> geometry_{};
-    ParallelPwlsConfig config_{};
+    PwlsConfig config_{};
     cudaStream_t stream_ = nullptr;
     int device_id_ = 0;
     bool prepared_ = false;
     int max_subset_views_ = 0;
     std::vector<std::vector<int>> subset_indices_{};
-    std::vector<SCBCTParams> subset_params_{};
+    std::vector<SReconstructionParams> subset_params_{};
     ForwardOperatorAdapter fp_{};
     BackOperatorAdapter bp_{};
     Mem::MemoryController memory_{};

@@ -53,7 +53,6 @@ volume = "../example/brainweb_normal_1mm_20260827/brain_total_600_600_600_f32.ra
 preview = "../example/brainweb_normal_1mm_20260827/brain_total_central_world_x_slice.bmp"
 
 
-
 [[case]]
 name = "primary-brain-recon"
 pipeline = "fdk"
@@ -150,7 +149,6 @@ gain = 1.0
 [case.output]
 volume = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brain_total_600_600_40_f32.raw"
 preview = "../example/brainweb_normal_1mm_z360_1536x128_20260827/brain_total_central_world_x_slice.bmp"
-
 
 
 [[case]]

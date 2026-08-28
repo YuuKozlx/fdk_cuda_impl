@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "common/YkProjectionOperators.hpp"
 #include "common/YkDeviceWorkspace.hpp"
 #include "kernels/YkIterLaunch.cuh"
@@ -31,7 +31,7 @@ namespace YK {
             ETask bp_task = ETask::BP_FDK_matched;
         };
 
-        bool init(const SCBCTParams& params, const Config& cfg,
+        bool init(const SReconstructionParams& params, const Config& cfg,
             cudaStream_t stream, int deviceId = 0)
         {
             std::vector<SConeProjGeomVec> geometry;
@@ -39,19 +39,19 @@ namespace YK {
             return init(params, cfg, geometry, stream, deviceId);
         }
 
-        bool init(const SCBCTParams& params, const Config& cfg,
+        bool init(const SReconstructionParams& params, const Config& cfg,
             const std::vector<SConeProjGeomVec>& geometry,
             cudaStream_t stream, int deviceId = 0)
         {
-            if (static_cast<int>(geometry.size()) != params.iPAng) {
+            if (static_cast<int>(geometry.size()) != params.scan.NAng) {
                 YK_LOGE("[CglsAstraBackend] geometry size mismatch");
                 return false;
             }
             params_ = params;
             cfg_ = cfg;
 
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t sino_n = (size_t)params.iPAng * params.iPU * params.iPV;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t sino_n = (size_t)params.scan.NAng * params.scan.Nu * params.scan.Nv;
 
             d_r_.allocate(sino_n, deviceId);  // r（正弦图空间）
             d_w_.allocate(sino_n, deviceId);  // w = A p（正弦图空间）
@@ -62,19 +62,19 @@ namespace YK {
             bp_.init(params, geometry, cfg.bp_task, deviceId, stream);
 
             is_initialized_ = true;
-            YK_LOGI("[CGLSAstra] init OK: {} angles", params.iPAng);
+            YK_LOGI("[CGLSAstra] init OK: {} angles", params.scan.NAng);
             return true;
         }
 
         bool run(const float* d_sino_meas,
             float* d_vol,
-            const SCBCTParams& params,
+            const SReconstructionParams& params,
             cudaStream_t stream)
         {
             if (!is_initialized_) return false;
 
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t sino_n = (size_t)params.iPAng * params.iPU * params.iPV;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t sino_n = (size_t)params.scan.NAng * params.scan.Nu * params.scan.Nv;
 
             // ── 初始化：r = b - A x，p = A^T r ───────────────────────
             {
@@ -161,7 +161,7 @@ namespace YK {
 
     private:
         bool        is_initialized_ = false;
-        SCBCTParams params_;
+        SReconstructionParams params_;
         Config      cfg_;
 
         ForwardOperatorAdapter fp_;
@@ -176,7 +176,7 @@ namespace YK {
     YK_INLINE bool cgls_astra_backend_reconstruct(
         const float* d_sino_meas,
         float* d_vol,
-        const SCBCTParams& params,
+        const SReconstructionParams& params,
         cudaStream_t stream,
         CglsAstraBackend::Config cfg = {})
     {
@@ -212,7 +212,7 @@ namespace YK {
             Iter::IterativeConvergenceConfig convergence{};
         };
 
-        bool init(const SCBCTParams& params,
+        bool init(const SReconstructionParams& params,
             const Config& cfg,
             const std::vector<SConeProjGeomVec>& h_views,
             cudaStream_t stream,
@@ -223,14 +223,14 @@ namespace YK {
             h_views_ = h_views;
             deviceId_ = deviceId;
 
-            if ((int)h_views.size() != params.iPAng) {
+            if ((int)h_views.size() != params.scan.NAng) {
                 YK_LOGE("[CglsRobustBackend] geometry size mismatch: {} vs iPAng={}",
-                    (int)h_views.size(), params.iPAng);
+                    (int)h_views.size(), params.scan.NAng);
                 return false;
             }
 
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t sino_n = (size_t)params.iPAng * params.iPU * params.iPV;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t sino_n = (size_t)params.scan.NAng * params.scan.Nu * params.scan.Nv;
 
             // r = b - Ax（残差，正弦图空间）
             YK_CUDA_CHECK(cudaMalloc(&d_r_, sino_n * sizeof(float)));
@@ -253,19 +253,19 @@ namespace YK {
 
             is_initialized_ = true;
             YK_LOGI("[CglsRobustBackend] init OK: {} angles",
-                params.iPAng);
+                params.scan.NAng);
             return true;
         }
 
         bool run(const float* d_sino_meas,
             float* d_vol,
-            const SCBCTParams& params,
+            const SReconstructionParams& params,
             cudaStream_t stream)
         {
             if (!is_initialized_) return false;
 
-            const size_t vol_n = (size_t)params.iVX * params.iVY * params.iVZ;
-            const size_t sino_n = (size_t)params.iPAng * params.iPU * params.iPV;
+            const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
+            const size_t sino_n = (size_t)params.scan.NAng * params.scan.Nu * params.scan.Nv;
 
             int re_init_at = -1;
             float l2_prev = std::numeric_limits<float>::max();
@@ -457,7 +457,7 @@ namespace YK {
         void initialize_(
             const float* d_sino_meas,
             const float* d_vol,
-            const SCBCTParams& params,
+            const SReconstructionParams& params,
             cudaStream_t stream,
             size_t vol_n, size_t sino_n)
         {
@@ -496,7 +496,7 @@ namespace YK {
 
         bool         is_initialized_ = false;
         int          deviceId_ = 0;
-        SCBCTParams  params_;
+        SReconstructionParams  params_;
         Config       cfg_;
 
         std::vector<SConeProjGeomVec> h_views_;
@@ -516,7 +516,7 @@ namespace YK {
     YK_INLINE bool cgls_robust_backend_reconstruct(
         const float* d_sino_meas,
         float* d_vol,
-        const SCBCTParams& params,
+        const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& h_views,
         cudaStream_t stream,
         CglsRobustBackend::Config cfg = {})

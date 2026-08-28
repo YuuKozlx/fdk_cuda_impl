@@ -18,7 +18,7 @@ TIGRE 风格 ASD-POCS、PCSD、AwTV 和 Bregman 算法的完整状态机与参�
 
 几何入口同样独立：
 
-- `AlgebraicReconstructor` 根据 `SCBCTParams` 构造标准圆轨迹；
+- `AlgebraicReconstructor` 根据 `SReconstructionParams::scan` 构造标准圆轨迹；
 - `AlgebraicReconstructorEx` 接收逐视角 `SConeProjGeomVec`，可用于螺旋、
   偏置或其他显式 geometry；
 - `Ex` 只表示几何输入方式，不隐含算法、权重或正则化类型。
@@ -60,8 +60,8 @@ reconstructor.prepare(params, geometry, config, stream, device_id);
 reconstructor.reconstruct(d_projection, d_volume);
 ```
 
-`geometry.size()` 必须等于 `params.iPAng`。接口不会把显式 geometry 静默
-退化成由 `SCBCTParams` 生成的圆轨迹。
+`geometry.size()` 必须等于 `params.scan.NAng`。接口不会把显式 geometry 静默
+退化成由 `SReconstructionParams::scan` 生成的圆轨迹。
 
 ### 1.3 SIRT、SART 与 OS-SART 的统一表达
 
@@ -233,19 +233,21 @@ reconstructor.reconstruct(d_projection, d_volume);
 
 ## 5. PWLS
 
-`ParallelPwlsReconstructor` 提供并行 surrogate 更新，并支持无正则、二次先验
-和 Huber 先验。它与 OS-SART-TV 的交替式 TV 流程属于不同算法，不应只按
-字段名比较正则化强度。
+`PwlsReconstructor` 提供通用 PWLS surrogate 更新，并支持无正则、二次先验
+和 Huber 先验。当前实现同步更新全体素，但这只是更新策略，不表示平行束几何。
+扫描轨迹完全由显式传入的逐视图 `geometry` 决定，因此同一重建器可用于圆轨迹
+或平板螺旋轨迹。它与 OS-SART-TV 的交替式 TV 流程属于不同算法，不应只按字段名
+比较正则化强度。
 
 ```cpp
-YK::Iter::ParallelPwlsConfig config{};
+YK::Iter::PwlsConfig config{};
 config.iterations = 20;
 config.relaxation = 0.7f;
-config.regularizer = YK::Iter::EParallelPwlsRegularizer::Huber;
+config.regularizer = YK::Iter::EPwlsRegularizer::Huber;
 config.regularization = 2e-3f;
 config.huber_delta = 1e-3f;
 
-YK::Iter::ParallelPwlsReconstructor reconstructor;
+YK::Iter::PwlsReconstructor reconstructor;
 reconstructor.prepare(params, geometry, config, stream, device_id);
 reconstructor.reconstruct(d_projection, d_volume);
 ```

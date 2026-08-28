@@ -4,8 +4,10 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/testmain.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredReconstruction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredForwardProjection.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredWfbp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_validation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_forward_projectors.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cuda/YkTextureTestKernels.cu
 
     # 框架、几何与重建冒烟测试
     ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
@@ -14,16 +16,12 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_water.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_arrow.cpp
 
-    # 通用算法和真实数据诊断
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_fp.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_sart.cpp
 )
 
 # 螺旋和圆柱探测器测试直接包含 Heli 头文件并引用对应实现，必须与主库的
 # YKCBCT_BUILD_HELICAL 开关保持一致。
 if(YKCBCT_BUILD_HELICAL)
     list(APPEND YKCBCT_MANUAL_TEST_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_helical_algorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/test_fpcyl.cpp
     )
 endif()

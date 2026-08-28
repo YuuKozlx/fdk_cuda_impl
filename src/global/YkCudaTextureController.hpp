@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 #include "YkMem3d.hpp"
 #include "YkGlobals.h"
+#include "YkMacro.hpp"
 
 namespace YK {
     namespace Mem {
@@ -17,15 +18,21 @@ namespace YK {
         struct Tex3DHandle {
             cudaArray_t         arr = nullptr;
             cudaTextureObject_t tex = 0;
+            int                 nx = 0;
+            int                 ny = 0;
+            int                 nz = 0;
+            cudaTextureFilterMode  filter = cudaFilterModePoint;
+            cudaTextureAddressMode address = cudaAddressModeBorder;
 
             Tex3DHandle() = default;
             Tex3DHandle(const Tex3DHandle&) = delete;
             Tex3DHandle& operator=(const Tex3DHandle&) = delete;
 
             Tex3DHandle(Tex3DHandle&& o) noexcept
-                : arr(o.arr), tex(o.tex)
+                : arr(o.arr), tex(o.tex), nx(o.nx), ny(o.ny), nz(o.nz),
+                  filter(o.filter), address(o.address)
             {
-                o.arr = nullptr; o.tex = 0;
+                o.arr = nullptr; o.tex = 0; o.nx = o.ny = o.nz = 0;
             }
 
             Tex3DHandle& operator=(Tex3DHandle&& o) noexcept
@@ -33,7 +40,9 @@ namespace YK {
                 if (this != &o) {
                     destroy();
                     arr = o.arr; tex = o.tex;
-                    o.arr = nullptr; o.tex = 0;
+                    nx = o.nx; ny = o.ny; nz = o.nz;
+                    filter = o.filter; address = o.address;
+                    o.arr = nullptr; o.tex = 0; o.nx = o.ny = o.nz = 0;
                 }
                 return *this;
             }
@@ -43,10 +52,20 @@ namespace YK {
 
             bool valid() const { return arr != nullptr && tex != 0; }
 
+            bool matches(int expected_nx, int expected_ny, int expected_nz,
+                cudaTextureFilterMode expected_filter,
+                cudaTextureAddressMode expected_address = cudaAddressModeBorder) const
+            {
+                return valid() && nx == expected_nx && ny == expected_ny &&
+                    nz == expected_nz && filter == expected_filter &&
+                    address == expected_address;
+            }
+
             void destroy()
             {
                 if (tex) { cudaDestroyTextureObject(tex); tex = 0; }
                 if (arr) { cudaFreeArray(arr);             arr = nullptr; }
+                nx = ny = nz = 0;
             }
 
             ~Tex3DHandle() { destroy(); }
@@ -190,6 +209,55 @@ namespace YK {
                     cudaMemcpyDeviceToDevice, filter, addr);
             }
 
+            // 为反复更新的数据建立持久化 3D 纹理。典型用途是迭代重建中
+            // 每轮变化的投影残差：cudaArray/texture 只创建一次，之后在调用
+            // stream 上异步更新，避免每轮销毁并重建纹理对象。
+            static Tex3DHandle createEmptyTex3D(
+                int Nx, int Ny, int Nz,
+                cudaTextureFilterMode filter = cudaFilterModeLinear,
+                cudaTextureAddressMode addr = cudaAddressModeBorder)
+            {
+                if (Nx <= 0 || Ny <= 0 || Nz <= 0)
+                    throw std::invalid_argument("createEmptyTex3D: dimensions must be positive");
+                check3DDimensions_(Nx, Ny, Nz);
+                Tex3DHandle h;
+                h.nx = Nx; h.ny = Ny; h.nz = Nz;
+                h.filter = filter; h.address = addr;
+                const cudaChannelFormatDesc fmt = cudaCreateChannelDesc<float>();
+                YK_CUDA_CHECK(cudaMalloc3DArray(&h.arr, &fmt,
+                    make_cudaExtent(Nx, Ny, Nz)));
+                cudaResourceDesc resource{};
+                resource.resType = cudaResourceTypeArray;
+                resource.res.array.array = h.arr;
+                cudaTextureDesc texture{};
+                texture.addressMode[0] = addr;
+                texture.addressMode[1] = addr;
+                texture.addressMode[2] = addr;
+                texture.filterMode = filter;
+                texture.readMode = cudaReadModeElementType;
+                texture.normalizedCoords = 0;
+                YK_CUDA_CHECK(cudaCreateTextureObject(&h.tex, &resource,
+                    &texture, nullptr));
+                return h;
+            }
+
+            static void updateTex3DFromDeviceAsync(Tex3DHandle& destination,
+                const float* source, int Nx, int Ny, int Nz,
+                cudaStream_t stream)
+            {
+                if (!destination.valid() || !source || Nx <= 0 || Ny <= 0 ||
+                    Nz <= 0 || destination.nx != Nx || destination.ny != Ny ||
+                    destination.nz != Nz)
+                    throw std::invalid_argument("updateTex3DFromDeviceAsync: invalid argument");
+                cudaMemcpy3DParms copy{};
+                copy.srcPtr = make_cudaPitchedPtr(const_cast<float*>(source),
+                    Nx * sizeof(float), Nx, Ny);
+                copy.dstArray = destination.arr;
+                copy.extent = make_cudaExtent(Nx, Ny, Nz);
+                copy.kind = cudaMemcpyDeviceToDevice;
+                YK_CUDA_CHECK(cudaMemcpy3DAsync(&copy, stream));
+            }
+
             // ============================================================
             // 3D texture — 从 host float* 创建 Tex3DHandle（H2D 拷贝）
             // ============================================================
@@ -275,6 +343,11 @@ namespace YK {
                 cudaTextureAddressMode addr)
             {
                 Tex3DHandle h;
+                if (!src || Nx <= 0 || Ny <= 0 || Nz <= 0)
+                    throw std::invalid_argument("createTex3D: invalid argument");
+                check3DDimensions_(Nx, Ny, Nz);
+                h.nx = Nx; h.ny = Ny; h.nz = Nz;
+                h.filter = filter; h.address = addr;
 
                 // 1. 分配 cudaArray3D
                 cudaChannelFormatDesc fmt = cudaCreateChannelDesc<float>();
@@ -321,6 +394,23 @@ namespace YK {
                         "cudaFilterModeLinear requires floating point type (float/float2), "
                         "use cudaFilterModePoint for integer types (uint8/uint16/int)");
                 }
+            }
+
+            static void check3DDimensions_(int Nx, int Ny, int Nz)
+            {
+                int device = 0;
+                int max_x = 0, max_y = 0, max_z = 0;
+                YK_CUDA_CHECK(cudaGetDevice(&device));
+                YK_CUDA_CHECK(cudaDeviceGetAttribute(&max_x,
+                    cudaDevAttrMaxTexture3DWidth, device));
+                YK_CUDA_CHECK(cudaDeviceGetAttribute(&max_y,
+                    cudaDevAttrMaxTexture3DHeight, device));
+                YK_CUDA_CHECK(cudaDeviceGetAttribute(&max_z,
+                    cudaDevAttrMaxTexture3DDepth, device));
+                if (Nx > max_x || Ny > max_y || Nz > max_z)
+                    throw std::out_of_range(
+                        "3D texture dimensions exceed the CUDA device limit; "
+                        "split the data into operator batches");
             }
         };
 

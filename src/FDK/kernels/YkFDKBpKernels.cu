@@ -73,12 +73,12 @@ namespace YK {
 
                 const float3 dir = P - src;
 
-                denom_c = dot(dir, f4_to_f3(gv.ray_center));
+                denom_c = dot(dir, f4_to_f3(gv.radial_ray));
 
                 const float denom_n = dot(dir, f4_to_f3(gv.det_n));
                 if (fabsf(denom_n) < 1e-8f) return false;
 
-                const float t = __fdividef(gv.SDD_plane_mm, denom_n);
+                const float t = __fdividef(gv.source_to_detector_plane_mm, denom_n);
                 if (t <= 0.f) return false;
 
                 const float3 Pi = src + dir * t;
@@ -145,11 +145,13 @@ namespace YK {
                     float uNum = c.Cu_w + fX * c.Cu_x + fY * c.Cu_y + fZ * c.Cu_z;
                     float vNum = c.Cv_w + fX * c.Cv_x + fY * c.Cv_y + fZ * c.Cv_z;
                     float den = c.Cd_w + fX * c.Cd_x + fY * c.Cd_y + fZ * c.Cd_z;
+                    float depthDen = c.Cr_w + fX * c.Cr_x + fY * c.Cr_y + fZ * c.Cr_z;
 
                     const float uStep = c.Cu_z * vg.vox_z;
                     const float vStep = c.Cv_z * vg.vox_z;
                     const float dStep = c.Cd_z * vg.vox_z;
-                    const float w_base = c.SID2 * c.dtheta * c.fScaleDTheta;
+                    const float rStep = c.Cr_z * vg.vox_z;
+                    const float w_base = c.source_to_axis_sq * c.dtheta * c.fScaleDTheta;
 
 #ifdef YK_DEBUG
                     // ── 层2：几何参数和权重基础值 ────────────────────────────
@@ -157,7 +159,7 @@ namespace YK {
                         YK_DEV_LOGD("[bp_pre][view%d] den=%.6f u0=%.3f v0=%.3f "
                             "w_base=%.8f SID2=%.3f dtheta=%.6f\n",
                             i, den, uNum / den, vNum / den,
-                            w_base, c.SID2, c.dtheta);
+                            w_base, c.source_to_axis_sq, c.dtheta);
 #endif
 
 #pragma unroll
@@ -166,7 +168,8 @@ namespace YK {
                         const float u = uNum * fr;
                         const float v = vNum * fr;
                         const float p = tex2D<float>(tex_views[i], u + 0.5f, v + 0.5f);
-                        const float contrib = p * (w_base * fr * fr);
+                        const float depthFr = __fdividef(1.f, depthDen);
+                        const float contrib = p * (w_base * depthFr * depthFr);
 
 #ifdef YK_DEBUG
                         // ── 层3：fetch 值和贡献量（iz=0）────────────────────
@@ -185,6 +188,7 @@ namespace YK {
                         uNum += uStep;
                         vNum += vStep;
                         den += dStep;
+                        depthDen += rStep;
                     }
                 }
 
@@ -243,7 +247,8 @@ namespace YK {
                     const SConeProjGeomVec& g = d_geo[i];
                     const SFDKGeoParamPerView& gv = d_gv[i];
 
-                    const float w_base = gv.SOD_mm * gv.SOD_mm * gv.dtheta * gv.fScaleDTheta;
+                    const float w_base = gv.source_to_axis_mm * gv.source_to_axis_mm *
+                        gv.dtheta * gv.fScaleDTheta;
 
 #pragma unroll
                     for (int iz = 0; iz < ZSIZE; ++iz) {
@@ -276,10 +281,10 @@ namespace YK {
                                 "w_base=%.8f SOD=%.3f dtheta=%.6f\n",
                                 i, fX, fY, worldZ,
                                 u, v, p, denom_c, contrib,
-                                w_base, gv.SOD_mm, gv.dtheta);
+                                w_base, gv.source_to_axis_mm, gv.dtheta);
                             if (isnan(contrib) || isinf(contrib))
                                 YK_DEV_LOGD("[bp_dir][NaN!][view%d] SOD=%.3f denom_c=%.8f p=%.6f\n",
-                                    i, gv.SOD_mm, denom_c, p);
+                                    i, gv.source_to_axis_mm, denom_c, p);
                         }
 #endif
                     }

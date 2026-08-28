@@ -84,7 +84,7 @@ namespace YK {
                     ws[3] = g.detS.x;   ws[4] = g.detS.y;   ws[5] = g.detS.z;
                     ws[6] = g.detU.x;   ws[7] = g.detU.y;   ws[8] = g.detU.z;
                     ws[9] = g.detV.x;   ws[10] = g.detV.y;   ws[11] = g.detV.z;
-                    ws[12] = gp.SDD_mm;
+                    ws[12] = gp.source_to_radial_detector_mm;
                 }
                 // lane0 写完后同步，确保 warp 内其他 lane 读到有效值
                 // 注意：这里用 __syncwarp() 而非 __syncthreads()，
@@ -217,7 +217,7 @@ namespace YK {
                     g_dS_x = g.detS.x;  g_dS_y = g.detS.y;  g_dS_z = g.detS.z;
                     g_dU_x = g.detU.x;  g_dU_y = g.detU.y;  g_dU_z = g.detU.z;
                     g_dV_x = g.detV.x;  g_dV_y = g.detV.y;  g_dV_z = g.detV.z;
-                    g_DSD = gp.SDD_mm;
+                    g_DSD = gp.source_to_radial_detector_mm;
                 }
 
                 // 从 lane0 广播到 warp 内所有 lane，每条指令约 4 cycle
@@ -333,8 +333,8 @@ namespace YK {
                         g_dS_x = g.detS.x;  g_dS_y = g.detS.y;  g_dS_z = g.detS.z;
                         g_dU_x = g.detU.x;  g_dU_y = g.detU.y;  g_dU_z = g.detU.z;
                         g_dV_x = g.detV.x;  g_dV_y = g.detV.y;  g_dV_z = g.detV.z;
-                        g_DSD = gp.SDD_mm;
-                        g_DSO = gp.SOD_mm;   // ← 新增
+                        g_DSD = gp.source_to_radial_detector_mm;
+                        g_DSO = gp.source_to_axis_mm;
                         g_inv_du = gp.inv_du_mm;    // ← 新增
                     }
 

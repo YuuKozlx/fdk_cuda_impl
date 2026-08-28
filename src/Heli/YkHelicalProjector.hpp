@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <vector>
 #include "common/YkProjectionOperators.hpp"
 #include "Heli/YkHelicalGeo.hpp"
@@ -63,25 +63,25 @@ namespace YK {
 				d_proj, 0, proj_elems * sizeof(float)));
 
 			// 构造 fp_params，从 SHeliCTParam 转换
-			SCBCTParams fp_params{};
-			fp_params.iPU = param_.iPU;
-			fp_params.iPV = param_.iPV;
-			fp_params.iVX = param_.iVX;
-			fp_params.iVY = param_.iVY;
-			fp_params.iVZ = param_.iVZ;
-			fp_params.SID = param_.SID;
-			fp_params.SDD = param_.SDD;
-			fp_params.du_mm = param_.du_mm;
-			fp_params.dv_mm = param_.dv_mm;
-			fp_params.vox_x_mm = param_.vox_x_mm;
-			fp_params.vox_y_mm = param_.vox_y_mm;
-			fp_params.vox_z_mm = param_.vox_z_mm;
-			fp_params.vol_offset_x_mm = param_.vol_offset_x_mm;
-			fp_params.vol_offset_y_mm = param_.vol_offset_y_mm;
-			fp_params.vol_offset_z_mm = param_.vol_offset_z_mm;
-			fp_params.iPAng = total_views;
-			fp_params.iPAngTotal = total_views;
-			fp_params.angle_list = param_.angle_list;
+			SReconstructionParams fp_params{};
+			fp_params.scan.Nu = param_.iPU;
+			fp_params.scan.Nv = param_.iPV;
+			fp_params.scan.NAng = total_views;
+			fp_params.scan.totalViews = total_views;
+			fp_params.scan.sid_mm = param_.SID;
+			fp_params.scan.sdd_mm = param_.SDD;
+			fp_params.scan.du_mm = param_.du_mm;
+			fp_params.scan.dv_mm = param_.dv_mm;
+			fp_params.scan.angles = param_.angle_list;
+			fp_params.volume.Nx = param_.iVX;
+			fp_params.volume.Ny = param_.iVY;
+			fp_params.volume.Nz = param_.iVZ;
+			fp_params.volume.voxelX_mm = param_.vox_x_mm;
+			fp_params.volume.voxelY_mm = param_.vox_y_mm;
+			fp_params.volume.voxelZ_mm = param_.vox_z_mm;
+			fp_params.volume.centerX_mm = param_.vol_offset_x_mm;
+			fp_params.volume.centerY_mm = param_.vol_offset_y_mm;
+			fp_params.volume.centerZ_mm = param_.vol_offset_z_mm;
 
 			GeometryContext geometry;
 			ResourceContext resources;

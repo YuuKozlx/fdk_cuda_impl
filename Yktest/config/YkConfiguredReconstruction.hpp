@@ -9,7 +9,7 @@
 namespace YK::TestConfig {
 
 enum class Pipeline {
-    Fdk, Sirt, Sart, Ossart, Cgls, TigreGradientLocal, ParallelPwls,
+    Fdk, Sirt, Sart, Ossart, Cgls, TigreGradientLocal, Pwls,
     FdkOssart, FdkCgls
 };
 enum class InputMode { ProjectionRaw, Phantom };
@@ -76,7 +76,7 @@ struct TigreConfig {
     int bregman_interval = 5;
 };
 
-struct ParallelPwlsCaseConfig {
+struct PwlsCaseConfig {
     int subsets = 1;
     float relaxation = 0.8f;
     std::string regularizer = "quadratic";
@@ -93,11 +93,11 @@ struct ReconstructionCase {
     int device = 0;
     int chunk_views = 32;
     int batch_views = 32;
-    SCBCTParams params{};
+    SReconstructionParams params{};
     InputConfig input{};
     AlgorithmConfig algorithm{};
     TigreConfig tigre{};
-    ParallelPwlsCaseConfig parallel_pwls{};
+    PwlsCaseConfig pwls{};
     std::filesystem::path output{};
     std::filesystem::path preview{};
 };

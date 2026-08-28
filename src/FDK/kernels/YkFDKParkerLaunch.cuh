@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 
 #include "../../global/YkGlobals.h"              // CUDA_PI, kMaxChunkAng
+#include "../../global/YkFdkKernelTypes.hpp"
 #include "../../global/YkMacro.hpp"              // YK_CUDA_CHECK, YK_CUDA_KERNEL_CHECK
 #include "YkFDKParkerHelpers.cuh"
 
@@ -33,8 +34,9 @@ namespace YK {
             void pk_launchParker(
                 float* d_data,
                 int Nu, int Nv, int K,
-                float fSDD, float fDetUSize,
-                float fCentralFanAngle, float fScale,
+                const SConeProjGeomVec* d_geometry,
+                const SFDKGeoParamPerView* d_gv,
+                float fScale,
                 int nDirSign,
                 cudaStream_t stream);
 

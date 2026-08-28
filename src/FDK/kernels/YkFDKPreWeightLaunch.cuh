@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 
 #include "common/YkVecGeo.hpp"
-#include "FDK/YkFdkStageTypes.hpp"   // SKernelLaunchPolicy
+#include "global/YkKernelLaunchPolicy.hpp"
 
 
 #include "FDK/kernels/YkFDKPreWeightHelpers.cuh"

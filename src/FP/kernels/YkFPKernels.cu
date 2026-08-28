@@ -1,64 +1,9 @@
 ﻿#include "YkFPHelpers.cuh"
-#include "YkFPLaunch.cuh"
+#include "YkFlatJosephFpLaunch.cuh"
 #include "global/YkMacro.hpp"
 
 namespace YK {
     namespace Fp {
-
-        namespace detail {
-
-            struct DirX {
-                __host__ __device__ static float c0(float x, float y, float z) { return x; }
-                __host__ __device__ static float c1(float x, float y, float z) { return y; }
-                __host__ __device__ static float c2(float x, float y, float z) { return z; }
-                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Nx; }
-                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Ny; }
-                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Nz; }
-                __host__ __device__ static float vox0(float vx, float vy, float vz) { return vx; }
-                __host__ __device__ static float vox1(float vx, float vy, float vz) { return vy; }
-                __host__ __device__ static float vox2(float vx, float vy, float vz) { return vz; }
-                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_x; }
-                __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
-                {
-                    return tex3D<float>(tex, f0, f1, f2);
-                }
-            };
-
-            struct DirY {
-                __host__ __device__ static float c0(float x, float y, float z) { return y; }
-                __host__ __device__ static float c1(float x, float y, float z) { return x; }
-                __host__ __device__ static float c2(float x, float y, float z) { return z; }
-                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Ny; }
-                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Nx; }
-                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Nz; }
-                __host__ __device__ static float vox0(float vx, float vy, float vz) { return vy; }
-                __host__ __device__ static float vox1(float vx, float vy, float vz) { return vx; }
-                __host__ __device__ static float vox2(float vx, float vy, float vz) { return vz; }
-                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_y; }
-                __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
-                {
-                    return tex3D<float>(tex, f1, f0, f2);
-                }
-            };
-
-            struct DirZ {
-                __host__ __device__ static float c0(float x, float y, float z) { return z; }
-                __host__ __device__ static float c1(float x, float y, float z) { return x; }
-                __host__ __device__ static float c2(float x, float y, float z) { return y; }
-                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Nz; }
-                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Nx; }
-                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Ny; }
-                __host__ __device__ static float vox0(float vx, float vy, float vz) { return vz; }
-                __host__ __device__ static float vox1(float vx, float vy, float vz) { return vx; }
-                __host__ __device__ static float vox2(float vx, float vy, float vz) { return vy; }
-                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_z; }
-                __device__ static float sample(cudaTextureObject_t tex, float f0, float f1, float f2)
-                {
-                    return tex3D<float>(tex, f1, f2, f0);
-                }
-            };
-        }; // detail
-
 
         namespace detail {
 
@@ -583,36 +528,6 @@ namespace YK {
 
 
         void fp_joseph_launch(
-            cudaTextureObject_t              volTex,
-            const std::vector<float4>& h_center_ray_dirs,
-            const SConeProjGeomVec* d_views_vox,
-            float* d_sino,
-            const SVolGeom& g,
-            int Na, int Nu, int Nv,
-            bool accumulate,
-            cudaStream_t stream,
-            FpStepSuperSample step)
-        {
-            for (int a = 0; a < Na; ++a)
-            {
-                const MainAxis ax = getMainAxis(h_center_ray_dirs[a]);
-                float* d_s = d_sino + (size_t)a * Nv * Nu;
-
-                switch (step) {
-                case FpStepSuperSample::x1:
-                    detail::launchAngle<1>(ax, volTex, d_views_vox, d_s, g, Nu, Nv, a, a + 1, accumulate, stream);
-                    break;
-                case FpStepSuperSample::x2:
-                    detail::launchAngle<2>(ax, volTex, d_views_vox, d_s, g, Nu, Nv, a, a + 1, accumulate, stream);
-                    break;
-                case FpStepSuperSample::x4:
-                    detail::launchAngle<4>(ax, volTex, d_views_vox, d_s, g, Nu, Nv, a, a + 1, accumulate, stream);
-                    break;
-                }
-            }
-        }
-
-        void fp_joseph_launch(
             cudaTextureObject_t                  volTex,
             const std::vector<SConeProjGeomVec>& h_views,   // 用于主轴判断
             const SConeProjGeomVec* d_views_vox,
@@ -623,17 +538,11 @@ namespace YK {
             cudaStream_t stream,
             FpStepSuperSample ss)
         {
-            int i = 0;
-            while (i < Na)
-            {
-                // srcCR is the geometric centre-ray direction.  For the
-                // current circular trajectory it is collinear with src up to
-                // sign, so this preserves behavior but makes the meaning
-                // correct for future external geometries.
-                const MainAxis ax = getMainAxis(h_views[i].srcCR);
-                int j = i + 1;
-                while (j < Na && getMainAxis(h_views[j].srcCR) == ax) ++j;
-
+            // 主轴由最终 geometry 的源点和探测器中心派生。
+            const bool validGeometry = forEachAxisRun(h_views, Na, Nu, Nv,
+                [&](MainAxis ax, CudaOp::SViewRange range) {
+                const int i = range.first;
+                const int j = range.end();
                 float* d_s = d_sino + (size_t)i * Nv * Nu;
 
                 switch (ss) {
@@ -647,36 +556,15 @@ namespace YK {
                     detail::launchAngle<4>(ax, volTex, d_views_vox, d_s, g, Nu, Nv, i, j, accumulate, stream);
                     break;
                 }
-                i = j;
+            });
+            if (!validGeometry) {
+                YK_LOGE("Joseph FP launch rejected invalid projection geometry");
+                return;
             }
+            YK_CUDA_KERNEL_CHECK();
         }
 
 
-        // ============================================================
-         // 重载1：h_center_ray_dirs，per-angle
-         // ============================================================
-        void fp_joseph_ss_launch(
-            cudaTextureObject_t              volTex,
-            const std::vector<float4>& h_center_ray_dirs,
-            const SConeProjGeomVec* d_views_vox,
-            float* d_sino,
-            const SVolGeom& g,
-            int Na, int Nu, int Nv,
-            bool accumulate,
-            cudaStream_t stream,
-            FpStepSuperSample ss,
-            FpDetSuperSample   det)
-        {
-            for (int a = 0; a < Na; ++a)
-                detail::fp_ss_dispatch(
-                    [&](int i) { return getMainAxis(h_center_ray_dirs[i]); },
-                    volTex, d_views_vox, d_sino, g, Nu, Nv,
-                    a, a + 1, accumulate, stream, ss, det);
-        }
-
-        // ============================================================
-        // 重载2：h_views，连续 run 分组
-        // ============================================================
         void fp_joseph_ss_launch(
             cudaTextureObject_t                  volTex,
             const std::vector<SConeProjGeomVec>& h_views,
@@ -689,19 +577,18 @@ namespace YK {
             FpStepSuperSample ss,
             FpDetSuperSample   det)
         {
-            int i = 0;
-            while (i < Na)
-            {
-                const MainAxis ax = getMainAxis(h_views[i].srcCR);
-                int j = i + 1;
-                while (j < Na && getMainAxis(h_views[j].srcCR) == ax) ++j;
-
+            const bool validGeometry = forEachAxisRun(h_views, Na, Nu, Nv,
+                [&](MainAxis axis, CudaOp::SViewRange range) {
                 detail::fp_ss_dispatch(
-                    [&](int k) { return getMainAxis(h_views[k].srcCR); },
+                    [&](int) { return axis; },
                     volTex, d_views_vox, d_sino, g, Nu, Nv,
-                    i, j, accumulate, stream, ss, det);
-                i = j;
+                    range.first, range.end(), accumulate, stream, ss, det);
+            });
+            if (!validGeometry) {
+                YK_LOGE("Joseph supersampled FP launch rejected invalid projection geometry");
+                return;
             }
+            YK_CUDA_KERNEL_CHECK();
         }
 
     } // namespace Fp

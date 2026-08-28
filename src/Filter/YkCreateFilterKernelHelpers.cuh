@@ -4,6 +4,7 @@
 
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
+#include "../global/YkFilterTypes.hpp"
 
 namespace YK {
     namespace Filter {

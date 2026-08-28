@@ -5,7 +5,8 @@
 #include <vector>
 #include <cuda_runtime.h>
 #include "YkMemTypes.h"
-#include "YkGlobals.h"   // YK_CUDA_CHECK
+#include "YkGlobals.h"
+#include "YkMacro.hpp"
 
 namespace YK {
 namespace Mem {

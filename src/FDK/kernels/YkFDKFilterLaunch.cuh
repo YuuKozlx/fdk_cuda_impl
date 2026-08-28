@@ -4,7 +4,7 @@
 
 #include "../../Filter/YkConv.hpp"               // _kernel_pointwise_mul
 #include "../../Filter/YkFFT.hpp"                // CudaFFT
-#include "../../FDK/YkFdkStageTypes.hpp" // SKernelLaunchPolicy
+#include "../../global/YkKernelLaunchPolicy.hpp"
 #include "../../global/YkMacro.hpp"              // YK_CUDA_KERNEL_CHECK
 
 

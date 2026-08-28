@@ -21,11 +21,11 @@ public:
         ETask bp_task = ETask::BP_Joseph_v2;
     };
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
     { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         const std::vector<SConeProjGeomVec>& geometry,
         cudaStream_t stream, int device_id = 0)
     {
@@ -47,7 +47,7 @@ public:
     }
 
     bool run(const float* measured, float* volume,
-        const SCBCTParams&, cudaStream_t)
+        const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
 
     void reset() { implementation_.reset(); }
@@ -58,7 +58,7 @@ private:
 };
 
 inline bool sart_reconstruct(const float* measured, float* volume,
-    const SCBCTParams& params, cudaStream_t stream, SART::Config cfg = {})
+    const SReconstructionParams& params, cudaStream_t stream, SART::Config cfg = {})
 {
     SART recon;
     return recon.init(params, cfg, stream) &&
@@ -85,11 +85,11 @@ public:
         ETask bp_task = ETask::BP_Joseph_v3;
     };
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         cudaStream_t stream, int device_id = 0)
     { return init(params, cfg, std::vector<SConeProjGeomVec>{}, stream, device_id); }
 
-    bool init(const SCBCTParams& params, const Config& cfg,
+    bool init(const SReconstructionParams& params, const Config& cfg,
         const std::vector<SConeProjGeomVec>& geometry,
         cudaStream_t stream, int device_id = 0)
     {
@@ -111,11 +111,11 @@ public:
     }
 
     bool iterate(const float* measured, float* volume,
-        const SCBCTParams&, cudaStream_t, unsigned int iterations)
+        const SReconstructionParams&, cudaStream_t, unsigned int iterations)
     { return implementation_.iterateSubsetUpdates(measured, volume, iterations); }
 
     bool run(const float* measured, float* volume,
-        const SCBCTParams&, cudaStream_t)
+        const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
 
     void reset() { implementation_.reset(); }
@@ -126,7 +126,7 @@ private:
 };
 
 inline bool sirt_reconstruct(const float* measured, float* volume,
-    const SCBCTParams& params, cudaStream_t stream, SIRT::Config cfg = {})
+    const SReconstructionParams& params, cudaStream_t stream, SIRT::Config cfg = {})
 {
     SIRT recon;
     return recon.init(params, cfg, stream) &&

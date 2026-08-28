@@ -3,6 +3,7 @@
 #include "YkConv.hpp"
 #include <algorithm>
 #include "global/YkMacro.hpp"
+#include "global/YkKernelLaunchPolicy.hpp"
 
 namespace YK {
     namespace Filter {

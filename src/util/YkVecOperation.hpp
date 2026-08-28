@@ -5,6 +5,7 @@
  * 本文件只提供 helper_math.h 未覆盖的扩展
  */
 #include <cuda_runtime.h>
+#include "YKCBCT/geometry/YkRigidTransform.hpp"
 #include "helper_math.h"
 #include <cmath>
 
@@ -135,27 +136,6 @@ namespace YK {
     YK_HD YK_FORCE_INLINE float4 f4_rot_axis(float4 v, float4 k, float a) { return f3_to_f4(f3_rot_axis(f4_to_f3(v), f4_to_f3(k), a)); }
 
     // ============================================================
-    // SRigidTf
-    // ============================================================
-
-    struct SRigidTf {
-        float3 ex, ey, ez;
-        float3 t;
-
-        YK_HD YK_FORCE_INLINE float3 apply_vec(float3 v) const { return ex * v.x + ey * v.y + ez * v.z; }
-        YK_HD YK_FORCE_INLINE float3 apply_point(float3 p) const { return apply_vec(p) + t; }
-    };
-
-    YK_HD YK_FORCE_INLINE SRigidTf f3_rigid_from_axis_angle(float3 k, float a, float3 t = make_float3(0, 0, 0)) {
-        SRigidTf tf;
-        tf.ex = f3_rot_axis(make_float3(1, 0, 0), k, a);
-        tf.ey = f3_rot_axis(make_float3(0, 1, 0), k, a);
-        tf.ez = f3_rot_axis(make_float3(0, 0, 1), k, a);
-        tf.t = t;
-        return tf;
-    }
-
-    // ============================================================
     // SMat4f
     // ============================================================
 
@@ -255,11 +235,13 @@ namespace YK {
             return R;
         }
 
-        YK_HD static SMat4f from_rigid(const SRigidTf& tf) {
+        // 公共刚体类型按行保存旋转矩阵；在此集中完成到内部 4x4 矩阵的转换，
+        // 避免 util 层再维护一套列向量存储的刚体定义。
+        YK_HD static SMat4f from_rigid(const SRigidTransform& tf) {
             SMat4f m;
-            m.m[0][0] = tf.ex.x; m.m[0][1] = tf.ey.x; m.m[0][2] = tf.ez.x; m.m[0][3] = tf.t.x;
-            m.m[1][0] = tf.ex.y; m.m[1][1] = tf.ey.y; m.m[1][2] = tf.ez.y; m.m[1][3] = tf.t.y;
-            m.m[2][0] = tf.ex.z; m.m[2][1] = tf.ey.z; m.m[2][2] = tf.ez.z; m.m[2][3] = tf.t.z;
+            m.m[0][0] = tf.row0.x; m.m[0][1] = tf.row0.y; m.m[0][2] = tf.row0.z; m.m[0][3] = tf.translation.x;
+            m.m[1][0] = tf.row1.x; m.m[1][1] = tf.row1.y; m.m[1][2] = tf.row1.z; m.m[1][3] = tf.translation.y;
+            m.m[2][0] = tf.row2.x; m.m[2][1] = tf.row2.y; m.m[2][2] = tf.row2.z; m.m[2][3] = tf.translation.z;
             m.m[3][0] = 0.f;     m.m[3][1] = 0.f;     m.m[3][2] = 0.f;     m.m[3][3] = 1.f;
             return m;
         }

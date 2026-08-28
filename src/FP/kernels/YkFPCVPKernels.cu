@@ -52,10 +52,10 @@ namespace YK
                 // 2. Perspective projection onto the detector
                 //    Ray direction: d = vc - src
                 //    Parameter t such that src + t*d lies on the detector plane:
-                //      dot(t*d, srcCR) = SDD  =>  t = SDD / dot(d, srcCR)
+                //      dot(t*d, detectorNormal) = SDD
                 // ----------------------------------------------------------
                 const float3 d = d_sub(vc, f4_to_f3(c.src));
-                const float  d_dot_n = d_dot(d, f4_to_f3(c.srcCR));
+                const float  d_dot_n = d_dot(d, f4_to_f3(c.detectorNormal));
 
                 // Skip voxels behind the source or parallel to the detector normal
                 if (d_dot_n <= 0.f) return;
@@ -155,7 +155,7 @@ namespace YK
                     c.vol_origin.z + iz * c.a3);
 
                 const float3 d = d_sub(vc, f4_to_f3(c.src));
-                const float  d_dot_n = d_dot(d, f4_to_f3(c.srcCR));
+                const float  d_dot_n = d_dot(d, f4_to_f3(c.detectorNormal));
                 if (d_dot_n <= 0.f) return;
 
                 const float  t = c.SDD / d_dot_n;
@@ -233,10 +233,22 @@ namespace YK
             int Na, int Nu, int Nv,
             cudaStream_t stream)
         {
-            // d_cos_theta 完全不需要了
+            if (Na < 0 || Nu <= 0 || Nv <= 0 || (Na > 0 && h_views == nullptr)) {
+                YK_LOGE("CVP FP launch rejected invalid dimensions or null geometry");
+                return;
+            }
+            // 在启动第一个 kernel 前完成全部派生，避免坏视图产生部分投影。
+            std::vector<SCVPViewCache> caches(static_cast<size_t>(Na));
+            for (int a = 0; a < Na; ++a) {
+                if (!make_view_cache(h_views[a], Nu, Nv, g, caches[a])) {
+                    YK_LOGE("CVP FP launch rejected invalid projection geometry at view %d", a);
+                    return;
+                }
+            }
+
             for (int a = 0; a < Na; ++a)
             {
-                const auto cache = make_view_cache(h_views[a], Nu, Nv, g);
+                const auto& cache = caches[a];
                 float* d_s = d_sino + (size_t)a * Nv * Nu;
 
                 // Step 1: scatter
@@ -268,9 +280,21 @@ namespace YK
             int Na, int Nu, int Nv,
             cudaStream_t stream)
         {
+            if (Na < 0 || Nu <= 0 || Nv <= 0 || (Na > 0 && h_views == nullptr)) {
+                YK_LOGE("CVP texture FP launch rejected invalid dimensions or null geometry");
+                return;
+            }
+            std::vector<SCVPViewCache> caches(static_cast<size_t>(Na));
+            for (int a = 0; a < Na; ++a) {
+                if (!make_view_cache(h_views[a], Nu, Nv, g, caches[a])) {
+                    YK_LOGE("CVP texture FP launch rejected invalid projection geometry at view %d", a);
+                    return;
+                }
+            }
+
             for (int a = 0; a < Na; ++a)
             {
-                const auto cache = make_view_cache(h_views[a], Nu, Nv, g);
+                const auto& cache = caches[a];
                 float* d_s = d_sino + (size_t)a * Nv * Nu;
 
                 // Step 1: scatter（纹理版本）

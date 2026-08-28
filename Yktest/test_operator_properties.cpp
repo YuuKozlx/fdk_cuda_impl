@@ -12,16 +12,16 @@
 namespace {
 using namespace YK;
 
-SCBCTParams makePropertyParams()
+SReconstructionParams makePropertyParams()
 {
-    SCBCTParams p{};
-    p.iPU = 32; p.iPV = 24; p.iPAng = 12; p.iPAngTotal = 12;
-    p.iVX = 16; p.iVY = 16; p.iVZ = 12;
-    p.du_mm = p.dv_mm = 1.f;
-    p.vox_x_mm = p.vox_y_mm = p.vox_z_mm = 1.f;
-    p.SID = 80.f; p.SDD = 160.f; p.scan_range_rad = 2.f * CUDA_PI;
-    p.angle_list.resize(p.iPAng);
-    for (int i = 0; i < p.iPAng; ++i) p.angle_list[i] = 2.f * CUDA_PI * i / p.iPAng;
+    SReconstructionParams p{};
+    p.scan.Nu = 32; p.scan.Nv = 24; p.scan.NAng = 12; p.scan.totalViews = 12;
+    p.volume.Nx = 16; p.volume.Ny = 16; p.volume.Nz = 12;
+    p.scan.du_mm = p.scan.dv_mm = 1.f;
+    p.volume.voxelX_mm = p.volume.voxelY_mm = p.volume.voxelZ_mm = 1.f;
+    p.scan.sid_mm = 80.f; p.scan.sdd_mm = 160.f; p.scan.range_rad = 2.f * CUDA_PI;
+    p.scan.angles.resize(p.scan.NAng);
+    for (int i = 0; i < p.scan.NAng; ++i) p.scan.angles[i] = 2.f * CUDA_PI * i / p.scan.NAng;
     return p;
 }
 
@@ -38,21 +38,21 @@ bool finite(const std::vector<float>& values)
     return true;
 }
 
-bool projectAndBackproject(const SCBCTParams& p, const std::vector<SConeProjGeomVec>& geometry,
+bool projectAndBackproject(const SReconstructionParams& p, const std::vector<SConeProjGeomVec>& geometry,
     ETask fp_task, ETask bp_task, const std::vector<float>& h_volume,
     const std::vector<float>& h_sino, std::vector<float>& out_projection,
     std::vector<float>& out_volume)
 {
-    const size_t volume_n = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    const size_t sino_n = static_cast<size_t>(p.iPAng) * p.iPU * p.iPV;
+    const size_t volume_n = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t sino_n = static_cast<size_t>(p.scan.NAng) * p.scan.Nu * p.scan.Nv;
     cudaStream_t stream = nullptr;
     Mem::MemoryController memory;
     // All test allocations use the library allocator: ownership and the
     // canonical [z][y][x] / [view][v][u] layouts stay identical to production.
-    auto d_volume = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
-    auto d_sino_input = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-    auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-    auto d_backprojection = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
+    auto d_volume = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
+    auto d_sino_input = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+    auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+    auto d_backprojection = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
     bool ok = cudaStreamCreate(&stream) == cudaSuccess &&
         cudaMemcpyAsync(d_volume.data(), h_volume.data(), volume_n * sizeof(float), cudaMemcpyHostToDevice, stream) == cudaSuccess &&
         cudaMemcpyAsync(d_sino_input.data(), h_sino.data(), sino_n * sizeof(float), cudaMemcpyHostToDevice, stream) == cudaSuccess;
@@ -88,11 +88,11 @@ bool projectAndBackproject(const SCBCTParams& p, const std::vector<SConeProjGeom
 // separate tight assertion.
 int main_operator_matrix_smoke()
 {
-    const SCBCTParams p = makePropertyParams();
+    const SReconstructionParams p = makePropertyParams();
     std::vector<SConeProjGeomVec> geometry;
     detail::buildCircularViews(p, geometry);
     const auto x = TestPhantom::makeBasic(p);
-    std::vector<float> y(static_cast<size_t>(p.iPAng) * p.iPU * p.iPV);
+    std::vector<float> y(static_cast<size_t>(p.scan.NAng) * p.scan.Nu * p.scan.Nv);
     for (size_t i = 0; i < y.size(); ++i) y[i] = static_cast<float>((i * 19 + 7) % 41) / 41.f - 0.5f;
     struct Pair { const char* name; ETask fp; ETask bp; };
     const Pair pairs[] = {
@@ -133,12 +133,12 @@ int main_operator_matrix_smoke()
 // both FP and BP and produces a finite non-zero result.
 int main_planar_geometry_operator_smoke()
 {
-    const SCBCTParams p = makePropertyParams();
+    const SReconstructionParams p = makePropertyParams();
     std::vector<SConeProjGeomVec> planar;
-    build_planar_ct_vec_geometry(planar, p.angle_list, p.iPAng, p.iPU, p.iPV,
-        p.du_mm, p.dv_mm, p.SID, p.SDD - p.SID, 12.f);
+    build_planar_ct_vec_geometry(planar, p.scan.angles, p.scan.NAng, p.scan.Nu, p.scan.Nv,
+        p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm, 12.f);
     const auto x = TestPhantom::makeCatphanLike(p);
-    std::vector<float> y(static_cast<size_t>(p.iPAng) * p.iPU * p.iPV, 0.1f);
+    std::vector<float> y(static_cast<size_t>(p.scan.NAng) * p.scan.Nu * p.scan.Nv, 0.1f);
     std::vector<float> projection, backprojection;
     const bool ok = projectAndBackproject(p, planar, ETask::FP_Joseph, ETask::BP_Joseph_v2,
         x, y, projection, backprojection) && finite(projection) && finite(backprojection) &&

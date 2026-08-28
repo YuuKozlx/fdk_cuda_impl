@@ -98,7 +98,7 @@ public:
     TigreGradientReconstructorEx(const TigreGradientReconstructorEx&) = delete;
     TigreGradientReconstructorEx& operator=(const TigreGradientReconstructorEx&) = delete;
 
-    bool prepare(const SCBCTParams& params,
+    bool prepare(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry,
         const Config& config, cudaStream_t stream, int device_id = 0)
     {
@@ -109,11 +109,11 @@ public:
         config_ = config;
         stream_ = stream;
         device_id_ = device_id;
-        volume_count_ = static_cast<size_t>(params.iVX) * params.iVY * params.iVZ;
-        projection_count_ = static_cast<size_t>(params.iPAng) * params.iPU * params.iPV;
+        volume_count_ = static_cast<size_t>(params.volume.Nx) * params.volume.Ny * params.volume.Nz;
+        projection_count_ = static_cast<size_t>(params.scan.NAng) * params.scan.Nu * params.scan.Nv;
 
-        const int block_size = resolvedBlockSize_(config, params.iPAng);
-        requested_subset_count_ = (params.iPAng + block_size - 1) / block_size;
+        const int block_size = resolvedBlockSize_(config, params.scan.NAng);
+        requested_subset_count_ = (params.scan.NAng + block_size - 1) / block_size;
         AlgebraicTigreBackend::Config data_config{};
         data_config.n_iter = config.iterations;
         data_config.n_subset = requested_subset_count_;
@@ -266,12 +266,12 @@ private:
         YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
         FdkPipeline fdk;
         if (!fdk.prepareWithGeometry(params_, geometry_,
-                std::min(params_.iPAng, kMaxChunkAng), stream_, device_id_))
+                std::min(params_.scan.NAng, kMaxChunkAng), stream_, device_id_))
             return false;
         FdkProjectionBatch batch{};
         batch.projection = host_projection.data();
         batch.geometry = &geometry_;
-        batch.count = params_.iPAng;
+        batch.count = params_.scan.NAng;
         const bool ok = fdk.processBatch(batch, d_volume, true);
         // FdkPipeline 的 stage 和临时缓冲区归它所有；局部对象释放前必须
         // 等待本 stream 上的异步 kernel 完成，否则初始化路径会过早释放资源。
@@ -427,7 +427,7 @@ private:
             YK_CUDA_CHECK(cudaMemcpyAsync(d_regularization_start_, d_volume,
                 volume_count_ * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
             tigre_tv_descent_launch(d_volume, d_tv_gradient_,
-                params_.iVX, params_.iVY, params_.iVZ,
+                params_.volume.Nx, params_.volume.Ny, params_.volume.Nz,
                 step, config_.tv_iterations, config_.tv_epsilon,
                 isAdaptive_(config_.algorithm), config_.adaptive_delta, stream_);
             if (config_.non_negative)
@@ -491,13 +491,13 @@ private:
                 volume_count_ * sizeof(float), stream_);
     }
 
-    static bool validate_(const SCBCTParams& params,
+    static bool validate_(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& geometry,
         const Config& config, cudaStream_t stream)
     {
-        if (!stream || params.iPAng <= 0 || params.iPU <= 0 || params.iPV <= 0 ||
-            params.iVX <= 0 || params.iVY <= 0 || params.iVZ <= 0 ||
-            static_cast<int>(geometry.size()) != params.iPAng ||
+        if (!stream || params.scan.NAng <= 0 || params.scan.Nu <= 0 || params.scan.Nv <= 0 ||
+            params.volume.Nx <= 0 || params.volume.Ny <= 0 || params.volume.Nz <= 0 ||
+            static_cast<int>(geometry.size()) != params.scan.NAng ||
             config.iterations <= 0 || config.block_size <= 0 ||
             config.lambda <= 0.f || config.lambda_reduction <= 0.f ||
             config.tv_iterations <= 0 || config.alpha <= 0.f ||
@@ -515,7 +515,7 @@ private:
         return true;
     }
 
-    SCBCTParams params_{};
+    SReconstructionParams params_{};
     std::vector<SConeProjGeomVec> geometry_{};
     Config config_{};
     TigreGradientStatistics statistics_{};

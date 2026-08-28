@@ -1,19 +1,8 @@
 #pragma once
 
-#include <cuda_runtime.h>
-
-#include "CylFpBp/YkCylFpBpTypes.hpp"
-
-namespace YK::CylFpBp::detail {
-
-void launch_forward(const float* volume, float* projection,
-    const SCylConeProjGeomVec* geometry, int views, int rows, int channels,
-    const SVolGeom& volume_geometry, const Config& config,
-    cudaStream_t stream, bool accumulate);
-
-void launch_backproject(const float* projection, float* volume,
-    const SCylConeProjGeomVec* geometry, int views, int rows, int channels,
-    const SVolGeom& volume_geometry, const Config& config,
-    cudaStream_t stream, bool accumulate);
-
-} // namespace YK::CylFpBp::detail
+// 兼容聚合头；具体 kernel 文件应包含对应算法的语义化 launch 头。
+#include "CylFpBp/kernels/YkCylFdkLaunch.cuh"
+#include "CylFpBp/kernels/YkCylJosephLaunch.cuh"
+#include "CylFpBp/kernels/YkCylLegacyLaunch.cuh"
+#include "CylFpBp/kernels/YkCylSiddonLaunch.cuh"
+#include "CylFpBp/kernels/YkCylVoxelDrivenLaunch.cuh"

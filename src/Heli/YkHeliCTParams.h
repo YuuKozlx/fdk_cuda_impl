@@ -16,6 +16,10 @@ struct SHeliCTParam {
     float dv_mm = 0.25f;
     float offsetU_mm = 0.f;
     float offsetV_mm = 0.f;   // 新增
+    // 源端在机架初始局部坐标系中的校准偏移，由 geometry builder 烘焙。
+    float sourceOffsetX_mm = 0.f;
+    float sourceOffsetY_mm = 0.f;
+    float sourceOffsetZ_mm = 0.f;
 
     // ---- 几何 ----
     float SID = 500.f;

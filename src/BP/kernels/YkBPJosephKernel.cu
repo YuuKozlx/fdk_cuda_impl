@@ -1,75 +1,16 @@
-﻿#include "YkBpJosephLaunch.cuh"
+﻿#include "YkFlatJosephBpLaunch.cuh"
 #include "../../global/YkMacro.hpp"
 #include "YkBPHelpers.cuh"
+#include "common/cuda/operators/YkSamplingReaders.cuh"
 #include <BP/YkBPCommon.cuh>
 
 namespace YK {
     namespace Bp {
         namespace detail {
-
-            struct DirX {
-                __host__ __device__ static float c0(float x, float y, float z) { return x; }
-                __host__ __device__ static float c1(float x, float y, float z) { return y; }
-                __host__ __device__ static float c2(float x, float y, float z) { return z; }
-                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Nx; }
-                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Ny; }
-                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Nz; }
-                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_x; }
-                __device__ static float sampleVol(cudaTextureObject_t tex,
-                    float f0, float f1, float f2)
-                {
-                    return tex3D<float>(tex, f0, f1, f2);
-                }
-                __host__ __device__ static int3 toVoxel(int s, int d1, int d2)
-                {
-                    return make_int3(s, d1, d2);
-                }
-            };
-
-            struct DirY {
-                __host__ __device__ static float c0(float x, float y, float z) { return y; }
-                __host__ __device__ static float c1(float x, float y, float z) { return x; }
-                __host__ __device__ static float c2(float x, float y, float z) { return z; }
-                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Ny; }
-                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Nx; }
-                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Nz; }
-                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_y; }
-                __device__ static float sampleVol(cudaTextureObject_t tex,
-                    float f0, float f1, float f2)
-                {
-                    return tex3D<float>(tex, f1, f0, f2);
-                }
-                __host__ __device__ static int3 toVoxel(int s, int d1, int d2)
-                {
-                    return make_int3(d1, s, d2);
-                }
-            };
-
-            struct DirZ {
-                __host__ __device__ static float c0(float x, float y, float z) { return z; }
-                __host__ __device__ static float c1(float x, float y, float z) { return x; }
-                __host__ __device__ static float c2(float x, float y, float z) { return y; }
-                __host__ __device__ static int nSlices(int Nx, int Ny, int Nz) { return Nz; }
-                __host__ __device__ static int nDim1(int Nx, int Ny, int Nz) { return Nx; }
-                __host__ __device__ static int nDim2(int Nx, int Ny, int Nz) { return Ny; }
-                __host__ __device__ static float voxSize(const SVolGeom& g) { return g.vox_z; }
-                __device__ static float sampleVol(cudaTextureObject_t tex,
-                    float f0, float f1, float f2)
-                {
-                    return tex3D<float>(tex, f1, f2, f0);
-                }
-                __host__ __device__ static int3 toVoxel(int s, int d1, int d2)
-                {
-                    return make_int3(d1, d2, s);
-                }
-            };
-
-
             // ray driven 
             // 缺陷原子操作多
-            template<typename DIR, int kStepDenom, bool UseTex>
-            __global__ void joseph_bp_kernel(const float* d_sino,
-                cudaTextureObject_t     sinoTex,
+            template<typename DIR, int kStepDenom, typename SinoReader>
+            __global__ void joseph_bp_kernel(SinoReader sino,
                 const SConeProjGeomVec* d_views_vox,   // 全局指针
                 float* d_vol,
                 SVolGeom                g,
@@ -125,13 +66,7 @@ namespace YK {
 
                 const float fDistCorr = __fsqrt_rn(a1 * a1 + a2 * a2 + 1.f);
 
-                float proj_val;
-                if constexpr (UseTex) {
-                    proj_val = tex3D<float>(sinoTex, detU + 0.5f, detV + 0.5f, angle + 0.5f);
-                }
-                else {
-                    proj_val = d_sino[((size_t)angle * Nv + detV) * Nu + detU];
-                }
+                const float proj_val = sino.read(angle, detV, detU, Nu, Nv);
                 const float contrib_base = proj_val * fDistCorr * step * fMainAxisVox;
 
                 float f0 = startSlice * step + 0.5f * step;
@@ -179,10 +114,9 @@ namespace YK {
 
 
 
-            template<typename DIR, int kStepDenom, bool UseTex>
+            template<typename DIR, int kStepDenom, typename SinoReader>
             static void joseph_bp_launch_group_impl(
-                const float* d_sino,
-                cudaTextureObject_t     sinoTex,
+                SinoReader sino,
                 const SConeProjGeomVec* d_views_vox,
                 float* d_vol,
                 const SVolGeom& g,
@@ -206,8 +140,8 @@ namespace YK {
 
                 for (int s = 0; s < nSlices; s += kBlockSlices)
                 {
-                    joseph_bp_kernel<DIR, kStepDenom, UseTex> << <grid, block, 0, stream >> > (
-                        d_sino, sinoTex,
+                    joseph_bp_kernel<DIR, kStepDenom><<<grid, block, 0, stream>>>(
+                        sino,
                         d_views_vox,
                         d_vol, g, Nu, Nv,
                         s, startAngle, endAngle,
@@ -216,10 +150,9 @@ namespace YK {
             }
 
             // ── dispatch：d_views_vox 全局指针，不偏移 ──────────────────────
-            template<bool UseTex>
+            template<typename SinoReader>
             static void joseph_bp_dispatch(
-                const float* d_sino,
-                cudaTextureObject_t                  sinoTex,
+                SinoReader sino,
                 const std::vector<SConeProjGeomVec>& h_views,
                 const SConeProjGeomVec* d_views_vox,   // 全局指针
                 float* d_vol,
@@ -228,68 +161,64 @@ namespace YK {
                 cudaStream_t stream,
                 BpStepSuperSample ss)
             {
-                int i = 0;
-                while (i < Na)
-                {
-                    // Group by the geometric centre-ray direction rather than
-                    // source position.  Circular scans are unchanged because
-                    // src and srcCR are collinear up to sign.
-                    const MainAxis ax = getMainAxis(h_views[i].srcCR);
-                    int j = i + 1;
-                    while (j < Na && getMainAxis(h_views[j].srcCR) == ax) ++j;
-
+                // 中心射线由源点和探测器几何中心派生，不接受独立方向输入。
+                const bool validGeometry = forEachAxisRun(h_views, Na, Nu, Nv,
+                    [&](MainAxis ax, CudaOp::SViewRange range) {
+                    const int i = range.first;
+                    const int j = range.end();
                     switch (ax) {
                     case MainAxis::X:
                         switch (ss) {
                         case BpStepSuperSample::x1:
-                            joseph_bp_launch_group_impl<DirX, 1, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirX, 1>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         case BpStepSuperSample::x2:
-                            joseph_bp_launch_group_impl<DirX, 2, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirX, 2>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         case BpStepSuperSample::x4:
-                            joseph_bp_launch_group_impl<DirX, 4, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirX, 4>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         }
                         break;
                     case MainAxis::Y:
                         switch (ss) {
                         case BpStepSuperSample::x1:
-                            joseph_bp_launch_group_impl<DirY, 1, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirY, 1>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         case BpStepSuperSample::x2:
-                            joseph_bp_launch_group_impl<DirY, 2, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirY, 2>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         case BpStepSuperSample::x4:
-                            joseph_bp_launch_group_impl<DirY, 4, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirY, 4>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         }
                         break;
                     case MainAxis::Z:
                         switch (ss) {
                         case BpStepSuperSample::x1:
-                            joseph_bp_launch_group_impl<DirZ, 1, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirZ, 1>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         case BpStepSuperSample::x2:
-                            joseph_bp_launch_group_impl<DirZ, 2, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirZ, 2>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         case BpStepSuperSample::x4:
-                            joseph_bp_launch_group_impl<DirZ, 4, UseTex>(
-                                d_sino, sinoTex, d_views_vox, d_vol, g, Nu, Nv,
+                            joseph_bp_launch_group_impl<DirZ, 4>(
+                                sino, d_views_vox, d_vol, g, Nu, Nv,
                                 i, j, stream); break;
                         }
                         break;
                     }
-                    i = j;
-                }
+                });
+                if (!validGeometry)
+                    YK_LOGE("Joseph BP launch rejected invalid projection geometry");
             }
 
         } // namespace detail
@@ -305,13 +234,14 @@ namespace YK {
             cudaStream_t stream,
             BpStepSuperSample ss)
         {
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)g.Nx * g.Ny * g.Nz * sizeof(float), stream));
-            }
-            detail::joseph_bp_dispatch<false>(
-                d_sino, 0, h_views, d_views_vox, d_vol,
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(g.Nx) * g.Ny * g.Nz,
+                CudaOp::writeMode(accumulate), stream);
+            detail::joseph_bp_dispatch(
+                CudaOp::RawProjectionPointReader{ d_sino, 0 }, h_views,
+                d_views_vox, d_vol,
                 g, Na, Nu, Nv, stream, ss);
+            YK_CUDA_KERNEL_CHECK();
         }
 
         void joseph_bp_launch(
@@ -325,32 +255,20 @@ namespace YK {
             cudaStream_t stream,
             BpStepSuperSample ss)
         {
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)g.Nx * g.Ny * g.Nz * sizeof(float), stream));
-            }
-            detail::joseph_bp_dispatch<true>(
-                nullptr, sinoTex, h_views, d_views_vox, d_vol,
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(g.Nx) * g.Ny * g.Nz,
+                CudaOp::writeMode(accumulate), stream);
+            detail::joseph_bp_dispatch(
+                CudaOp::TextureProjectionPointReader{ sinoTex, 0 }, h_views,
+                d_views_vox, d_vol,
                 g, Na, Nu, Nv, stream, ss);
+            YK_CUDA_KERNEL_CHECK();
         }
 
     } // namespace Bp
 } // namespace YK
 
-
-
-
-
-
-
-// //YkBPJosephV2Kernel.cu
-//
-//#include "YkBPJosephLaunch.cuh"
-//#include "../../global/YkMacro.hpp"
-//#include "YkBPHelpers.cuh"
-//#include <BP/YkBPCommon.cuh>
-//
-// 非放射系数版
+// 体素驱动 Joseph BP。兼容入口仍使用 v2 名称。
 namespace YK {
     namespace Bp {
         namespace detail {
@@ -412,7 +330,6 @@ namespace YK {
                     const float dy_vox = dy * rcp_vox_y;
                     const float absDX_vox = fabsf(dx_vox);
                     const float absDY_vox = fabsf(dy_vox);
-                    const float dx2_dy2 = dx * dx + dy * dy;
 
 #pragma unroll
                     for (int iz = 0; iz < ZSIZE; ++iz)
@@ -526,13 +443,13 @@ namespace YK {
             cudaStream_t stream
         )
         {
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)vg.Nx * vg.Ny * vg.Nz * sizeof(float), stream));
-            }
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(vg.Nx) * vg.Ny * vg.Nz,
+                CudaOp::writeMode(accumulate), stream);
             detail::joseph_bp_v2_launch_impl<4>(
                 sinoTex, d_views_vox, d_vol, vg,
                 0, Na, stream);
+            YK_CUDA_KERNEL_CHECK();
         }
 
     } // namespace Bp
@@ -698,13 +615,13 @@ namespace YK {
             bool accumulate,
             cudaStream_t stream)
         {
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)vg.Nx * vg.Ny * vg.Nz * sizeof(float), stream));
-            }
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(vg.Nx) * vg.Ny * vg.Nz,
+                CudaOp::writeMode(accumulate), stream);
             detail::joseph_bp_v3_launch_impl<4>(
                 sinoTex, d_views, d_coeffs, d_vol, vg,
                 0, Na, stream);
+            YK_CUDA_KERNEL_CHECK();
         }
 
     } // namespace Bp

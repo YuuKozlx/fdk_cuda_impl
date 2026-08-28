@@ -1,7 +1,10 @@
 ﻿// YkBPSiddonKernel.cu
 #include "global/YkMacro.hpp"
+#include "global/YkKernelLaunchPolicy.hpp"
 #include "common/YkVecGeo.hpp"
-#include "BP/kernels/YkBPSiddonLaunch.cuh"
+#include "BP/kernels/YkFlatSiddonBpLaunch.cuh"
+#include "common/cuda/operators/YkOperatorKernelTypes.cuh"
+#include "common/cuda/operators/YkSamplingReaders.cuh"
 #include <algorithm>
 
 // ─── 公用宏：vol_origin = 第0体素中心 ────────────────────────────────────────
@@ -23,8 +26,9 @@
 namespace YK {
     namespace Bp {
         namespace detail {
+            template <typename SinoReader>
             __global__ void siddon_bp_kernel(
-                const float* __restrict__ d_sino,
+                SinoReader sino,
                 float* __restrict__ d_vol,
                 const SConeProjGeomVec* __restrict__ d_views,
                 float3 vol_origin,
@@ -104,7 +108,7 @@ namespace YK {
                 const float dtY = (fabsf(ray.y) > 1e-8f) ? fabsf(vox_y / ray.y) : 1e30f;
                 const float dtZ = (fabsf(ray.z) > 1e-8f) ? fabsf(vox_z / ray.z) : 1e30f;
 
-                const float proj_val = d_sino[((size_t)ia * Nv + iv) * Nu + iu];
+                const float proj_val = sino.read(ia, iv, iu, Nu, Nv);
 
                 float t_cur = tmin;
                 while (t_cur < tmax)
@@ -150,14 +154,44 @@ namespace YK {
             for (int base = 0; base < K; ) {
                 const int count = std::min(max_angle_chunk, K - base);
                 const dim3 grid(grid_xy.x, grid_xy.y, count);
-                detail::siddon_bp_kernel << <grid, block, 0, stream >> > (
-                    d_sino + (size_t)base * view_elems, d_vol, d_views + base,
+                detail::siddon_bp_kernel<<<grid, block, 0, stream>>>(
+                    CudaOp::RawProjectionPointReader{
+                        d_sino + (size_t)base * view_elems, 0 }, d_vol,
+                    d_views + base,
                     g.origin(),
                     g.vox_x, g.vox_y, g.vox_z,
                     g.Nx, g.Ny, g.Nz,
                     Nu, Nv, count);
                 base += count;
             }
+            YK_CUDA_KERNEL_CHECK();
+        }
+
+        void bp_siddon_launch(
+            cudaTextureObject_t sinoTex,
+            float* d_vol,
+            const SConeProjGeomVec* d_views,
+            const SVolGeom& g,
+            int Nu, int Nv, int K,
+            cudaStream_t stream)
+        {
+            if (K <= 0) return;
+            SKernelLaunchPolicy policy;
+            const int max_angle_chunk = policy.maxAngleChunk();
+            const dim3 block(16, 16, 1);
+            const dim3 grid_xy((Nu + block.x - 1) / block.x,
+                (Nv + block.y - 1) / block.y, 1);
+            for (int base = 0; base < K; ) {
+                const int count = std::min(max_angle_chunk, K - base);
+                const dim3 grid(grid_xy.x, grid_xy.y, count);
+                detail::siddon_bp_kernel<<<grid, block, 0, stream>>>(
+                    CudaOp::TextureProjectionPointReader{ sinoTex, base }, d_vol,
+                    d_views + base,
+                    g.origin(), g.vox_x, g.vox_y, g.vox_z,
+                    g.Nx, g.Ny, g.Nz, Nu, Nv, count);
+                base += count;
+            }
+            YK_CUDA_KERNEL_CHECK();
         }
 
     } // namespace Bp
@@ -559,10 +593,9 @@ namespace YK {
             cudaStream_t            stream)
         {
             if (K <= 0) return;
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)g.Nx * g.Ny * g.Nz * sizeof(float), stream));
-            }
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(g.Nx) * g.Ny * g.Nz,
+                CudaOp::writeMode(accumulate), stream);
 
             // 三维 block，每个线程对应一个体素
             dim3 block(8, 8, 4);
@@ -577,6 +610,7 @@ namespace YK {
                 g.vox_x, g.vox_y, g.vox_z,
                 g.Nx, g.Ny, g.Nz,
                 Nu, Nv, K);
+            YK_CUDA_KERNEL_CHECK();
         }
 
 
@@ -591,10 +625,9 @@ namespace YK {
             bool accumulate,
             cudaStream_t stream)
         {
-            if (!accumulate) {
-                YK_CUDA_CHECK(cudaMemsetAsync(d_vol, 0,
-                    (size_t)g.Nx * g.Ny * g.Nz * sizeof(float), stream));
-            }
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(g.Nx) * g.Ny * g.Nz,
+                CudaOp::writeMode(accumulate), stream);
 
             constexpr int ZSIZE = 4;
             const dim3 block(16, 16, 1);
@@ -609,6 +642,7 @@ namespace YK {
                 g.vox_x, g.vox_y, g.vox_z,
                 g.Nx, g.Ny, g.Nz,
                 Nu, Nv, K);
+            YK_CUDA_KERNEL_CHECK();
         }
 
     } // namespace Bp

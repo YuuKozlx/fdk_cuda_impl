@@ -11,7 +11,7 @@
 #include "FDK/YkFdkPipeline.hpp"
 #include "Iter/YkAlgebraicReconstructor.hpp"
 #include "Iter/YkCglsReconstructor.hpp"
-#include "Iter/YkParallelPwlsReconstructor.hpp"
+#include "Iter/YkPwlsReconstructor.hpp"
 #include "YkTestImage.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "common/YkVecGeo.hpp"
@@ -44,28 +44,28 @@ bool writeFloatRaw(const std::filesystem::path& path,
     return output.good();
 }
 
-SCBCTParams makeParams()
+SReconstructionParams makeParams()
 {
-    SCBCTParams p{};
-    p.iVX = 512; p.iVY = 512; p.iVZ = 400;
-    p.vox_x_mm = 0.3f; p.vox_y_mm = 0.3f; p.vox_z_mm = 0.3f;
-    p.iPU = 1024; p.iPV = 128;
-    p.du_mm = 0.417f; p.dv_mm = 0.417f;
-    p.SID = 440.f; p.SDD = 770.f;
-    p.iPAng = 720; p.iPAngTotal = 720;
-    p.scan_start_angle_rad = 0.f;
-    p.scan_range_rad = 2.f * CUDA_PI;
-    p.bShortScan = false;
-    p.offsetU_mm = 0.f; p.offsetV_mm = 0.f;
-    p.angle_list.resize(p.iPAng);
-    for (int i = 0; i < p.iPAng; ++i)
-        p.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / p.iPAng;
+    SReconstructionParams p{};
+    p.volume.Nx = 512; p.volume.Ny = 512; p.volume.Nz = 400;
+    p.volume.voxelX_mm = 0.3f; p.volume.voxelY_mm = 0.3f; p.volume.voxelZ_mm = 0.3f;
+    p.scan.Nu = 1024; p.scan.Nv = 128;
+    p.scan.du_mm = 0.417f; p.scan.dv_mm = 0.417f;
+    p.scan.sid_mm = 440.f; p.scan.sdd_mm = 770.f;
+    p.scan.NAng = 720; p.scan.totalViews = 720;
+    p.scan.start_angle_rad = 0.f;
+    p.scan.range_rad = 2.f * CUDA_PI;
+    p.scan.short_scan = false;
+    p.scan.offsetU_mm = 0.f; p.scan.offsetV_mm = 0.f;
+    p.scan.angles.resize(p.scan.NAng);
+    for (int i = 0; i < p.scan.NAng; ++i)
+        p.scan.angles[i] = 2.f * CUDA_PI * static_cast<float>(i) / p.scan.NAng;
     return p;
 }
 
 // 缩小后的封闭水模：水区直径 130 mm，外壳厚 10 mm，外径 150 mm。
 // 为避免 Z 边界贴住体积，外部高度 110 mm，内部水柱高度 90 mm。
-std::vector<float> makeWaterPhantom(const SCBCTParams& p)
+std::vector<float> makeWaterPhantom(const SReconstructionParams& p)
 {
     constexpr float water_radius_mm = 65.f;
     constexpr float shell_outer_radius_mm = 75.f;
@@ -73,13 +73,13 @@ std::vector<float> makeWaterPhantom(const SCBCTParams& p)
     constexpr float shell_outer_half_height_mm = 55.f;
     constexpr float water_mu = 0.020f;
     constexpr float shell_mu = 0.040f;
-    std::vector<float> volume(static_cast<size_t>(p.iVX) * p.iVY * p.iVZ, 0.f);
-    for (int z = 0; z < p.iVZ; ++z) {
-        const float pz = (z + 0.5f - 0.5f * p.iVZ) * p.vox_z_mm;
-        for (int y = 0; y < p.iVY; ++y) {
-            const float py = (y + 0.5f - 0.5f * p.iVY) * p.vox_y_mm;
-            for (int x = 0; x < p.iVX; ++x) {
-                const float px = (x + 0.5f - 0.5f * p.iVX) * p.vox_x_mm;
+    std::vector<float> volume(static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz, 0.f);
+    for (int z = 0; z < p.volume.Nz; ++z) {
+        const float pz = (z + 0.5f - 0.5f * p.volume.Nz) * p.volume.voxelZ_mm;
+        for (int y = 0; y < p.volume.Ny; ++y) {
+            const float py = (y + 0.5f - 0.5f * p.volume.Ny) * p.volume.voxelY_mm;
+            for (int x = 0; x < p.volume.Nx; ++x) {
+                const float px = (x + 0.5f - 0.5f * p.volume.Nx) * p.volume.voxelX_mm;
                 const float radius2 = px * px + py * py;
                 float value = 0.f;
                 if (radius2 <= shell_outer_radius_mm * shell_outer_radius_mm &&
@@ -89,7 +89,7 @@ std::vector<float> makeWaterPhantom(const SCBCTParams& p)
                         std::fabs(pz) <= water_half_height_mm)
                         value = water_mu;
                 }
-                volume[(static_cast<size_t>(z) * p.iVY + y) * p.iVX + x] = value;
+                volume[(static_cast<size_t>(z) * p.volume.Ny + y) * p.volume.Nx + x] = value;
             }
         }
     }
@@ -109,19 +109,19 @@ struct MaterialMetrics {
 };
 
 MaterialMetrics measureMaterials(const std::vector<float>& reconstruction,
-    const SCBCTParams& p, float scale)
+    const SReconstructionParams& p, float scale)
 {
     double water_sum = 0.0, shell_sum = 0.0;
     size_t water_count = 0, shell_count = 0;
     MaterialMetrics result{};
-    const int z = p.iVZ / 2;
-    for (int y = 0; y < p.iVY; ++y) {
-        const float py = (y + 0.5f - 0.5f * p.iVY) * p.vox_y_mm;
-        for (int x = 0; x < p.iVX; ++x) {
-            const float px = (x + 0.5f - 0.5f * p.iVX) * p.vox_x_mm;
+    const int z = p.volume.Nz / 2;
+    for (int y = 0; y < p.volume.Ny; ++y) {
+        const float py = (y + 0.5f - 0.5f * p.volume.Ny) * p.volume.voxelY_mm;
+        for (int x = 0; x < p.volume.Nx; ++x) {
+            const float px = (x + 0.5f - 0.5f * p.volume.Nx) * p.volume.voxelX_mm;
             const float radius = std::sqrt(px * px + py * py);
             const float value = scale * reconstruction[
-                (static_cast<size_t>(z) * p.iVY + y) * p.iVX + x];
+                (static_cast<size_t>(z) * p.volume.Ny + y) * p.volume.Nx + x];
             // 远离两条材料边界取均值，避免插值过渡带影响材料值判断。
             if (radius < 55.f) {
                 water_sum += value;
@@ -140,15 +140,15 @@ MaterialMetrics measureMaterials(const std::vector<float>& reconstruction,
 }
 
 Metrics compareCentralSlab(const std::vector<float>& truth,
-    const std::vector<float>& reconstruction, const SCBCTParams& p,
+    const std::vector<float>& reconstruction, const SReconstructionParams& p,
     float half_span_mm)
 {
     double truth_norm = 0.0, recon_norm = 0.0, dot = 0.0;
-    for (int z = 0; z < p.iVZ; ++z) {
-        const float pz = (z + 0.5f - 0.5f * p.iVZ) * p.vox_z_mm;
+    for (int z = 0; z < p.volume.Nz; ++z) {
+        const float pz = (z + 0.5f - 0.5f * p.volume.Nz) * p.volume.voxelZ_mm;
         if (std::fabs(pz) > half_span_mm) continue;
-        const size_t begin = static_cast<size_t>(z) * p.iVX * p.iVY;
-        const size_t end = begin + static_cast<size_t>(p.iVX) * p.iVY;
+        const size_t begin = static_cast<size_t>(z) * p.volume.Nx * p.volume.Ny;
+        const size_t end = begin + static_cast<size_t>(p.volume.Nx) * p.volume.Ny;
         for (size_t i = begin; i < end; ++i) {
             truth_norm += static_cast<double>(truth[i]) * truth[i];
             recon_norm += static_cast<double>(reconstruction[i]) * reconstruction[i];
@@ -158,11 +158,11 @@ Metrics compareCentralSlab(const std::vector<float>& truth,
     Metrics result{};
     result.scale = recon_norm > 1e-30 ? static_cast<float>(dot / recon_norm) : 0.f;
     double error_norm = 0.0;
-    for (int z = 0; z < p.iVZ; ++z) {
-        const float pz = (z + 0.5f - 0.5f * p.iVZ) * p.vox_z_mm;
+    for (int z = 0; z < p.volume.Nz; ++z) {
+        const float pz = (z + 0.5f - 0.5f * p.volume.Nz) * p.volume.voxelZ_mm;
         if (std::fabs(pz) > half_span_mm) continue;
-        const size_t begin = static_cast<size_t>(z) * p.iVX * p.iVY;
-        const size_t end = begin + static_cast<size_t>(p.iVX) * p.iVY;
+        const size_t begin = static_cast<size_t>(z) * p.volume.Nx * p.volume.Ny;
+        const size_t end = begin + static_cast<size_t>(p.volume.Nx) * p.volume.Ny;
         for (size_t i = begin; i < end; ++i) {
             const double error = result.scale * reconstruction[i] - truth[i];
             error_norm += error * error;
@@ -195,12 +195,12 @@ void configure_large_water_fdk_iterative_test(const std::string& method,
 
 int main_large_water_pwls()
 {
-    const SCBCTParams p = makeParams();
+    const SReconstructionParams p = makeParams();
     const auto truth = makeWaterPhantom(p);
     std::vector<SConeProjGeomVec> geometry;
     detail::buildCircularViews(p, geometry);
-    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    const size_t projection_count = static_cast<size_t>(p.iPU) * p.iPV * p.iPAng;
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.Nu) * p.scan.Nv * p.scan.NAng;
     std::vector<float> projection(projection_count);
     std::vector<float> reconstruction(volume_count);
 
@@ -215,16 +215,16 @@ int main_large_water_pwls()
     MaterialMetrics material{};
     {
         Mem::MemoryController memory;
-        auto d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
-        auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-        auto d_reconstruction = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
+        auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
+        auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
         ok = cudaMemcpyAsync(d_truth.data(), truth.data(), volume_count * sizeof(float),
             cudaMemcpyHostToDevice, stream) == cudaSuccess;
         ok = ok && cudaMemsetAsync(d_reconstruction.data(), 0,
             volume_count * sizeof(float), stream) == cudaSuccess;
 
         ForwardOperatorAdapter fp;
-        Iter::ParallelPwlsConfig config{};
+        Iter::PwlsConfig config{};
         config.iterations = 120;
         config.subset_count = 10;
         config.relaxation = 0.25f;
@@ -235,7 +235,7 @@ int main_large_water_pwls()
         config.huber_delta = 3e-3f;
         config.fp_task = ETask::FP_Joseph;
         config.bp_task = ETask::BP_Joseph_v3;
-        Iter::ParallelPwlsReconstructor pwls;
+        Iter::PwlsReconstructor pwls;
         cudaEvent_t start = nullptr, fp_stop = nullptr;
         cudaEvent_t prepare_stop = nullptr, recon_stop = nullptr;
         ok = ok && cudaEventCreate(&start) == cudaSuccess &&
@@ -324,7 +324,7 @@ int main_large_water_pwls()
 
     const double used_mib = free_before >= free_during
         ? (free_before - free_during) / (1024.0 * 1024.0) : 0.0;
-    const double axial_fov_mm = p.iPV * p.dv_mm * p.SID / p.SDD;
+    const double axial_fov_mm = p.scan.Nv * p.scan.dv_mm * p.scan.sid_mm / p.scan.sdd_mm;
     std::printf("Large water PWLS: corr %.6f NRMSE %.6f, "
         "water %.6f shell %.6f peak %.6f, axial FOV %.2f mm, "
         "FP %.1f ms prepare %.1f ms 120x10 subset updates %.1f ms, GPU %.1f MiB: %s\n",
@@ -338,12 +338,12 @@ int main_large_water_pwls()
 
 int main_large_water_ossart()
 {
-    const SCBCTParams p = makeParams();
+    const SReconstructionParams p = makeParams();
     const auto truth = makeWaterPhantom(p);
     std::vector<SConeProjGeomVec> geometry;
     detail::buildCircularViews(p, geometry);
-    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    const size_t projection_count = static_cast<size_t>(p.iPU) * p.iPV * p.iPAng;
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.Nu) * p.scan.Nv * p.scan.NAng;
     std::vector<float> projection(projection_count);
     std::vector<float> reconstruction(volume_count);
 
@@ -358,10 +358,10 @@ int main_large_water_ossart()
     MaterialMetrics material{};
     {
         Mem::MemoryController memory;
-        auto d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
-        auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-        auto d_reconstruction = memory.allocateDevice3D<float>(p.iVX, p.iVY,
-            p.iVZ, 0);
+        auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
+        auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny,
+            p.volume.Nz, 0);
         ok = cudaMemcpyAsync(d_truth.data(), truth.data(), volume_count * sizeof(float),
             cudaMemcpyHostToDevice, stream) == cudaSuccess;
         ok = ok && cudaMemsetAsync(d_reconstruction.data(), 0,
@@ -475,12 +475,12 @@ int main_large_water_ossart()
 
 int main_large_water_fdk()
 {
-    const SCBCTParams p = makeParams();
+    const SReconstructionParams p = makeParams();
     const auto truth = makeWaterPhantom(p);
     std::vector<SConeProjGeomVec> geometry;
     detail::buildCircularViews(p, geometry);
-    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    const size_t projection_count = static_cast<size_t>(p.iPU) * p.iPV * p.iPAng;
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.Nu) * p.scan.Nv * p.scan.NAng;
     std::vector<float> projection(projection_count);
     std::vector<float> reconstruction(volume_count);
 
@@ -495,10 +495,10 @@ int main_large_water_fdk()
     MaterialMetrics material{};
     {
         Mem::MemoryController memory;
-        auto d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
-        auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-        auto d_reconstruction = memory.allocateDevice3D<float>(p.iVX, p.iVY,
-            p.iVZ, 0);
+        auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
+        auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny,
+            p.volume.Nz, 0);
         ok = cudaMemcpyAsync(d_truth.data(), truth.data(), volume_count * sizeof(float),
             cudaMemcpyHostToDevice, stream) == cudaSuccess;
 
@@ -525,7 +525,7 @@ int main_large_water_fdk()
             cudaEventRecord(prepare_stop, stream);
             if (ok) {
                 const FdkProjectionBatch batch{
-                    projection.data(), &geometry, nullptr, p.iPAng
+                    projection.data(), &geometry, nullptr, p.scan.NAng
                 };
                 ok = fdk.processBatch(batch, d_reconstruction.data(), true);
                 cudaEventRecord(recon_stop, stream);
@@ -603,12 +603,12 @@ int main_large_water_fdk()
 
 int main_large_water_fdk_iterative()
 {
-    const SCBCTParams p = makeParams();
+    const SReconstructionParams p = makeParams();
     const auto truth = makeWaterPhantom(p);
     std::vector<SConeProjGeomVec> geometry;
     detail::buildCircularViews(p, geometry);
-    const size_t volume_count = static_cast<size_t>(p.iVX) * p.iVY * p.iVZ;
-    const size_t projection_count = static_cast<size_t>(p.iPU) * p.iPV * p.iPAng;
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.Nu) * p.scan.Nv * p.scan.NAng;
     std::vector<float> projection(projection_count);
     std::vector<float> fdk_initial(volume_count);
     std::vector<float> reconstruction(volume_count);
@@ -630,10 +630,10 @@ int main_large_water_fdk_iterative()
     Iter::IterativeConvergenceStatistics convergence_statistics{};
     {
         Mem::MemoryController memory;
-        auto d_truth = memory.allocateDevice3D<float>(p.iVX, p.iVY, p.iVZ, 0);
-        auto d_projection = memory.allocateDevice3D<float>(p.iPU, p.iPV, p.iPAng, 0);
-        auto d_reconstruction = memory.allocateDevice3D<float>(p.iVX, p.iVY,
-            p.iVZ, 0);
+        auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0);
+        auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0);
+        auto d_reconstruction = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny,
+            p.volume.Nz, 0);
         ok = cudaMemcpyAsync(d_truth.data(), truth.data(),
             volume_count * sizeof(float), cudaMemcpyHostToDevice, stream) ==
             cudaSuccess;
@@ -664,7 +664,7 @@ int main_large_water_fdk_iterative()
             cudaEventRecord(fdk_prepare_stop, stream);
             if (ok) {
                 const FdkProjectionBatch batch{
-                    projection.data(), &geometry, nullptr, p.iPAng
+                    projection.data(), &geometry, nullptr, p.scan.NAng
                 };
                 ok = fdk.processBatch(batch, d_reconstruction.data(), true);
                 cudaEventRecord(fdk_stop, stream);
@@ -790,12 +790,12 @@ int main_large_water_fdk_iterative()
         writeFloatRaw(fdk_path, fdk_initial) &&
         writeFloatRaw(reconstruction_path, reconstruction);
     std::vector<TestImage::GrayPanel> panels;
-    for (const int z : { p.iVZ / 2 - 20, p.iVZ / 2, p.iVZ / 2 + 20 }) {
-        panels.push_back({ &truth, p.iVX, p.iVY, p.iVZ, z,
+    for (const int z : { p.volume.Nz / 2 - 20, p.volume.Nz / 2, p.volume.Nz / 2 + 20 }) {
+        panels.push_back({ &truth, p.volume.Nx, p.volume.Ny, p.volume.Nz, z,
             1.f, 0.f, 0.045f, false });
-        panels.push_back({ &fdk_initial, p.iVX, p.iVY, p.iVZ, z,
+        panels.push_back({ &fdk_initial, p.volume.Nx, p.volume.Ny, p.volume.Nz, z,
             fdk_metrics.scale, 0.f, 0.045f, false });
-        panels.push_back({ &reconstruction, p.iVX, p.iVY, p.iVZ, z,
+        panels.push_back({ &reconstruction, p.volume.Nx, p.volume.Ny, p.volume.Nz, z,
             final_metrics.scale, 0.f, 0.045f, false });
     }
     const auto montage_path = artifact_dir /

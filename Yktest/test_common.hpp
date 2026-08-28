@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -90,38 +90,38 @@ static std::string dataPath(const std::string& filename)
 }
 
 
-YK_INLINE SCBCTParams make_default_params()
+YK_INLINE SReconstructionParams make_default_params()
 {
-    SCBCTParams params;
-    params.iPU = 1024;
-    params.iPV = 1024;
-    params.iPAng = 480;
-    params.iPAngTotal = 480;
-    params.tiltn_angle_rad = 0.f;
-    params.tiltu_angle_rad = 0.f;
-    params.tiltv_angle_rad = 0.f;
-    params.iVX = 512;
-    params.iVY = 512;
-    params.iVZ = 400;
-    params.bShortScan = true;
-    params.scan_range_rad = (float)CUDA_PI * 4.0f / 3.0f;
-    params.SID = 500.f;
-    params.SDD = 1000.f;
-    params.du_mm = 0.25f;
-    params.dv_mm = 0.25f;
-    params.vox_x_mm = 0.1f;
-    params.vox_y_mm = 0.1f;
-    params.vox_z_mm = 0.1f;
-    params.offsetU_mm = 0.f;
-    params.offsetV_mm = 0.f;
-    params.vol_offset_x_mm = 0.f;
-    params.vol_offset_y_mm = 0.f;
-    params.vol_offset_z_mm = 0.f;
+    SReconstructionParams params;
+    params.scan.Nu = 1024;
+    params.scan.Nv = 1024;
+    params.scan.NAng = 480;
+    params.scan.totalViews = 480;
+    params.scan.tiltN_rad = 0.f;
+    params.scan.tiltU_rad = 0.f;
+    params.scan.tiltV_rad = 0.f;
+    params.volume.Nx = 512;
+    params.volume.Ny = 512;
+    params.volume.Nz = 400;
+    params.scan.short_scan = true;
+    params.scan.range_rad = (float)CUDA_PI * 4.0f / 3.0f;
+    params.scan.sid_mm = 500.f;
+    params.scan.sdd_mm = 1000.f;
+    params.scan.du_mm = 0.25f;
+    params.scan.dv_mm = 0.25f;
+    params.volume.voxelX_mm = 0.1f;
+    params.volume.voxelY_mm = 0.1f;
+    params.volume.voxelZ_mm = 0.1f;
+    params.scan.offsetU_mm = 0.f;
+    params.scan.offsetV_mm = 0.f;
+    params.volume.centerX_mm = 0.f;
+    params.volume.centerY_mm = 0.f;
+    params.volume.centerZ_mm = 0.f;
 
-    params.angle_list.resize(params.iPAng);
-    for (int i = 0; i < params.iPAng; ++i)
-        params.angle_list[i] = i * 2.f * (float)CUDA_PI / 720;
-    params.scan_start_angle_rad = params.angle_list[0];
+    params.scan.angles.resize(params.scan.NAng);
+    for (int i = 0; i < params.scan.NAng; ++i)
+        params.scan.angles[i] = i * 2.f * (float)CUDA_PI / 720;
+    params.scan.start_angle_rad = params.scan.angles[0];
 
     return params;
 }
@@ -146,7 +146,6 @@ struct SimGeoConfig {
     std::vector<float3> src_offsets = { make_float3(0,0,0) };
     std::vector<float3> det_offsets = { make_float3(0,0,0) };
     std::vector<float3> detTilt_degs = { make_float3(0,0,0) };
-    std::vector<float3> srcCRTilt_degs = { make_float3(0,0,0) };
 };
 
 // ================================================================
@@ -162,7 +161,7 @@ build_sim_geometry(const SimGeoConfig& cfg)
         cfg.du, cfg.dv,
         cfg.SID, cfg.IDD,
         cfg.det_offsets, cfg.src_offsets,
-        cfg.detTilt_degs, cfg.srcCRTilt_degs);
+        cfg.detTilt_degs);
     return h_views;
 }
 
@@ -189,23 +188,23 @@ std::vector<SConeProjGeomVec>        // 外部预建几何
 // ================================================================
 
 // 理想几何（无抖动）
-YK_INLINE SimGeoConfig make_ideal_config(const SCBCTParams& p)
+YK_INLINE SimGeoConfig make_ideal_config(const SReconstructionParams& p)
 {
     SimGeoConfig cfg;
-    cfg.SID = p.SID;
-    cfg.IDD = p.SDD - p.SID;
-    cfg.Na = p.iPAng;
-    cfg.Nu = p.iPU;
-    cfg.Nv = p.iPV;
-    cfg.du = p.du_mm;
-    cfg.dv = p.dv_mm;
-    cfg.angle_list = p.angle_list;
+    cfg.SID = p.scan.sid_mm;
+    cfg.IDD = p.scan.sdd_mm - p.scan.sid_mm;
+    cfg.Na = p.scan.NAng;
+    cfg.Nu = p.scan.Nu;
+    cfg.Nv = p.scan.Nv;
+    cfg.du = p.scan.du_mm;
+    cfg.dv = p.scan.dv_mm;
+    cfg.angle_list = p.scan.angles;
     return cfg;
 }
 
 // 固定offset
 YK_INLINE SimGeoConfig make_fixed_offset_config(
-    const SCBCTParams& p,
+    const SReconstructionParams& p,
     float3 src_offset,
     float3 det_offset,
     float3 detTilt_deg = make_float3(0, 0, 0))
@@ -219,7 +218,7 @@ YK_INLINE SimGeoConfig make_fixed_offset_config(
 
 // 周期抖动
 YK_INLINE SimGeoConfig make_periodic_config(
-    const SCBCTParams& p,
+    const SReconstructionParams& p,
     float src_amp_x = 0.f,   // mm
     float src_amp_y = 0.f,   // mm，等效SID变化
     float src_amp_z = 0.f,
@@ -229,35 +228,32 @@ YK_INLINE SimGeoConfig make_periodic_config(
     float period_frames = 6.f)
 {
     SimGeoConfig cfg = make_ideal_config(p);
-    const int Na = p.iPAng;
+    const int Na = p.scan.NAng;
     cfg.src_offsets.resize(Na);
     cfg.det_offsets.resize(Na);
     cfg.detTilt_degs.resize(Na);
-    cfg.srcCRTilt_degs.resize(Na);
     for (int i = 0; i < Na; ++i) {
         const float phase = 2.f * CUDA_PI * i / period_frames;
         const float jit = std::sin(phase);
         cfg.src_offsets[i] = make_float3(src_amp_x * jit, src_amp_y * jit, src_amp_z * jit);
         cfg.det_offsets[i] = make_float3(det_amp_x * jit, det_amp_y * jit, det_amp_z * jit);
         cfg.detTilt_degs[i] = make_float3(0.f, 0.f, 0.f);
-        cfg.srcCRTilt_degs[i] = make_float3(0.f, 0.f, 0.f);
     }
     return cfg;
 }
 
 // 随机抖动
 YK_INLINE SimGeoConfig make_random_config(
-    const SCBCTParams& p,
+    const SReconstructionParams& p,
     float sigma_t = 0.25f,  // mm
     float sigma_r = 0.1f,   // deg
     uint32_t seed = 42)
 {
     SimGeoConfig cfg = make_ideal_config(p);
-    const int Na = p.iPAng;
+    const int Na = p.scan.NAng;
     cfg.src_offsets.resize(Na);
     cfg.det_offsets.resize(Na);
     cfg.detTilt_degs.resize(Na);
-    cfg.srcCRTilt_degs.resize(Na);
     std::mt19937 rng(seed);
     std::normal_distribution<float> dist_t(0.f, sigma_t);
     std::normal_distribution<float> dist_sid(0.f,1.f);
@@ -268,7 +264,6 @@ YK_INLINE SimGeoConfig make_random_config(
         cfg.det_offsets[i] = make_float3(dist_t(rng), dist_idd(rng), dist_t(rng));
         cfg.detTilt_degs[i] = make_float3(dist_r(rng), dist_r(rng), 0.f);
         cfg.detTilt_degs[i] = make_float3(0, 0, 0.f);
-        cfg.srcCRTilt_degs[i] = make_float3(0.f, 0.f, 0.f);
     }
     return cfg;
 }
@@ -276,16 +271,16 @@ YK_INLINE SimGeoConfig make_random_config(
 
 
 YK_INLINE bool run_fp(
-    const SCBCTParams& params,
+    const SReconstructionParams& params,
     const GeoSource& geo_src,
     const std::string& sino_path,
 
     const std::string& phantom_path,
     cudaStream_t                    stream)
 {
-    const int Na = params.iPAng;
-    const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
-    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const int Na = params.scan.NAng;
+    const int Nx = params.volume.Nx, Ny = params.volume.Ny, Nz = params.volume.Nz;
+    const size_t view_elems = (size_t)params.scan.Nu * params.scan.Nv;
 
     auto h_views = resolve_geometry(geo_src);
 
@@ -296,7 +291,7 @@ YK_INLINE bool run_fp(
         YK_LOGE("recon_raw_save.raw not found"); return false;
     }
     auto d_vol = mc.allocateDevice3D<float>(Nx, Ny, Nz, 0);
-    auto d_sino = mc.allocateDevice3D<float>(params.iPU, params.iPV, Na, 0);
+    auto d_sino = mc.allocateDevice3D<float>(params.scan.Nu, params.scan.Nv, Na, 0);
     { auto borrow = mc.borrowCpu3D(h_vol.data(), Nx, Ny, Nz); mc.upload3D(d_vol, borrow); }
     h_vol.reset();
 
@@ -317,7 +312,7 @@ YK_INLINE bool run_fp(
 
     std::vector<float> h_sino(view_elems * Na);
     {
-        auto borrow_sino = mc.borrowCpu3D(h_sino.data(), params.iPU, params.iPV, Na);
+        auto borrow_sino = mc.borrowCpu3D(h_sino.data(), params.scan.Nu, params.scan.Nv, Na);
         mc.download3D(borrow_sino, d_sino);
     }
     if (!write_raw_float((datapath::test_data_dir + sino_path).c_str(),
@@ -328,15 +323,15 @@ YK_INLINE bool run_fp(
 }
 
 YK_INLINE void run_recon(
-    const SCBCTParams& params,
+    const SReconstructionParams& params,
     const GeoSource& geo_src,
     const std::string& sino_path,
     const std::string& vol_path,
     cudaStream_t                    stream)
 {
-    const int Na = params.iPAng;
-    const int Nx = params.iVX, Ny = params.iVY, Nz = params.iVZ;
-    const size_t view_elems = (size_t)params.iPU * params.iPV;
+    const int Na = params.scan.NAng;
+    const int Nx = params.volume.Nx, Ny = params.volume.Ny, Nz = params.volume.Nz;
+    const size_t view_elems = (size_t)params.scan.Nu * params.scan.Nv;
     const size_t vol_elems = (size_t)Nx * Ny * Nz;
 
     auto h_views_recon = resolve_geometry(geo_src);
@@ -373,7 +368,7 @@ YK_INLINE void run_recon(
 }
 
 YK_INLINE void run_fp_and_recon(
-    const SCBCTParams& params,
+    const SReconstructionParams& params,
     const SimGeoConfig& geo_cfg,
     const SimGeoConfig& recon_cfg,
     const std::string& sino_path,

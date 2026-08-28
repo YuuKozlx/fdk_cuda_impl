@@ -6,6 +6,7 @@
 #include <driver_types.h>
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
+#include "../global/YkFilterTypes.hpp"
 #include "YkCreateFilterKernelHelpers.cuh"
 
 namespace YK {

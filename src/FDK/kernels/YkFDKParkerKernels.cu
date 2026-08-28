@@ -3,6 +3,8 @@
 
 #include "../../global/YkGlobals.h"              // CUDA_PI
 #include "../../global/YkMacro.hpp"
+#include "../../global/YkFdkKernelTypes.hpp"
+#include "../../global/YkKernelLaunchPolicy.hpp"
 #include "YkFDKParkerHelpers.cuh"
 #include "../../global/YkWarpStrideCtx.cuh"
 
@@ -44,28 +46,43 @@ namespace YK {
             __global__ void parker_weight_kernel(
                 float* __restrict__ data,
                 int Nu, int Nv, int K,
-                float fSDD, float fDetUSize,
-                float fCentralFanAngle, float fScale,
+                const SConeProjGeomVec* __restrict__ geometry,
+                const SFDKGeoParamPerView* __restrict__ gv,
+                float fScale,
                 int nDirSign)
             {
                 WarpStrideCtx<EWarpStrideAxis::RowWarp> ctx;
 
                 const int   total_rows = K * Nv;
-                const float Gamma = fCentralFanAngle;
                 const float kQuadPi = CUDA_PI * 0.25f;
                 const float eps = 1e-6f;
 
                 for (int row = ctx.warp_global; row < total_rows; row += ctx.n_warps)
                 {
                     const int angle = row / Nv;
+                    const SConeProjGeomVec& geo = geometry[angle];
+                    const SFDKGeoParamPerView& view = gv[angle];
+                    const float center_v = 0.5f * (Nv - 1);
+                    const float3 radial = make_float3(
+                        view.radial_ray.x, view.radial_ray.y, 0.f);
+                    const auto fanAngle = [&](float detector_u) {
+                        const float ray_x = geo.detS.x + detector_u * geo.detU.x +
+                            center_v * geo.detV.x - geo.src.x;
+                        const float ray_y = geo.detS.y + detector_u * geo.detU.y +
+                            center_v * geo.detV.y - geo.src.y;
+                        // atan2(ray x radial) 的符号与旧实现的探测器 U 扇角一致。
+                        return atan2f(ray_x * radial.y - ray_y * radial.x,
+                            ray_x * radial.x + ray_y * radial.y);
+                    };
+                    const float Gamma = fmaxf(
+                        fabsf(fanAngle(0.f)), fabsf(fanAngle(float(Nu - 1))));
                     // beta 已在上传时折算为标准正向 [0, β_max]，不再翻转
                     const float beta = gC_parker_angle[angle];
 
                     for (int u = ctx.lane; u < Nu; u += 32)
                     {
-                        const float u_mm = (u - 0.5f * Nu + 0.5f) * fDetUSize;
                         // gamma 按 nDirSign 翻转，与 beta 保持同坐标系
-                        const float gamma = nDirSign * atanf(u_mm / fSDD);
+                        const float gamma = nDirSign * fanAngle(float(u));
 
                         const float t1 = 2.0f * (Gamma + gamma);
                         const float t2 = CUDA_PI + 2.0f * gamma;
@@ -138,8 +155,9 @@ namespace YK {
             void pk_launchParker(
                 float* d_data,
                 int Nu, int Nv, int K,
-                float fSDD, float fDetUSize,
-                float fCentralFanAngle, float fScale,
+                const SConeProjGeomVec* d_geometry,
+                const SFDKGeoParamPerView* d_gv,
+                float fScale,
                 int nDirSign,
                 cudaStream_t stream)
             {
@@ -149,7 +167,7 @@ namespace YK {
 
                 parker_weight_kernel << <launch.grid, launch.block, 0, stream >> > (
                     d_data, Nu, Nv, K,
-                    fSDD, fDetUSize, fCentralFanAngle, fScale,
+                    d_geometry, d_gv, fScale,
                     nDirSign);
 
                 YK_CUDA_KERNEL_CHECK();
@@ -160,146 +178,3 @@ namespace YK {
         }
     }
 } // namespace YK::Fdk::detail
-
-
-//namespace YK {
-//    namespace Fdk {
-//        namespace detail {
-//
-//            // ----------------------------------------------------------------
-//            // print_d_out_kernel  （调试用，Release 中不调用）
-//            // ----------------------------------------------------------------
-//            __global__ void print_d_out_kernel(const float* data, int Nu, int Nv, int K)
-//            {
-//                const int u = blockIdx.x * blockDim.x + threadIdx.x;
-//                const int angle = blockIdx.y * blockDim.y + threadIdx.y;
-//                if (u >= Nu || angle >= K) return;
-//                for (int v = 0; v < Nv; ++v) {
-//                    const int idx = (angle * Nv + v) * Nu + u;
-//                    printf("data[%d] = %f\n", idx, data[idx]);
-//                }
-//            }
-//
-//            // ----------------------------------------------------------------
-//            // parker_weight_kernel
-//            //
-//            //   数据布局：[K, Nv, Nu]，紧密排列，无 padding。
-//            //   beta  = gC_parker_angle[angle]，已归一化到 [0, 2π)。
-//            //   gamma = atan(u_mm / SDD)，u_mm 为探测器列物理坐标。
-//            //   沿 v 方向同列权重相同，一次 thread 处理整列。
-//            // ----------------------------------------------------------------
-//            __global__ void parker_weight_kernel(
-//                float* __restrict__ data,
-//                int   Nu,
-//                int   Nv,
-//                int   K,
-//                float fSDD,
-//                float fDetUSize,
-//                float fCentralFanAngle,
-//                float fScale)
-//            {
-//                const int u = blockIdx.x * blockDim.x + threadIdx.x;
-//                const int angle = blockIdx.y * blockDim.y + threadIdx.y;
-//
-//                if (u >= Nu || angle >= K) return;
-//
-//                // 探测器列物理坐标(以探测器中心为原点)
-//                const float u_mm = (u - 0.5f * Nu + 0.5f) * fDetUSize;
-//                const float gamma = atanf(u_mm / fSDD);
-//                const float beta = gC_parker_angle[angle];
-//
-//                // Parker 权重分段函数
-//                const float t1 = 2.0f * (fCentralFanAngle + gamma);
-//                const float t2 = CUDA_PI + 2.0f * gamma;
-//                const float t3 = CUDA_PI + 2.0f * fCentralFanAngle;
-//
-//                float w;
-//                if (beta <= 0.0f) {
-//                    w = 0.0f;
-//                }
-//                else if (beta < t1) {
-//                    const float arg = (CUDA_PI * 0.25f) * beta / (fCentralFanAngle + gamma);
-//                    const float s = sinf(arg);
-//                    w = s * s;
-//                }
-//                else if (beta <= t2) {
-//                    w = 1.0f;
-//                }
-//                else if (beta < t3) {
-//                    const float arg = (CUDA_PI * 0.25f) * (CUDA_PI + 2.0f * fCentralFanAngle - beta)
-//                        / (fCentralFanAngle - gamma);
-//                    const float s = sinf(arg);
-//                    w = s * s;
-//                }
-//                else {
-//                    w = 0.0f;
-//                }
-//
-//                w *= fScale;
-//
-//                // 沿 v 方向写回
-//                for (int v = 0; v < Nv; ++v) {
-//                    const int idx = (angle * Nv + v) * Nu + u;
-//                    data[idx] *= w;
-//                }
-//            }
-//
-//
-//            // ----------------------------------------------------------------
-//         // pk_uploadAngles
-//         //   将本 chunk 的绝对角度转换为相对角度（归一化到 [0, 2π)）
-//         //   并上传到 constant memory gC_parker_angle。
-//         //
-//         //   注意：cudaMemcpyToSymbol 是同步调用，无需显式 stream 参数。
-//         // ----------------------------------------------------------------
-//            void pk_uploadAngles(
-//                const float* h_angles,
-//                int          K,
-//                float        fAngleBase)
-//            {
-//                std::vector<float> rel(K);
-//                for (int i = 0; i < K; ++i) {
-//                    float f = h_angles[i] - fAngleBase;
-//                    while (f < 0.f)            f += 2.f * CUDA_PI;
-//                    while (f >= 2.f * CUDA_PI)  f -= 2.f * CUDA_PI;
-//                    rel[i] = f;
-//                }
-//
-//                printf("\n[pk_upload] K=%d base=%.6f angles[0]=%.6f angles[K-1]=%.6f\n\n",
-//                    K, fAngleBase, h_angles[0], h_angles[K - 1]);
-//                YK_CUDA_CHECK(cudaMemcpyToSymbol(
-//
-//                    gC_parker_angle,
-//                    rel.data(),
-//                    static_cast<size_t>(K) * sizeof(float),
-//                    0,
-//                    cudaMemcpyHostToDevice));
-//            }
-//
-//            // ----------------------------------------------------------------
-//            // pk_launchParker
-//            //   原地 Parker 加权：d_data [K, Nv, Nu] device buffer。
-//            // ----------------------------------------------------------------
-//            void pk_launchParker(
-//                float* d_data,
-//                int    Nu, int Nv, int K,
-//                float  fSDD,
-//                float  fDetUSize,
-//                float  fCentralFanAngle,
-//                float  fScale,
-//                cudaStream_t stream)
-//            {
-//                const dim3 dimBlock(32, 8);
-//                const dim3 dimGrid(
-//                    (Nu + 31) / 32,
-//                    (K + 7) / 8);
-//
-//                parker_weight_kernel << <dimGrid, dimBlock, 0, stream >> > (
-//                    d_data, Nu, Nv, K,
-//                    fSDD, fDetUSize, fCentralFanAngle, fScale);
-//                YK_CUDA_KERNEL_CHECK();
-//            }
-//
-//        }
-//    }
-//} // namespace YK::Fdk::detail

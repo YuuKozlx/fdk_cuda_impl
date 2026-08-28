@@ -19,7 +19,6 @@ SConeProjGeomVec makeSingleView(int nu, int nv, float du, float dv)
     constexpr float sdd = 1000.f;
     SConeProjGeomVec view{};
     view.src = make_float4(0.f, -sid, 0.f, 0.f);
-    view.srcCR = make_float4(0.f, 1.f, 0.f, 0.f);
     view.detU = make_float4(du, 0.f, 0.f, 0.f);
     view.detV = make_float4(0.f, 0.f, dv, 0.f);
     view.detS = make_float4(-nu * 0.5f * du, sdd - sid, -nv * 0.5f * dv, 0.f);

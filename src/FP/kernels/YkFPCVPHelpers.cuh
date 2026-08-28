@@ -14,7 +14,7 @@ namespace YK
         struct SCVPViewCache {
             // Copied directly from SConeProjGeomVec
             float4 src;
-            float4 srcCR;    // detector normal (unit vector, src -> detector)
+            float4 detectorNormal; // 由 detU/detV 派生，方向为 source -> detector
             float4 detS;     // world position of pixel (0,0) origin (not pixel center)
             float4 detU;     // per-pixel U vector (carries physical spacing)
             float4 detV;     // per-pixel V vector (carries physical spacing)
@@ -35,10 +35,9 @@ namespace YK
             float  inv_a1, inv_a2, inv_a3;
             int    Nx, Ny, Nz;
 
-            // Projected depth of the voxel bounding box along srcCR (precomputed per view).
-            // For axis-aligned voxels: depth = |a1*(X.srcCR)| + |a2*(Y.srcCR)| + |a3*(Z.srcCR)|
+            // Projected depth of the voxel bounding box along detectorNormal.
             // If the volume has an additional rotation matrix R, replace the world-axis
-            // dot products with dot(R_col_alpha, srcCR).
+            // dot products with dot(R_col_alpha, detectorNormal).
             // Note: currently retained in the struct but not used in the kernel after
             // the cut-volume formula was corrected to use voxel-volume * overlap-fraction.
             float  vox_depth;  // [mm]
@@ -47,15 +46,15 @@ namespace YK
         // ============================================================
         //  Host: build SCVPViewCache from user geometry + volume desc
         // ============================================================
-        inline static SCVPViewCache make_view_cache(
+        inline static bool make_view_cache(
             const SConeProjGeomVec& g,
             int M, int N,
-            const SVolGeom& vol)
+            const SVolGeom& vol,
+            SCVPViewCache& c)
         {
-            SCVPViewCache c;
+            c = {};
 
             c.src = g.src;
-            c.srcCR = g.srcCR;
             c.detS = g.detS;
             c.detU = g.detU;
             c.detV = g.detV;
@@ -64,25 +63,20 @@ namespace YK
             // Pixel physical spacing
             c.du = sqrtf(g.detU.x * g.detU.x + g.detU.y * g.detU.y + g.detU.z * g.detU.z);
             c.dv = sqrtf(g.detV.x * g.detV.x + g.detV.y * g.detV.y + g.detV.z * g.detV.z);
+            if (!std::isfinite(c.du) || !std::isfinite(c.dv) ||
+                c.du <= 0.f || c.dv <= 0.f)
+                return false;
             c.inv_du = 1.f / c.du;
             c.inv_dv = 1.f / c.dv;
             c.detU_n = make_float3(g.detU.x * c.inv_du, g.detU.y * c.inv_du, g.detU.z * c.inv_du);
             c.detV_n = make_float3(g.detV.x * c.inv_dv, g.detV.y * c.inv_dv, g.detV.z * c.inv_dv);
 
-            // Detector geometric center: detS + M/2 * detU + N/2 * detV
-            // detS is the pixel (0,0) origin, not the pixel center.
-            // Pixel (m,n) center = detS + (m+0.5)*detU + (n+0.5)*detV
-            const float hM = (float)M * 0.5f, hN = (float)N * 0.5f;
-            c.det_center = make_float3(
-                g.detS.x + hM * g.detU.x + hN * g.detV.x,
-                g.detS.y + hM * g.detU.y + hN * g.detV.y,
-                g.detS.z + hM * g.detU.z + hN * g.detV.z);
-
-            // SDD = dot(det_center - src, srcCR)
-            const float dcx = c.det_center.x - g.src.x;
-            const float dcy = c.det_center.y - g.src.y;
-            const float dcz = c.det_center.z - g.src.z;
-            c.SDD = dcx * g.srcCR.x + dcy * g.srcCR.y + dcz * g.srcCR.z;
+            SProjectionFrame frame{};
+            if (!deriveProjectionFrame(g, M, N, frame)) return false;
+            c.det_center = frame.detectorCenter;
+            c.detectorNormal = make_float4(frame.detectorNormal.x,
+                frame.detectorNormal.y, frame.detectorNormal.z, 0.f);
+            c.SDD = frame.planeDistance;
 
             // Volume
             c.vol_origin = vol.origin();     // 或者 make_float3(vol.ox, vol.oy, vol.oz)
@@ -95,13 +89,11 @@ namespace YK
             c.Nx = vol.Nx; c.Ny = vol.Ny; c.Nz = vol.Nz;
 
 
-            // Voxel bounding-box projection depth along srcCR.
-            // srcCR is a unit vector, so dot(world_axis_alpha, srcCR) = srcCR component alpha.
-            c.vox_depth = fabsf(vol.vox_x * g.srcCR.x)
-                + fabsf(vol.vox_y * g.srcCR.y)
-                + fabsf(vol.vox_z * g.srcCR.z);
+            c.vox_depth = fabsf(vol.vox_x * frame.detectorNormal.x)
+                + fabsf(vol.vox_y * frame.detectorNormal.y)
+                + fabsf(vol.vox_z * frame.detectorNormal.z);
 
-            return c;
+            return true;
         }
 
         // ============================================================

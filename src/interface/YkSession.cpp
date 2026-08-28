@@ -48,30 +48,30 @@ public:
         device_ = desc.gpu[0];
         if (!geometry_.initialize(desc) || !resources_.initialize(device_)) return false;
         params_ = geometry_.base();
-        params_.angle_list = geometry_.allAngles();
+        params_.scan.angles = geometry_.allAngles();
         if (geometry_.hasExternalGeometry()) {
             // 外部 geometry 的 angle.x 是唯一角度来源。同步写入内部参数仅为
             // 复用当前 FDK/Parker 配置接口，绝不读取 SessionDesc::angles。
-            params_.angle_list.resize(geometry_.allGeometry().size());
+            params_.scan.angles.resize(geometry_.allGeometry().size());
             for (size_t i = 0; i < geometry_.allGeometry().size(); ++i)
-                params_.angle_list[i] = geometry_.allGeometry()[i].angle.x;
-            params_.scan_start_angle_rad = params_.angle_list.front();
-            if (params_.angle_list.size() >= 2)
-                params_.nDirSign = params_.angle_list[1] >= params_.angle_list[0] ? 1 : -1;
+                params_.scan.angles[i] = geometry_.allGeometry()[i].angle.x;
+            params_.scan.start_angle_rad = params_.scan.angles.front();
+            if (params_.scan.angles.size() >= 2)
+                params_.scan.direction = params_.scan.angles[1] >= params_.scan.angles[0] ? 1 : -1;
         }
-        params_.iPAng = static_cast<int>(params_.angle_list.size());
+        params_.scan.NAng = static_cast<int>(params_.scan.angles.size());
 
         bool ok = false;
         switch (desc.algorithm.pipeline) {
         case EPipeline::FDK:
-            params_.desc = makeFilterDesc(desc.algorithm.fdk);
+            params_.reconstruction.filter = makeFilterDesc(desc.algorithm.fdk);
             // geometry 非空时，它是唯一的几何/角度真源。圆轨迹 angles 只在
             // geometry 为空时用于构造同一份完整 geometry。
             ok = geometry_.hasExternalGeometry()
                 ? fdk_.prepareWithGeometry(params_, geometry_.allGeometry(), kMaxChunkAng,
                     resources_.stream(), device_)
-                : static_cast<int>(params_.angle_list.size()) == params_.iPAngTotal
-                ? fdk_.prepareWithAngles(params_, params_.angle_list, kMaxChunkAng,
+                : static_cast<int>(params_.scan.angles.size()) == params_.scan.totalViews
+                ? fdk_.prepareWithAngles(params_, params_.scan.angles, kMaxChunkAng,
                     resources_.stream(), device_)
                 : fdk_.prepare(params_, kMaxChunkAng, resources_.stream(), device_);
             break;
@@ -162,7 +162,7 @@ public:
 private:
     bool hasCompleteAngles_() const
     {
-        if (static_cast<int>(params_.angle_list.size()) != desc_.scan.NAng) {
+        if (static_cast<int>(params_.scan.angles.size()) != desc_.scan.NAng) {
             YK_LOGE("[Session] iterative pipelines require complete angles or per-view geometry.");
             return false;
         }
@@ -212,7 +212,7 @@ private:
         // 外部 geometry 模式下 angle.x 已是唯一角度来源。当前 ExecuteRequest
         // 没有 batch offset，因此只允许一次提交完整序列，避免用另一份 angles
         // 去猜测子集并造成几何/角度分叉。
-        if (geometry_.hasExternalGeometry() && r.K != params_.iPAngTotal) {
+        if (geometry_.hasExternalGeometry() && r.K != params_.scan.totalViews) {
             YK_LOGE("[Session] external-geometry FP currently requires the complete view sequence.");
             return false;
         }
@@ -227,11 +227,11 @@ private:
         if (!d_volume || !d_projection) return false;
         const float* batch_angles = geometry_.hasExternalGeometry()
             ? geometry_.allAngles().data() : r.angles;
-        SCBCTParams batch = geometry_.batch(batch_angles, r.K);
-        batch.iPAngTotal = r.K;
+        SReconstructionParams batch = geometry_.batch(batch_angles, r.K);
+        batch.scan.totalViews = r.K;
         if (!forward_ || !forward_->apply(d_volume, batch, d_projection, resources_)) return false;
         if (r.projection.location == EMemoryLocation::Host) {
-            const size_t bytes = static_cast<size_t>(r.K) * params_.iPU * params_.iPV * sizeof(float);
+            const size_t bytes = static_cast<size_t>(r.K) * params_.scan.Nu * params_.scan.Nv * sizeof(float);
             YK_CUDA_CHECK(cudaMemcpyAsync(r.projection.data, d_projection, bytes,
                 cudaMemcpyDeviceToHost, resources_.stream()));
             YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
@@ -293,7 +293,7 @@ private:
     }
     float* ensureProjectionScratch_(int k)
     {
-        const size_t needed = static_cast<size_t>(k) * params_.iPU * params_.iPV * sizeof(float);
+        const size_t needed = static_cast<size_t>(k) * params_.scan.Nu * params_.scan.Nv * sizeof(float);
         if (needed > projection_scratch_bytes_) {
             if (d_projection_scratch_) cudaFree(d_projection_scratch_);
             YK_CUDA_CHECK(cudaMalloc(&d_projection_scratch_, needed));
@@ -301,7 +301,7 @@ private:
         }
         return d_projection_scratch_;
     }
-    size_t volumeBytes_() const { return static_cast<size_t>(params_.iVX) * params_.iVY * params_.iVZ * sizeof(float); }
+    size_t volumeBytes_() const { return static_cast<size_t>(params_.volume.Nx) * params_.volume.Ny * params_.volume.Nz * sizeof(float); }
     void freeScratch_()
     {
         if (d_volume_scratch_) { cudaFree(d_volume_scratch_); d_volume_scratch_ = nullptr; }
@@ -310,7 +310,7 @@ private:
     }
 
     SessionDesc desc_{};
-    SCBCTParams params_{};
+    SReconstructionParams params_{};
     int device_ = 0;
     bool initialized_ = false;
     FdkPipeline fdk_;
