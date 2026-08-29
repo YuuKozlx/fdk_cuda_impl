@@ -22,6 +22,7 @@
 #include "CylFpBp/YkCylIterativeReconstructor.hpp"
 #include "CylFpBp/YkCylForwardOperator.hpp"
 #include "CylFpBp/YkCylFdkBackprojector.hpp"
+#include "CylFpBp/YkCylFdkPipeline.hpp"
 #include "CylFpBp/YkCylVoxelDrivenBackprojector.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
 #include "FP/YkFPGpuContext.hpp"
@@ -474,6 +475,93 @@ int main_fpcyl_fdk_backprojectors()
     rejected.release();
     fdk.release();
     matched.release();
+    cudaStreamDestroy(stream);
+    return ok ? 0 : 1;
+}
+
+int main_fpcyl_cfdk_reconstruction()
+{
+    // 第一版 C-FDK 只验证其有明确定义的适用域：完整圆扫、源中心等角
+    // 柱面且 R=SDD。投影由同一柱面几何下的 Joseph FP 生成，判定使用
+    // 绝对衰减系数，相关系数不参与通过条件。
+    SHeliCTParam h{};
+    h.iPU = 160; h.iPV = 64;
+    h.iVX = 64; h.iVY = 64; h.iVZ = 32;
+    h.du_mm = 0.8f; h.dv_mm = 0.8f;
+    h.vox_x_mm = 0.8f; h.vox_y_mm = 0.8f; h.vox_z_mm = 0.8f;
+    h.SID = 160.f; h.SDD = 300.f;
+    h.offsetU_mm = 1.2f;
+    h.offsetV_mm = 1.6f;
+    h.views_per_rot = 360;
+    h.angle_list.resize(h.views_per_rot);
+    for (int i = 0; i < h.views_per_rot; ++i)
+        h.angle_list[i] = 2.f * CUDA_PI * i / h.views_per_rot;
+
+    const SReconstructionParams params = toCbct(h);
+    const std::vector<float> truth = TestPhantom::makeBasic(params);
+    const size_t volume_count = truth.size();
+    const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
+        h.angle_list.size();
+    const auto geometry = CylFpBp::buildFreeCtArcGeometry(h);
+
+    cudaStream_t stream = nullptr;
+    if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
+    Mem::MemoryController memory;
+    auto d_truth = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+    auto d_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    auto d_recon = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+    YK_CUDA_CHECK(cudaMemcpyAsync(d_truth.data(), truth.data(),
+        volume_count * sizeof(float), cudaMemcpyHostToDevice, stream));
+
+    auto truth_texture = makeTexture(d_truth.data(), h.iVX, h.iVY, h.iVZ,
+        cudaFilterModeLinear, stream);
+    CylFpBp::Config fp_config{};
+    fp_config.samples_per_voxel = 2.f;
+    CylFpBp::ForwardOperator fp;
+    CylFpBp::FdkPipeline cfdk;
+    bool ok = fp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, fp_config) &&
+        fp.forward(truth_texture, d_projection.data(), stream) &&
+        cfdk.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry,
+            SFilterKernelDesc::RamLak(), stream) &&
+        cfdk.reconstruct(d_projection.data(), d_recon.data()) &&
+        cudaStreamSynchronize(stream) == cudaSuccess;
+
+    std::vector<float> reconstruction(volume_count);
+    if (ok) {
+        ok = cudaMemcpy(reconstruction.data(), d_recon.data(),
+            volume_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess;
+    }
+    const Metrics metrics = compare(truth, reconstruction);
+    double water_sum = 0.0, background_sum = 0.0;
+    size_t water_count = 0, background_count = 0;
+    const int z = h.iVZ / 2;
+    for (int y = 0; y < h.iVY; ++y) {
+        for (int x = 0; x < h.iVX; ++x) {
+            const float dx = (x + 0.5f - 0.5f * h.iVX) * h.vox_x_mm;
+            const float dy = (y + 0.5f - 0.5f * h.iVY) * h.vox_y_mm;
+            const float radius = std::sqrt(dx * dx + dy * dy);
+            const size_t index = (static_cast<size_t>(z) * h.iVY + y) * h.iVX + x;
+            // basic phantom 的高衰减小球中心约在 r=5.7 mm；中心 ROI 收到
+            // 3 mm，避免把 0.08 mm^-1 插入物混入 0.02 mm^-1 水区统计。
+            if (radius < 3.f) { water_sum += reconstruction[index]; ++water_count; }
+            if (radius > 23.f) { background_sum += reconstruction[index]; ++background_count; }
+        }
+    }
+    const double water_mean = water_count ? water_sum / water_count : 0.0;
+    const double background_mean = background_count
+        ? background_sum / background_count : 0.0;
+    YK_LOGI("[C-FDK] water expected=2.000000e-02 mean={:.6e} bias={:.6e} "
+        "background={:.6e} MAE={:.6e} abs-NRMSE={:.6f} corr={:.6f}",
+        water_mean, water_mean - 0.02, background_mean, metrics.mae,
+        metrics.absolute_nrmse, metrics.correlation);
+
+    // 初始阈值只排除 NaN、零输出和数量级错误；达到材料定量精度前，测试
+    // 日志中的绝对值是继续修正滤波核与归一化的依据。
+    ok = ok && std::isfinite(water_mean) && water_mean > 0.005 &&
+        water_mean < 0.08 && std::fabs(background_mean) < 0.01;
+    fp.release();
+    cfdk.release();
     cudaStreamDestroy(stream);
     return ok ? 0 : 1;
 }

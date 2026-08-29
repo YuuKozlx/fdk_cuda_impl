@@ -1,15 +1,20 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include <cuda_runtime.h>
 
 #include <global/YkGlobals.h>
 #include <utility>
+#include "FDK/YkCurveFilteredFdkPipeline.hpp"
 #include "FDK/YkFdkPipeline.hpp"
 #include "FDK/kernels/YkFDKBpPrecompute.cuh"
 #include "YkTestPhantoms.hpp"
+#include "YkTestImage.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "test_common.hpp"
 #include "util/YkVecOperation.hpp"
@@ -69,6 +74,1047 @@ namespace {
     }
 
 } // namespace
+
+// 论文版 C-FDK 的端到端数值回归。投影由同一逐视图平板圆几何生成，测试
+// 直接报告 ASTRA 官方 Shepp-Logan 模体的材料值误差，避免用相关系数
+// 掩盖整体比例错误。
+int main_curve_filtered_fdk_reconstruction()
+{
+    SReconstructionParams p = makeSmallParams(90);
+    p.scan.Nu = 128; p.scan.Nv = 128;
+    p.scan.du_mm = 0.8f; p.scan.dv_mm = 0.8f;
+    p.scan.sid_mm = 100.f; p.scan.sdd_mm = 200.f;
+    p.volume.Nx = 64; p.volume.Ny = 64; p.volume.Nz = 64;
+    p.volume.voxelX_mm = 0.5f;
+    p.volume.voxelY_mm = 0.5f;
+    p.volume.voxelZ_mm = 0.5f;
+    p.scan.angles.resize(p.scan.NAng);
+    for (int i = 0; i < p.scan.NAng; ++i)
+        p.scan.angles[i] = 2.f * CUDA_PI * i / p.scan.NAng;
+
+    std::vector<SConeProjGeomVec> views;
+    detail::buildCircularViews(p, views);
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) *
+        p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.NAng) *
+        p.scan.Nu * p.scan.Nv;
+    std::vector<float> phantom = TestPhantom::makeAstraSheppLogan3D(
+        p, 16.0f, true, 0.02f);
+    const SVolGeom vg = SVolGeom::make_centered(p.volume.Nx, p.volume.Ny,
+        p.volume.Nz, p.volume.voxelX_mm, p.volume.voxelY_mm,
+        p.volume.voxelZ_mm);
+    const float3 origin = vg.origin();
+
+    Mem::MemoryController memory;
+    auto d_phantom = memory.allocateDevice3D<float>(p.volume.Nx,
+        p.volume.Ny, p.volume.Nz, 0, false);
+    auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu,
+        p.scan.Nv, p.scan.NAng, 0, false);
+    auto d_reconstruction = memory.allocateDevice3D<float>(p.volume.Nx,
+        p.volume.Ny, p.volume.Nz, 0, false);
+    auto h_reconstruction = memory.allocateCpu3D<float>(p.volume.Nx,
+        p.volume.Ny, p.volume.Nz, false);
+    auto h_phantom = memory.allocateCpu3D<float>(p.volume.Nx,
+        p.volume.Ny, p.volume.Nz, false);
+    std::copy(phantom.begin(), phantom.end(), h_phantom.data());
+    memory.upload3D(d_phantom, h_phantom);
+
+    cudaStream_t stream = nullptr;
+    cudaEvent_t begin = nullptr, end = nullptr;
+    bool ok = checkCuda(cudaStreamCreate(&stream), "create C-FDK stream") &&
+        checkCuda(cudaEventCreate(&begin), "create C-FDK start event") &&
+        checkCuda(cudaEventCreate(&end), "create C-FDK stop event");
+    GeometryContext geometry;
+    ResourceContext resources;
+    ok = ok && geometry.initialize(p, views);
+    resources.attach(stream, 0);
+    auto fp = makeForwardOperator(ETask::FP_Joseph);
+    ok = ok && fp->prepare(geometry, resources) &&
+        fp->apply(d_phantom.data(), p, d_projection.data(), resources);
+
+    Fdk::CurveFilteredFdkPipeline cfdk;
+    if (ok) {
+        ok = cfdk.prepare(p, views, stream);
+        if (ok) {
+            cudaEventRecord(begin, stream);
+            ok = cfdk.reconstruct(d_projection.data(),
+                d_reconstruction.data(), true);
+            cudaEventRecord(end, stream);
+            ok = ok && cfdk.wait();
+        }
+    }
+    float elapsed_ms = 0.f;
+    if (ok) {
+        cudaEventElapsedTime(&elapsed_ms, begin, end);
+        memory.download3D(h_reconstruction, d_reconstruction);
+    }
+
+    double sum = 0.0, truth_sum = 0.0, abs_error = 0.0, sq_error = 0.0, truth_sq = 0.0;
+    size_t roi_count = 0;
+    if (ok) {
+        for (int z = 0; z < p.volume.Nz; ++z) {
+            const float wz = origin.z + z * vg.vox_z;
+            for (int y = 0; y < p.volume.Ny; ++y) {
+                const float wy = origin.y + y * vg.vox_y;
+                for (int x = 0; x < p.volume.Nx; ++x) {
+                    const size_t i = (static_cast<size_t>(z) * p.volume.Ny + y) * p.volume.Nx + x;
+                    const float truth = phantom[i];
+                    if (truth <= 0.f) continue;
+                    const float value = h_reconstruction.cdata()[i];
+                    ok = ok && std::isfinite(value);
+                    sum += value;
+                    truth_sum += truth;
+                    abs_error += std::fabs(value - truth);
+                    sq_error += static_cast<double>(value - truth) * (value - truth);
+                    truth_sq += static_cast<double>(truth) * truth;
+                    ++roi_count;
+                }
+            }
+        }
+    }
+    const double mean = roi_count ? sum / roi_count : 0.0;
+    const double mae = roi_count ? abs_error / roi_count : INFINITY;
+    const double truth_mean = roi_count ? truth_sum / roi_count : 0.0;
+    const double bias = mean - truth_mean;
+    const double nrmse = truth_sq > 0.0 ? std::sqrt(sq_error / truth_sq) : INFINITY;
+    ok = ok && roi_count > 0 && std::isfinite(nrmse) && nrmse < 1.0;
+    YK_LOGI("[CurveFilteredFdk] ASTRA Shepp-Logan truth_mean={:.6e} ROI mean={:.6e} "
+        "bias={:.6e} MAE={:.6e} NRMSE={:.6e} time={:.3f} ms",
+        truth_mean, mean, bias, mae, nrmse, elapsed_ms);
+
+    // 探测器倾斜已超出论文推导范围，必须显式拒绝，不能静默退回近似 FDK。
+    std::vector<SConeProjGeomVec> tilted;
+    build_circular_vec_geometry_from_theta(tilted, p.scan.angles, p.scan.NAng,
+        p.scan.Nu, p.scan.Nv, p.scan.du_mm, p.scan.dv_mm,
+        p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
+        make_float3(0.f, 0.f, 0.f), make_float3(1.f, 0.f, 0.f));
+    Fdk::CurveFilteredFdkPipeline invalid;
+    ok = ok && !invalid.prepare(p, tilted, stream);
+    YK_LOGI("[CurveFilteredFdk] absolute-value reconstruction: {}",
+        ok ? "PASS" : "FAIL");
+
+    invalid.release();
+    cfdk.release();
+    fp->release();
+    resources.release();
+    if (end) cudaEventDestroy(end);
+    if (begin) cudaEventDestroy(begin);
+    if (stream) cudaStreamDestroy(stream);
+    return ok ? 0 : 1;
+}
+
+// 论文式 (25)、(27) 使用 |c| 定义上下对称的渐变曲线。式 (35) 是这些
+// 曲线的反解，因此必须验证三个分段的往返、边界连续性和 c(-z)=-c(z)。
+// 该测试独立于重建图像，可直接发现负 z 分母误用有符号 z 的问题。
+int main_curve_filtered_fdk_piecewise_mapping()
+{
+    Fdk::detail::SCurveFilteredFdkGeometry g{};
+    g.sid_mm = 400.f;
+    g.sdd_mm = 800.f;
+    const float am = 99.609375f;
+    g.bm_mm = 99.609375f;
+    const float r2 = g.sid_mm * g.sid_mm;
+    const float q_edge = std::sqrt(r2 - am * am);
+    g.c0_mm = g.bm_mm * (2.f * (r2 - am * am) -
+        g.sid_mm * q_edge) / r2;
+    g.s0_mm = g.bm_mm * (r2 - am * am) / r2;
+
+    bool ok = true;
+    float max_roundtrip_error = 0.f;
+    float max_symmetry_error = 0.f;
+    float max_boundary_jump = 0.f;
+    float max_ray_error = 0.f;
+    int branch_hits[3] = {0, 0, 0};
+    const float t_values[] = {0.f, 35.f, 80.f};
+    const float v_values[] = {-40.f, 0.f, 45.f};
+    const float c_values[] = {
+        0.5f * g.c0_mm,
+        g.c0_mm,
+        0.5f * (g.c0_mm + g.s0_mm),
+        g.s0_mm,
+        0.5f * (g.s0_mm + g.bm_mm),
+        g.bm_mm
+    };
+
+    const auto forward_z = [&](float t, float v, float c) {
+        const float q = std::sqrt(r2 - t * t);
+        const float abs_c = std::fabs(c);
+        float sc_prime = 0.f;
+        if (abs_c <= g.c0_mm) {
+            sc_prime = 2.f * q - g.sid_mm;
+        } else if (abs_c <= g.s0_mm) {
+            sc_prime = 2.f * q - g.sid_mm +
+                (abs_c - g.c0_mm) / (g.s0_mm - g.c0_mm) *
+                (g.sid_mm - q);
+        } else {
+            sc_prime = q + (abs_c - g.s0_mm) /
+                (g.bm_mm - g.s0_mm) * t * t / q;
+        }
+        return c * (q + v) / sc_prime;
+    };
+
+    for (float t : t_values) {
+        // 验证论文坐标转到项目 builder 后的视角符号。项目虚拟平板的
+        // U 轴为 e_beta，beta=theta+asin(t/R) 时，源点和 a 采样点到
+        // e_theta 的投影都必须为 t，即二者定义同一条平行射线。
+        const float theta = 0.37f;
+        const float delta = std::asin(t / g.sid_mm);
+        const float beta = theta + delta;
+        const float q = std::sqrt(r2 - t * t);
+        const float a = t * g.sid_mm / q;
+        const float source_projection = g.sid_mm * std::sin(beta - theta);
+        const float detector_projection = a * std::cos(beta - theta);
+        max_ray_error = std::max(max_ray_error,
+            std::max(std::fabs(source_projection - t),
+                std::fabs(detector_projection - t)));
+        for (float v : v_values) {
+            for (float magnitude : c_values) {
+                for (float sign : {-1.f, 1.f}) {
+                    const float expected_c = sign * magnitude;
+                    const float z = forward_z(t, v, expected_c);
+                    float actual_c = 0.f;
+                    int branch = -1;
+                    ok = Fdk::detail::mapCurveFilteredFdkBackprojectionC(
+                        g, t, v, z, actual_c, &branch) && ok;
+                    if (branch >= 0 && branch < 3) ++branch_hits[branch];
+                    max_roundtrip_error = std::max(max_roundtrip_error,
+                        std::fabs(actual_c - expected_c));
+
+                    float mirrored_c = 0.f;
+                    ok = Fdk::detail::mapCurveFilteredFdkBackprojectionC(
+                        g, t, v, -z, mirrored_c) && ok;
+                    max_symmetry_error = std::max(max_symmetry_error,
+                        std::fabs(actual_c + mirrored_c));
+                }
+            }
+
+            // 在 c0 和 s0 两侧取极小扰动，检查分段反解没有数值跳变。
+            for (float boundary : {g.c0_mm, g.s0_mm}) {
+                const float epsilon = 1e-4f * boundary;
+                float left = 0.f, right = 0.f;
+                const float z_left = forward_z(t, v, boundary - epsilon);
+                const float z_right = forward_z(t, v, boundary + epsilon);
+                ok = Fdk::detail::mapCurveFilteredFdkBackprojectionC(
+                    g, t, v, z_left, left) && ok;
+                ok = Fdk::detail::mapCurveFilteredFdkBackprojectionC(
+                    g, t, v, z_right, right) && ok;
+                max_boundary_jump = std::max(max_boundary_jump,
+                    std::fabs((right - left) - 2.f * epsilon));
+            }
+        }
+    }
+
+    ok = ok && branch_hits[0] > 0 && branch_hits[1] > 0 &&
+        branch_hits[2] > 0 && max_roundtrip_error < 5e-4f &&
+        max_symmetry_error < 5e-5f && max_boundary_jump < 5e-4f &&
+        max_ray_error < 5e-5f;
+    YK_LOGI("[CurveFilteredFdk] piecewise mapping c0={:.6f} s0={:.6f} "
+        "bm={:.6f}; hits={}/{}/{} roundtrip={:.3e} symmetry={:.3e} "
+        "boundary={:.3e} ray={:.3e}: {}", g.c0_mm, g.s0_mm, g.bm_mm,
+        branch_hits[0], branch_hits[1], branch_hits[2],
+        max_roundtrip_error, max_symmetry_error, max_boundary_jump, max_ray_error,
+        ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+// 大锥角对比：使用论文实验接近的 ±14 度锥角，比较普通 FDK 与 C-FDK
+// 在中心层和离中心层的材料绝对值。该测试不做经验比例拟合，结果用于观察
+// C-FDK 对圆轨迹锥角伪影和 z 方向强度下降的改善幅度。
+int main_curve_filtered_fdk_large_cone_comparison()
+{
+    SReconstructionParams p = makeSmallParams(360);
+    // 论文第 3 节原始仿真参数：400 mm SID、800 mm SDD、400x400 mm
+    // 平板、256^3 体积和 0.78 mm 等方体素。
+    p.scan.Nu = 256; p.scan.Nv = 256;
+    p.scan.du_mm = 400.f / 256.f; p.scan.dv_mm = 400.f / 256.f;
+    p.scan.sid_mm = 400.f; p.scan.sdd_mm = 800.f;
+    p.volume.Nx = 256; p.volume.Ny = 256; p.volume.Nz = 256;
+    p.volume.voxelX_mm = 0.78f; p.volume.voxelY_mm = 0.78f;
+    p.volume.voxelZ_mm = 0.78f;
+    p.scan.angles.resize(p.scan.NAng);
+    for (int i = 0; i < p.scan.NAng; ++i)
+        p.scan.angles[i] = 2.f * CUDA_PI * i / p.scan.NAng;
+
+    std::vector<SConeProjGeomVec> views;
+    detail::buildCircularViews(p, views);
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) * p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.NAng) * p.scan.Nu * p.scan.Nv;
+    // 使用与普通 C-FDK 回归相同的 ASTRA 官方模体，覆盖椭球边缘和低对比结构。
+    std::vector<float> phantom = TestPhantom::makeAstraSheppLogan3D(
+        p, 0.5f * p.volume.Nx * p.volume.voxelX_mm, false, 1.0f);
+    const SVolGeom vg = SVolGeom::make_centered(p.volume.Nx, p.volume.Ny,
+        p.volume.Nz, p.volume.voxelX_mm, p.volume.voxelY_mm, p.volume.voxelZ_mm);
+    const float3 origin = vg.origin();
+
+    Mem::MemoryController memory;
+    auto h_phantom = memory.allocateCpu3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, false);
+    std::copy(phantom.begin(), phantom.end(), h_phantom.data());
+    auto d_phantom = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0, false);
+    auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv, p.scan.NAng, 0, false);
+    auto d_fdk = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0, false);
+    auto d_cfdk = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0, false);
+    auto h_fdk = memory.allocateCpu3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, false);
+    auto h_cfdk = memory.allocateCpu3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, false);
+    memory.upload3D(d_phantom, h_phantom);
+
+    cudaStream_t stream = nullptr;
+    bool ok = checkCuda(cudaStreamCreate(&stream), "create large-cone stream");
+    GeometryContext geometry;
+    ResourceContext resources;
+    ok = ok && geometry.initialize(p, views);
+    resources.attach(stream, 0);
+    auto fp = makeForwardOperator(ETask::FP_Joseph);
+    ok = ok && fp->prepare(geometry, resources) &&
+        fp->apply(d_phantom.data(), p, d_projection.data(), resources) &&
+        checkCuda(cudaStreamSynchronize(stream), "large-cone FP synchronize");
+
+    FdkPipeline fdk;
+    Fdk::CurveFilteredFdkPipeline cfdk;
+    double fdk_ms = 0.0, cfdk_ms = 0.0;
+    if (ok) {
+        ok = fdk.prepareWithGeometry(p, views, 32, stream);
+        // processBatchSync 的 host 输入契约要求投影位于 host；下载一次后复用，
+        // 避免为对比路径引入另一套 FP 实现。
+        if (ok) {
+            std::vector<float> host_projection(projection_count);
+            ok = checkCuda(cudaMemcpy(host_projection.data(), d_projection.data(),
+                projection_count * sizeof(float), cudaMemcpyDeviceToHost),
+                "download large-cone projection");
+            const auto begin = std::chrono::steady_clock::now();
+            if (ok) ok = fdk.processBatchSync({host_projection.data(), nullptr,
+                nullptr, p.scan.NAng}, d_fdk.data(), true) && fdk.complete();
+            fdk_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - begin).count();
+        }
+        if (ok) ok = cfdk.prepare(p, views, stream);
+        const auto begin = std::chrono::steady_clock::now();
+        if (ok) ok = cfdk.reconstruct(d_projection.data(), d_cfdk.data(), true) &&
+            cfdk.wait();
+        cfdk_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - begin).count();
+    }
+    if (ok) {
+        memory.download3D(h_fdk, d_fdk);
+        memory.download3D(h_cfdk, d_cfdk);
+        const std::filesystem::path output_dir =
+            std::filesystem::path(YKCBCT_TEST_SOURCE_DIR) / "output" / "cfdk";
+        std::filesystem::create_directories(output_dir);
+        const auto write_raw = [&](const char* name, const float* data) {
+            std::ofstream output(output_dir / name, std::ios::binary);
+            output.write(reinterpret_cast<const char*>(data),
+                static_cast<std::streamsize>(volume_count * sizeof(float)));
+            return output.good();
+        };
+        ok = write_raw("paper_shepp_logan_phantom_256x256x256_f32.raw", phantom.data()) &&
+            write_raw("paper_shepp_logan_fdk_256x256x256_f32.raw", h_fdk.cdata()) &&
+            write_raw("paper_shepp_logan_cfdk_256x256x256_f32.raw", h_cfdk.cdata());
+    }
+
+    struct Metrics { double mean = 0.0; double truth_mean = 0.0; double bias = 0.0; double mae = 0.0; size_t n = 0; };
+    const auto measure = [&](const auto& volume, float center_z) {
+        Metrics m{};
+        for (int z = 0; z < p.volume.Nz; ++z) {
+            const float wz = origin.z + z * vg.vox_z;
+            if (std::fabs(wz - center_z) > 1.5f) continue;
+            for (int y = 0; y < p.volume.Ny; ++y) for (int x = 0; x < p.volume.Nx; ++x) {
+                const size_t i = (static_cast<size_t>(z) * p.volume.Ny + y) * p.volume.Nx + x;
+                const float expected = phantom[i];
+                if (expected <= 0.f) continue;
+                const float value = volume.cdata()[i];
+                m.mean += value; m.truth_mean += expected;
+                m.mae += std::fabs(value - expected); ++m.n;
+            }
+        }
+        if (m.n) { m.mean /= m.n; m.truth_mean /= m.n; m.bias = m.mean - m.truth_mean; m.mae /= m.n; }
+        return m;
+    };
+    const Metrics fdk_center = measure(h_fdk, 0.f);
+    const Metrics cfdk_center = measure(h_cfdk, 0.f);
+    const Metrics fdk_off = measure(h_fdk, 10.f);
+    const Metrics cfdk_off = measure(h_cfdk, 10.f);
+    ok = ok && fdk_center.n > 0 && cfdk_center.n > 0 &&
+        fdk_off.n > 0 && cfdk_off.n > 0;
+    YK_LOGI("[LargeCone] FDK center mean={:.6e} bias={:.6e} MAE={:.6e}; "
+        "off-z mean={:.6e} bias={:.6e} MAE={:.6e}", fdk_center.mean,
+        fdk_center.bias, fdk_center.mae, fdk_off.mean, fdk_off.bias, fdk_off.mae);
+    YK_LOGI("[LargeCone] C-FDK center mean={:.6e} bias={:.6e} MAE={:.6e}; "
+        "off-z mean={:.6e} bias={:.6e} MAE={:.6e}", cfdk_center.mean,
+        cfdk_center.bias, cfdk_center.mae, cfdk_off.mean, cfdk_off.bias, cfdk_off.mae);
+    YK_LOGI("[LargeCone] reconstruction time: FDK={:.3f} ms, C-FDK={:.3f} ms",
+        fdk_ms, cfdk_ms);
+
+    if (ok) {
+        std::vector<float> fdk_values(h_fdk.cdata(), h_fdk.cdata() + volume_count);
+        std::vector<float> cfdk_values(h_cfdk.cdata(), h_cfdk.cdata() + volume_count);
+        std::vector<float> difference(volume_count, 0.f);
+        for (size_t i = 0; i < volume_count; ++i)
+            difference[i] = cfdk_values[i] - fdk_values[i];
+        int center_slice = 0, off_slice = 0;
+        float center_distance = INFINITY, off_distance = INFINITY;
+        for (int z = 0; z < p.volume.Nz; ++z) {
+            const float wz = origin.z + z * vg.vox_z;
+            if (std::fabs(wz) < center_distance) {
+                center_distance = std::fabs(wz);
+                center_slice = z;
+            }
+            if (std::fabs(wz - 10.f) < off_distance) {
+                off_distance = std::fabs(wz - 10.f);
+                off_slice = z;
+            }
+        }
+        const std::filesystem::path output_dir =
+            std::filesystem::path(YKCBCT_TEST_SOURCE_DIR) / "output" / "cfdk";
+        const std::vector<TestImage::GrayPanel> panels = {
+            {&phantom, p.volume.Nx, p.volume.Ny, p.volume.Nz, center_slice, 1.f, 0.f, 2.05f},
+            {&fdk_values, p.volume.Nx, p.volume.Ny, p.volume.Nz, center_slice, 1.f, 0.f, 2.05f},
+            {&cfdk_values, p.volume.Nx, p.volume.Ny, p.volume.Nz, center_slice, 1.f, 0.f, 2.05f},
+            {&difference, p.volume.Nx, p.volume.Ny, p.volume.Nz, center_slice, 1.f, -0.20f, 0.20f},
+            {&phantom, p.volume.Nx, p.volume.Ny, p.volume.Nz, off_slice, 1.f, 0.f, 2.05f},
+            {&fdk_values, p.volume.Nx, p.volume.Ny, p.volume.Nz, off_slice, 1.f, 0.f, 2.05f},
+            {&cfdk_values, p.volume.Nx, p.volume.Ny, p.volume.Nz, off_slice, 1.f, 0.f, 2.05f},
+            {&difference, p.volume.Nx, p.volume.Ny, p.volume.Nz, off_slice, 1.f, -0.20f, 0.20f},
+        };
+        ok = TestImage::writeGrayMontageBmp(
+            output_dir / "large_cone_center_offz_fdk_cfdk.bmp", panels, 4, 8, 3) && ok;
+        YK_LOGI("[LargeCone] image comparison written: {} (rows: z=0, z=10; "
+            "columns: truth, FDK, C-FDK, C-FDK-FDK)",
+            (output_dir / "large_cone_center_offz_fdk_cfdk.bmp").string());
+
+        // 论文 Fig.6 使用固定 y=-25 mm 的 X-Z 冠状面。这里同时输出
+        // 冠状面和 x=0 的 Y-Z 矢状面，并对 truth/FDK/C-FDK 使用完全相同的
+        // 绝对窗宽；禁止分别归一化，否则会掩盖材料值比例和 z 向衰减。
+        const int y_slice = std::clamp(static_cast<int>(std::lround(
+            (-25.f - origin.y) / vg.vox_y)), 0, p.volume.Ny - 1);
+        const int x_slice = std::clamp(static_cast<int>(std::lround(
+            (0.f - origin.x) / vg.vox_x)), 0, p.volume.Nx - 1);
+        const auto make_coronal = [&](const std::vector<float>& volume) {
+            std::vector<float> slice(static_cast<size_t>(p.volume.Nx) * p.volume.Nz);
+            for (int z = 0; z < p.volume.Nz; ++z)
+                for (int x = 0; x < p.volume.Nx; ++x)
+                    slice[static_cast<size_t>(z) * p.volume.Nx + x] =
+                        volume[(static_cast<size_t>(z) * p.volume.Ny + y_slice) * p.volume.Nx + x];
+            return slice;
+        };
+        const auto make_sagittal = [&](const std::vector<float>& volume) {
+            std::vector<float> slice(static_cast<size_t>(p.volume.Ny) * p.volume.Nz);
+            for (int z = 0; z < p.volume.Nz; ++z)
+                for (int y = 0; y < p.volume.Ny; ++y)
+                    slice[static_cast<size_t>(z) * p.volume.Ny + y] =
+                        volume[(static_cast<size_t>(z) * p.volume.Ny + y) * p.volume.Nx + x_slice];
+            return slice;
+        };
+        auto truth_xz = make_coronal(phantom);
+        auto fdk_xz = make_coronal(fdk_values);
+        auto cfdk_xz = make_coronal(cfdk_values);
+        auto truth_yz = make_sagittal(phantom);
+        auto fdk_yz = make_sagittal(fdk_values);
+        auto cfdk_yz = make_sagittal(cfdk_values);
+        std::vector<float> fdk_error_xz(truth_xz.size());
+        std::vector<float> cfdk_error_xz(truth_xz.size());
+        std::vector<float> fdk_error_yz(truth_yz.size());
+        std::vector<float> cfdk_error_yz(truth_yz.size());
+        for (size_t i = 0; i < truth_xz.size(); ++i) {
+            fdk_error_xz[i] = fdk_xz[i] - truth_xz[i];
+            cfdk_error_xz[i] = cfdk_xz[i] - truth_xz[i];
+        }
+        for (size_t i = 0; i < truth_yz.size(); ++i) {
+            fdk_error_yz[i] = fdk_yz[i] - truth_yz[i];
+            cfdk_error_yz[i] = cfdk_yz[i] - truth_yz[i];
+        }
+
+        const float absolute_lo = 0.f, absolute_hi = 2.05f;
+        const float uniformity_lo = 0.85f, uniformity_hi = 1.10f;
+        const float error_lo = -0.20f, error_hi = 0.20f;
+        const std::vector<TestImage::GrayPanel> absolute_panels = {
+            {&truth_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,absolute_lo,absolute_hi},
+            {&fdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,absolute_lo,absolute_hi},
+            {&cfdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,absolute_lo,absolute_hi},
+            {&truth_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,absolute_lo,absolute_hi},
+            {&fdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,absolute_lo,absolute_hi},
+            {&cfdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,absolute_lo,absolute_hi}
+        };
+        ok = TestImage::writeGrayMontageBmp(output_dir /
+            "large_cone_coronal_sagittal_absolute.bmp", absolute_panels, 3, 8, 2) && ok;
+        const std::vector<TestImage::GrayPanel> uniformity_panels = {
+            {&truth_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,uniformity_lo,uniformity_hi},
+            {&fdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,uniformity_lo,uniformity_hi},
+            {&cfdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,uniformity_lo,uniformity_hi},
+            {&truth_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,uniformity_lo,uniformity_hi},
+            {&fdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,uniformity_lo,uniformity_hi},
+            {&cfdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,uniformity_lo,uniformity_hi}
+        };
+        ok = TestImage::writeGrayMontageBmp(output_dir /
+            "large_cone_coronal_sagittal_uniformity.bmp", uniformity_panels, 3, 8, 2) && ok;
+        const std::vector<TestImage::GrayPanel> error_panels = {
+            {&fdk_error_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,error_lo,error_hi},
+            {&cfdk_error_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,error_lo,error_hi},
+            {&fdk_error_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,error_lo,error_hi},
+            {&cfdk_error_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,error_lo,error_hi}
+        };
+        ok = TestImage::writeGrayMontageBmp(output_dir /
+            "large_cone_coronal_sagittal_error.bmp", error_panels, 2, 8, 2) && ok;
+
+        struct PlaneBandMetrics { double ratio = 0.0; double mae = 0.0; size_t n = 0; };
+        const auto measure_plane_band = [&](const std::vector<float>& truth,
+            const std::vector<float>& reconstruction, int width,
+            float z_min_mm, float z_max_mm) {
+            PlaneBandMetrics metrics{};
+            for (int z = 0; z < p.volume.Nz; ++z) {
+                const float wz = origin.z + z * vg.vox_z;
+                if (wz < z_min_mm || wz >= z_max_mm) continue;
+                for (int horizontal = 0; horizontal < width; ++horizontal) {
+                    const size_t i = static_cast<size_t>(z) * width + horizontal;
+                    if (truth[i] <= 0.f) continue;
+                    metrics.ratio += reconstruction[i] / truth[i];
+                    metrics.mae += std::fabs(reconstruction[i] - truth[i]);
+                    ++metrics.n;
+                }
+            }
+            if (metrics.n) {
+                metrics.ratio /= metrics.n;
+                metrics.mae /= metrics.n;
+            }
+            return metrics;
+        };
+        const auto log_plane = [&](const char* name, const std::vector<float>& truth,
+            const std::vector<float>& fdk_slice, const std::vector<float>& cfdk_slice,
+            int width) {
+            const float bands[3][2] = {{-80.f, -65.f}, {-5.f, 5.f}, {65.f, 80.f}};
+            PlaneBandMetrics fdk_band[3], cfdk_band[3];
+            for (int i = 0; i < 3; ++i) {
+                fdk_band[i] = measure_plane_band(truth, fdk_slice, width,
+                    bands[i][0], bands[i][1]);
+                cfdk_band[i] = measure_plane_band(truth, cfdk_slice, width,
+                    bands[i][0], bands[i][1]);
+            }
+            YK_LOGI("[LargeCone] {} FDK top/center/bottom ratio="
+                "{:.6f}/{:.6f}/{:.6f} MAE={:.6f}/{:.6f}/{:.6f}; "
+                "C-FDK ratio={:.6f}/{:.6f}/{:.6f} MAE={:.6f}/{:.6f}/{:.6f}",
+                name, fdk_band[0].ratio, fdk_band[1].ratio, fdk_band[2].ratio,
+                fdk_band[0].mae, fdk_band[1].mae, fdk_band[2].mae,
+                cfdk_band[0].ratio, cfdk_band[1].ratio, cfdk_band[2].ratio,
+                cfdk_band[0].mae, cfdk_band[1].mae, cfdk_band[2].mae);
+        };
+        log_plane("coronal(y=-25mm)", truth_xz, fdk_xz, cfdk_xz, p.volume.Nx);
+        log_plane("sagittal(x=0mm)", truth_yz, fdk_yz, cfdk_yz, p.volume.Ny);
+
+        // 用稀疏体素/视角统计端到端图实际覆盖的式 (35) 分支。ASTRA 模体
+        // 不一定延伸到 c0/s0 外侧，必须把“解析分段已测试”和“图像覆盖分段”
+        // 区分开，避免根据一张图错误宣称三个过渡区都已验证。
+        size_t branch_hits[3] = {0, 0, 0};
+        size_t outside_hits = 0;
+        const auto& derived = cfdk.derivedGeometry();
+        for (int z = 0; z < p.volume.Nz; z += 4) {
+            const float wz = origin.z + z * vg.vox_z;
+            for (int y = 0; y < p.volume.Ny; y += 4) {
+                const float wy = origin.y + y * vg.vox_y;
+                for (int x = 0; x < p.volume.Nx; x += 4) {
+                    const size_t voxel = (static_cast<size_t>(z) * p.volume.Ny + y) *
+                        p.volume.Nx + x;
+                    if (phantom[voxel] <= 0.f) continue;
+                    const float wx = origin.x + x * vg.vox_x;
+                    for (int view = 0; view < p.scan.NAng; view += 15) {
+                        const float theta = derived.beta0_rad +
+                            view * derived.signed_dtheta_rad;
+                        const float sine = std::sin(theta), cosine = std::cos(theta);
+                        const float t = wy * cosine - wx * sine;
+                        const float v = -(wx * cosine + wy * sine);
+                        float c = 0.f;
+                        int branch = -1;
+                        if (Fdk::detail::mapCurveFilteredFdkBackprojectionC(
+                                derived, t, v, wz, c, &branch)) {
+                            if (branch >= 0 && branch < 3) ++branch_hits[branch];
+                        } else {
+                            ++outside_hits;
+                        }
+                    }
+                }
+            }
+        }
+        YK_LOGI("[LargeCone] sampled Eq.(35) branch hits={}/{}/{}, outside={}",
+            branch_hits[0], branch_hits[1], branch_hits[2], outside_hits);
+
+        const auto profile_ratio = [&](const std::vector<float>& v,
+            float z_min_mm, float z_max_mm) {
+            double sum = 0.0; size_t n = 0;
+            // 论文 Fig.7 是中心竖直剖面。取中心附近 3 列降低单像素离散噪声，
+            // 并只统计真值约为 1.02 的主体材料，排除空气和外层高值边缘。
+            for (int z = 0; z < p.volume.Nz; ++z) {
+                const float wz = origin.z + z * vg.vox_z;
+                if (wz < z_min_mm || wz > z_max_mm) continue;
+                for (int x = p.volume.Nx / 2 - 1; x <= p.volume.Nx / 2 + 1; ++x) {
+                    const size_t i = static_cast<size_t>(z) * p.volume.Nx + x;
+                    const float expected = truth_xz[i];
+                    if (expected < 0.95f || expected > 1.10f) continue;
+                    sum += v[i] / expected; ++n;
+                }
+            }
+            return n ? static_cast<float>(sum / n) : 0.f;
+        };
+        YK_LOGI("[LargeCone] paper center-line recon/truth FDK top/center/bottom={:.6f}/{:.6f}/{:.6f}; "
+            "C-FDK={:.6f}/{:.6f}/{:.6f}",
+            profile_ratio(fdk_xz, 45.f, 65.f),
+            profile_ratio(fdk_xz, -5.f, 5.f),
+            profile_ratio(fdk_xz, -65.f, -45.f),
+            profile_ratio(cfdk_xz, 45.f, 65.f),
+            profile_ratio(cfdk_xz, -5.f, 5.f),
+            profile_ratio(cfdk_xz, -65.f, -45.f));
+
+        // 中心线 CSV 保留物理值，不做显示归一化。坐标取论文的 y=-25 mm
+        // 冠状面、x=0 附近三列平均，便于逐 z 检查材料真值与上下对称性。
+        std::ofstream profile(output_dir / "large_cone_z_profile.csv");
+        profile << "z_mm,truth,fdk,cfdk,fdk_over_truth,cfdk_over_truth\n";
+        double fdk_symmetry = 0.0, cfdk_symmetry = 0.0;
+        size_t symmetry_count = 0;
+        for (int z = 0; z < p.volume.Nz; ++z) {
+            double truth_sum = 0.0, fdk_sum = 0.0, cfdk_sum = 0.0;
+            int count = 0;
+            for (int x = p.volume.Nx / 2 - 1; x <= p.volume.Nx / 2 + 1; ++x) {
+                const size_t i = static_cast<size_t>(z) * p.volume.Nx + x;
+                truth_sum += truth_xz[i]; fdk_sum += fdk_xz[i]; cfdk_sum += cfdk_xz[i];
+                ++count;
+            }
+            const double truth_value = truth_sum / count;
+            const double fdk_value = fdk_sum / count;
+            const double cfdk_value = cfdk_sum / count;
+            profile << origin.z + z * vg.vox_z << ',' << truth_value << ','
+                << fdk_value << ',' << cfdk_value << ','
+                << (truth_value != 0.0 ? fdk_value / truth_value : 0.0) << ','
+                << (truth_value != 0.0 ? cfdk_value / truth_value : 0.0) << '\n';
+            const int mirror = p.volume.Nz - 1 - z;
+            if (z < mirror) {
+                for (int x = p.volume.Nx / 2 - 1; x <= p.volume.Nx / 2 + 1; ++x) {
+                    const size_t i0 = static_cast<size_t>(z) * p.volume.Nx + x;
+                    const size_t i1 = static_cast<size_t>(mirror) * p.volume.Nx + x;
+                    if (truth_xz[i0] <= 0.f || truth_xz[i1] <= 0.f) continue;
+                    fdk_symmetry += std::fabs(fdk_xz[i0] - fdk_xz[i1]);
+                    cfdk_symmetry += std::fabs(cfdk_xz[i0] - cfdk_xz[i1]);
+                    ++symmetry_count;
+                }
+            }
+        }
+        ok = profile.good() && ok;
+        YK_LOGI("[LargeCone] coronal z symmetry MAE: FDK={:.6e}, C-FDK={:.6e}; "
+            "images use shared absolute windows, y-index={}, x-index={}",
+            symmetry_count ? fdk_symmetry / symmetry_count : 0.0,
+            symmetry_count ? cfdk_symmetry / symmetry_count : 0.0,
+            y_slice, x_slice);
+        YK_LOGI("[LargeCone] coronal/sagittal outputs: {}, {}, {}",
+            (output_dir / "large_cone_coronal_sagittal_absolute.bmp").string(),
+            (output_dir / "large_cone_coronal_sagittal_uniformity.bmp").string(),
+            (output_dir / "large_cone_coronal_sagittal_error.bmp").string());
+    }
+    YK_LOGI("[LargeCone] absolute comparison: {}", ok ? "PASS" : "FAIL");
+
+    cfdk.release(); fdk.release(); fp->release(); resources.release();
+    if (stream) cudaStreamDestroy(stream);
+    return ok ? 0 : 1;
+}
+
+// 大水模 C-FDK 回归：使用比常规 large-water 更大的水柱和更高的轴向范围，
+// 专门观察冠状面/矢状面的 z 向材料值。这里保留真实的水和壳体衰减系数，
+// 不使用相关系数归一化来掩盖绝对量级误差。
+int main_curve_filtered_fdk_large_water()
+{
+    SReconstructionParams p = makeSmallParams(720);
+    // 物理探测器宽度约 800 mm；经过 SID/SDD=0.5 的虚拟平面缩放后，
+    // 虚拟半宽约 200 mm，对应论文中约 26.6 度的真正大锥角。
+    p.scan.Nu = 768; p.scan.Nv = 384;
+    p.scan.du_mm = 1.04f; p.scan.dv_mm = 1.00f;
+    p.scan.sid_mm = 400.f; p.scan.sdd_mm = 800.f;
+    p.volume.Nx = 384; p.volume.Ny = 384; p.volume.Nz = 384;
+    p.volume.voxelX_mm = 0.40f;
+    p.volume.voxelY_mm = 0.40f;
+    p.volume.voxelZ_mm = 0.40f;
+    p.scan.angles.resize(p.scan.NAng);
+    for (int i = 0; i < p.scan.NAng; ++i)
+        p.scan.angles[i] = 2.f * CUDA_PI * i / p.scan.NAng;
+
+    const size_t volume_count = static_cast<size_t>(p.volume.Nx) *
+        p.volume.Ny * p.volume.Nz;
+    const size_t projection_count = static_cast<size_t>(p.scan.NAng) *
+        p.scan.Nu * p.scan.Nv;
+    std::vector<float> truth(volume_count, 0.f);
+    constexpr float water_radius_mm = 70.f;       // 140 mm 直径
+    constexpr float water_half_height_mm = 68.f;  // 136 mm 水柱高度
+    constexpr float water_mu = 0.020f;
+    const SVolGeom vg = SVolGeom::make_centered(p.volume.Nx, p.volume.Ny,
+        p.volume.Nz, p.volume.voxelX_mm, p.volume.voxelY_mm,
+        p.volume.voxelZ_mm);
+    const float3 origin = vg.origin();
+    for (int z = 0; z < p.volume.Nz; ++z) {
+        const float wz = origin.z + z * vg.vox_z;
+        for (int y = 0; y < p.volume.Ny; ++y) {
+            const float wy = origin.y + y * vg.vox_y;
+            for (int x = 0; x < p.volume.Nx; ++x) {
+                const float wx = origin.x + x * vg.vox_x;
+                const float radius2 = wx * wx + wy * wy;
+                const float value =
+                    radius2 <= water_radius_mm * water_radius_mm &&
+                    std::fabs(wz) <= water_half_height_mm ? water_mu : 0.f;
+                truth[(static_cast<size_t>(z) * p.volume.Ny + y) *
+                    p.volume.Nx + x] = value;
+            }
+        }
+    }
+
+    std::vector<SConeProjGeomVec> views;
+    detail::buildCircularViews(p, views);
+    Mem::MemoryController memory;
+    auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny,
+        p.volume.Nz, 0, false);
+    auto d_projection = memory.allocateDevice3D<float>(p.scan.Nu, p.scan.Nv,
+        p.scan.NAng, 0, false);
+    auto d_reconstruction = memory.allocateDevice3D<float>(p.volume.Nx,
+        p.volume.Ny, p.volume.Nz, 0, false);
+    auto h_reconstruction = memory.allocateCpu3D<float>(p.volume.Nx,
+        p.volume.Ny, p.volume.Nz, false);
+    bool ok = checkCuda(cudaMemcpy(d_truth.data(), truth.data(),
+        volume_count * sizeof(float), cudaMemcpyHostToDevice),
+        "upload large-water phantom");
+
+    cudaStream_t stream = nullptr;
+    ok = ok && checkCuda(cudaStreamCreate(&stream),
+        "create large-water C-FDK stream");
+    GeometryContext geometry;
+    ResourceContext resources;
+    ok = ok && geometry.initialize(p, views);
+    resources.attach(stream, 0);
+    auto fp = makeForwardOperator(ETask::FP_Joseph);
+    ok = ok && fp->prepare(geometry, resources) &&
+        fp->apply(d_truth.data(), p, d_projection.data(), resources) &&
+        checkCuda(cudaStreamSynchronize(stream), "large-water FP synchronize");
+
+    std::vector<float> host_projection(projection_count);
+    std::vector<float> fdk_values(volume_count, 0.f);
+    std::vector<float> cfdk_values(volume_count, 0.f);
+    float fdk_ms = 0.f, cfdk_ms = 0.f;
+    float derived_am = 0.f, derived_bm = 0.f, derived_c0 = 0.f,
+        derived_s0 = 0.f;
+    if (ok) {
+        ok = checkCuda(cudaMemcpy(host_projection.data(), d_projection.data(),
+            projection_count * sizeof(float), cudaMemcpyDeviceToHost),
+            "download large-water projection");
+        FdkPipeline fdk;
+        if (ok) ok = fdk.prepareWithGeometry(p, views, 32, stream);
+        const auto fdk_begin = std::chrono::steady_clock::now();
+        if (ok) ok = fdk.processBatchSync({host_projection.data(), nullptr,
+            nullptr, p.scan.NAng}, d_reconstruction.data(), true) && fdk.complete();
+        ok = ok && checkCuda(cudaStreamSynchronize(stream),
+            "large-water FDK synchronize");
+        fdk_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - fdk_begin).count());
+        if (ok) {
+            memory.download3D(h_reconstruction, d_reconstruction);
+            std::copy(h_reconstruction.cdata(), h_reconstruction.cdata() +
+                volume_count, fdk_values.begin());
+        }
+        fdk.release();
+    }
+    if (ok) {
+        Fdk::CurveFilteredFdkPipeline cfdk;
+        ok = cfdk.prepare(p, views, stream) &&
+            checkCuda(cudaMemsetAsync(d_reconstruction.data(), 0,
+                volume_count * sizeof(float), stream), "clear large-water C-FDK output");
+        if (ok) {
+            const auto& derived = cfdk.derivedGeometry();
+            derived_am = 0.5f * (p.scan.Nu - 1) * p.scan.du_mm *
+                derived.sid_mm / derived.sdd_mm;
+            derived_bm = derived.bm_mm;
+            derived_c0 = derived.c0_mm;
+            derived_s0 = derived.s0_mm;
+        }
+        const auto cfdk_begin = std::chrono::steady_clock::now();
+        if (ok) ok = cfdk.reconstruct(d_projection.data(), d_reconstruction.data(), true) &&
+            cfdk.wait();
+        cfdk_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - cfdk_begin).count());
+        if (ok) {
+            memory.download3D(h_reconstruction, d_reconstruction);
+            std::copy(h_reconstruction.cdata(), h_reconstruction.cdata() +
+                volume_count, cfdk_values.begin());
+        }
+        cfdk.release();
+    }
+
+    const std::filesystem::path output_dir =
+        std::filesystem::path(YKCBCT_TEST_SOURCE_DIR) / "output" / "cfdk" /
+        "large_water";
+    std::filesystem::create_directories(output_dir);
+    const auto write_raw = [&](const char* name, const std::vector<float>& data) {
+        std::ofstream output(output_dir / name, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(data.data()),
+            static_cast<std::streamsize>(data.size() * sizeof(float)));
+        return output.good();
+    };
+    ok = ok && write_raw("truth_f32.raw", truth) &&
+        write_raw("projection_f32.raw", host_projection) &&
+        write_raw("fdk_f32.raw", fdk_values) &&
+        write_raw("cfdk_f32.raw", cfdk_values);
+
+    const auto make_water_profile = [&](const std::vector<float>& volume,
+        float radius_mm) {
+        std::vector<float> result(p.volume.Nz, 0.f);
+        for (int z = 0; z < p.volume.Nz; ++z) {
+            double sum = 0.0; size_t count = 0;
+            for (int y = 0; y < p.volume.Ny; ++y) {
+                for (int x = 0; x < p.volume.Nx; ++x) {
+                const float wx = origin.x + x * vg.vox_x;
+                const float wy = origin.y + y * vg.vox_y;
+                if (wx * wx + wy * wy > radius_mm * radius_mm) continue;
+                sum += volume[(static_cast<size_t>(z) * p.volume.Ny + y) *
+                    p.volume.Nx + x];
+                ++count;
+                }
+            }
+            if (count) result[z] = static_cast<float>(sum / count);
+        }
+        return result;
+    };
+    const auto truth_profile = make_water_profile(truth, 50.f);
+    const auto fdk_profile = make_water_profile(fdk_values, 50.f);
+    const auto cfdk_profile = make_water_profile(cfdk_values, 50.f);
+    const auto profile_at = [&](const std::vector<float>& profile, float z_mm) {
+        const int z = std::clamp(static_cast<int>(std::lround(
+            (z_mm - origin.z) / vg.vox_z)), 0, p.volume.Nz - 1);
+        return profile[z];
+    };
+    const float z_probe[3] = {-60.f, 0.f, 60.f};
+    YK_LOGI("[LargeWater C-FDK] geometry: water diameter={} mm, water height={} mm, "
+        "volume={}x{}x{} @ {} mm, views={}", 2.f * water_radius_mm,
+        2.f * water_half_height_mm, p.volume.Nx, p.volume.Ny, p.volume.Nz,
+        p.volume.voxelX_mm, p.scan.NAng);
+    for (const float z_mm : z_probe) {
+        YK_LOGI("[LargeWater C-FDK] z={:.1f} mm water truth/FDK/C-FDK="
+            "{:.6e}/{:.6e}/{:.6e}", z_mm, water_mu,
+            profile_at(fdk_profile, z_mm), profile_at(cfdk_profile, z_mm));
+    }
+    const float fdk_center = profile_at(fdk_profile, 0.f);
+    const float cfdk_center = profile_at(cfdk_profile, 0.f);
+    const float fdk_end = 0.5f * (profile_at(fdk_profile, -60.f) +
+        profile_at(fdk_profile, 60.f));
+    const float cfdk_end = 0.5f * (profile_at(cfdk_profile, -60.f) +
+        profile_at(cfdk_profile, 60.f));
+    YK_LOGI("[LargeWater C-FDK] |z|=60/center ratio FDK={:.6f}, "
+        "C-FDK={:.6f}", fdk_center != 0.f ? fdk_end / fdk_center : 0.f,
+        cfdk_center != 0.f ? cfdk_end / cfdk_center : 0.f);
+    YK_LOGI("[LargeWater C-FDK] virtual detector am/bm={:.3f}/{:.3f} mm, "
+        "c0/s0/bm={:.3f}/{:.3f}/{:.3f} mm, half-cone={:.3f} deg",
+        derived_am, derived_bm, derived_c0, derived_s0, derived_bm,
+        std::atan(derived_am / p.scan.sid_mm) * 180.f / CUDA_PI);
+    YK_LOGI("[LargeWater C-FDK] time FDK={:.1f} ms, C-FDK={:.1f} ms",
+        fdk_ms, cfdk_ms);
+
+    const int y_slice = p.volume.Ny / 2;
+    const int x_slice = p.volume.Nx / 2;
+    const auto make_coronal = [&](const std::vector<float>& volume) {
+        std::vector<float> slice(static_cast<size_t>(p.volume.Nx) * p.volume.Nz);
+        for (int z = 0; z < p.volume.Nz; ++z) for (int x = 0; x < p.volume.Nx; ++x)
+            slice[static_cast<size_t>(z) * p.volume.Nx + x] = volume[
+                (static_cast<size_t>(z) * p.volume.Ny + y_slice) * p.volume.Nx + x];
+        return slice;
+    };
+    const auto make_sagittal = [&](const std::vector<float>& volume) {
+        std::vector<float> slice(static_cast<size_t>(p.volume.Ny) * p.volume.Nz);
+        for (int z = 0; z < p.volume.Nz; ++z) for (int y = 0; y < p.volume.Ny; ++y)
+            slice[static_cast<size_t>(z) * p.volume.Ny + y] = volume[
+                (static_cast<size_t>(z) * p.volume.Ny + y) * p.volume.Nx + x_slice];
+        return slice;
+    };
+    auto truth_xz = make_coronal(truth), fdk_xz = make_coronal(fdk_values),
+        cfdk_xz = make_coronal(cfdk_values);
+    auto truth_yz = make_sagittal(truth), fdk_yz = make_sagittal(fdk_values),
+        cfdk_yz = make_sagittal(cfdk_values);
+    const std::vector<TestImage::GrayPanel> panels = {
+        {&truth_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,0.f,0.025f},
+        {&fdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,0.f,0.025f},
+        {&cfdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,0.f,0.025f},
+        {&truth_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,0.f,0.025f},
+        {&fdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,0.f,0.025f},
+        {&cfdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,0.f,0.025f}
+    };
+    ok = TestImage::writeGrayMontageBmp(output_dir / "coronal_sagittal.bmp",
+        panels, 3, 8, 2) && ok;
+    const std::vector<TestImage::GrayPanel> water_window_panels = {
+        {&truth_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,0.017f,0.022f},
+        {&fdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,0.017f,0.022f},
+        {&cfdk_xz,p.volume.Nx,p.volume.Nz,1,0,1.f,0.017f,0.022f},
+        {&truth_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,0.017f,0.022f},
+        {&fdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,0.017f,0.022f},
+        {&cfdk_yz,p.volume.Ny,p.volume.Nz,1,0,1.f,0.017f,0.022f}
+    };
+    ok = TestImage::writeGrayMontageBmp(output_dir /
+        "coronal_sagittal_water_window.bmp", water_window_panels, 3, 8, 2) && ok;
+    std::ofstream profile(output_dir / "z_profile.csv");
+    profile << "z_mm,truth,fdk,cfdk,fdk_over_truth,cfdk_over_truth\n";
+    for (int z = 0; z < p.volume.Nz; ++z) {
+        const float z_mm = origin.z + z * vg.vox_z;
+        const float expected = truth_profile[z];
+        profile << z_mm << ',' << expected << ',' << fdk_profile[z] << ',' <<
+            cfdk_profile[z] << ',' <<
+            (expected > 0.f ? fdk_profile[z] / expected : 0.f) << ',' <<
+            (expected > 0.f ? cfdk_profile[z] / expected : 0.f) << '\n';
+    }
+    ok = profile.good() && ok;
+    std::ofstream metadata(output_dir / "metadata.json");
+    metadata << "{\n"
+        << "  \"data_type\": \"float32 little-endian\",\n"
+        << "  \"layout\": \"[z][y][x], x fastest\",\n"
+        << "  \"volume_xyz\": [" << p.volume.Nx << ", " << p.volume.Ny
+        << ", " << p.volume.Nz << "],\n"
+        << "  \"voxel_mm_xyz\": [" << p.volume.voxelX_mm << ", "
+        << p.volume.voxelY_mm << ", " << p.volume.voxelZ_mm << "],\n"
+        << "  \"water_mu_per_mm\": " << water_mu << ",\n"
+        << "  \"water_diameter_mm\": " << 2.f * water_radius_mm << ",\n"
+        << "  \"water_height_mm\": " << 2.f * water_half_height_mm << ",\n"
+        << "  \"detector_uv\": [" << p.scan.Nu << ", " << p.scan.Nv
+        << "],\n"
+        << "  \"detector_pixel_mm_uv\": [" << p.scan.du_mm << ", "
+        << p.scan.dv_mm << "],\n"
+        << "  \"sid_mm\": " << p.scan.sid_mm << ",\n"
+        << "  \"sdd_mm\": " << p.scan.sdd_mm << ",\n"
+        << "  \"views\": " << p.scan.NAng << ",\n"
+        << "  \"fdk_time_ms\": " << fdk_ms << ",\n"
+        << "  \"cfdk_time_ms\": " << cfdk_ms << ",\n"
+        << "  \"end_to_center_ratio\": {\"fdk\": "
+        << (fdk_center != 0.f ? fdk_end / fdk_center : 0.f)
+        << ", \"cfdk\": "
+        << (cfdk_center != 0.f ? cfdk_end / cfdk_center : 0.f) << "},\n"
+        << "  \"forward_projector\": \"Joseph x1\",\n"
+        << "  \"files\": {\"truth\": \"truth_f32.raw\", "
+        << "\"fdk\": \"fdk_f32.raw\", \"cfdk\": \"cfdk_f32.raw\"}\n"
+        << "}\n";
+    metadata.close();
+    ok = metadata.good() && ok;
+    ok = ok && std::all_of(fdk_values.begin(), fdk_values.end(),
+        [](float value) { return std::isfinite(value); }) &&
+        std::all_of(cfdk_values.begin(), cfdk_values.end(),
+        [](float value) { return std::isfinite(value); }) &&
+        fdk_center > 0.005f && cfdk_center > 0.005f;
+    if (fp) fp->release();
+    resources.release();
+    if (stream) cudaStreamDestroy(stream);
+    YK_LOGI("[LargeWater C-FDK] artifacts: {} ({})", output_dir.string(),
+        ok ? "PASS" : "FAILED");
+    return ok ? 0 : 1;
+}
+
+// ICRP 真实投影的大锥角对比。原始 1024x1024x720 数据按 2x2 像素、隔一帧
+// 降采样为 512x512x360，保持探测器物理宽度和约 19.4 度锥角，避免测试被
+// 3 GB 输入和 768^3 输出的显存占用主导。结果输出到 output/cfdk/icrp。
+int main_curve_filtered_fdk_icrp_comparison()
+{
+    namespace fs = std::filesystem;
+    const fs::path root = fs::path(YKCBCT_TEST_SOURCE_DIR) / "example" /
+        "ICRP_female_head_20260827";
+    const fs::path projection_path = root /
+        "icrp145_female_head_cbct_z720_1024_frame0_1024x1024pixels_720proj.raw";
+    const fs::path air_path = root /
+        "icrp145_female_head_cbct_z720_1024_air_frame0_1024x1024pixels_1proj.raw";
+    if (!fs::exists(projection_path) || !fs::exists(air_path)) {
+        YK_LOGE("[ICRP C-FDK] projection/air 文件不存在，跳过真实数据测试。");
+        return 1;
+    }
+    constexpr int in_u = 1024, in_v = 1024, in_views = 720;
+    constexpr int nu = 512, nv = 512, views_count = 360;
+    constexpr float in_du = 0.787654f, in_dv = 0.787654f;
+    constexpr float sid = 709.f, sdd = 1143.699951f;
+    std::vector<float> air(static_cast<size_t>(in_u) * in_v);
+    {
+        std::ifstream stream(air_path, std::ios::binary);
+        stream.read(reinterpret_cast<char*>(air.data()),
+            static_cast<std::streamsize>(air.size() * sizeof(float)));
+        if (!stream) return 1;
+    }
+    std::vector<float> projection(static_cast<size_t>(views_count) * nu * nv);
+    std::vector<float> input(static_cast<size_t>(in_u) * in_v);
+    std::ifstream stream(projection_path, std::ios::binary);
+    for (int view = 0; view < views_count; ++view) {
+        stream.seekg(static_cast<std::streamoff>(view * 2ull * input.size() * sizeof(float)));
+        stream.read(reinterpret_cast<char*>(input.data()),
+            static_cast<std::streamsize>(input.size() * sizeof(float)));
+        if (!stream) return 1;
+        for (int y = 0; y < nv; ++y) for (int x = 0; x < nu; ++x) {
+            const int iy = 2 * y, ix = 2 * x;
+            const float measured = 0.25f * (input[iy * in_u + ix] +
+                input[iy * in_u + ix + 1] + input[(iy + 1) * in_u + ix] +
+                input[(iy + 1) * in_u + ix + 1]);
+            const float reference = 0.25f * (air[iy * in_u + ix] +
+                air[iy * in_u + ix + 1] + air[(iy + 1) * in_u + ix] +
+                air[(iy + 1) * in_u + ix + 1]);
+            projection[(static_cast<size_t>(view) * nv + y) * nu + x] =
+                -std::log(std::clamp(measured / std::max(reference, 1e-6f),
+                    1e-6f, 1.f));
+        }
+    }
+    SReconstructionParams p{};
+    p.scan.Nu = nu; p.scan.Nv = nv; p.scan.NAng = views_count;
+    p.scan.totalViews = views_count; p.scan.du_mm = 2.f * in_du;
+    p.scan.dv_mm = 2.f * in_dv; p.scan.sid_mm = sid; p.scan.sdd_mm = sdd;
+    p.scan.range_rad = 2.f * CUDA_PI; p.scan.angles.resize(views_count);
+    for (int i = 0; i < views_count; ++i)
+        p.scan.angles[i] = 2.f * CUDA_PI * i / views_count;
+    p.volume.Nx = 384; p.volume.Ny = 384; p.volume.Nz = 384;
+    p.volume.voxelX_mm = p.volume.voxelY_mm = p.volume.voxelZ_mm = 1.f;
+
+    std::vector<SConeProjGeomVec> geometry;
+    detail::buildCircularViews(p, geometry);
+    Mem::MemoryController memory;
+    auto h_projection = memory.allocateCpu3D<float>(nu, nv, views_count, false);
+    std::copy(projection.begin(), projection.end(), h_projection.data());
+    auto d_projection = memory.allocateDevice3D<float>(nu, nv, views_count, 0, false);
+    auto d_fdk = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0, false);
+    auto d_cfdk = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, 0, false);
+    auto h_fdk = memory.allocateCpu3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, false);
+    auto h_cfdk = memory.allocateCpu3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz, false);
+    memory.upload3D(d_projection, h_projection);
+    cudaStream_t cuda_stream = nullptr;
+    bool ok = checkCuda(cudaStreamCreate(&cuda_stream), "create ICRP C-FDK stream");
+    FdkPipeline fdk;
+    Fdk::CurveFilteredFdkPipeline cfdk;
+    const auto begin = std::chrono::steady_clock::now();
+    ok = ok && fdk.prepareWithGeometry(p, geometry, 32, cuda_stream) &&
+        fdk.processBatchSync({projection.data(), nullptr, nullptr, views_count},
+            d_fdk.data(), true) && fdk.complete();
+    const double fdk_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - begin).count();
+    const auto cfdk_begin = std::chrono::steady_clock::now();
+    ok = ok && cfdk.prepare(p, geometry, cuda_stream) &&
+        cfdk.reconstruct(d_projection.data(), d_cfdk.data(), true) && cfdk.wait();
+    const double cfdk_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - cfdk_begin).count();
+    if (ok) { memory.download3D(h_fdk, d_fdk); memory.download3D(h_cfdk, d_cfdk); }
+    if (ok) {
+        const fs::path out = fs::path(YKCBCT_TEST_SOURCE_DIR) / "output" / "cfdk" / "icrp";
+        fs::create_directories(out);
+        const auto minmax = [](const auto& h) {
+            auto it = std::minmax_element(h.cdata(), h.cdata() +
+                static_cast<size_t>(384) * 384 * 384);
+            return std::pair<float, float>{*it.first, *it.second};
+        };
+        const auto f = minmax(h_fdk), c = minmax(h_cfdk);
+        const float wmin = std::max(0.f, std::min(f.first, c.first));
+        const float wmax = std::min(0.08f, std::max(f.second, c.second));
+        std::vector<float> vf(h_fdk.cdata(), h_fdk.cdata() + 384ull * 384 * 384);
+        std::vector<float> vc(h_cfdk.cdata(), h_cfdk.cdata() + 384ull * 384 * 384);
+        std::vector<float> difference(vf.size(), 0.f);
+        for (size_t i = 0; i < difference.size(); ++i)
+            difference[i] = std::fabs(vc[i] - vf[i]) * 10.f;
+        const std::vector<TestImage::GrayPanel> panels = {
+            {&vf,384,384,384,192,1.f,wmin,wmax}, {&vc,384,384,384,192,1.f,wmin,wmax},
+            {&difference,384,384,384,192,1.f,0.f,0.01f},
+            {&vf,384,384,384,202,1.f,wmin,wmax}, {&vc,384,384,384,202,1.f,wmin,wmax},
+            {&difference,384,384,384,202,1.f,0.f,0.01f}};
+        ok = TestImage::writeGrayMontageBmp(out / "icrp_fdk_cfdk_center_offz.bmp",
+            panels, 3, 8, 2);
+        YK_LOGI("[ICRP C-FDK] FDK={:.1f} ms C-FDK={:.1f} ms window=[{:.4g},{:.4g}] "
+            "difference=10x absolute, image={}", fdk_ms, cfdk_ms, wmin, wmax,
+            (out / "icrp_fdk_cfdk_center_offz.bmp").string());
+    }
+    cfdk.release(); fdk.release();
+    if (cuda_stream) cudaStreamDestroy(cuda_stream);
+    return ok ? 0 : 1;
+}
 
 // 坐标变换在前端烘焙几何，但体素数组仍固定在 Object 坐标系。该测试使用
 // 非零体积中心，验证绕中心旋转的枢轴补偿、点/向量规则和逆变换。

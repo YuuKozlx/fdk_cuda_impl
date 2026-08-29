@@ -27,6 +27,83 @@ inline void voxelCenterMm(const SReconstructionParams& p, int x, int y, int z,
     pz = (z + 0.5f - 0.5f * p.volume.Nz) * p.volume.voxelZ_mm;
 }
 
+// ASTRA Toolbox 的 modified 3-D Shepp-Logan 模体。
+//
+// 来源：ASTRA Toolbox, src/SheppLogan.cpp, generateSheppLogan3D()
+// Copyright 2010-2022 imec Vision Lab, University of Antwerp
+// Copyright 2014-2022 CWI, Amsterdam
+// SPDX-License-Identifier: GPL-3.0-or-later
+// https://github.com/astra-toolbox/astra-toolbox
+//
+// 椭球表、叠加顺序、XY 平面旋转约定、modified 强度和最终负值截断均与
+// ASTRA 原实现保持一致。ASTRA 使用归一化体坐标；physical_half_extent_mm
+// 只负责把 [-1,1]^3 等比例映射到本项目的毫米世界坐标，不改变模体定义。
+inline std::vector<float> makeAstraSheppLogan3D(
+    const SReconstructionParams& p, float physical_half_extent_mm,
+    bool modified = true, float attenuation_scale = 0.02f)
+{
+    struct Ellipsoid {
+        double x, y, z;
+        double axis_x, axis_y, axis_z;
+        double rotation_degrees;
+        double value;
+    };
+    std::vector<Ellipsoid> ellipsoids = {
+        { 0,     0,      0, 0.69,   0.92,  0.81,   0,  2.00 },
+        { 0,    -0.0184, 0, 0.6624, 0.874, 0.78,   0, -0.98 },
+        { 0.22,  0,      0, 0.11,   0.31,  0.22, -18, -0.02 },
+        {-0.22,  0,      0, 0.16,   0.41,  0.28,  18, -0.02 },
+        { 0,     0.35,   0, 0.21,   0.25,  0.41,   0,  0.01 },
+        { 0,     0.1,    0, 0.046,  0.046, 0.05,   0,  0.01 },
+        { 0,    -0.1,    0, 0.046,  0.046, 0.05,   0,  0.01 },
+        {-0.08, -0.605,  0, 0.046,  0.023, 0.05,   0,  0.01 },
+        { 0,    -0.605,  0, 0.023,  0.023, 0.02,   0,  0.01 },
+        { 0.06, -0.605,  0, 0.023,  0.046, 0.02,   0,  0.01 }
+    };
+    if (modified) {
+        constexpr double values[] = {
+            1.0, -0.8, -0.2, -0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1
+        };
+        for (size_t i = 0; i < ellipsoids.size(); ++i)
+            ellipsoids[i].value = values[i];
+    }
+    std::vector<float> volume(static_cast<size_t>(p.volume.Nx) *
+        p.volume.Ny * p.volume.Nz, 0.f);
+    if (!(physical_half_extent_mm > 0.f)) return volume;
+    for (int z = 0; z < p.volume.Nz; ++z) {
+        for (int y = 0; y < p.volume.Ny; ++y) {
+            for (int x = 0; x < p.volume.Nx; ++x) {
+                float wx, wy, wz;
+                voxelCenterMm(p, x, y, z, wx, wy, wz);
+                // ASTRA 的数组 Y/Z 轴随索引增加对应归一化坐标减小。
+                const double px = wx / physical_half_extent_mm;
+                const double py = -wy / physical_half_extent_mm;
+                const double pz = -wz / physical_half_extent_mm;
+                double value = 0.0;
+                for (const auto& ellipsoid : ellipsoids) {
+                    const double theta = ellipsoid.rotation_degrees *
+                        3.14159265358979323846 / 180.0;
+                    const double cosine = std::cos(theta);
+                    const double sine = std::sin(theta);
+                    const double dx = px - ellipsoid.x;
+                    const double dy = py - ellipsoid.y;
+                    const double dz = pz - ellipsoid.z;
+                    const double rx = dx * cosine - dy * sine;
+                    const double ry = dx * sine + dy * cosine;
+                    const double equation =
+                        rx * rx / (ellipsoid.axis_x * ellipsoid.axis_x) +
+                        ry * ry / (ellipsoid.axis_y * ellipsoid.axis_y) +
+                        dz * dz / (ellipsoid.axis_z * ellipsoid.axis_z);
+                    if (equation <= 1.0) value += ellipsoid.value;
+                }
+                volume[index(p, x, y, z)] = static_cast<float>(
+                    std::max(value, 0.0) * attenuation_scale);
+            }
+        }
+    }
+    return volume;
+}
+
 // A compact analytic phantom for FP/BP smoke tests: water-equivalent cylinder,
 // one high-contrast bead and one air cavity.  The three structures exercise
 // both smooth boundaries and isolated high-frequency content.

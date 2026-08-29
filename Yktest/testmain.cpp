@@ -23,6 +23,11 @@ int main_fdk_batch_consistency_smoke();
 int main_fdk_synchronous_batch_smoke();
 int main_fdk_calibrated_geometry_smoke();
 int main_fdk_depth_denominator_smoke();
+int main_curve_filtered_fdk_reconstruction();
+int main_curve_filtered_fdk_piecewise_mapping();
+int main_curve_filtered_fdk_large_cone_comparison();
+int main_curve_filtered_fdk_large_water();
+int main_curve_filtered_fdk_icrp_comparison();
 int main_catphan_phantom_smoke();
 int main_rigid_geometry_transform_smoke();
 int main_filter_spatial_ramp_validation();
@@ -50,6 +55,7 @@ void configure_large_arrow_test(const std::string& method, int iterations,
 int main_fpcyl_adjoint();
 int main_fpcyl_fdk_adjoint();
 int main_fpcyl_fdk_backprojectors();
+int main_fpcyl_cfdk_reconstruction();
 int main_fpcyl_kernel_benchmark();
 int main_fpcyl_iterative_comparison();
 int main_fpcyl_wfbp_comparison();
@@ -111,6 +117,16 @@ namespace {
         TEST_INT("fdk/synchronous-batch", "fdk", false, main_fdk_synchronous_batch_smoke),
         TEST_INT("fdk/calibrated-geometry", "fdk", false, main_fdk_calibrated_geometry_smoke),
         TEST_INT("fdk/depth-denominator", "fdk", false, main_fdk_depth_denominator_smoke),
+        TEST_INT("fdk/curve-filtered-reconstruction", "fdk", false,
+            main_curve_filtered_fdk_reconstruction),
+        TEST_INT("fdk/curve-filtered-piecewise-mapping", "fdk", false,
+            main_curve_filtered_fdk_piecewise_mapping),
+        TEST_INT("fdk/curve-filtered-large-cone", "fdk", false,
+            main_curve_filtered_fdk_large_cone_comparison),
+        TEST_INT("fdk/curve-filtered-large-water", "fdk", false,
+            main_curve_filtered_fdk_large_water),
+        TEST_INT("fdk/curve-filtered-icrp", "fdk", true,
+            main_curve_filtered_fdk_icrp_comparison),
         TEST_INT("phantom/catphan-like", "phantom", false, main_catphan_phantom_smoke),
         TEST_INT("filter/spatial-ramp", "filter", false, main_filter_spatial_ramp_validation),
         TEST_INT("filter/discrete-ramlak-dc", "filter", false, main_filter_discrete_ramlak_dc_zero),
@@ -142,6 +158,8 @@ namespace {
         TEST_INT("fpcyl/fdk-adjoint", "fpcyl", false, main_fpcyl_fdk_adjoint),
         TEST_INT("fpcyl/fdk-backprojectors", "fpcyl", false,
             main_fpcyl_fdk_backprojectors),
+        TEST_INT("fpcyl/cfdk-reconstruction", "fpcyl", false,
+            main_fpcyl_cfdk_reconstruction),
         TEST_INT("fpcyl/kernel-benchmark", "fpcyl", false,
             main_fpcyl_kernel_benchmark),
         TEST_INT("fpcyl/iterative-compare", "fpcyl", true,

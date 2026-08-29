@@ -8,6 +8,30 @@
 namespace YK::CylFpBp::detail {
 namespace {
 
+__global__ void cyl_fdk_preweight_kernel(const float* input, float* output,
+    const SCylFdkView* geometry, int channels, int rows, int views)
+{
+    const size_t count = static_cast<size_t>(channels) * rows * views;
+    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+         index < count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
+        const int channel = static_cast<int>(index % channels);
+        const size_t view_row = index / channels;
+        const int row = static_cast<int>(view_row % rows);
+        const int view_index = static_cast<int>(view_row / rows);
+        const SCylFdkView& view = geometry[view_index];
+        const float gamma = view.detector_center_angle_rad +
+            (static_cast<float>(channel) - view.principal_u) *
+                (1.f / view.inv_channel_angle_step_rad);
+        const float q = view.detector_axial_offset_mm +
+            (static_cast<float>(row) - view.principal_v) /
+                view.inv_row_step_mm;
+        const float cosine = cosf(gamma);
+        const float cone = view.radius_mm /
+            sqrtf(fmaxf(view.radius_mm * view.radius_mm + q * q, 1e-20f));
+        output[index] = input[index] * cosine * cone * view.dtheta;
+    }
+}
+
 __device__ float3 sub3(float3 a, float3 b)
 { return make_float3(a.x - b.x, a.y - b.y, a.z - b.z); }
 __device__ float dot3(float3 a, float3 b)
@@ -42,11 +66,12 @@ __device__ bool map_voxel_to_detector(const SCylFdkView& view, float3 voxel,
     coordinate.channel = view.principal_u +
         atan2f(tangent_direction, radial_direction) *
         view.inv_channel_angle_step_rad;
-    coordinate.row = view.principal_v + coordinate.axial_mm *
-        view.inv_row_step_mm;
+    coordinate.row = view.principal_v +
+        (coordinate.axial_mm - view.detector_axial_offset_mm) *
+            view.inv_row_step_mm;
     coordinate.source_distance_squared = transverse_squared +
         axial_direction * axial_direction;
-    coordinate.central_depth_mm = radial_direction;
+    coordinate.central_depth_mm = dot3(direction, to3(view.depth_unit));
     return true;
 }
 
@@ -145,6 +170,18 @@ void launch(cudaTextureObject_t projection_texture,
 }
 
 } // namespace
+
+void launch_cyl_fdk_preweight(const float* input, float* output,
+    const SCylFdkView* geometry, int channels, int rows, int views,
+    cudaStream_t stream)
+{
+    const size_t count = static_cast<size_t>(channels) * rows * views;
+    const int blocks = static_cast<int>(std::min<size_t>(
+        (count + 255) / 256, 65535));
+    cyl_fdk_preweight_kernel<<<blocks, 256, 0, stream>>>(
+        input, output, geometry, channels, rows, views);
+    YK_CUDA_KERNEL_CHECK();
+}
 
 void launch_cyl_fdk_bp(cudaTextureObject_t projection_texture,
     const SCylFdkView* geometry, float* volume, int views,

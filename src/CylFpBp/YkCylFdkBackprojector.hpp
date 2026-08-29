@@ -54,7 +54,12 @@ public:
 
             // 当前几何约定的旋转中心是世界原点。中央射线方向 radial 指向
             // 等中心，因此 -source 在 radial 上的投影就是 SID。
-            const float sid = -dot(source, frame.radialUnit);
+            const float source_axial = dot(source, frame.axisUnit);
+            const float3 source_to_center = make_float3(
+                -source.x + source_axial * frame.axisUnit.x,
+                -source.y + source_axial * frame.axisUnit.y,
+                -source.z + source_axial * frame.axisUnit.z);
+            const float sid = sqrtf(dot(source_to_center, source_to_center));
             if (!(sid > 0.f)) return false;
 
             SCylFdkView item{};
@@ -65,6 +70,8 @@ public:
                 frame.tangentUnit.y, frame.tangentUnit.z, 0.f);
             item.axis_unit = make_float4(frame.axisUnit.x,
                 frame.axisUnit.y, frame.axisUnit.z, 0.f);
+            item.depth_unit = make_float4(source_to_center.x / sid,
+                source_to_center.y / sid, source_to_center.z / sid, 0.f);
             item.radius_mm = frame.radius_mm;
             item.sid_mm = sid;
             item.principal_u = frame.principalU;
@@ -73,6 +80,15 @@ public:
             item.inv_row_step_mm = 1.f / frame.rowStepMm;
             item.inverse_pixel_area = 1.f /
                 (frame.channelStepRad * frame.radius_mm * frame.rowStepMm);
+            item.detector_center_angle_rad = atan2f(
+                -dot(make_float3(item.depth_unit.x, item.depth_unit.y,
+                    item.depth_unit.z), frame.tangentUnit),
+                dot(make_float3(item.depth_unit.x, item.depth_unit.y,
+                    item.depth_unit.z), frame.radialUnit));
+            item.detector_axial_offset_mm = dot(make_float3(
+                frame.detectorCenter.x - source.x,
+                frame.detectorCenter.y - source.y,
+                frame.detectorCenter.z - source.z), frame.axisUnit);
             packed.push_back(item);
         }
 
