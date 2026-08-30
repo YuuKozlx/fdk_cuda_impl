@@ -3,6 +3,7 @@
 
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 #include "YKCBCT/geometry/YkSystemGeometry.hpp"
+#include "YKCBCT/interface/YkSystemReconstruction.hpp"
 
 int main_geometry_builder_four_modes()
 {
@@ -120,5 +121,15 @@ int main_geometry_builder_four_modes()
 
     static_flat_system.scan.views_per_turn = 1;
     if (buildStaticFlatGeometry(static_flat_system, static_flat)) return 1;
+
+    SStaticFlatReconstructionRequest request{};
+    request.system = static_flat_system;
+    request.system.scan.views_per_turn = 8;
+    request.reconstruction.parker.mode = EParkerMode::Auto;
+    if (!resolveParkerEnabled(request) ||
+        request.reconstruction.pipeline != EPipeline::FDK)
+        return 1;
+    request.system.scan.total_views = request.system.scan.views_per_turn;
+    if (resolveParkerEnabled(request)) return 1;
     return 0;
 }

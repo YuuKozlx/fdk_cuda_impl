@@ -14,6 +14,7 @@
 #include "FDK/YkFDKPreWeightProcessor.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
+#include "YKCBCT/interface/YkSystemReconstruction.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkCBCTParams.h"
 #include "global/YkLog.h"
@@ -228,6 +229,32 @@ private:
 // 数据，避免隐式状态跨批次泄漏。
 class FdkPipeline {
 public:
+    // 新系统级入口：宏观 Flat CBCT 几何和 FDK 配置一次传入。扫描范围从
+    // total_views/views_per_turn 派生，Parker 不再依赖调用方重复填写旧参数。
+    bool prepare(const SStaticFlatReconstructionRequest& request,
+        int requested_chunk, cudaStream_t stream, int device_id = 0)
+    {
+        if (request.reconstruction.pipeline != EPipeline::FDK) {
+            YK_LOGE("[FdkPipeline] 系统级入口只接受 FDK 重建请求。");
+            return false;
+        }
+        std::vector<SConeProjGeomVec> geometry;
+        SVolGeom volume{};
+        if (!buildStaticFlatGeometry(request.system, geometry, volume)) {
+            YK_LOGE("[FdkPipeline] Flat 系统 geometry 构造失败。");
+            return false;
+        }
+
+        SReconstructionParams params{};
+        if (!buildParams_(request, volume, params)) return false;
+        if (params.scan.short_scan &&
+            !validateParkerCoverage_(geometry, request.system.detector.channels,
+                request.system.detector.rows, params.scan.range_rad))
+            return false;
+        return prepareWithGeometry(params, geometry, requested_chunk,
+            stream, device_id);
+    }
+
     bool prepare(const SReconstructionParams& params, int requested_chunk,
         cudaStream_t stream, int device_id = 0)
     {
@@ -483,6 +510,102 @@ public:
     { return geometry_diagnostics_; }
 
 private:
+    static EFilterKernel mapFilter_(EFdkFilter filter)
+    {
+        switch (filter) {
+        case EFdkFilter::None: return EFilterKernel::None;
+        case EFdkFilter::RamLak: return EFilterKernel::RamLak;
+        case EFdkFilter::SheppLogan: return EFilterKernel::SheppLogan;
+        case EFdkFilter::Cosine: return EFilterKernel::Cosine;
+        case EFdkFilter::Hann: return EFilterKernel::Hann;
+        case EFdkFilter::Hamming: return EFilterKernel::Hamming;
+        case EFdkFilter::Blackman: return EFilterKernel::Blackman;
+        case EFdkFilter::Butterworth: return EFilterKernel::Butterworth;
+        case EFdkFilter::Kaiser: return EFilterKernel::Kaiser;
+        case EFdkFilter::Tukey: return EFilterKernel::Tukey;
+        }
+        return EFilterKernel::RamLak;
+    }
+
+    static bool buildParams_(const SStaticFlatReconstructionRequest& request,
+        const SVolGeom& volume, SReconstructionParams& params)
+    {
+        const auto& system = request.system;
+        const float range = regularScanRangeRad(system.scan);
+        if (!std::isfinite(range) || range <= 0.f) return false;
+        params = {};
+        params.scan.Nu = system.detector.channels;
+        params.scan.Nv = system.detector.rows;
+        params.scan.NAng = system.scan.total_views;
+        params.scan.totalViews = system.scan.total_views;
+        params.scan.du_mm = system.detector.channel_size_mm;
+        params.scan.dv_mm = system.detector.row_size_mm;
+        params.scan.range_rad = range;
+        params.scan.start_angle_rad = system.scan.start_angle_rad;
+        params.scan.direction = system.scan.rotation_direction;
+        params.scan.sid_mm = system.scan.sid_mm;
+        params.scan.sdd_mm = system.scan.sdd_mm;
+        params.scan.short_scan = resolveParkerEnabled(request);
+        params.volume.Nx = volume.Nx; params.volume.Ny = volume.Ny;
+        params.volume.Nz = volume.Nz;
+        params.volume.voxelX_mm = volume.vox_x;
+        params.volume.voxelY_mm = volume.vox_y;
+        params.volume.voxelZ_mm = volume.vox_z;
+        params.volume.centerX_mm = volume.center.x;
+        params.volume.centerY_mm = volume.center.y;
+        params.volume.centerZ_mm = volume.center.z;
+        const auto& input = request.reconstruction.fdk;
+        auto& filter = params.reconstruction.filter;
+        filter.kind = mapFilter_(input.filter);
+        filter.source = EWeightsBuildSource::AnalyticFreq;
+        filter.cutoff = input.cutoff;
+        filter.gain = input.gain;
+        filter.order = input.butterworth_order;
+        filter.beta = input.kaiser_beta;
+        filter.tukey_alpha = input.tukey_alpha;
+        return true;
+    }
+
+    static bool validateParkerCoverage_(
+        const std::vector<SConeProjGeomVec>& geometry, int detector_u,
+        int detector_v, float range_rad)
+    {
+        if (geometry.empty() || range_rad >= 2.f * CUDA_PI - 1e-5f) {
+            YK_LOGE("[FdkPipeline] Parker 只适用于小于 2π 的有效短扫描。");
+            return false;
+        }
+        float max_fan = 0.f;
+        for (const auto& geo : geometry) {
+            const float cu = 0.5f * static_cast<float>(detector_u - 1);
+            const float cv = 0.5f * static_cast<float>(detector_v - 1);
+            const float3 center = make_float3(
+                geo.detS.x + cu * geo.detU.x + cv * geo.detV.x,
+                geo.detS.y + cu * geo.detU.y + cv * geo.detV.y,
+                geo.detS.z + cu * geo.detU.z + cv * geo.detV.z);
+            const float2 principal = make_float2(
+                center.x - geo.src.x, center.y - geo.src.y);
+            for (float u : {0.f, static_cast<float>(detector_u - 1)}) {
+                const float3 edge = make_float3(
+                    geo.detS.x + u * geo.detU.x + cv * geo.detV.x,
+                    geo.detS.y + u * geo.detU.y + cv * geo.detV.y,
+                    geo.detS.z + u * geo.detU.z + cv * geo.detV.z);
+                const float2 ray = make_float2(
+                    edge.x - geo.src.x, edge.y - geo.src.y);
+                const float gamma = std::atan2(ray.x * principal.y -
+                    ray.y * principal.x, ray.x * principal.x +
+                    ray.y * principal.y);
+                max_fan = std::max(max_fan, std::fabs(gamma));
+            }
+        }
+        const float required = CUDA_PI + 2.f * max_fan;
+        if (range_rad + 1e-5f < required) {
+            YK_LOGE("[FdkPipeline] Parker 短扫范围不足：实际 {} rad，至少需要 {} rad（π+2Γ）。",
+                range_rad, required);
+            return false;
+        }
+        return true;
+    }
+
     bool validateStatic_(const SReconstructionParams& p, int requested_chunk, cudaStream_t stream) const
     {
         if (!stream || requested_chunk <= 0 || p.scan.totalViews <= 0 || p.scan.Nu <= 0 ||
