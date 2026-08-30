@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
+#include "YKCBCT/geometry/YkHelicalSystemGeometry.hpp"
 
 int main_geometry_builder_four_modes()
 {
@@ -51,5 +52,41 @@ int main_geometry_builder_four_modes()
     SCylDetectorSpec invalid_cyl = cyl;
     invalid_cyl.curvature_radius_mm = -1.f;
     if (buildProjectionGeometry(circular, invalid_cyl, static_cyl)) return 1;
+
+    // 宏观系统参数入口自动生成规则角度和螺旋 z；调用方无需逐帧填写
+    // SConeProjGeomVec/SCylConeProjGeomVec。
+    SHelicalFlatSystemSpec flat_system{};
+    flat_system.scan.total_views = 8;
+    flat_system.scan.views_per_turn = 4;
+    flat_system.scan.sid_mm = 500.f;
+    flat_system.scan.sdd_mm = 1000.f;
+    flat_system.scan.start_angle_rad = 0.5f;
+    flat_system.scan.start_z_mm = -12.f;
+    flat_system.scan.pitch_mm_per_turn = 20.f;
+    flat_system.detector = flat;
+    flat_system.volume = {16, 16, 8, 1.f, 1.f, 1.f, make_float3(3.f, 0.f, 2.f)};
+    SVolGeom flat_system_volume{};
+    if (!buildHelicalFlatGeometry(flat_system, helical_flat,
+            flat_system_volume) ||
+        helical_flat.size() != 8 ||
+        std::fabs(helical_flat.front().src.z -
+            (-12.f + flat_system.scan.source_offset_mm.z)) > 1e-5f ||
+        std::fabs(flat_system_volume.center.x - 3.f) > 1e-5f)
+        return 1;
+
+    SVolGeom volume_geometry{};
+    if (!buildVolumeGeometry(flat_system.volume, volume_geometry) ||
+        std::fabs(volume_geometry.center.z - 2.f) > 1e-5f)
+        return 1;
+
+    SHelicalCylSystemSpec cyl_system{};
+    cyl_system.scan = flat_system.scan;
+    cyl_system.detector = cyl;
+    cyl_system.volume = flat_system.volume;
+    SVolGeom cyl_system_volume{};
+    if (!buildHelicalCylGeometry(cyl_system, helical_cyl,
+            cyl_system_volume) || helical_cyl.size() != 8 ||
+        cyl_system_volume.Nz != flat_system.volume.nz)
+        return 1;
     return 0;
 }

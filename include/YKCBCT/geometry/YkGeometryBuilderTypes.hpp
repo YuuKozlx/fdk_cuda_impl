@@ -26,6 +26,23 @@ struct SHelicalTrajectorySpec {
     float3 source_offset_mm = make_float3(0.f, 0.f, 0.f);
 };
 
+// 规则螺旋扫描的宏观采集参数。常规用户只需要设置这一层，builder 会
+// 自动生成 angles_rad 和逐视图 geometry。显式 SHelicalTrajectorySpec
+// 仍用于非等间隔角度、外部编码器角度或逐视图校准数据。
+struct SRegularHelicalScanSpec {
+    int total_views = 0;
+    int views_per_turn = 0;
+    float start_angle_rad = 0.f;
+    // +1/-1 分别表示角度递增/递减。
+    int rotation_direction = 1;
+    float sid_mm = 0.f;
+    float sdd_mm = 0.f;
+    float start_z_mm = 0.f;
+    // 带符号的物理进床量。正负号决定 Z 方向，与机架旋转方向无关。
+    float pitch_mm_per_turn = 0.f;
+    float3 source_offset_mm = make_float3(0.f, 0.f, 0.f);
+};
+
 // 探测器相对标称主点的局部姿态。offset 分量依次沿 U、表面法向 N、V；
 // tilt 全部使用弧度，并依次绕 U、V、N 轴施加。
 struct SDetectorPoseSpec {
@@ -58,6 +75,18 @@ struct SCylDetectorSpec {
     float row_size_mm = 0.f;
     float curvature_radius_mm = 0.f;
     SDetectorPoseSpec pose{};
+};
+
+// 重建体积的宏观网格。它属于系统配置，但不参与射线几何生成；单独保存
+// 可避免将体积中心错误地当作旋转中心或探测器校正量。
+struct SVolumeGridSpec {
+    int nx = 0;
+    int ny = 0;
+    int nz = 0;
+    float voxel_x_mm = 0.f;
+    float voxel_y_mm = 0.f;
+    float voxel_z_mm = 0.f;
+    float3 center_mm = make_float3(0.f, 0.f, 0.f);
 };
 
 // 轨迹层输出的探测器无关坐标架。detector_principal 是无 offset/tilt 时

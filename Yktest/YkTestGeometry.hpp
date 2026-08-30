@@ -4,6 +4,7 @@
 
 #include "Heli/YkHeliCTParams.h"
 #include "Heli/analytic/wfbp/YkWfbpTypes.hpp"
+#include "YKCBCT/geometry/YkHelicalSystemGeometry.hpp"
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 
 namespace YK::TestGeometry {
@@ -59,10 +60,37 @@ inline SHelicalTrajectorySpec helicalTrajectory(const SHeliCTParam& p)
     return trajectory;
 }
 
+inline SRegularHelicalScanSpec regularHelicalScan(const SHeliCTParam& p)
+{
+    SRegularHelicalScanSpec scan{};
+    scan.total_views = static_cast<int>(p.angle_list.size());
+    scan.views_per_turn = p.views_per_rot;
+    scan.start_angle_rad = p.angle_list.empty() ? 0.f : p.angle_list.front();
+    if (p.angle_list.size() > 1 && p.angle_list[1] < p.angle_list[0])
+        scan.rotation_direction = -1;
+    scan.sid_mm = p.SID;
+    scan.sdd_mm = p.SDD;
+    scan.start_z_mm = p.start_z_mm;
+    scan.pitch_mm_per_turn = p.pitch_mm;
+    scan.source_offset_mm = make_float3(
+        p.sourceOffsetX_mm, p.sourceOffsetY_mm, p.sourceOffsetZ_mm);
+    return scan;
+}
+
+inline SVolumeGridSpec volumeGrid(const SHeliCTParam& p)
+{
+    return {p.iVX, p.iVY, p.iVZ, p.vox_x_mm, p.vox_y_mm, p.vox_z_mm,
+        make_float3(p.vol_offset_x_mm, p.vol_offset_y_mm, p.vol_offset_z_mm)};
+}
+
 inline std::vector<SConeProjGeomVec> helicalFlat(const SHeliCTParam& p)
 {
+    SHelicalFlatSystemSpec system{};
+    system.scan = regularHelicalScan(p);
+    system.detector = flatDetector(p);
+    system.volume = volumeGrid(p);
     std::vector<SConeProjGeomVec> geometry;
-    buildProjectionGeometry(helicalTrajectory(p), flatDetector(p), geometry);
+    buildHelicalFlatGeometry(system, geometry);
     return geometry;
 }
 
@@ -78,16 +106,19 @@ inline std::vector<SCylConeProjGeomVec> staticCyl(const SHeliCTParam& p,
 inline std::vector<SCylConeProjGeomVec> helicalCyl(const SHeliCTParam& p,
     float radius_mm, float channel_angle_step_rad = 0.f)
 {
+    SHelicalCylSystemSpec system{};
+    system.scan = regularHelicalScan(p);
+    system.detector = cylDetector(p, radius_mm, channel_angle_step_rad);
+    system.volume = volumeGrid(p);
     std::vector<SCylConeProjGeomVec> geometry;
-    buildProjectionGeometry(helicalTrajectory(p),
-        cylDetector(p, radius_mm, channel_angle_step_rad), geometry);
+    buildHelicalCylGeometry(system, geometry);
     return geometry;
 }
 
 inline Helical::Wfbp::InputGeometry wfbpInput(const SHeliCTParam& p)
 {
     Helical::Wfbp::InputGeometry input{};
-    input.trajectory = helicalTrajectory(p);
+    buildHelicalTrajectory(regularHelicalScan(p), input.trajectory);
     input.channels = p.iPU; input.rows = p.iPV;
     input.channel_spacing_mm = p.du_mm;
     input.row_spacing_mm = p.dv_mm;
@@ -98,10 +129,8 @@ inline Helical::Wfbp::InputGeometry wfbpInput(const SHeliCTParam& p)
 
 inline SVolGeom volume(const SHeliCTParam& p)
 {
-    auto geometry = SVolGeom::make_centered(p.iVX, p.iVY, p.iVZ,
-        p.vox_x_mm, p.vox_y_mm, p.vox_z_mm);
-    geometry.center = make_float3(p.vol_offset_x_mm, p.vol_offset_y_mm,
-        p.vol_offset_z_mm);
+    SVolGeom geometry{};
+    buildVolumeGeometry(volumeGrid(p), geometry);
     return geometry;
 }
 
