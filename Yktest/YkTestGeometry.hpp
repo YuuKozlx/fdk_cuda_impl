@@ -4,7 +4,7 @@
 
 #include "Heli/YkHeliCTParams.h"
 #include "Heli/analytic/wfbp/YkWfbpTypes.hpp"
-#include "YKCBCT/geometry/YkHelicalSystemGeometry.hpp"
+#include "YKCBCT/geometry/YkSystemGeometry.hpp"
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 
 namespace YK::TestGeometry {
@@ -77,6 +77,22 @@ inline SRegularHelicalScanSpec regularHelicalScan(const SHeliCTParam& p)
     return scan;
 }
 
+inline SRegularCircularScanSpec regularCircularScan(const SHeliCTParam& p)
+{
+    SRegularCircularScanSpec scan{};
+    scan.total_views = static_cast<int>(p.angle_list.size());
+    scan.views_per_turn = p.views_per_rot;
+    scan.start_angle_rad = p.angle_list.empty() ? 0.f : p.angle_list.front();
+    if (p.angle_list.size() > 1 && p.angle_list[1] < p.angle_list[0])
+        scan.rotation_direction = -1;
+    scan.sid_mm = p.SID;
+    scan.sdd_mm = p.SDD;
+    scan.z_mm = p.start_z_mm;
+    scan.source_offset_mm = make_float3(
+        p.sourceOffsetX_mm, p.sourceOffsetY_mm, p.sourceOffsetZ_mm);
+    return scan;
+}
+
 inline SVolumeGridSpec volumeGrid(const SHeliCTParam& p)
 {
     return {p.iVX, p.iVY, p.iVZ, p.vox_x_mm, p.vox_y_mm, p.vox_z_mm,
@@ -94,12 +110,26 @@ inline std::vector<SConeProjGeomVec> helicalFlat(const SHeliCTParam& p)
     return geometry;
 }
 
+inline std::vector<SConeProjGeomVec> staticFlat(const SHeliCTParam& p)
+{
+    SStaticFlatSystemSpec system{};
+    system.scan = regularCircularScan(p);
+    system.detector = flatDetector(p);
+    system.volume = volumeGrid(p);
+    std::vector<SConeProjGeomVec> geometry;
+    buildStaticFlatGeometry(system, geometry);
+    return geometry;
+}
+
 inline std::vector<SCylConeProjGeomVec> staticCyl(const SHeliCTParam& p,
     float radius_mm, float channel_angle_step_rad = 0.f)
 {
+    SStaticCylSystemSpec system{};
+    system.scan = regularCircularScan(p);
+    system.detector = cylDetector(p, radius_mm, channel_angle_step_rad);
+    system.volume = volumeGrid(p);
     std::vector<SCylConeProjGeomVec> geometry;
-    buildProjectionGeometry(circularTrajectory(p),
-        cylDetector(p, radius_mm, channel_angle_step_rad), geometry);
+    buildStaticCylGeometry(system, geometry);
     return geometry;
 }
 

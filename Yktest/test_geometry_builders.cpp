@@ -2,7 +2,7 @@
 #include <vector>
 
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
-#include "YKCBCT/geometry/YkHelicalSystemGeometry.hpp"
+#include "YKCBCT/geometry/YkSystemGeometry.hpp"
 
 int main_geometry_builder_four_modes()
 {
@@ -53,8 +53,37 @@ int main_geometry_builder_four_modes()
     invalid_cyl.curvature_radius_mm = -1.f;
     if (buildProjectionGeometry(circular, invalid_cyl, static_cyl)) return 1;
 
-    // 宏观系统参数入口自动生成规则角度和螺旋 z；调用方无需逐帧填写
+    // 四种宏观系统参数入口均自动生成规则角度；调用方无需逐帧填写
     // SConeProjGeomVec/SCylConeProjGeomVec。
+    SStaticFlatSystemSpec static_flat_system{};
+    static_flat_system.scan.total_views = 6;
+    static_flat_system.scan.views_per_turn = 8;
+    static_flat_system.scan.start_angle_rad = 0.25f;
+    static_flat_system.scan.rotation_direction = -1;
+    static_flat_system.scan.sid_mm = 500.f;
+    static_flat_system.scan.sdd_mm = 1000.f;
+    static_flat_system.scan.z_mm = 7.f;
+    static_flat_system.detector = flat;
+    static_flat_system.volume = {16, 16, 8, 1.f, 1.f, 1.f,
+        make_float3(3.f, 0.f, 2.f)};
+    SVolGeom static_flat_volume{};
+    if (!buildStaticFlatGeometry(static_flat_system, static_flat,
+            static_flat_volume) || static_flat.size() != 6 ||
+        std::fabs(static_flat.front().src.z - 7.f) > 1e-5f ||
+        !(static_flat[1].angle.x < static_flat[0].angle.x))
+        return 1;
+
+    SStaticCylSystemSpec static_cyl_system{};
+    static_cyl_system.scan = static_flat_system.scan;
+    static_cyl_system.detector = cyl;
+    static_cyl_system.volume = static_flat_system.volume;
+    SVolGeom static_cyl_volume{};
+    if (!buildStaticCylGeometry(static_cyl_system, static_cyl,
+            static_cyl_volume) || static_cyl.size() != 6 ||
+        std::fabs(static_cyl.front().source.z - 7.f) > 1e-5f ||
+        static_cyl_volume.Nx != static_flat_volume.Nx)
+        return 1;
+
     SHelicalFlatSystemSpec flat_system{};
     flat_system.scan.total_views = 8;
     flat_system.scan.views_per_turn = 4;
@@ -88,5 +117,8 @@ int main_geometry_builder_four_modes()
             cyl_system_volume) || helical_cyl.size() != 8 ||
         cyl_system_volume.Nz != flat_system.volume.nz)
         return 1;
+
+    static_flat_system.scan.views_per_turn = 1;
+    if (buildStaticFlatGeometry(static_flat_system, static_flat)) return 1;
     return 0;
 }

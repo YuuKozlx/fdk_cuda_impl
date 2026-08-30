@@ -17,6 +17,20 @@ struct SCircularTrajectorySpec {
     float3 source_offset_mm = make_float3(0.f, 0.f, 0.f);
 };
 
+// 规则静态圆扫描的宏观采集参数。total_views 可以小于 views_per_turn
+// 表示短扫描，也可以大于 views_per_turn 表示多圈静态扫描。
+struct SRegularCircularScanSpec {
+    int total_views = 0;
+    int views_per_turn = 0;
+    float start_angle_rad = 0.f;
+    // +1/-1 分别表示角度递增/递减。
+    int rotation_direction = 1;
+    float sid_mm = 0.f;
+    float sdd_mm = 0.f;
+    float z_mm = 0.f;
+    float3 source_offset_mm = make_float3(0.f, 0.f, 0.f);
+};
+
 struct SHelicalTrajectorySpec {
     std::vector<float> angles_rad{};
     float sid_mm = 0.f;
