@@ -24,6 +24,7 @@ int main_fdk_batch_consistency_smoke();
 int main_fdk_synchronous_batch_smoke();
 int main_fdk_calibrated_geometry_smoke();
 int main_fdk_system_request_smoke();
+int main_system_reconstruction_four_geometries();
 int main_fdk_depth_denominator_smoke();
 int main_curve_filtered_fdk_reconstruction();
 int main_curve_filtered_fdk_piecewise_mapping();
@@ -125,6 +126,8 @@ namespace {
         TEST_INT("fdk/synchronous-batch", "fdk", false, main_fdk_synchronous_batch_smoke),
         TEST_INT("fdk/calibrated-geometry", "fdk", false, main_fdk_calibrated_geometry_smoke),
         TEST_INT("fdk/system-request", "fdk", false, main_fdk_system_request_smoke),
+        TEST_INT("example/system-reconstruction-four-geometries", "example", false,
+            main_system_reconstruction_four_geometries),
         TEST_INT("fdk/depth-denominator", "fdk", false, main_fdk_depth_denominator_smoke),
         TEST_INT("fdk/curve-filtered-reconstruction", "fdk", false,
             main_curve_filtered_fdk_reconstruction),

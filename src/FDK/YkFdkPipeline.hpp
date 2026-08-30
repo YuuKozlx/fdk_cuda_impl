@@ -540,6 +540,14 @@ private:
         params.scan.totalViews = system.scan.total_views;
         params.scan.du_mm = system.detector.channel_size_mm;
         params.scan.dv_mm = system.detector.row_size_mm;
+        params.scan.offsetU_mm = system.detector.pose.offset_unv_mm.x;
+        params.scan.offsetV_mm = system.detector.pose.offset_unv_mm.z;
+        params.scan.tiltU_rad = system.detector.pose.tilt_u_rad;
+        params.scan.tiltV_rad = system.detector.pose.tilt_v_rad;
+        params.scan.tiltN_rad = system.detector.pose.tilt_n_rad;
+        params.scan.sourceOffsetX_mm = system.scan.source_offset_mm.x;
+        params.scan.sourceOffsetY_mm = system.scan.source_offset_mm.y;
+        params.scan.sourceOffsetZ_mm = system.scan.source_offset_mm.z;
         params.scan.range_rad = range;
         params.scan.start_angle_rad = system.scan.start_angle_rad;
         params.scan.direction = system.scan.rotation_direction;

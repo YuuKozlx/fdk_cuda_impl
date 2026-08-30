@@ -9,6 +9,7 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_validation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_forward_projectors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_geometry_builders.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/example_system_reconstruction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cuda/YkTextureTestKernels.cu
 
     # 框架、几何与重建冒烟测试
