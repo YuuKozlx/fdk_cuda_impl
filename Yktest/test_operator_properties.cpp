@@ -6,6 +6,7 @@
 
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
+#include "YKCBCT/geometry/YkPlanarGeometryBuilder.hpp"
 #include "global/YkMem3d.hpp"
 #include "util/YkCudaTimer.hpp"
 
@@ -98,6 +99,10 @@ int main_operator_matrix_smoke()
     const Pair pairs[] = {
         { "joseph/siddon-ray", ETask::FP_Joseph, ETask::BP_Siddon_RayDriven },
         { "joseph/siddon-voxel", ETask::FP_Joseph, ETask::BP_Siddon_VoxDriven },
+        { "joseph/siddon-voxel-v2", ETask::FP_Joseph,
+            ETask::BP_Siddon_VoxDriven_v2 },
+        { "joseph/siddon-voxel-v3", ETask::FP_Joseph,
+            ETask::BP_Siddon_VoxDriven_v3 },
         { "joseph/joseph", ETask::FP_Joseph, ETask::BP_Joseph },
         { "joseph/joseph-v2", ETask::FP_Joseph, ETask::BP_Joseph_v2 },
         { "joseph/joseph-v3", ETask::FP_Joseph, ETask::BP_Joseph_v3 },
@@ -105,6 +110,10 @@ int main_operator_matrix_smoke()
         { "joseph/fdk-matched", ETask::FP_Joseph, ETask::BP_FDK_matched },
         { "siddon/siddon-ray", ETask::FP_Siddon, ETask::BP_Siddon_RayDriven },
         { "siddon/siddon-voxel", ETask::FP_Siddon, ETask::BP_Siddon_VoxDriven },
+        { "siddon/siddon-voxel-v2", ETask::FP_Siddon,
+            ETask::BP_Siddon_VoxDriven_v2 },
+        { "siddon/siddon-voxel-v3", ETask::FP_Siddon,
+            ETask::BP_Siddon_VoxDriven_v3 },
         { "siddon/joseph", ETask::FP_Siddon, ETask::BP_Joseph },
         { "siddon/joseph-v2", ETask::FP_Siddon, ETask::BP_Joseph_v2 },
         { "siddon/joseph-v3", ETask::FP_Siddon, ETask::BP_Joseph_v3 },
@@ -135,8 +144,9 @@ int main_planar_geometry_operator_smoke()
 {
     const SReconstructionParams p = makePropertyParams();
     std::vector<SConeProjGeomVec> planar;
-    build_planar_ct_vec_geometry(planar, p.scan.angles, p.scan.NAng, p.scan.Nu, p.scan.Nv,
-        p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm, 12.f);
+    buildPlanarRotatingSourceGeometry(p.scan.angles, p.scan.Nu, p.scan.Nv,
+        p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
+        12.f, planar);
     const auto x = TestPhantom::makeCatphanLike(p);
     std::vector<float> y(static_cast<size_t>(p.scan.NAng) * p.scan.Nu * p.scan.Nv, 0.1f);
     std::vector<float> projection, backprojection;

@@ -13,19 +13,19 @@
 #include <vector>
 
 #include <cuda_runtime.h>
-#include <toml.hpp>
+#include <toml++/toml.hpp>
 
-#include "YKCBCT/geometry/YkProjectionGeometryBuilders.hpp"
+#include "YKCBCT/geometry/YkPlanarGeometryBuilder.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkCudaTextureController.hpp"
 #include "global/YkMem3d.hpp"
 #include "global/YkLog.h"
-#include "CylFpBp/YkCylBackProjection.hpp"
-#include "CylFpBp/YkCylFpBpGeometry.hpp"
-#include "CylFpBp/YkCylForwardProjection.hpp"
-#include "Heli/YkHelicalGeo.hpp"
+#include "CylFpBp/bp/YkCylBackProjection.hpp"
+#include "YkTestGeometry.hpp"
+#include "CylFpBp/fp/YkCylForwardProjection.hpp"
+
 
 namespace YK::TestConfig {
 namespace {
@@ -80,7 +80,9 @@ enum class GeometryModel { Circular, Helical, Planar, PlanarEllipse, Cylindrical
 enum class ProjectorModel { Joseph, Siddon, CylindricalJoseph, CylindricalSiddon };
 enum class InputModel { Phantom, VolumeRaw, ProjectionRaw };
 enum class Operation { Forward, Backproject, ForwardBackproject };
-enum class CylBackprojector { VoxelDrivenV3, Fdk, FdkMatched };
+enum class CylBackprojector {
+    JosephV3, Siddon, SiddonV2, SiddonV3, SiddonRayDriven, Fdk, FdkMatched
+};
 
 struct ForwardCase {
     std::string name;
@@ -90,7 +92,7 @@ struct ForwardCase {
     ProjectorModel projector = ProjectorModel::Joseph;
     InputModel input = InputModel::Phantom;
     Operation operation = Operation::Forward;
-    CylBackprojector backprojector = CylBackprojector::VoxelDrivenV3;
+    CylBackprojector backprojector = CylBackprojector::JosephV3;
     std::string phantom = "catphan";
     std::filesystem::path volume_input;
     std::filesystem::path projection_input;
@@ -133,7 +135,12 @@ ProjectorModel parseProjector(const std::string& value)
 
 CylBackprojector parseCylBackprojector(const std::string& value)
 {
-    if (value == "v3") return CylBackprojector::VoxelDrivenV3;
+    if (value == "joseph-v3" || value == "v3")
+        return CylBackprojector::JosephV3;
+    if (value == "siddon") return CylBackprojector::Siddon;
+    if (value == "siddon-v2") return CylBackprojector::SiddonV2;
+    if (value == "siddon-v3") return CylBackprojector::SiddonV3;
+    if (value == "siddon-ray-driven") return CylBackprojector::SiddonRayDriven;
     if (value == "fdk") return CylBackprojector::Fdk;
     if (value == "fdk-matched") return CylBackprojector::FdkMatched;
     throw std::runtime_error("未知 operator.backprojector: " + value);
@@ -298,7 +305,8 @@ ForwardCase parseCase(const toml::table& table, const std::filesystem::path& bas
         throw std::runtime_error(result.name +
             "：BP 仅支持 cylindrical，且必须设置 output.volume");
     if (result.operation != Operation::Forward &&
-        result.backprojector != CylBackprojector::VoxelDrivenV3) {
+        (result.backprojector == CylBackprojector::Fdk ||
+         result.backprojector == CylBackprojector::FdkMatched)) {
         const float tolerance = std::max(1e-3f, 1e-5f * p.scan.sdd_mm);
         if (std::fabs(result.curvature_radius_mm - p.scan.sdd_mm) > tolerance)
             throw std::runtime_error(result.name +
@@ -407,16 +415,16 @@ std::vector<SConeProjGeomVec> buildPlanarGeometry(const ForwardCase& config)
     if (config.geometry == GeometryModel::Circular) {
         detail::buildCircularViews(p, geometry);
     } else if (config.geometry == GeometryModel::Planar) {
-        build_planar_ct_vec_geometry(geometry, p.scan.angles, p.scan.NAng,
-            p.scan.Nu, p.scan.Nv, p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
-            config.source_lateral_mm);
+        buildPlanarRotatingSourceGeometry(p.scan.angles, p.scan.Nu, p.scan.Nv,
+            p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
+            config.source_lateral_mm, geometry);
     } else if (config.geometry == GeometryModel::PlanarEllipse) {
-        build_planar_ct_vec_geometry_ellipse(geometry, p.scan.angles, p.scan.NAng,
-            p.scan.Nu, p.scan.Nv, p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
-            config.source_axis_x_mm, config.source_axis_z_mm);
+        buildPlanarEllipticSourceGeometry(p.scan.angles, p.scan.Nu, p.scan.Nv,
+            p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
+            config.source_axis_x_mm, config.source_axis_z_mm, geometry);
     }
     else if (config.geometry == GeometryModel::Helical) {
-        build_helical_vec_geometry(geometry, makeHelicalParams(config));
+        geometry = TestGeometry::helicalFlat(makeHelicalParams(config));
     }
     return geometry;
 }
@@ -480,8 +488,11 @@ int runCase(const ForwardCase& config)
     bool launched = false;
     if (config.geometry == GeometryModel::Cylindrical) {
         const SHeliCTParam h = makeHelicalParams(config);
-        const auto geometry = CylFpBp::buildCylindricalArcGeometry(h,
-            config.curvature_radius_mm, config.channel_angle_step_rad);
+        const auto geometry = config.pitch_mm == 0.f
+            ? TestGeometry::staticCyl(h, config.curvature_radius_mm,
+                config.channel_angle_step_rad)
+            : TestGeometry::helicalCyl(h, config.curvature_radius_mm,
+                config.channel_angle_step_rad);
         CylFpBp::Config operator_config{};
         operator_config.samples_per_voxel = config.samples_per_voxel;
         SVolGeom volume_geometry = SVolGeom::make_centered(p.volume.Nx, p.volume.Ny, p.volume.Nz,
@@ -497,14 +508,22 @@ int runCase(const ForwardCase& config)
         auto forward = CylFpBp::makeForwardProjection(forward_model);
         const auto back_model = [&] {
             switch (config.backprojector) {
-            case CylBackprojector::VoxelDrivenV3:
-                return CylFpBp::EBackProjection::VoxelDrivenV3;
+            case CylBackprojector::JosephV3:
+                return CylFpBp::EBackProjection::JosephV3;
+            case CylBackprojector::Siddon:
+                return CylFpBp::EBackProjection::Siddon;
+            case CylBackprojector::SiddonV2:
+                return CylFpBp::EBackProjection::SiddonV2;
+            case CylBackprojector::SiddonV3:
+                return CylFpBp::EBackProjection::SiddonV3;
+            case CylBackprojector::SiddonRayDriven:
+                return CylFpBp::EBackProjection::SiddonRayDriven;
             case CylBackprojector::Fdk:
                 return CylFpBp::EBackProjection::Fdk;
             case CylBackprojector::FdkMatched:
                 return CylFpBp::EBackProjection::FdkMatched;
             }
-            return CylFpBp::EBackProjection::VoxelDrivenV3;
+            return CylFpBp::EBackProjection::JosephV3;
         };
         auto back = CylFpBp::makeBackProjection(back_model());
         const bool needs_forward = config.operation != Operation::Backproject;

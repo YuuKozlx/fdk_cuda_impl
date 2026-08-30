@@ -13,6 +13,7 @@
 #include "FDK/YkFDKParkerWeightProcessor.hpp"
 #include "FDK/YkFDKPreWeightProcessor.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
+#include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkCBCTParams.h"
 #include "global/YkLog.h"
@@ -624,15 +625,25 @@ private:
     static void buildCircularGeometry_(const SReconstructionParams& params,
         const std::vector<float>& angles, std::vector<SConeProjGeomVec>& geometry)
     {
-        const auto rad2deg = [](float radians) { return radians * 180.f / CUDA_PI; };
-        geometry.resize(angles.size());
-        buildCircularConeGeometry(geometry, angles, static_cast<int>(angles.size()),
-            params.scan.Nu, params.scan.Nv, params.scan.du_mm, params.scan.dv_mm, params.scan.sid_mm,
-            params.scan.sdd_mm - params.scan.sid_mm, f3(params.scan.offsetU_mm, 0.f, params.scan.offsetV_mm),
-            f3(rad2deg(params.scan.tiltU_rad), rad2deg(params.scan.tiltN_rad),
-                rad2deg(params.scan.tiltV_rad)),
-            f3(params.scan.sourceOffsetX_mm, params.scan.sourceOffsetY_mm,
-                params.scan.sourceOffsetZ_mm));
+        SCircularTrajectorySpec trajectory{};
+        trajectory.angles_rad = angles;
+        trajectory.sid_mm = params.scan.sid_mm;
+        trajectory.sdd_mm = params.scan.sdd_mm;
+        trajectory.source_offset_mm = make_float3(
+            params.scan.sourceOffsetX_mm, params.scan.sourceOffsetY_mm,
+            params.scan.sourceOffsetZ_mm);
+        SFlatDetectorSpec detector{};
+        detector.channels = params.scan.Nu;
+        detector.rows = params.scan.Nv;
+        detector.channel_size_mm = params.scan.du_mm;
+        detector.row_size_mm = params.scan.dv_mm;
+        detector.pose.offset_unv_mm = make_float3(
+            params.scan.offsetU_mm, 0.f, params.scan.offsetV_mm);
+        detector.pose.tilt_u_rad = params.scan.tiltU_rad;
+        detector.pose.tilt_v_rad = params.scan.tiltV_rad;
+        detector.pose.tilt_n_rad = params.scan.tiltN_rad;
+        if (!buildProjectionGeometry(trajectory, detector, geometry))
+            geometry.clear();
     }
 
     bool buildDerivedGeometry_(const std::vector<SConeProjGeomVec>& geometry)

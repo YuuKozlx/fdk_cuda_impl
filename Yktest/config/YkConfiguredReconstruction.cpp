@@ -1,5 +1,6 @@
 #include "config/YkConfiguredReconstruction.hpp"
 #include "config/YkConfiguredForwardProjection.hpp"
+#include "config/YkConfiguredCylReconstruction.hpp"
 #include "config/YkConfiguredWfbp.hpp"
 
 #include <algorithm>
@@ -12,9 +13,11 @@
 #include <unordered_set>
 
 #include <cuda_runtime.h>
-#include <toml.hpp>
+#include <toml++/toml.hpp>
 
 #include "FDK/YkFdkPipeline.hpp"
+#include "FDK/CFDK/YkCurveFilteredFdkPipeline.hpp"
+#include "FDK/XFDK/YkXfdkPipeline.hpp"
 #include "Iter/YkAlgebraicReconstructorEx.hpp"
 #include "Iter/YkCglsReconstructorEx.hpp"
 #include "Iter/YkPwlsReconstructor.hpp"
@@ -67,6 +70,8 @@ const toml::table& requiredTable(const toml::table& table,
 Pipeline parsePipeline(const std::string& text)
 {
     if (text == "fdk") return Pipeline::Fdk;
+    if (text == "cfdk") return Pipeline::Cfdk;
+    if (text == "xfdk") return Pipeline::Xfdk;
     if (text == "sirt") return Pipeline::Sirt;
     if (text == "sart") return Pipeline::Sart;
     if (text == "ossart") return Pipeline::Ossart;
@@ -139,6 +144,8 @@ ETask parseBackProjector(const std::string& text)
     if (text == "joseph-v3") return ETask::BP_Joseph_v3;
     if (text == "siddon-ray") return ETask::BP_Siddon_RayDriven;
     if (text == "siddon-voxel") return ETask::BP_Siddon_VoxDriven;
+    if (text == "siddon-voxel-v2") return ETask::BP_Siddon_VoxDriven_v2;
+    if (text == "siddon-voxel-v3") return ETask::BP_Siddon_VoxDriven_v3;
     throw std::runtime_error("未知反投算子: " + text);
 }
 
@@ -233,8 +240,25 @@ ReconstructionCase parseCase(const toml::table& table,
     if (mode == "phantom") {
         result.input.mode = InputMode::Phantom;
         result.input.phantom = optional<std::string>(input, "phantom", "catphan");
-        if (result.input.phantom != "basic" && result.input.phantom != "catphan")
+        result.input.phantom_value = static_cast<float>(
+            optional<double>(input, "value", 0.02));
+        result.input.phantom_size_fraction = static_cast<float>(
+            optional<double>(input, "size_fraction", 0.65));
+        result.input.phantom_height_fraction = static_cast<float>(
+            optional<double>(input, "height_fraction", 0.80));
+        if (result.input.phantom != "basic" && result.input.phantom != "catphan" &&
+            result.input.phantom != "arrow" &&
+            result.input.phantom != "sphere" &&
+            result.input.phantom != "water-cylinder" &&
+            result.input.phantom != "square")
             throw std::runtime_error("未知内置模体: " + result.input.phantom);
+        if (!(result.input.phantom_value > 0.f) ||
+            !(result.input.phantom_size_fraction > 0.f &&
+              result.input.phantom_size_fraction <= 1.f) ||
+            !(result.input.phantom_height_fraction > 0.f &&
+              result.input.phantom_height_fraction <= 1.f))
+            throw std::runtime_error(
+                "input.value 必须为正，size_fraction/height_fraction 必须在 (0,1] 内");
     }
     else if (mode == "projection-raw") {
         result.input.mode = InputMode::ProjectionRaw;
@@ -558,6 +582,24 @@ bool writePreview(const ReconstructionCase& config,
     return TestImage::writeGrayMontageBmp(config.preview, panels, 1, 0, 2);
 }
 
+std::vector<float> makeConfiguredPhantom(const ReconstructionCase& config)
+{
+    const auto& p = config.params;
+    const auto& input = config.input;
+    if (input.phantom == "basic") return TestPhantom::makeBasic(p);
+    if (input.phantom == "catphan") return TestPhantom::makeCatphanLike(p);
+    if (input.phantom == "arrow") return TestPhantom::makeArrowDirections(p);
+    if (input.phantom == "sphere")
+        return TestPhantom::makeSphere(p, input.phantom_size_fraction,
+            input.phantom_value);
+    if (input.phantom == "water-cylinder")
+        return TestPhantom::makeWaterCylinder(p,
+            input.phantom_size_fraction, input.phantom_height_fraction,
+            input.phantom_value);
+    return TestPhantom::makeSquarePrism(p, input.phantom_size_fraction,
+        input.phantom_height_fraction, input.phantom_value);
+}
+
 bool runStreamingRawFdk(const ReconstructionCase& config,
     const std::vector<SConeProjGeomVec>& geometry, float* d_volume,
     cudaStream_t stream, Mem::MemoryController& memory)
@@ -658,8 +700,7 @@ bool runCase(const ReconstructionCase& config)
                     stream) == cudaSuccess;
             }
             else {
-                const std::vector<float> phantom = config.input.phantom == "basic" ?
-                    TestPhantom::makeBasic(p) : TestPhantom::makeCatphanLike(p);
+                const std::vector<float> phantom = makeConfiguredPhantom(config);
                 auto d_truth = memory.allocateDevice3D<float>(p.volume.Nx, p.volume.Ny, p.volume.Nz,
                     config.device);
                 ok = cudaMemcpyAsync(d_truth.data(), phantom.data(),
@@ -693,6 +734,21 @@ bool runCase(const ReconstructionCase& config)
                     config.chunk_views, stream, config.device) &&
                     pipeline.processBatchSync(batch, d_volume.data(), true) &&
                     pipeline.complete();
+            }
+            if (ok && config.pipeline == Pipeline::Xfdk) {
+                // xFDK 的扇束到平行束重排需要跨视图插值，只接受全量设备
+                // 投影。它与普通 FDK 的在线 batch 路径有意保持分离。
+                Fdk::XfdkPipeline pipeline;
+                ok = pipeline.prepare(p, geometry, stream, config.device) &&
+                    pipeline.reconstruct(d_projection.data(), d_volume.data(), true) &&
+                    pipeline.wait();
+            }
+            if (ok && config.pipeline == Pipeline::Cfdk) {
+                // C-FDK 曲线重排需要跨视图插值，当前只接受完整设备投影。
+                Fdk::CurveFilteredFdkPipeline pipeline;
+                ok = pipeline.prepare(p, geometry, stream, config.device) &&
+                    pipeline.reconstruct(d_projection.data(), d_volume.data(), true) &&
+                    pipeline.wait();
             }
             if (ok && (config.pipeline == Pipeline::Cgls ||
                 config.pipeline == Pipeline::FdkCgls)) {
@@ -905,6 +961,8 @@ int runConfiguredReconstruction(const std::filesystem::path& file,
         const std::string task = document["task"].value_or(std::string("reconstruction"));
         if (task == "forward-projection" || task == "cyl-fp-bp")
             return runConfiguredForwardProjection(file, case_name);
+        if (task == "cylindrical-reconstruction")
+            return runConfiguredCylReconstruction(file, case_name);
         if (task == "wfbp-reconstruction" || task == "helical-reconstruction")
             return runConfiguredWfbp(file, case_name);
         if (task != "reconstruction") {

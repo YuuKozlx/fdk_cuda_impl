@@ -9,7 +9,7 @@
 namespace YK::TestConfig {
 
 enum class Pipeline {
-    Fdk, Sirt, Sart, Ossart, Cgls, TigreGradientLocal, Pwls,
+    Fdk, Cfdk, Xfdk, Sirt, Sart, Ossart, Cgls, TigreGradientLocal, Pwls,
     FdkOssart, FdkCgls
 };
 enum class InputMode { ProjectionRaw, Phantom };
@@ -17,6 +17,11 @@ enum class InputMode { ProjectionRaw, Phantom };
 struct InputConfig {
     InputMode mode = InputMode::Phantom;
     std::string phantom = "catphan";
+    // 解析模体参数。size_fraction 表示相对可用 FOV 的直径或边长，
+    // height_fraction 只用于沿 Z 延伸的圆柱和方柱。
+    float phantom_value = 0.02f;
+    float phantom_size_fraction = 0.65f;
+    float phantom_height_fraction = 0.80f;
     std::filesystem::path projection{};
     // 可选空气场。提供后按 -log(clamp(I/I0, minimum_ratio, 1)) 转为线积分。
     std::filesystem::path air{};

@@ -1,8 +1,8 @@
 ﻿// YkFDKDataBus.hpp
 #pragma once
-#include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <texture_types.h>
@@ -164,7 +164,7 @@ namespace YK {
             std::vector<FdkAffineCoeff> h(K);
             Fdk::bp_readbackCoeffs(h.data(), K);
 
-            constexpr float kEps = FLT_EPSILON;
+            constexpr float kEps = std::numeric_limits<float>::epsilon();
             bool all_zero = true;
             for (int i = 0; i < K; ++i) {
                 const auto& c = h[i];

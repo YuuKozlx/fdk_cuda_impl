@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -15,20 +16,22 @@
 #include "BP/kernels/YkBPJosephLaunch.cuh"
 #include "BP/kernels/YkBPSiddonLaunch.cuh"
 #include "BP/kernels/YkBpFdkLaunch.cuh"
-#include "CylFpBp/YkCylFpBpGeometry.hpp"
-#include "CylFpBp/YkCylBackProjection.hpp"
-#include "CylFpBp/YkCylBackOperator.hpp"
-#include "CylFpBp/YkCylForwardProjection.hpp"
-#include "CylFpBp/YkCylIterativeReconstructor.hpp"
-#include "CylFpBp/YkCylForwardOperator.hpp"
-#include "CylFpBp/YkCylFdkBackprojector.hpp"
-#include "CylFpBp/YkCylFdkPipeline.hpp"
-#include "CylFpBp/YkCylVoxelDrivenBackprojector.hpp"
+#include "YkTestGeometry.hpp"
+#include "CylFpBp/bp/YkCylBackProjection.hpp"
+#include "CylFpBp/bp/YkCylBackOperator.hpp"
+#include "CylFpBp/fp/YkCylForwardProjection.hpp"
+#include "CylFpBp/iter/YkCylAlgebraicReconstructor.hpp"
+#include "CylFpBp/fp/YkCylForwardOperator.hpp"
+#include "CylFpBp/bp/YkCylFdkBackprojector.hpp"
+#include "CylFpBp/analytic/YkCylFdkPipeline.hpp"
+#include "CylFpBp/iter/YkCylPwlsReconstructor.hpp"
+#include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
 #include "FP/YkFPGpuContext.hpp"
 #include "FP/kernels/YkFPLaunch.cuh"
-#include "Heli/YkHelicalGeo.hpp"
-#include "Heli/wfbp/YkWfbpPipeline.hpp"
+
+#include "Heli/analytic/wfbp/YkWfbpPipeline.hpp"
+#include "Heli/iter/YkHelicalCylIterativeReconstructor.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "cuda/YkTextureTestKernels.cuh"
@@ -133,6 +136,24 @@ SHeliCTParam makeComparisonParams()
     return h;
 }
 
+// Kernel 基准使用独立的大尺寸参数，避免改变其它功能/数值测试的运行规模。
+// 该规模在常见 8 GB 显存上仍有余量，同时让单次 kernel 足够长，降低计时抖动。
+SHeliCTParam makeKernelBenchmarkParams()
+{
+    SHeliCTParam h = makeComparisonParams();
+    h.iPU = 256;
+    h.iPV = 64;
+    h.iVX = 128;
+    h.iVY = 128;
+    h.iVZ = 64;
+    h.views_per_rot = 180;
+    h.angle_list.resize(360);
+    for (int i = 0; i < static_cast<int>(h.angle_list.size()); ++i)
+        h.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / h.views_per_rot;
+    h.start_z_mm = -0.5f * h.pitch_mm * h.angle_list.back() / (2.f * CUDA_PI);
+    return h;
+}
+
 } // namespace
 
 int main_fpcyl_adjoint()
@@ -176,14 +197,14 @@ int main_fpcyl_adjoint()
 
     // 非理想圆弧：SDD=150 mm，而曲率半径 R=120 mm。圆柱轴线不经过焦点。
     const float curvature_radius_mm = 120.f;
-    const auto geometry = CylFpBp::buildCylindricalArcGeometry(
+    const auto geometry = TestGeometry::helicalCyl(
         h, curvature_radius_mm);
     std::vector<float> ax(projection_count), at_y(volume_count);
     CylFpBp::Config config{};
     const auto prepared_geometry = CylFpBp::detail::prepareJosephGeometry(
         volumeGeometry(h), h.iPU, h.iPV, geometry);
-    CylFpBp::ForwardOperator forward;
-    CylFpBp::BackOperator back;
+    CylFpBp::CylForwardOperator forward;
+    CylFpBp::CylBackOperator back;
     auto volume_texture = makeTexture(d_x.data(), h.iVX, h.iVY, h.iVZ,
         cudaFilterModeLinear, stream);
     auto projection_texture = makeTexture(d_y.data(), h.iPU, h.iPV,
@@ -213,6 +234,34 @@ int main_fpcyl_adjoint()
         "agreement={:.6f} rel={:.3e} {}",
         h.SDD, curvature_radius_mm, lhs, rhs, 1.0 - relative_error,
         relative_error, ok ? "PASS" : "FAIL");
+
+    // Siddon FP/BP 共享同一条源到圆柱像素射线以及相同的体素段长度，
+    // 因此除 atomicAdd 累加顺序造成的舍入外应满足离散转置关系。
+    auto point_volume_texture = makeTexture(d_x.data(), h.iVX, h.iVY, h.iVZ,
+        cudaFilterModePoint, stream);
+    bool siddon_ok = forward.forwardSiddon(point_volume_texture, d_ax.data(), stream) &&
+        back.backprojectSiddon(projection_texture, d_at_y.data(), stream) &&
+        cudaStreamSynchronize(stream) == cudaSuccess;
+    if (siddon_ok) {
+        siddon_ok = cudaMemcpy(ax.data(), d_ax.data(), projection_count * sizeof(float),
+                cudaMemcpyDeviceToHost) == cudaSuccess &&
+            cudaMemcpy(at_y.data(), d_at_y.data(), volume_count * sizeof(float),
+                cudaMemcpyDeviceToHost) == cudaSuccess;
+    }
+    double siddon_lhs = 0.0, siddon_rhs = 0.0;
+    for (size_t i = 0; i < projection_count; ++i)
+        siddon_lhs += static_cast<double>(ax[i]) * y[i];
+    for (size_t i = 0; i < volume_count; ++i)
+        siddon_rhs += static_cast<double>(x[i]) * at_y[i];
+    const double siddon_relative = std::fabs(siddon_lhs - siddon_rhs) /
+        std::max({std::fabs(siddon_lhs), std::fabs(siddon_rhs), 1e-30});
+    siddon_ok = siddon_ok && std::isfinite(siddon_relative) &&
+        siddon_relative < 1e-5;
+    YK_LOGI("[CylFpBp Siddon-FP-vs-Siddon-BP] "
+        "SDD={:.1f} R={:.1f} <Ax,y>={:.9e} <x,BPy>={:.9e} rel={:.3e} {}",
+        h.SDD, curvature_radius_mm, siddon_lhs, siddon_rhs, siddon_relative,
+        siddon_ok ? "PASS" : "FAIL");
+    ok = ok && siddon_ok;
     forward.release();
     back.release();
 
@@ -258,11 +307,11 @@ int main_fpcyl_fdk_adjoint()
     YK_CUDA_CHECK(cudaMemcpyAsync(d_y.data(), y.data(),
         projection_count * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-    const auto geometry = CylFpBp::buildFreeCtArcGeometry(h);
+    const auto geometry = TestGeometry::staticCyl(h, h.SDD);
     auto volume_texture = makeTexture(d_x.data(), h.iVX, h.iVY, h.iVZ,
         cudaFilterModeLinear, stream);
     CylFpBp::Config fp_config{};
-    CylFpBp::ForwardOperator fp;
+    CylFpBp::CylForwardOperator fp;
     bool ok = fp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry,
         fp_config) && fp.forward(volume_texture, d_ax.data(), stream) &&
         cudaStreamSynchronize(stream) == cudaSuccess;
@@ -347,7 +396,7 @@ int main_fpcyl_fdk_backprojectors()
     YK_CUDA_CHECK(cudaMemcpyAsync(d_projection.data(), projection.data(),
         projection_count * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-    const auto geometry = CylFpBp::buildFreeCtArcGeometry(h);
+    const auto geometry = TestGeometry::helicalCyl(h, h.SDD);
     CylFpBp::FdkBackprojector fdk;
     CylFpBp::FdkMatchedBackprojector matched;
     bool ok = fdk.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, stream) &&
@@ -430,7 +479,7 @@ int main_fpcyl_fdk_backprojectors()
         matched_off_center_error < 1e-4;
 
     // 一般圆柱必须先映射到 R=SDD；解析 BP 不允许静默接受 R!=SDD。
-    const auto unsupported = CylFpBp::buildCylindricalArcGeometry(h, 240.f);
+    const auto unsupported = TestGeometry::helicalCyl(h, 240.f);
     CylFpBp::FdkBackprojector rejected;
     const bool rejects_general_cylinder = !rejected.prepare(volumeGeometry(h),
         h.iPU, h.iPV, unsupported, stream);
@@ -502,7 +551,7 @@ int main_fpcyl_cfdk_reconstruction()
     const size_t volume_count = truth.size();
     const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
         h.angle_list.size();
-    const auto geometry = CylFpBp::buildFreeCtArcGeometry(h);
+    const auto geometry = TestGeometry::helicalCyl(h, h.SDD);
 
     cudaStream_t stream = nullptr;
     if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
@@ -518,7 +567,7 @@ int main_fpcyl_cfdk_reconstruction()
         cudaFilterModeLinear, stream);
     CylFpBp::Config fp_config{};
     fp_config.samples_per_voxel = 2.f;
-    CylFpBp::ForwardOperator fp;
+    CylFpBp::CylForwardOperator fp;
     CylFpBp::FdkPipeline cfdk;
     bool ok = fp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, fp_config) &&
         fp.forward(truth_texture, d_projection.data(), stream) &&
@@ -569,8 +618,12 @@ int main_fpcyl_cfdk_reconstruction()
 int main_fpcyl_kernel_benchmark()
 {
     // 性能项只覆盖算子执行，不包含 prepare、主机传输或任何重建流程。
-    SHeliCTParam h = makeComparisonParams();
+    SHeliCTParam h = makeKernelBenchmarkParams();
     const size_t volume_count = static_cast<size_t>(h.iVX) * h.iVY * h.iVZ;
+    YK_LOGI("[Cyl benchmark] detector={}x{} volume={}x{}x{} views={} "
+        "rays={}", h.iPU, h.iPV, h.iVX, h.iVY, h.iVZ,
+        h.angle_list.size(), static_cast<size_t>(h.iPU) * h.iPV *
+            h.angle_list.size());
     cudaStream_t stream = nullptr;
     if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
     Mem::MemoryController memory;
@@ -587,10 +640,12 @@ int main_fpcyl_kernel_benchmark()
     YK_CUDA_CHECK(cudaMemcpyAsync(d_volume.data(), volume.data(),
         volume_count * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-    const auto geometry = CylFpBp::buildCylindricalArcGeometry(h, 240.f);
-    // 单次 kernel 仅数毫秒，增加重复次数以减小 GPU 动态升频和事件分辨率
-    // 对结果的影响；日志输出仍为每次算子的平均耗时。
-    constexpr int repetitions = 20;
+    const auto geometry = TestGeometry::helicalCyl(h, 240.f);
+    // 先预热若干次，再对每次 launch 单独计时。中位数比简单总平均更能
+    // 排除首次调度、动态升频和偶发系统抢占造成的离群值。
+    constexpr int warmup_runs = 3;
+    constexpr int timed_runs = 15;
+    constexpr int repetitions = timed_runs; // 平板对照沿用同一计时次数
     CylFpBp::Config config{};
 
     // Cyl 专有 IForwardProjection 负责体积纹理的过滤模式与生命周期。
@@ -620,10 +675,13 @@ int main_fpcyl_kernel_benchmark()
     // IBackProjection 对外统一使用线性设备内存。Joseph/V3 支持一般曲率，
     // FDK 两种权重按其算法约束改用 R=SDD 的源中心等角几何。
     bool back_interface_ok = true;
-    const auto fdk_geometry = CylFpBp::buildFreeCtArcGeometry(h);
+    const auto fdk_geometry = TestGeometry::helicalCyl(h, h.SDD);
     for (const auto model : {
             CylFpBp::EBackProjection::Joseph,
-            CylFpBp::EBackProjection::VoxelDrivenV3,
+            CylFpBp::EBackProjection::JosephV3,
+            CylFpBp::EBackProjection::SiddonV2,
+            CylFpBp::EBackProjection::Siddon,
+            CylFpBp::EBackProjection::SiddonRayDriven,
             CylFpBp::EBackProjection::Fdk,
             CylFpBp::EBackProjection::FdkMatched }) {
         const bool needs_source_centered_arc =
@@ -640,13 +698,14 @@ int main_fpcyl_kernel_benchmark()
             cudaStreamSynchronize(stream) == cudaSuccess;
         if (backprojection) backprojection->release();
     }
-    YK_LOGI("[CylFpBp IBackProjection] joseph/v3/fdk/fdk-matched {}",
+    YK_LOGI("[CylFpBp IBackProjection] joseph/v3/siddon-v2/"
+        "siddon-v3/siddon-ray-driven/fdk/fdk-matched {}",
         back_interface_ok ? "PASS" : "FAIL");
 
     const auto benchmark_geometry = CylFpBp::detail::prepareJosephGeometry(
         volumeGeometry(h), h.iPU, h.iPV, geometry);
-    CylFpBp::ForwardOperator op;
-    CylFpBp::BackOperator bp;
+    CylFpBp::CylForwardOperator op;
+    CylFpBp::CylBackOperator bp;
     auto volume_texture = makeTexture(d_volume.data(), h.iVX, h.iVY,
         h.iVZ, cudaFilterModeLinear, stream);
     // Siddon 读取离散体素值，必须使用独立的 Point 纹理；不能把 Joseph 的
@@ -688,6 +747,9 @@ int main_fpcyl_kernel_benchmark()
         sampling_contract_ok, sampling_contract_ok ? "PASS" : "FAIL");
     float forward_ms = 0.f, backproject_ms = 0.f;
     if (ok) {
+        for (int i = 0; i < warmup_runs; ++i)
+            ok = ok && op.forward(volume_texture, d_projection.data(), stream);
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream));
         YK_CUDA_CHECK(cudaEventRecord(start, stream));
         for (int i = 0; i < repetitions; ++i)
             ok = ok && op.forward(volume_texture, d_projection.data(), stream);
@@ -716,22 +778,29 @@ int main_fpcyl_kernel_benchmark()
     op.release();
     bp.release();
 
-    CylFpBp::VoxelDrivenBackprojectorV3 cylindrical_v3;
+    auto cylindrical_v3 = CylFpBp::makeBackProjection(
+        CylFpBp::EBackProjection::JosephV3);
     cudaEvent_t cylindrical_v3_start = nullptr, cylindrical_v3_stop = nullptr;
     float cylindrical_v3_ms = 0.f;
     bool cylindrical_v3_ok = cudaEventCreate(&cylindrical_v3_start) ==
             cudaSuccess &&
         cudaEventCreate(&cylindrical_v3_stop) == cudaSuccess &&
-        cylindrical_v3.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry,
-            stream) &&
-        cylindrical_v3.uploadProjection(d_projection.data()) &&
-        cylindrical_v3.backproject(d_backprojection.data(), false) &&
+        cylindrical_v3 && cylindrical_v3->prepare(volumeGeometry(h), h.iPU,
+            h.iPV, geometry, config, forward_resources) &&
+        cylindrical_v3->apply(d_projection.data(), d_backprojection.data(),
+            false, forward_resources) &&
         cudaStreamSynchronize(stream) == cudaSuccess;
     if (cylindrical_v3_ok) {
+        for (int i = 0; i < warmup_runs; ++i)
+            cylindrical_v3_ok = cylindrical_v3_ok &&
+                cylindrical_v3->apply(d_projection.data(),
+                    d_backprojection.data(), true, forward_resources);
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream));
         YK_CUDA_CHECK(cudaEventRecord(cylindrical_v3_start, stream));
         for (int i = 0; i < repetitions; ++i)
             cylindrical_v3_ok = cylindrical_v3_ok &&
-                cylindrical_v3.backproject(d_backprojection.data(), true);
+                cylindrical_v3->apply(d_projection.data(),
+                    d_backprojection.data(), true, forward_resources);
         YK_CUDA_CHECK(cudaEventRecord(cylindrical_v3_stop, stream));
         YK_CUDA_CHECK(cudaEventSynchronize(cylindrical_v3_stop));
         YK_CUDA_CHECK(cudaEventElapsedTime(&cylindrical_v3_ms,
@@ -739,8 +808,8 @@ int main_fpcyl_kernel_benchmark()
         cylindrical_v3_ms /= repetitions;
 
         // 性能循环使用 accumulate=true；数值比较前重新生成单次 V3 输出。
-        cylindrical_v3_ok = cylindrical_v3.backproject(
-            d_backprojection.data(), false) &&
+        cylindrical_v3_ok = cylindrical_v3->apply(d_projection.data(),
+            d_backprojection.data(), false, forward_resources) &&
             cudaStreamSynchronize(stream) == cudaSuccess;
         std::vector<float> v3_result(volume_count);
         cylindrical_v3_ok = cylindrical_v3_ok &&
@@ -748,7 +817,7 @@ int main_fpcyl_kernel_benchmark()
                 volume_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess;
 
         CylFpBp::Config joseph_config{};
-        CylFpBp::BackOperator joseph;
+        CylFpBp::CylBackOperator joseph;
         auto joseph_projection_texture = makeTexture(d_projection.data(),
             h.iPU, h.iPV, static_cast<int>(h.angle_list.size()),
             cudaFilterModePoint, stream);
@@ -781,11 +850,11 @@ int main_fpcyl_kernel_benchmark()
     }
     if (cylindrical_v3_start) cudaEventDestroy(cylindrical_v3_start);
     if (cylindrical_v3_stop) cudaEventDestroy(cylindrical_v3_stop);
-    YK_LOGI("[CylFpBp kernel:voxel-driven-v3] rays={} BP={:.3f} ms {}",
+    YK_LOGI("[CylFpBp kernel:joseph-v3] rays={} BP={:.3f} ms {}",
         static_cast<size_t>(h.iPU) * h.iPV * h.angle_list.size(),
         cylindrical_v3_ms, cylindrical_v3_ok ? "PASS" : "FAIL");
     ok = ok && cylindrical_v3_ok;
-    cylindrical_v3.release();
+    if (cylindrical_v3) cylindrical_v3->release();
 
     // 圆柱其余纹理算子：Siddon FP、FDK/FDK-matched BP。线性内存路径不统计。
     cudaEvent_t cyl_extra_start = nullptr, cyl_extra_stop = nullptr;
@@ -793,30 +862,104 @@ int main_fpcyl_kernel_benchmark()
         cudaEventCreate(&cyl_extra_stop) == cudaSuccess;
     auto measure_cyl = [&](const char* name, const std::function<void()>& launch) {
         if (!cyl_events) return;
-        float elapsed = 0.f;
-        YK_CUDA_CHECK(cudaEventRecord(cyl_extra_start, stream));
-        for (int i = 0; i < repetitions; ++i) launch();
-        YK_CUDA_CHECK(cudaEventRecord(cyl_extra_stop, stream));
-        YK_CUDA_CHECK(cudaEventSynchronize(cyl_extra_stop));
-        YK_CUDA_CHECK(cudaEventElapsedTime(&elapsed, cyl_extra_start, cyl_extra_stop));
-        YK_LOGI("[Cyl kernel:{}] {:.3f} ms", name, elapsed / repetitions);
+        for (int i = 0; i < warmup_runs; ++i) launch();
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+        std::vector<float> samples;
+        samples.reserve(timed_runs);
+        for (int i = 0; i < timed_runs; ++i) {
+            YK_CUDA_CHECK(cudaEventRecord(cyl_extra_start, stream));
+            launch();
+            YK_CUDA_CHECK(cudaEventRecord(cyl_extra_stop, stream));
+            YK_CUDA_CHECK(cudaEventSynchronize(cyl_extra_stop));
+            float elapsed = 0.f;
+            YK_CUDA_CHECK(cudaEventElapsedTime(&elapsed,
+                cyl_extra_start, cyl_extra_stop));
+            samples.push_back(elapsed);
+        }
+        std::sort(samples.begin(), samples.end());
+        const float median = samples[samples.size() / 2];
+        YK_LOGI("[Cyl kernel:{}] median={:.3f} ms min={:.3f} ms max={:.3f} ms "
+            "(warmup={} samples={})", name, median, samples.front(),
+            samples.back(), warmup_runs, timed_runs);
     };
     if (cyl_events) {
-        CylFpBp::ForwardOperator siddon_fp;
+        CylFpBp::CylForwardOperator joseph_fp;
+        if (joseph_fp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, config)) {
+            measure_cyl("joseph-fp", [&] {
+                joseph_fp.forward(volume_texture, d_projection.data(), stream);
+            });
+            joseph_fp.release();
+        } else {
+            YK_LOGE("[Cyl kernel:joseph-fp] prepare failed");
+            ok = false;
+        }
+        // Joseph 的 matched/reference FP 与普通 Joseph 使用同一几何，单独
+        // 计时以便观察其额外的离散采样/权重开销，而不是把两者合并。
+        CylFpBp::CylForwardOperator matched_fp;
+        if (matched_fp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, config)) {
+            measure_cyl("joseph-matched-reference-fp", [&] {
+                matched_fp.forwardMatchedReference(volume_point_texture,
+                    d_projection.data(), stream);
+            });
+            matched_fp.release();
+        } else {
+            YK_LOGE("[Cyl kernel:joseph-matched-reference-fp] prepare failed");
+            ok = false;
+        }
+        CylFpBp::CylForwardOperator siddon_fp;
         siddon_fp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, config);
         measure_cyl("siddon-fp", [&] {
             siddon_fp.forwardSiddon(volume_point_texture, d_projection.data(), stream);
         });
         siddon_fp.release();
+        auto siddon_v2 = CylFpBp::makeBackProjection(
+            CylFpBp::EBackProjection::SiddonV2);
+        ok = ok && siddon_v2 && siddon_v2->prepare(volumeGeometry(h), h.iPU,
+            h.iPV, geometry, config, forward_resources);
+        measure_cyl("siddon-v2-bp", [&] {
+            siddon_v2->apply(d_projection.data(), d_backprojection.data(),
+                true, forward_resources);
+        });
+        siddon_v2->release();
+        auto siddon_v3 = CylFpBp::makeBackProjection(
+            CylFpBp::EBackProjection::SiddonV3);
+        ok = ok && siddon_v3 && siddon_v3->prepare(volumeGeometry(h), h.iPU,
+            h.iPV, geometry, config, forward_resources);
+        measure_cyl("siddon-v3-bp", [&] {
+            siddon_v3->apply(d_projection.data(), d_backprojection.data(),
+                true, forward_resources);
+        });
+        siddon_v3->release();
+        CylFpBp::CylBackOperator joseph_bp;
+        if (joseph_bp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, config)) {
+            measure_cyl("joseph-bp", [&] {
+                joseph_bp.backproject(projection_texture,
+                    d_backprojection.data(), stream, true);
+            });
+            joseph_bp.release();
+        } else {
+            YK_LOGE("[Cyl kernel:joseph-bp] prepare failed");
+            ok = false;
+        }
+        CylFpBp::CylBackOperator siddon_ray;
+        siddon_ray.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, config);
+        Mem::TextureController::updateTex3DFromDeviceAsync(projection_texture,
+            d_projection.data(), h.iPU, h.iPV,
+            static_cast<int>(h.angle_list.size()), stream);
+        measure_cyl("siddon-ray-driven-bp", [&] {
+            siddon_ray.backprojectSiddon(projection_texture,
+                d_backprojection.data(), stream, true);
+        });
+        siddon_ray.release();
         CylFpBp::FdkBackprojector fdk_bp;
         fdk_bp.prepare(volumeGeometry(h), h.iPU, h.iPV,
-            CylFpBp::buildFreeCtArcGeometry(h), stream);
+            TestGeometry::helicalCyl(h, h.SDD), stream);
         fdk_bp.uploadProjection(d_projection.data());
         measure_cyl("fdk-bp", [&] { fdk_bp.backproject(d_backprojection.data(), true); });
         fdk_bp.release();
         CylFpBp::FdkMatchedBackprojector matched_bp;
         matched_bp.prepare(volumeGeometry(h), h.iPU, h.iPV,
-            CylFpBp::buildFreeCtArcGeometry(h), stream);
+            TestGeometry::helicalCyl(h, h.SDD), stream);
         matched_bp.uploadProjection(d_projection.data());
         measure_cyl("fdk-matched-bp", [&] { matched_bp.backproject(d_backprojection.data(), true); });
         matched_bp.release();
@@ -830,7 +973,7 @@ int main_fpcyl_kernel_benchmark()
     const SReconstructionParams flat_params = toCbct(h);
     const SVolGeom flat_volume_geometry = volumeGeometry(h);
     std::vector<SConeProjGeomVec> flat_geometry;
-    build_helical_vec_geometry(flat_geometry, h);
+    flat_geometry = TestGeometry::helicalFlat(h);
     std::vector<SFDKGeoParamPerView> flat_derived;
     bool flat_ok = GeoDerivedManagerVec{}.build_geo_params(h.iPU, h.iPV,
         flat_params.scan.range_rad, flat_geometry, flat_derived);
@@ -862,7 +1005,7 @@ int main_fpcyl_kernel_benchmark()
             cudaEventCreate(&flat_stop) == cudaSuccess;
     }
     if (flat_ok) {
-        // 分别预热匹配的 ray-driven BP 和更快但非离散转置的 voxel-driven v3。
+        // 分别预热匹配的 ray-driven BP 和更快但非离散转置的 Joseph V3。
         Bp::joseph_bp_launch(flat_point_projection_texture.tex,
             flat_bp.geo.h_views_world_vec(), flat_bp.geo.d_views_vox(),
             d_backprojection.data(), flat_volume_geometry, flat_params.scan.NAng,
@@ -911,7 +1054,8 @@ int main_fpcyl_kernel_benchmark()
         YK_CUDA_CHECK(cudaEventSynchronize(flat_stop));
         YK_CUDA_CHECK(cudaEventElapsedTime(&flat_v3_bp_ms, flat_start, flat_stop));
 
-        // 其余平板纹理算子逐项测量；旧的线性内存 Siddon 路径不纳入统计。
+        // 其余平板算子逐项测量。Siddon 的 ray-driven、原始 voxel、V2
+        // 和 V3 分开记录，避免把不同驱动方式误合并为一个耗时。
         auto measure_flat = [&](const char* name, const std::function<void()>& launch) {
             float elapsed = 0.f;
             YK_CUDA_CHECK(cudaMemsetAsync(d_backprojection.data(), 0,
@@ -963,6 +1107,24 @@ int main_fpcyl_kernel_benchmark()
         });
         measure_flat("siddon-bp-texture", [&] {
             Bp::bp_siddon_voxel_v2_launch(flat_bp.sinoTex.tex,
+                d_backprojection.data(), flat_bp.geo.d_views_world(),
+                flat_volume_geometry, h.iPU, h.iPV, flat_params.scan.NAng,
+                true, stream);
+        });
+        measure_flat("siddon-voxel-bp-linear", [&] {
+            Bp::bp_siddon_voxel_launch(d_projection.data(),
+                d_backprojection.data(), flat_bp.geo.d_views_world(),
+                flat_volume_geometry, h.iPU, h.iPV, flat_params.scan.NAng,
+                true, stream);
+        });
+        measure_flat("siddon-voxel-v2-bp", [&] {
+            Bp::bp_siddon_voxel_v2_launch(flat_point_projection_texture.tex,
+                d_backprojection.data(), flat_bp.geo.d_views_world(),
+                flat_volume_geometry, h.iPU, h.iPV, flat_params.scan.NAng,
+                true, stream);
+        });
+        measure_flat("siddon-voxel-v3-bp", [&] {
+            Bp::bp_siddon_voxel_v3_launch(flat_point_projection_texture.tex,
                 d_backprojection.data(), flat_bp.geo.d_views_world(),
                 flat_volume_geometry, h.iPU, h.iPV, flat_params.scan.NAng,
                 true, stream);
@@ -1091,8 +1253,8 @@ int main_fpcyl_wfbp_comparison()
             volume_count * sizeof(float), cudaMemcpyHostToDevice, stream);
 
         const float radius = test_case.curvature_radius_mm;
-        const auto geometry = CylFpBp::buildCylindricalArcGeometry(h, radius);
-        CylFpBp::ForwardOperator projector;
+        const auto geometry = TestGeometry::helicalCyl(h, radius);
+        CylFpBp::CylForwardOperator projector;
         CylFpBp::Config projector_config{};
         projector_config.samples_per_voxel = 2.f;
         Helical::Wfbp::Config config{};
@@ -1107,7 +1269,8 @@ int main_fpcyl_wfbp_comparison()
             cudaEventCreate(&recon_stop) == cudaSuccess &&
             projector.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry,
                 projector_config) &&
-            wfbp.prepare(h, config, stream);
+            wfbp.prepare(TestGeometry::wfbpInput(h), TestGeometry::volume(h),
+                config, stream);
         if (case_ok) {
             cudaEventRecord(start, stream);
             auto volume_texture = makeTexture(d_truth.data(), h.iVX, h.iVY,
@@ -1207,6 +1370,8 @@ int main_fpcyl_iterative_comparison()
     struct TestCase {
         const char* name;
         CylFpBp::EIterativeMethod method;
+        CylFpBp::EIterativeForwardModel forward_model;
+        CylFpBp::EIterativeBackprojectorModel backprojector_model;
         int iterations;
         int subsets;
         float relaxation;
@@ -1215,10 +1380,27 @@ int main_fpcyl_iterative_comparison()
     // SART 的一次外循环已经包含 360 次单视图更新；其迭代数不能与
     // SIRT/CGLS 的全投影更新次数直接比较。
     const TestCase cases[] = {
-        { "sirt", CylFpBp::EIterativeMethod::Sirt, 10, 1, 1.f, 1.f },
-        { "sart", CylFpBp::EIterativeMethod::Sart, 1, 360, 0.2f, 1.f },
-        { "ossart", CylFpBp::EIterativeMethod::Ossart, 10, 20, 0.2f, 0.98f },
-        { "cgls", CylFpBp::EIterativeMethod::Cgls, 10, 1, 1.f, 1.f }
+        // 常用快速组合：Joseph FP + JosephV3 BP。
+        { "sirt-joseph-joseph-v3", CylFpBp::EIterativeMethod::Sirt,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::JosephV3, 3, 1, 1.f, 1.f },
+        { "sart-joseph-joseph-v3", CylFpBp::EIterativeMethod::Sart,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::JosephV3, 1, 360, 0.2f, 1.f },
+        { "ossart-joseph-siddon-v3", CylFpBp::EIterativeMethod::Ossart,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::SiddonV3, 3, 20, 0.2f, 0.98f },
+        // 两组高伴随组合必须参与：严格 Siddon 转置，以及 Point Joseph 参考组合。
+        { "cgls-siddon-ray-driven", CylFpBp::EIterativeMethod::Cgls,
+            CylFpBp::EIterativeForwardModel::Siddon,
+            CylFpBp::EIterativeBackprojectorModel::SiddonRayDriven, 2, 1, 1.f, 1.f },
+        { "cgls-joseph-matched", CylFpBp::EIterativeMethod::Cgls,
+            CylFpBp::EIterativeForwardModel::JosephMatchedReference,
+            CylFpBp::EIterativeBackprojectorModel::Joseph, 2, 1, 1.f, 1.f },
+        // FDK 风格 BP 可与迭代方法自由组合，作为工程近似对照。
+        { "cgls-joseph-fdk-matched", CylFpBp::EIterativeMethod::Cgls,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::FdkMatched, 2, 1, 1.f, 1.f }
     };
 
     cudaStream_t stream = nullptr;
@@ -1231,10 +1413,12 @@ int main_fpcyl_iterative_comparison()
     YK_CUDA_CHECK(cudaMemcpyAsync(d_truth.data(), truth.data(),
         volume_count * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-    const auto geometry = CylFpBp::buildCylindricalArcGeometry(h, 900.f);
+    // 迭代组合包含 FDK 风格 BP；该 BP 的标准柱面约束为 R=SDD，
+    // 因此这里使用标称 SDD 曲率，避免把不兼容的 R=900 几何误判为算法失败。
+    const auto geometry = TestGeometry::helicalCyl(h, h.SDD);
     CylFpBp::Config operator_config{};
     operator_config.samples_per_voxel = 1.f;
-    CylFpBp::ForwardOperator forward;
+    CylFpBp::CylForwardOperator forward;
     auto truth_texture = makeTexture(d_truth.data(), h.iVX, h.iVY, h.iVZ,
         cudaFilterModeLinear, stream);
     bool ok = forward.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry,
@@ -1259,14 +1443,26 @@ int main_fpcyl_iterative_comparison()
         config.subset_count = test.subsets;
         config.relaxation = test.relaxation;
         config.relaxation_reduction = test.reduction;
+        config.forward_model = test.forward_model;
+        config.backprojector_model = test.backprojector_model;
         config.nonnegative = test.method != CylFpBp::EIterativeMethod::Cgls;
         config.use_max = test.method != CylFpBp::EIterativeMethod::Cgls;
         config.maximum = 0.12f;
 
         const auto started = std::chrono::steady_clock::now();
-        CylFpBp::IterativeReconstructor reconstructor;
+        Helical::Iterative::CylConfig heli_config{};
+        heli_config.method = test.method == CylFpBp::EIterativeMethod::Sirt ?
+            Helical::Iterative::EMethod::Sirt :
+            test.method == CylFpBp::EIterativeMethod::Sart ?
+                Helical::Iterative::EMethod::Sart :
+            test.method == CylFpBp::EIterativeMethod::Cgls ?
+                Helical::Iterative::EMethod::Cgls :
+                Helical::Iterative::EMethod::Ossart;
+        heli_config.algebraic = config;
+        heli_config.operators = operator_config;
+        Helical::Iterative::CylReconstructor reconstructor;
         bool case_ok = reconstructor.prepare(volumeGeometry(h), h.iPU, h.iPV,
-            geometry, config, operator_config, stream) &&
+                geometry, heli_config, stream) &&
             reconstructor.reconstruct(d_projection.data(), d_recon.data());
         case_ok = case_ok && cudaStreamSynchronize(stream) == cudaSuccess;
         const double elapsed_ms = std::chrono::duration<double, std::milli>(
@@ -1347,6 +1543,454 @@ int main_fpcyl_iterative_comparison()
         "out/test-artifacts/fpcyl_iterative_comparison.bmp");
     ok = ok && TestImage::writeGrayMontageBmp(artifact, panels, 3, 8, 4);
     YK_LOGI("[CylIterative] image: {}", artifact.string());
+    cudaStreamDestroy(stream);
+    return ok ? 0 : 1;
+}
+
+// ASTRA modified 3-D Shepp-Logan 椭球模体上的 Cyl 重建矩阵。
+// 同一份物理 R!=SDD 投影同时用于代数重建和解析重建：代数算子直接消费
+// 物理 geometry，解析路径先 map 到 R=SDD 的虚拟等角柱面。
+int main_fpcyl_astra_ellipse_matrix()
+{
+    SHeliCTParam h{};
+    h.iPU = 192; h.iPV = 96;
+    h.iVX = 96; h.iVY = 96; h.iVZ = 96;
+    h.du_mm = 1.f; h.dv_mm = 1.f;
+    h.vox_x_mm = 0.75f; h.vox_y_mm = 0.75f; h.vox_z_mm = 0.75f;
+    h.SID = 160.f; h.SDD = 300.f;
+    h.views_per_rot = 180;
+    h.angle_list.resize(180);
+    for (int i = 0; i < 180; ++i)
+        h.angle_list[i] = 2.f * CUDA_PI * static_cast<float>(i) / 180.f;
+    constexpr float physical_radius = 240.f;
+    const auto physical_geometry = TestGeometry::helicalCyl(
+        h, physical_radius);
+    const SVolGeom vg = volumeGeometry(h);
+    const SReconstructionParams phantom_params = toCbct(h);
+    const auto truth = TestPhantom::makeAstraSheppLogan3D(
+        phantom_params, 32.f, true, 0.02f);
+    const size_t volume_count = truth.size();
+
+    cudaStream_t stream = nullptr;
+    if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
+    Mem::MemoryController memory;
+    auto d_truth = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+    auto d_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    auto d_reconstruction = memory.allocateDevice3D<float>(h.iVX, h.iVY,
+        h.iVZ, 0);
+    YK_CUDA_CHECK(cudaMemcpyAsync(d_truth.data(), truth.data(),
+        volume_count * sizeof(float), cudaMemcpyHostToDevice, stream));
+    auto truth_texture = makeTexture(d_truth.data(), h.iVX, h.iVY, h.iVZ,
+        cudaFilterModeLinear, stream);
+    CylFpBp::Config operator_config{};
+    operator_config.samples_per_voxel = 2.f;
+    CylFpBp::CylForwardOperator simulator;
+    bool ok = simulator.prepare(vg, h.iPU, h.iPV, physical_geometry,
+            operator_config) &&
+        simulator.forward(truth_texture, d_projection.data(), stream) &&
+        cudaStreamSynchronize(stream) == cudaSuccess;
+    simulator.release();
+    if (!ok) { cudaStreamDestroy(stream); return 1; }
+
+    // 单独验证解析重建前端的曲率重排。仅比较 map 前后并不能判断重排
+    // 是否正确，因此还在规范 R=SDD geometry 上重新正投同一模体，作为
+    // 每条目标射线的参考值。输出图固定按“物理/map/规范参考”排列。
+    CylFpBp::Analytic::GeometryCanonicalizer canonicalizer;
+    CylFpBp::Analytic::CanonicalGeometry canonical{};
+    CylFpBp::Analytic::GeometryCanonicalizationConfig canonical_config{};
+    canonical_config.source_to_detector_mm = h.SDD;
+    bool map_ok = canonicalizer.canonicalize(h.iPU, h.iPV, physical_geometry,
+        canonical_config, canonical);
+    const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
+        h.angle_list.size();
+    auto d_mapped_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    auto d_canonical_reference = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    CylFpBp::Analytic::ProjectionMapper projection_mapper;
+    CylFpBp::CylForwardOperator canonical_simulator;
+    map_ok = map_ok && projection_mapper.prepare(canonical.projection_map) &&
+        projection_mapper.apply(d_projection.data(), d_mapped_projection.data(),
+            stream) &&
+        canonical_simulator.prepare(vg, h.iPU, h.iPV,
+            canonical.canonical_geometry, operator_config) &&
+        canonical_simulator.forward(truth_texture, d_canonical_reference.data(),
+            stream) && cudaStreamSynchronize(stream) == cudaSuccess;
+
+    std::vector<float> physical_projection(projection_count);
+    std::vector<float> mapped_projection(projection_count);
+    std::vector<float> canonical_reference(projection_count);
+    if (map_ok) {
+        map_ok = cudaMemcpy(physical_projection.data(), d_projection.data(),
+                projection_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                cudaSuccess &&
+            cudaMemcpy(mapped_projection.data(), d_mapped_projection.data(),
+                projection_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                cudaSuccess &&
+            cudaMemcpy(canonical_reference.data(), d_canonical_reference.data(),
+                projection_count * sizeof(float), cudaMemcpyDeviceToHost) ==
+                cudaSuccess;
+    }
+    projection_mapper.release();
+    canonical_simulator.release();
+
+    struct ProjectionStats {
+        double mean = 0.0;
+        double rms = 0.0;
+        float maximum = 0.f;
+        double nonzero_ratio = 0.0;
+        bool finite = true;
+    };
+    const auto projection_stats = [](const std::vector<float>& projection) {
+        ProjectionStats result{};
+        size_t nonzero = 0;
+        double square_sum = 0.0;
+        for (const float value : projection) {
+            result.finite = result.finite && std::isfinite(value);
+            result.mean += value;
+            square_sum += static_cast<double>(value) * value;
+            result.maximum = std::max(result.maximum, std::fabs(value));
+            nonzero += std::fabs(value) > 1e-8f;
+        }
+        if (!projection.empty()) {
+            result.mean /= projection.size();
+            result.rms = std::sqrt(square_sum / projection.size());
+            result.nonzero_ratio = static_cast<double>(nonzero) /
+                projection.size();
+        }
+        return result;
+    };
+    const ProjectionStats physical_stats = projection_stats(physical_projection);
+    const ProjectionStats mapped_stats = projection_stats(mapped_projection);
+    const ProjectionStats reference_stats = projection_stats(canonical_reference);
+    const Metrics map_metrics = compare(canonical_reference, mapped_projection);
+    YK_LOGI("[CylEllipse:projection-map] physical max={:.6e} mean={:.6e} "
+        "rms={:.6e} nonzero={:.6f}", physical_stats.maximum,
+        physical_stats.mean, physical_stats.rms, physical_stats.nonzero_ratio);
+    YK_LOGI("[CylEllipse:projection-map] mapped   max={:.6e} mean={:.6e} "
+        "rms={:.6e} nonzero={:.6f}", mapped_stats.maximum, mapped_stats.mean,
+        mapped_stats.rms, mapped_stats.nonzero_ratio);
+    YK_LOGI("[CylEllipse:projection-map] reference max={:.6e} mean={:.6e} "
+        "rms={:.6e} nonzero={:.6f}", reference_stats.maximum,
+        reference_stats.mean, reference_stats.rms, reference_stats.nonzero_ratio);
+    YK_LOGI("[CylEllipse:projection-map] mapped-vs-reference corr={:.6f} "
+        "NRMSE={:.6f} MAE={:.6e} bias={:.6e}", map_metrics.correlation,
+        map_metrics.absolute_nrmse, map_metrics.mae, map_metrics.bias);
+    map_ok = map_ok && physical_stats.finite && mapped_stats.finite &&
+        reference_stats.finite && mapped_stats.maximum > 1e-8f &&
+        reference_stats.maximum > 1e-8f;
+    ok = ok && map_ok;
+
+    const float projection_window_max = std::max({physical_stats.maximum,
+        mapped_stats.maximum, reference_stats.maximum, 1e-6f});
+    const std::vector<TestImage::GrayPanel> projection_panels = {
+        {&physical_projection, h.iPU, h.iPV,
+            static_cast<int>(h.angle_list.size()), 37, 1.f, 0.f,
+            projection_window_max, false},
+        {&mapped_projection, h.iPU, h.iPV,
+            static_cast<int>(h.angle_list.size()), 37, 1.f, 0.f,
+            projection_window_max, false},
+        {&canonical_reference, h.iPU, h.iPV,
+            static_cast<int>(h.angle_list.size()), 37, 1.f, 0.f,
+            projection_window_max, false}
+    };
+    const auto projection_output = std::filesystem::absolute(
+        "out/test-artifacts/fpcyl_projection_map_comparison.bmp");
+    map_ok = TestImage::writeGrayMontageBmp(projection_output,
+        projection_panels, 3, 8, 3) && map_ok;
+    YK_LOGI("[CylEllipse:projection-map] montage physical/map/reference: {}",
+        projection_output.string());
+    ok = ok && map_ok;
+
+    struct IterativeCase {
+        const char* name;
+        CylFpBp::EIterativeMethod method;
+        CylFpBp::EIterativeForwardModel fp;
+        CylFpBp::EIterativeBackprojectorModel bp;
+    };
+    const IterativeCase cases[] = {
+        {"sart-joseph-joseph-v3", CylFpBp::EIterativeMethod::Sart,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::JosephV3},
+        {"sart-joseph-siddon-v3", CylFpBp::EIterativeMethod::Sart,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::SiddonV3},
+        {"sart-siddon-ray-driven", CylFpBp::EIterativeMethod::Sart,
+            CylFpBp::EIterativeForwardModel::Siddon,
+            CylFpBp::EIterativeBackprojectorModel::SiddonRayDriven},
+        {"sart-joseph-matched", CylFpBp::EIterativeMethod::Sart,
+            CylFpBp::EIterativeForwardModel::JosephMatchedReference,
+            CylFpBp::EIterativeBackprojectorModel::Joseph},
+        {"cgls-joseph-joseph-v3", CylFpBp::EIterativeMethod::Cgls,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::JosephV3},
+        {"cgls-joseph-siddon-v3", CylFpBp::EIterativeMethod::Cgls,
+            CylFpBp::EIterativeForwardModel::Joseph,
+            CylFpBp::EIterativeBackprojectorModel::SiddonV3},
+        {"cgls-siddon-ray-driven", CylFpBp::EIterativeMethod::Cgls,
+            CylFpBp::EIterativeForwardModel::Siddon,
+            CylFpBp::EIterativeBackprojectorModel::SiddonRayDriven},
+        {"cgls-joseph-matched", CylFpBp::EIterativeMethod::Cgls,
+            CylFpBp::EIterativeForwardModel::JosephMatchedReference,
+            CylFpBp::EIterativeBackprojectorModel::Joseph}
+    };
+
+    std::vector<std::vector<float>> images;
+    std::vector<TestImage::GrayPanel> panels;
+    images.reserve(std::size(cases) + 2);
+    images.push_back(truth);
+    for (const auto& test : cases) {
+        YK_CUDA_CHECK(cudaMemsetAsync(d_reconstruction.data(), 0,
+            volume_count * sizeof(float), stream));
+        CylFpBp::IterativeConfig config{};
+        config.method = test.method;
+        // CGLS 前几轮主要恢复低频分量；提高到 10 轮后再观察边缘
+        // 清晰度和绝对量级，避免将“3 轮尚未收敛”误判为算法模糊。
+        config.iterations = test.method == CylFpBp::EIterativeMethod::Sart ? 1 : 10;
+        config.subset_count = test.method == CylFpBp::EIterativeMethod::Sart ?
+            static_cast<int>(h.angle_list.size()) : 1;
+        config.relaxation = test.method == CylFpBp::EIterativeMethod::Sart ? 0.2f : 1.f;
+        config.nonnegative = test.method == CylFpBp::EIterativeMethod::Sart;
+        config.forward_model = test.fp;
+        config.backprojector_model = test.bp;
+        const auto start = std::chrono::steady_clock::now();
+        Helical::Iterative::CylConfig heli_config{};
+        heli_config.method = test.method == CylFpBp::EIterativeMethod::Sart ?
+            Helical::Iterative::EMethod::Sart :
+            Helical::Iterative::EMethod::Cgls;
+        heli_config.algebraic = config;
+        heli_config.operators = operator_config;
+        Helical::Iterative::CylReconstructor reconstruction;
+        bool case_ok = reconstruction.prepare(vg, h.iPU, h.iPV,
+                physical_geometry, heli_config, stream) &&
+            reconstruction.reconstruct(d_projection.data(),
+                d_reconstruction.data()) &&
+            cudaStreamSynchronize(stream) == cudaSuccess;
+        const double elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+        images.emplace_back(volume_count);
+        if (case_ok) case_ok = cudaMemcpy(images.back().data(),
+            d_reconstruction.data(), volume_count * sizeof(float),
+            cudaMemcpyDeviceToHost) == cudaSuccess;
+        const Metrics metrics = compare(truth, images.back());
+        float truth_maximum = 0.f, reconstruction_maximum = 0.f;
+        double truth_sum = 0.0, reconstruction_sum = 0.0;
+        size_t truth_nonzero = 0;
+        for (size_t index = 0; index < volume_count; ++index) {
+            truth_maximum = std::max(truth_maximum, std::fabs(truth[index]));
+            reconstruction_maximum = std::max(reconstruction_maximum,
+                std::fabs(images.back()[index]));
+            if (truth[index] > 1e-6f) {
+                truth_sum += truth[index];
+                reconstruction_sum += images.back()[index];
+                ++truth_nonzero;
+            }
+        }
+        const double roi_truth_mean = truth_nonzero
+            ? truth_sum / truth_nonzero : 0.0;
+        const double roi_reconstruction_mean = truth_nonzero
+            ? reconstruction_sum / truth_nonzero : 0.0;
+        YK_LOGI("[CylEllipse:{}] corr={:.6f} NRMSE={:.6f} MAE={:.6e} "
+            "bias={:.6e} fit-scale={:.6f} roi-mean={:.6e}/{:.6e} "
+            "max={:.6e}/{:.6e} time={:.3f} ms {}", test.name,
+            metrics.correlation, metrics.absolute_nrmse, metrics.mae,
+            metrics.bias, metrics.fitted_scale, roi_reconstruction_mean,
+            roi_truth_mean, reconstruction_maximum, truth_maximum, elapsed,
+            case_ok ? "PASS" : "FAIL");
+        ok = ok && case_ok;
+        reconstruction.release();
+    }
+
+    // 解析路径故意输入 R=240 的物理投影，验证前端 map 到 R=SDD=300
+    // 后才进入 CylFdkPipeline，而不是绕过规范化直接执行解析 BP。
+    YK_CUDA_CHECK(cudaMemsetAsync(d_reconstruction.data(), 0,
+        volume_count * sizeof(float), stream));
+    const auto analytic_start = std::chrono::steady_clock::now();
+    CylFpBp::Analytic::Reconstruction analytic;
+    bool analytic_ok = analytic.prepare(vg, h.iPU, h.iPV, physical_geometry,
+            h.SDD, stream) &&
+        analytic.reconstruct(d_projection.data(), d_reconstruction.data(), true) &&
+        cudaStreamSynchronize(stream) == cudaSuccess;
+    const double analytic_elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - analytic_start).count();
+    images.emplace_back(volume_count);
+    if (analytic_ok) analytic_ok = cudaMemcpy(images.back().data(),
+        d_reconstruction.data(), volume_count * sizeof(float),
+        cudaMemcpyDeviceToHost) == cudaSuccess;
+    const Metrics analytic_metrics = compare(truth, images.back());
+    float analytic_maximum = 0.f;
+    bool analytic_finite = true;
+    for (const float value : images.back()) {
+        analytic_finite = analytic_finite && std::isfinite(value);
+        analytic_maximum = std::max(analytic_maximum, std::fabs(value));
+    }
+    // 调用成功不代表解析结果有效；至少排除 NaN/Inf 和静默全零。
+    // 绝对量级偏差保留在 NRMSE/MAE/bias 中，后续归一化修正不能被拟合
+    // 比例或相关系数掩盖。
+    analytic_ok = analytic_ok && analytic_finite && analytic_maximum > 1e-8f;
+    YK_LOGI("[CylEllipse:analytic-cyl-fdk] physical-R={:.1f} mapped-R={:.1f} "
+        "corr={:.6f} NRMSE={:.6f} MAE={:.6e} bias={:.6e} time={:.3f} ms {}",
+        physical_radius, h.SDD, analytic_metrics.correlation,
+        analytic_metrics.absolute_nrmse, analytic_metrics.mae,
+        analytic_metrics.bias, analytic_elapsed, analytic_ok ? "PASS" : "FAIL");
+    ok = ok && analytic_ok;
+    analytic.release();
+
+    for (auto& image : images)
+        panels.push_back({&image, h.iVX, h.iVY, h.iVZ, h.iVZ / 2,
+            1.f, 0.f, 0.022f, false});
+    const auto output = std::filesystem::absolute(
+        "out/test-artifacts/fpcyl_astra_ellipse_matrix.bmp");
+    std::filesystem::create_directories(output.parent_path());
+    // truth + 8 个迭代组合 + 1 个解析结果，共 10 个 panel。
+    ok = TestImage::writeGrayMontageBmp(output, panels, 5, 8, 4) && ok;
+    YK_LOGI("[CylEllipse] montage: {}", output.string());
+    cudaStreamDestroy(stream);
+    return ok ? 0 : 1;
+}
+
+// Cyl PWLS 的静态/螺旋几何回归。每种轨迹分别验证高伴随 Joseph 和严格
+// Siddon 数据项，并提供非均匀 W，确保执行的是 PWLS 而非未加权 PLS。
+int main_fpcyl_pwls_static_helical()
+{
+    SHeliCTParam base{};
+    base.iPU = 96; base.iPV = 48;
+    base.iVX = 48; base.iVY = 48; base.iVZ = 48;
+    base.du_mm = 1.f; base.dv_mm = 1.f;
+    base.vox_x_mm = 0.75f; base.vox_y_mm = 0.75f; base.vox_z_mm = 0.75f;
+    base.SID = 160.f; base.SDD = 300.f;
+    base.views_per_rot = 90;
+    // toCbct() 会从角度数组派生范围；模体本身不依赖视图数，但这里仍需
+    // 提供有效的占位圆扫，避免在测试轨迹循环前读取空数组。
+    base.angle_list = {0.f, 2.f * CUDA_PI};
+    constexpr float radius = 240.f;
+
+    struct Trajectory { const char* name; int views; float pitch; float start_z; };
+    const Trajectory trajectories[] = {
+        {"static", 90, 0.f, 0.f},
+        {"helical", 180, 16.f, -16.f}
+    };
+    struct Model { const char* name; CylFpBp::ECylPwlsDataModel kind; };
+    const Model models[] = {
+        {"joseph-matched", CylFpBp::ECylPwlsDataModel::JosephMatched},
+        {"siddon", CylFpBp::ECylPwlsDataModel::Siddon}
+    };
+
+    const SReconstructionParams phantom_params = toCbct(base);
+    const auto truth = TestPhantom::makeAstraSheppLogan3D(
+        phantom_params, 16.f, true, 0.02f);
+    const size_t volume_count = truth.size();
+    const SVolGeom vg = volumeGeometry(base);
+    cudaStream_t stream = nullptr;
+    if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
+    Mem::MemoryController memory;
+    auto d_truth = memory.allocateDevice3D<float>(base.iVX, base.iVY,
+        base.iVZ, 0);
+    auto d_volume = memory.allocateDevice3D<float>(base.iVX, base.iVY,
+        base.iVZ, 0);
+    YK_CUDA_CHECK(cudaMemcpyAsync(d_truth.data(), truth.data(),
+        volume_count * sizeof(float), cudaMemcpyHostToDevice, stream));
+    auto truth_texture = makeTexture(d_truth.data(), base.iVX, base.iVY,
+        base.iVZ, cudaFilterModePoint, stream);
+
+    bool ok = true;
+    std::vector<std::vector<float>> images;
+    images.push_back(truth);
+    CylFpBp::Config operator_config{};
+    operator_config.samples_per_voxel = 2.f;
+    for (const auto& trajectory : trajectories) {
+        SHeliCTParam h = base;
+        h.pitch_mm = trajectory.pitch;
+        h.start_z_mm = trajectory.start_z;
+        h.angle_list.resize(trajectory.views);
+        for (int view = 0; view < trajectory.views; ++view)
+            h.angle_list[view] = 2.f * CUDA_PI * view / h.views_per_rot;
+        const auto geometry = trajectory.pitch == 0.f
+            ? TestGeometry::staticCyl(h, radius)
+            : TestGeometry::helicalCyl(h, radius);
+        const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
+            trajectory.views;
+        auto d_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+            trajectory.views, 0);
+        std::vector<float> weights(projection_count);
+        for (int view = 0; view < trajectory.views; ++view) {
+            for (int row = 0; row < h.iPV; ++row) {
+                for (int channel = 0; channel < h.iPU; ++channel) {
+                    const float normalized = std::fabs((channel + 0.5f) /
+                        h.iPU - 0.5f) * 2.f;
+                    const size_t index = (static_cast<size_t>(view) * h.iPV +
+                        row) * h.iPU + channel;
+                    weights[index] = 1.f - 0.35f * normalized;
+                }
+            }
+        }
+        auto d_weights = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+            trajectory.views, 0);
+        YK_CUDA_CHECK(cudaMemcpyAsync(d_weights.data(), weights.data(),
+            projection_count * sizeof(float), cudaMemcpyHostToDevice, stream));
+
+        for (const auto& model : models) {
+            CylFpBp::CylForwardOperator simulator;
+            bool case_ok = simulator.prepare(vg, h.iPU, h.iPV, geometry,
+                operator_config);
+            case_ok = case_ok && (model.kind ==
+                CylFpBp::ECylPwlsDataModel::Siddon
+                ? simulator.forwardSiddon(truth_texture, d_projection.data(), stream)
+                : simulator.forwardMatchedReference(truth_texture,
+                    d_projection.data(), stream));
+            simulator.release();
+            YK_CUDA_CHECK(cudaMemsetAsync(d_volume.data(), 0,
+                volume_count * sizeof(float), stream));
+            CylFpBp::CylPwlsConfig config{};
+            config.iterations = 20;
+            config.relaxation = 0.8f;
+            config.regularizer = Iter::EPwlsRegularizer::Huber;
+            config.regularization = 1e-4f;
+            config.huber_delta = 2e-3f;
+            config.data_model = model.kind;
+            config.projection_weights = d_weights.data();
+            Helical::Iterative::CylConfig heli_config{};
+            heli_config.method = Helical::Iterative::EMethod::Pwls;
+            heli_config.pwls = config;
+            heli_config.operators = operator_config;
+            Helical::Iterative::CylReconstructor reconstructor;
+            const auto started = std::chrono::steady_clock::now();
+            case_ok = case_ok && reconstructor.prepare(vg, h.iPU, h.iPV,
+                    geometry, heli_config, stream) &&
+                reconstructor.reconstruct(d_projection.data(), d_volume.data()) &&
+                cudaStreamSynchronize(stream) == cudaSuccess;
+            const double elapsed = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+            images.emplace_back(volume_count);
+            if (case_ok) case_ok = cudaMemcpy(images.back().data(),
+                d_volume.data(), volume_count * sizeof(float),
+                cudaMemcpyDeviceToHost) == cudaSuccess;
+            const Metrics metrics = compare(truth, images.back());
+            const float maximum = *std::max_element(images.back().begin(),
+                images.back().end());
+            case_ok = case_ok && std::all_of(images.back().begin(),
+                images.back().end(), [](float value) { return std::isfinite(value); }) &&
+                maximum > 1e-6f && metrics.correlation > 0.75;
+            YK_LOGI("[CylPWLS:{}:{}] corr={:.6f} NRMSE={:.6f} "
+                "MAE={:.6e} bias={:.6e} fit-scale={:.6f} max={:.6e} "
+                "time={:.3f} ms {}", trajectory.name, model.name,
+                metrics.correlation, metrics.absolute_nrmse, metrics.mae,
+                metrics.bias, metrics.fitted_scale, maximum, elapsed,
+                case_ok ? "PASS" : "FAIL");
+            ok = ok && case_ok;
+            reconstructor.release();
+        }
+    }
+    std::vector<TestImage::GrayPanel> panels;
+    for (auto& image : images)
+        panels.push_back({&image, base.iVX, base.iVY, base.iVZ,
+            base.iVZ / 2, 1.f, 0.f, 0.022f, false});
+    const auto output = std::filesystem::absolute(
+        "out/test-artifacts/fpcyl_pwls_static_helical.bmp");
+    ok = TestImage::writeGrayMontageBmp(output, panels, 5, 8, 4) && ok;
+    YK_LOGI("[CylPWLS] montage truth/static-joseph/static-siddon/"
+        "helical-joseph/helical-siddon: {}", output.string());
     cudaStreamDestroy(stream);
     return ok ? 0 : 1;
 }

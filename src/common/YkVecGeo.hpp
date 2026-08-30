@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "YKCBCT/geometry/YkProjectionGeometryBuilders.hpp"
+#include "YKCBCT/geometry/YkProjectionGeometry.hpp"
 #include "../global/YkLog.h"
 #include "../global/YkMacro.hpp"
 #include "../util/YkVecOperation.hpp"
@@ -11,9 +11,8 @@
 #include <util/fmt/format.h>
 #endif
 
-// 兼容聚合头：几何构造实现已经统一迁移到公共
-// YkProjectionGeometryBuilders.hpp。旧代码可继续包含本文件，但这里不再
-// 保存第二份 builder 实现。
+// 内部几何类型与诊断格式化工具。几何构造必须显式包含对应 builder，
+// kernel 和算法数据结构不通过本文件间接依赖前端构造逻辑。
 namespace YK {
 
 #ifndef __CUDACC__

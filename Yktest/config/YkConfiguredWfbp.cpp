@@ -12,18 +12,18 @@
 #include <vector>
 
 #include <cuda_runtime.h>
-#include <toml.hpp>
+#include <toml++/toml.hpp>
 
 #include "global/YkLog.h"
 
 #if YKCBCT_TEST_HAS_HELICAL
-#include "CylFpBp/YkCylFpBpGeometry.hpp"
-#include "CylFpBp/YkCylForwardProjection.hpp"
-#include "Heli/YkHelicalGeo.hpp"
-#include "Heli/wfbp/YkWfbpPipeline.hpp"
-#include "Iter/YkAlgebraicReconstructorEx.hpp"
-#include "Iter/YkPwlsReconstructor.hpp"
+#include "YkTestGeometry.hpp"
+#include "CylFpBp/fp/YkCylForwardProjection.hpp"
+
+#include "Heli/analytic/wfbp/YkWfbpPipeline.hpp"
+#include "Heli/iter/YkHelicalFlatIterativeReconstructor.hpp"
 #include "YkTestImage.hpp"
+#include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkCudaTextureController.hpp"
 #include "global/YkMem3d.hpp"
@@ -79,8 +79,8 @@ std::filesystem::path resolvePath(const std::filesystem::path& base,
         (base / path).lexically_normal();
 }
 
-enum class InputMode { ProjectionRaw, VolumeRaw };
-enum class Reconstructor { Wfbp, Pwls, Ossart };
+enum class InputMode { ProjectionRaw, VolumeRaw, Phantom };
+enum class Reconstructor { Wfbp, Sirt, Sart, Ossart, Cgls, Pwls };
 
 struct Case {
     std::string name;
@@ -89,7 +89,8 @@ struct Case {
     Helical::Wfbp::Config algorithm{};
     Reconstructor reconstructor = Reconstructor::Wfbp;
     Iter::PwlsConfig pwls{};
-    Iter::AlgebraicReconstructionConfig ossart{};
+    Iter::AlgebraicReconstructionConfig algebraic{};
+    Iter::CglsReconstructionConfig cgls{};
     InputMode input_mode = InputMode::ProjectionRaw;
     std::filesystem::path input;
     std::string scalar_type = "float32";
@@ -138,9 +139,13 @@ Case parseCase(const toml::table& table, const std::filesystem::path& base)
     const std::string reconstructor = optional<std::string>(table,
         "reconstructor", "wfbp");
     if (reconstructor == "wfbp") result.reconstructor = Reconstructor::Wfbp;
+    else if (reconstructor == "sirt") result.reconstructor = Reconstructor::Sirt;
+    else if (reconstructor == "sart") result.reconstructor = Reconstructor::Sart;
     else if (reconstructor == "pwls") result.reconstructor = Reconstructor::Pwls;
     else if (reconstructor == "ossart") result.reconstructor = Reconstructor::Ossart;
-    else throw std::runtime_error("reconstructor 必须是 wfbp、pwls 或 ossart");
+    else if (reconstructor == "cgls") result.reconstructor = Reconstructor::Cgls;
+    else throw std::runtime_error(
+        "reconstructor 必须是 wfbp、sirt、sart、ossart、cgls 或 pwls");
     const auto& scan = requiredTable(table, "scan", result.name);
     auto& p = result.params;
     p.iPU = static_cast<int>(required<int64_t>(scan, "nu", "scan"));
@@ -240,32 +245,59 @@ Case parseCase(const toml::table& table, const std::filesystem::path& base)
         else throw std::runtime_error("pwls.regularizer 必须是 none、quadratic 或 huber");
     }
 
-    if (const auto* ossart = table["ossart"].as_table()) {
-        auto& o = result.ossart;
-        o.method = Iter::EAlgebraicMethod::Ossart;
+    const char* algebraic_section = result.reconstructor == Reconstructor::Sirt ?
+        "sirt" : result.reconstructor == Reconstructor::Sart ? "sart" : "ossart";
+    if (const auto* algebraic = table[algebraic_section].as_table()) {
+        auto& o = result.algebraic;
+        o.method = result.reconstructor == Reconstructor::Sirt ?
+            Iter::EAlgebraicMethod::Sirt :
+            result.reconstructor == Reconstructor::Sart ?
+                Iter::EAlgebraicMethod::Sart : Iter::EAlgebraicMethod::Ossart;
         o.weight_model = Iter::EAlgebraicWeightModel::DetailedSubset;
-        o.iterations = static_cast<int>(optional<int64_t>(*ossart,
+        o.iterations = static_cast<int>(optional<int64_t>(*algebraic,
             "iterations", 20));
-        o.subset_count = static_cast<int>(optional<int64_t>(*ossart,
-            "subsets", 20));
-        o.relaxation = static_cast<float>(optional<double>(*ossart,
+        o.subset_count = o.method == Iter::EAlgebraicMethod::Sirt ? 1 :
+            o.method == Iter::EAlgebraicMethod::Sart ? views :
+            static_cast<int>(optional<int64_t>(*algebraic, "subsets", 20));
+        o.relaxation = static_cast<float>(optional<double>(*algebraic,
             "relaxation", 0.2));
-        o.relaxation_reduction = static_cast<float>(optional<double>(*ossart,
+        o.relaxation_reduction = static_cast<float>(optional<double>(*algebraic,
             "relaxation_reduction", 0.98));
-        o.epsilon = static_cast<float>(optional<double>(*ossart,
+        o.epsilon = static_cast<float>(optional<double>(*algebraic,
             "epsilon", 1e-6));
         o.use_min = true;
-        o.min_constraint = static_cast<float>(optional<double>(*ossart,
+        o.min_constraint = static_cast<float>(optional<double>(*algebraic,
             "lower_bound", 0.0));
         o.use_max = true;
-        o.max_constraint = static_cast<float>(optional<double>(*ossart,
+        o.max_constraint = static_cast<float>(optional<double>(*algebraic,
             "upper_bound", 0.12));
         o.fp_task = ETask::FP_Joseph;
-        const std::string back = optional<std::string>(*ossart,
+        const std::string back = optional<std::string>(*algebraic,
             "back", "joseph-v3");
         if (back == "joseph-v3") o.bp_task = ETask::BP_Joseph_v3;
         else if (back == "joseph") o.bp_task = ETask::BP_Joseph;
-        else throw std::runtime_error("ossart.back 必须是 joseph-v3 或 joseph");
+        else throw std::runtime_error(
+            std::string(algebraic_section) + ".back 必须是 joseph-v3 或 joseph");
+    }
+
+    if (const auto* cgls = table["cgls"].as_table()) {
+        auto& c = result.cgls;
+        c.iterations = static_cast<int>(optional<int64_t>(*cgls,
+            "iterations", 20));
+        c.epsilon = static_cast<float>(optional<double>(*cgls,
+            "epsilon", 1e-8));
+        c.use_min = optional<bool>(*cgls, "use_min", false);
+        c.min_constraint = static_cast<float>(optional<double>(*cgls,
+            "lower_bound", 0.0));
+        c.use_max = optional<bool>(*cgls, "use_max", false);
+        c.max_constraint = static_cast<float>(optional<double>(*cgls,
+            "upper_bound", 0.12));
+        c.fp_task = ETask::FP_Joseph;
+        const std::string back = optional<std::string>(*cgls,
+            "back", "joseph-v3");
+        if (back == "joseph-v3") c.bp_task = ETask::BP_Joseph_v3;
+        else if (back == "joseph") c.bp_task = ETask::BP_Joseph;
+        else throw std::runtime_error("cgls.back 必须是 joseph-v3 或 joseph");
     }
 
     const auto& input = requiredTable(table, "input", result.name);
@@ -303,7 +335,14 @@ Case parseCase(const toml::table& table, const std::filesystem::path& base)
             result.crop_z = static_cast<int>(required<int64_t>(*crop, 2, "crop_origin"));
         }
     }
-    else throw std::runtime_error("wFBP input.mode 必须是 projection-raw 或 volume-raw");
+    else if (mode == "phantom") {
+        if (optional<std::string>(input, "phantom", "catphan") != "catphan")
+            throw std::runtime_error("螺旋重建内置模体当前只支持 catphan");
+        result.input_mode = InputMode::Phantom;
+        result.scalar_type = "float32";
+    }
+    else throw std::runtime_error(
+        "wFBP input.mode 必须是 projection-raw、volume-raw 或 phantom");
 
     const auto& output = requiredTable(table, "output", result.name);
     result.output = resolvePath(base, required<std::string>(output, "volume", "output"));
@@ -333,7 +372,8 @@ Case parseCase(const toml::table& table, const std::filesystem::path& base)
         p.views_per_rot < 4 || std::fabs(configured_step - expected_step) >
         a.angle_tolerance * expected_step)
         throw std::runtime_error(result.name + " 的尺寸、螺距或角度采样无效");
-    if (result.input_mode == InputMode::VolumeRaw &&
+    if ((result.input_mode == InputMode::VolumeRaw ||
+         result.input_mode == InputMode::Phantom) &&
         a.focal_spot_mode != Helical::Wfbp::EFocalSpotMode::None)
         throw std::runtime_error(result.name +
             "：volume-raw 自测不生成 FFS 交错焦点，请改用真实 projection-raw");
@@ -350,12 +390,19 @@ Case parseCase(const toml::table& table, const std::filesystem::path& base)
          result.pwls.epsilon <= 0.f || result.pwls.lower_bound > result.pwls.upper_bound))
         throw std::runtime_error(
             "螺旋 PWLS 参数无效；当前定量对照只允许 subsets=1 的全批量更新");
-    if (result.reconstructor == Reconstructor::Ossart &&
-        (result.ossart.iterations <= 0 || result.ossart.subset_count <= 0 ||
-         result.ossart.subset_count > views || result.ossart.relaxation <= 0.f ||
-         result.ossart.relaxation_reduction <= 0.f || result.ossart.epsilon <= 0.f ||
-         result.ossart.min_constraint > result.ossart.max_constraint))
-        throw std::runtime_error("螺旋 OS-SART 参数无效");
+    if ((result.reconstructor == Reconstructor::Sirt ||
+         result.reconstructor == Reconstructor::Sart ||
+         result.reconstructor == Reconstructor::Ossart) &&
+        (result.algebraic.iterations <= 0 || result.algebraic.subset_count <= 0 ||
+         result.algebraic.subset_count > views || result.algebraic.relaxation <= 0.f ||
+         result.algebraic.relaxation_reduction <= 0.f ||
+         result.algebraic.epsilon <= 0.f ||
+         result.algebraic.min_constraint > result.algebraic.max_constraint))
+        throw std::runtime_error("螺旋代数重建参数无效");
+    if (result.reconstructor == Reconstructor::Cgls &&
+        (result.cgls.iterations <= 0 || result.cgls.epsilon <= 0.f ||
+         result.cgls.min_constraint > result.cgls.max_constraint))
+        throw std::runtime_error("螺旋 CGLS 参数无效");
     if (result.input_mode == InputMode::VolumeRaw &&
         (result.source_nx <= 0 || result.source_ny <= 0 || result.source_nz <= 0 ||
          result.crop_x < 0 || result.crop_y < 0 || result.crop_z < 0 ||
@@ -604,7 +651,10 @@ bool runCase(const Case& config)
 {
     const auto& h = config.params;
     const char* method = config.reconstructor == Reconstructor::Wfbp ? "wFBP" :
-        config.reconstructor == Reconstructor::Pwls ? "PWLS" : "OS-SART";
+        config.reconstructor == Reconstructor::Sirt ? "SIRT" :
+        config.reconstructor == Reconstructor::Sart ? "SART" :
+        config.reconstructor == Reconstructor::Ossart ? "OS-SART" :
+        config.reconstructor == Reconstructor::Cgls ? "CGLS" : "PWLS";
     const size_t volume_count = static_cast<size_t>(h.iVX) * h.iVY * h.iVZ;
     const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
         h.angle_list.size();
@@ -628,7 +678,10 @@ bool runCase(const Case& config)
                 cudaSuccess;
         }
         else {
-            truth = readInput(config, volume_count);
+            if (config.input_mode == InputMode::Phantom)
+                truth = TestPhantom::makeCatphanLike(toCbct(h));
+            else
+                truth = readInput(config, volume_count);
             auto d_phantom = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ,
                 config.device);
             ok = cudaMemcpyAsync(d_phantom.data(), truth.data(),
@@ -638,7 +691,7 @@ bool runCase(const Case& config)
                 Helical::Wfbp::EInputDetector::FlatPanel) {
                 const SReconstructionParams p = toCbct(h);
                 std::vector<SConeProjGeomVec> geometry;
-                build_helical_vec_geometry(geometry, h);
+                geometry = TestGeometry::helicalFlat(h);
                 ForwardOperatorAdapter fp;
                 ok = fp.init(p, geometry, ETask::FP_Joseph, config.device, stream) &&
                     fp.run(d_phantom.data(), p, d_projection.data(), stream);
@@ -660,7 +713,7 @@ bool runCase(const Case& config)
                     geometry_params.offsetU_mm =
                         (0.5f * (h.iPU - 1) - principal) * h.du_mm;
                 }
-                auto geometry = CylFpBp::buildCylindricalArcGeometry(
+                auto geometry = TestGeometry::helicalCyl(
                     geometry_params, radius, step);
                 SVolGeom volume_geometry = SVolGeom::make_centered(h.iVX,
                     h.iVY, h.iVZ, h.vox_x_mm, h.vox_y_mm, h.vox_z_mm);
@@ -687,25 +740,29 @@ bool runCase(const Case& config)
             volume_count * sizeof(float), stream) == cudaSuccess;
         if (ok && config.reconstructor == Reconstructor::Wfbp) {
             Helical::Wfbp::Pipeline pipeline;
-            ok = pipeline.prepare(h, config.algorithm, stream, config.device) &&
+            ok = pipeline.prepare(TestGeometry::wfbpInput(h),
+                TestGeometry::volume(h), config.algorithm, stream, config.device) &&
                 pipeline.reconstruct(d_projection.data(), d_volume.data());
-        }
-        else if (ok && config.reconstructor == Reconstructor::Pwls) {
-            const SReconstructionParams p = toCbct(h);
-            std::vector<SConeProjGeomVec> geometry;
-            build_helical_vec_geometry(geometry, h);
-            Iter::PwlsReconstructor reconstructor;
-            ok = reconstructor.prepare(p, geometry, config.pwls, stream,
-                config.device) && reconstructor.reconstruct(
-                    d_projection.data(), d_volume.data());
         }
         else if (ok) {
             const SReconstructionParams p = toCbct(h);
-            std::vector<SConeProjGeomVec> geometry;
-            build_helical_vec_geometry(geometry, h);
-            // 使用显式逐视图几何，螺旋床位和任意轨迹不会被圆扫描参数覆盖。
-            Iter::AlgebraicReconstructorEx reconstructor;
-            ok = reconstructor.prepare(p, geometry, config.ossart, stream,
+            const auto geometry = TestGeometry::helicalFlat(h);
+            Helical::Iterative::FlatConfig iterative{};
+            iterative.method = config.reconstructor == Reconstructor::Sirt ?
+                Helical::Iterative::EMethod::Sirt :
+                config.reconstructor == Reconstructor::Sart ?
+                    Helical::Iterative::EMethod::Sart :
+                config.reconstructor == Reconstructor::Ossart ?
+                    Helical::Iterative::EMethod::Ossart :
+                config.reconstructor == Reconstructor::Cgls ?
+                    Helical::Iterative::EMethod::Cgls :
+                    Helical::Iterative::EMethod::Pwls;
+            iterative.algebraic = config.algebraic;
+            iterative.cgls = config.cgls;
+            iterative.pwls = config.pwls;
+            // Heli 迭代入口只接收显式逐视图几何，不会从标称角度重建圆轨迹。
+            Helical::Iterative::FlatReconstructor reconstructor;
+            ok = reconstructor.prepare(p, geometry, iterative, stream,
                 config.device) && reconstructor.reconstruct(
                     d_projection.data(), d_volume.data());
         }

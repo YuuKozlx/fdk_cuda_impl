@@ -1,6 +1,6 @@
 # FreeCT_wFBP attribution
 
-The wFBP implementation under `src/Heli/wfbp` is adapted from the algorithm
+The wFBP implementation under `src/Heli/analytic/wfbp` is adapted from the algorithm
 and CUDA implementation in [FreeCT_wFBP](https://github.com/FreeCT/FreeCT_wFBP).
 
 Reference revisions used for this port:

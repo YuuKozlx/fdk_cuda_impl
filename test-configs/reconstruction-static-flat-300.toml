@@ -1,0 +1,326 @@
+# 300^3 Catphan-like 定量/图像测试。
+# 该文件用于较真实的分辨率和迭代次数测试，不纳入快速 smoke 测试。
+task = "reconstruction"
+
+[[case]]
+name = "catphan-300-fdk"
+pipeline = "fdk"
+chunk_views = 16
+[case.scan]
+nu = 1024
+nv = 256
+views = 360
+sid_mm = 1000.0
+sdd_mm = 1170.0
+du_mm = 0.35
+dv_mm = 0.35
+[case.volume]
+nx = 300
+ny = 300
+nz = 300
+# 256x0.35 mm 探测器在 1.17 放大倍率下仅覆盖约 76.6 mm 物方高度。
+voxel_mm = [1.0, 1.0, 0.25]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+[case.output]
+volume = "output/normal-size/catphan_300_fdk.raw"
+preview = "output/normal-size/catphan_300_fdk.bmp"
+
+[[case]]
+name = "catphan-300-ossart"
+pipeline = "ossart"
+chunk_views = 16
+[case.scan]
+nu = 1024
+nv = 256
+views = 360
+sid_mm = 1000.0
+sdd_mm = 1170.0
+du_mm = 0.35
+dv_mm = 0.35
+[case.volume]
+nx = 300
+ny = 300
+nz = 300
+voxel_mm = [1.0, 1.0, 0.25]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.algorithm]
+# 20 轮、8 子集是质量和耗时之间的常用工程折中；需要收敛曲线时可提高到 50。
+iterations = 20
+subsets = 8
+relaxation = 0.2
+forward = "joseph"
+back = "joseph-v3"
+[case.output]
+volume = "output/normal-size/catphan_300_ossart.raw"
+preview = "output/normal-size/catphan_300_ossart.bmp"
+
+[[case]]
+name = "catphan-300-cfdk"
+pipeline = "cfdk"
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.filter]
+kernel="ramlak"
+source="discrete-fft"
+[case.output]
+volume="output/normal-size/catphan_300_cfdk.raw"
+preview="output/normal-size/catphan_300_cfdk.bmp"
+
+[[case]]
+name = "catphan-300-xfdk"
+pipeline = "xfdk"
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.filter]
+kernel="ramlak"
+source="discrete-fft"
+[case.output]
+volume="output/normal-size/catphan_300_xfdk.raw"
+preview="output/normal-size/catphan_300_xfdk.bmp"
+
+[[case]]
+name="catphan-300-sirt"
+pipeline="sirt"
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.algorithm]
+iterations=50
+relaxation=0.2
+forward="joseph"
+back="joseph-v3"
+[case.output]
+volume="output/normal-size/catphan_300_sirt.raw"
+preview="output/normal-size/catphan_300_sirt.bmp"
+
+[[case]]
+name="catphan-300-sart"
+pipeline="sart"
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.algorithm]
+iterations=10
+relaxation=0.2
+forward="joseph"
+back="joseph-v3"
+[case.output]
+volume="output/normal-size/catphan_300_sart.raw"
+preview="output/normal-size/catphan_300_sart.bmp"
+
+[[case]]
+name="catphan-300-cgls"
+pipeline="cgls"
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.algorithm]
+iterations=20
+strategy="robust-restart"
+forward="joseph"
+back="joseph-v2"
+[case.output]
+volume="output/normal-size/catphan_300_cgls.raw"
+preview="output/normal-size/catphan_300_cgls.bmp"
+
+[[case]]
+name="catphan-300-tigre-os-sart"
+pipeline="tigre-gradient-local"
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.algorithm]
+iterations=20
+forward="joseph"
+back="joseph-v3"
+[case.tigre]
+method="os-sart"
+block_size=8
+lambda=1.0
+[case.output]
+volume="output/normal-size/catphan_300_tigre_os_sart.raw"
+preview="output/normal-size/catphan_300_tigre_os_sart.bmp"
+
+[[case]]
+name="catphan-300-pwls"
+pipeline="pwls"
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.algorithm]
+iterations=20
+forward="joseph"
+back="joseph"
+[case.pwls]
+subsets=1
+relaxation=0.4
+regularizer="quadratic"
+regularization=1e-3
+[case.output]
+volume="output/normal-size/catphan_300_pwls.raw"
+preview="output/normal-size/catphan_300_pwls.bmp"
+
+[[case]]
+name="catphan-300-fdk-ossart"
+pipeline="fdk-ossart"
+chunk_views=16
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.filter]
+kernel="hann"
+source="discrete-fft"
+[case.algorithm]
+iterations=10
+subsets=8
+relaxation=0.1
+forward="joseph"
+back="joseph-v3"
+[case.output]
+volume="output/normal-size/catphan_300_fdk_ossart.raw"
+preview="output/normal-size/catphan_300_fdk_ossart.bmp"
+
+[[case]]
+name="catphan-300-fdk-cgls"
+pipeline="fdk-cgls"
+chunk_views=16
+[case.scan]
+nu=1024
+nv=256
+views=360
+sid_mm=1000.0
+sdd_mm=1170.0
+du_mm=0.35
+dv_mm=0.35
+[case.volume]
+nx=300
+ny=300
+nz=300
+voxel_mm=[1.0,1.0,0.25]
+[case.input]
+mode="phantom"
+phantom="catphan"
+[case.filter]
+kernel="hann"
+source="discrete-fft"
+[case.algorithm]
+iterations=10
+strategy="robust-restart"
+forward="joseph"
+back="joseph-v2"
+[case.output]
+volume="output/normal-size/catphan_300_fdk_cgls.raw"
+preview="output/normal-size/catphan_300_fdk_cgls.bmp"

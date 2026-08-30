@@ -1,0 +1,322 @@
+# 同一 Catphan 模体、同一圆扫描几何下的重建器横向测试。
+# 每个 case 只改变 pipeline 或对应算法参数，便于直接比较输出图像。
+
+[[case]]
+name = "catphan-fdk"
+pipeline = "fdk"
+chunk_views = 8
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+[case.output]
+volume = "output/phantoms/catphan_fdk.raw"
+preview = "output/phantoms/catphan_fdk.bmp"
+
+[[case]]
+name = "catphan-cfdk"
+pipeline = "cfdk"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+[case.output]
+volume = "output/phantoms/catphan_cfdk.raw"
+preview = "output/phantoms/catphan_cfdk.bmp"
+
+[[case]]
+name = "catphan-xfdk"
+pipeline = "xfdk"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.filter]
+kernel = "ramlak"
+source = "discrete-fft"
+[case.output]
+volume = "output/phantoms/catphan_xfdk.raw"
+preview = "output/phantoms/catphan_xfdk.bmp"
+
+[[case]]
+name = "catphan-sirt"
+pipeline = "sirt"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.algorithm]
+iterations = 2
+relaxation = 0.2
+forward = "joseph"
+back = "joseph-v3"
+[case.output]
+volume = "output/phantoms/catphan_sirt.raw"
+preview = "output/phantoms/catphan_sirt.bmp"
+
+[[case]]
+name = "catphan-sart"
+pipeline = "sart"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.algorithm]
+iterations = 2
+relaxation = 0.2
+forward = "joseph"
+back = "joseph-v3"
+[case.output]
+volume = "output/phantoms/catphan_sart.raw"
+preview = "output/phantoms/catphan_sart.bmp"
+
+[[case]]
+name = "catphan-ossart"
+pipeline = "ossart"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.algorithm]
+iterations = 2
+subsets = 4
+relaxation = 0.2
+forward = "joseph"
+back = "joseph-v3"
+[case.output]
+volume = "output/phantoms/catphan_ossart.raw"
+preview = "output/phantoms/catphan_ossart.bmp"
+
+[[case]]
+name = "catphan-cgls"
+pipeline = "cgls"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.algorithm]
+iterations = 2
+strategy = "robust-restart"
+forward = "joseph"
+back = "joseph-v2"
+[case.output]
+volume = "output/phantoms/catphan_cgls.raw"
+preview = "output/phantoms/catphan_cgls.bmp"
+
+[[case]]
+name = "catphan-tigre-os-sart"
+pipeline = "tigre-gradient-local"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.algorithm]
+iterations = 2
+forward = "joseph"
+back = "joseph-v3"
+[case.tigre]
+method = "os-sart"
+block_size = 8
+lambda = 1.0
+[case.output]
+volume = "output/phantoms/catphan_tigre_os_sart.raw"
+preview = "output/phantoms/catphan_tigre_os_sart.bmp"
+
+[[case]]
+name = "catphan-pwls"
+pipeline = "pwls"
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.algorithm]
+iterations = 2
+forward = "joseph"
+back = "joseph"
+[case.pwls]
+subsets = 1
+relaxation = 0.4
+regularizer = "quadratic"
+regularization = 1e-3
+[case.output]
+volume = "output/phantoms/catphan_pwls.raw"
+preview = "output/phantoms/catphan_pwls.bmp"
+
+[[case]]
+name = "catphan-fdk-ossart"
+pipeline = "fdk-ossart"
+chunk_views = 8
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.filter]
+kernel = "hann"
+source = "discrete-fft"
+[case.algorithm]
+iterations = 2
+subsets = 4
+relaxation = 0.1
+forward = "joseph"
+back = "joseph-v3"
+[case.output]
+volume = "output/phantoms/catphan_fdk_ossart.raw"
+preview = "output/phantoms/catphan_fdk_ossart.bmp"
+
+[[case]]
+name = "catphan-fdk-cgls"
+pipeline = "fdk-cgls"
+chunk_views = 8
+[case.scan]
+nu = 32
+nv = 24
+views = 32
+sid_mm = 80.0
+sdd_mm = 160.0
+du_mm = 1.0
+dv_mm = 1.0
+[case.volume]
+nx = 16
+ny = 16
+nz = 12
+voxel_mm = [1.0, 1.0, 1.0]
+[case.input]
+mode = "phantom"
+phantom = "catphan"
+[case.filter]
+kernel = "hann"
+source = "discrete-fft"
+[case.algorithm]
+iterations = 2
+strategy = "robust-restart"
+forward = "joseph"
+back = "joseph-v2"
+[case.output]
+volume = "output/phantoms/catphan_fdk_cgls.raw"
+preview = "output/phantoms/catphan_fdk_cgls.bmp"

@@ -6,6 +6,7 @@
 #include "common/cuda/operators/YkOperatorKernelTypes.cuh"
 #include "common/cuda/operators/YkSamplingReaders.cuh"
 #include <algorithm>
+#include <cuda/std/limits>
 
 // ─── 公用宏：vol_origin = 第0体素中心 ────────────────────────────────────────
 //
@@ -63,8 +64,8 @@ namespace YK {
                 const float z0 = AABB_LO(vol_origin.z, vox_z);
                 const float z1 = AABB_HI(vol_origin.z, Nz, vox_z);
 
-                // [F2] tmax = FLT_MAX，裁剪后 clamp 到探测器端 t=1
-                float tmin = 0.f, tmax = FLT_MAX;
+                // [F2] tmax 取 float 最大值，裁剪后 clamp 到探测器端 t=1
+                float tmin = 0.f, tmax = cuda::std::numeric_limits<float>::max();
 
 #define SLAB(r, s, b0, b1)                                  \
     if (fabsf(r) > 1e-8f) {                                 \
@@ -642,6 +643,35 @@ namespace YK {
                 g.vox_x, g.vox_y, g.vox_z,
                 g.Nx, g.Ny, g.Nz,
                 Nu, Nv, K);
+            YK_CUDA_KERNEL_CHECK();
+        }
+
+        void bp_siddon_voxel_v3_launch(
+            cudaTextureObject_t sinoTex,
+            float* d_vol,
+            const SConeProjGeomVec* d_views,
+            const SVolGeom& g,
+            int Nu, int Nv, int K,
+            bool accumulate,
+            cudaStream_t stream)
+        {
+            CudaOp::clearIfOverwrite(d_vol,
+                static_cast<size_t>(g.Nx) * g.Ny * g.Nz,
+                CudaOp::writeMode(accumulate), stream);
+
+            constexpr int ZSIZE = 4;
+            const dim3 block(16, 16, 1);
+            const dim3 grid(
+                (g.Nx + block.x - 1) / block.x,
+                (g.Ny + block.y - 1) / block.y,
+                (g.Nz + ZSIZE - 1) / ZSIZE);
+
+            // V3 保持原 kernel 的最近探测器像素语义。Point 纹理由上层
+            // 选择，避免在整数像素读取中意外引入硬件线性插值。
+            detail::siddon_bp_voxel_v3_kernel<ZSIZE><<<grid, block, 0, stream>>>(
+                sinoTex, d_views, d_vol, g.origin(),
+                g.vox_x, g.vox_y, g.vox_z,
+                g.Nx, g.Ny, g.Nz, Nu, Nv, K);
             YK_CUDA_KERNEL_CHECK();
         }
 

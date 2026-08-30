@@ -18,4 +18,8 @@ void bp_siddon_voxel_v2_launch(cudaTextureObject_t projection_texture,
     float* volume, const SConeProjGeomVec* views,
     const SVolGeom& volume_geometry, int channels, int rows, int views_count,
     bool accumulate, cudaStream_t stream);
+void bp_siddon_voxel_v3_launch(cudaTextureObject_t projection_texture,
+    float* volume, const SConeProjGeomVec* views,
+    const SVolGeom& volume_geometry, int channels, int rows, int views_count,
+    bool accumulate, cudaStream_t stream);
 } // namespace YK::Bp

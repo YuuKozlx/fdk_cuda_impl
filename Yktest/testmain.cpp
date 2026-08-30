@@ -17,6 +17,7 @@
 // All manual integration entry points live in the existing module files.
 // Keep registration here so adding a test never requires editing main().
 int main_operator_roundtrip_smoke();
+int main_geometry_builder_four_modes();
 int main_operator_release_fence_smoke();
 int main_external_geometry_operator_smoke();
 int main_fdk_batch_consistency_smoke();
@@ -28,6 +29,9 @@ int main_curve_filtered_fdk_piecewise_mapping();
 int main_curve_filtered_fdk_large_cone_comparison();
 int main_curve_filtered_fdk_large_water();
 int main_curve_filtered_fdk_icrp_comparison();
+int main_xfdk_smoke();
+int main_xfdk_streaming_consistency();
+int main_xfdk_large_cone_comparison();
 int main_catphan_phantom_smoke();
 int main_rigid_geometry_transform_smoke();
 int main_filter_spatial_ramp_validation();
@@ -58,6 +62,8 @@ int main_fpcyl_fdk_backprojectors();
 int main_fpcyl_cfdk_reconstruction();
 int main_fpcyl_kernel_benchmark();
 int main_fpcyl_iterative_comparison();
+int main_fpcyl_astra_ellipse_matrix();
+int main_fpcyl_pwls_static_helical();
 int main_fpcyl_wfbp_comparison();
 #endif
 
@@ -106,6 +112,7 @@ namespace {
     }
 
     const TestEntry kTests[] = {
+        TEST_INT("framework/geometry-builder-four-modes", "framework", false, main_geometry_builder_four_modes),
         // Framework and public data-flow contracts.
         TEST_INT("framework/operator-roundtrip", "framework", false, main_operator_roundtrip_smoke),
         TEST_INT("framework/rigid-geometry", "framework", false, main_rigid_geometry_transform_smoke),
@@ -127,11 +134,18 @@ namespace {
             main_curve_filtered_fdk_large_water),
         TEST_INT("fdk/curve-filtered-icrp", "fdk", true,
             main_curve_filtered_fdk_icrp_comparison),
+        TEST_INT("fdk/xfdk-smoke", "fdk", false, main_xfdk_smoke),
+        TEST_INT("fdk/xfdk-streaming-consistency", "fdk", false,
+            main_xfdk_streaming_consistency),
+        TEST_INT("fdk/xfdk-large-cone", "fdk", false,
+            main_xfdk_large_cone_comparison),
         TEST_INT("phantom/catphan-like", "phantom", false, main_catphan_phantom_smoke),
         TEST_INT("filter/spatial-ramp", "filter", false, main_filter_spatial_ramp_validation),
         TEST_INT("filter/discrete-ramlak-dc", "filter", false, main_filter_discrete_ramlak_dc_zero),
 
         // Forward/back projector properties.
+        TEST_INT("framework/operator-matrix", "framework", false,
+            main_operator_matrix_smoke),
         TEST_INT("fp/siddon-uniform-center", "fp", false, main_fp_siddon_uniform_center_length),
         TEST_INT("fp/siddon-single-voxel", "fp", false, main_fp_siddon_single_voxel_peak),
         TEST_INT("geometry/planar-fp-bp", "geometry", false, main_planar_geometry_operator_smoke),
@@ -162,8 +176,12 @@ namespace {
             main_fpcyl_cfdk_reconstruction),
         TEST_INT("fpcyl/kernel-benchmark", "fpcyl", false,
             main_fpcyl_kernel_benchmark),
-        TEST_INT("fpcyl/iterative-compare", "fpcyl", true,
+        TEST_INT("heli/cyl-iterative-compare", "heli", true,
             main_fpcyl_iterative_comparison),
+        TEST_INT("fpcyl/astra-ellipse-matrix", "fpcyl", false,
+            main_fpcyl_astra_ellipse_matrix),
+        TEST_INT("heli/cyl-pwls-static-helical", "heli", false,
+            main_fpcyl_pwls_static_helical),
         TEST_INT("fpcyl/wfbp-compare", "fpcyl", false, main_fpcyl_wfbp_comparison),
     #endif
     };
@@ -265,9 +283,9 @@ int main(int argc, char** argv)
         "  ykcbct_manual_tests filter/discrete-ramlak-dc\n"
         "  ykcbct_manual_tests filter\n"
         "  ykcbct_manual_tests all-local\n"
-        "  ykcbct_manual_tests --config test-configs/fdk.toml\n"
-        "  ykcbct_manual_tests --config test-configs/ossart.toml "
-        "--case catphan-ossart-tv\n"
+        "  ykcbct_manual_tests --config test-configs/reconstruction-static-flat.toml\n"
+        "  ykcbct_manual_tests --config test-configs/reconstruction-heli-cyl.toml "
+        "--case catphan-heli-cyl-ossart\n"
         "  ykcbct_manual_tests large/arrow-tigre "
         "--arrow-method os-sart --arrow-iterations 20\n"
         "真实数据测试只能通过完整测试名显式运行。");

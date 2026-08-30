@@ -38,8 +38,9 @@ SDD 是独立量：主通道点为 `source + A*SDD`，圆柱轴线为
 `source + A*(SDD-radius_mm)`。所以 `radius_mm < SDD` 和
 `radius_mm > SDD` 都可表达。
 
-`buildCylindricalArcGeometry(p, radius_mm)` 用 `p.du_mm` 作为圆弧物理像素
-弧长，并由 `du_mm/radius_mm` 推导通道角度。`buildFreeCtArcGeometry(p)` 是
+测试适配层中的 `TestGeometry::staticCyl(p, radius_mm)` 与
+`TestGeometry::helicalCyl(p, radius_mm)` 用 `p.du_mm` 作为圆弧物理像素
+弧长，并由 `du_mm/radius_mm` 推导通道角度。解析重建传入 `radius_mm=SDD`，
 兼容便捷函数，固定 `radius_mm=SDD`，其圆柱轴线经过焦点，适合 FreeCT 的
 源中心等角弧面数据。
 
@@ -62,7 +63,7 @@ SDD 是独立量：主通道点为 `source + A*SDD`，圆柱轴线为
    因接口拆分而重复打包和上传逐视图参数。
 
 `IForwardProjection` 支持 Joseph、完整浮点 matched-reference 和 Siddon；
-`IBackProjection` 支持 Joseph、VoxelDrivenV3、FDK 和 FDK-matched。
+`IBackProjection` 支持 Joseph、JosephV3、FDK 和 FDK-matched。
 
 所有纹理必须使用 `cudaAddressModeBorder`，越界返回 0，禁止使用会复制边缘
 值的 Clamp。`IterativeReconstructor` 在全部 OS 子集间复用一份体积纹理和
@@ -78,8 +79,20 @@ CGLS 也使用该组合。原始等距离三线性、预计算三线性和主轴
 `EForwardProjection::Siddon` 提供圆柱探测器的 Siddon 正投版本。它沿源点到
 圆柱像素中心的射线，按体素边界逐段积分，体素值从 Point/Border 纹理读取；
 因此比主轴 Joseph FP 更接近精确射线积分，但通常更慢。该版本只实现 FP，
-不会自动改变所选 BP，也没有对应的圆柱 Siddon BP。配置化
-任务中使用 `projector.model = "cylindrical-siddon"` 即可选择它。
+`IBackProjection` 同时支持 Joseph、JosephVoxelV3、FDK-like、FDK-matched 和 Siddon。
+对应的圆柱 Siddon BP 使用同一组射线和体素段长度，
+形成离散转置；配置化任务使用 `projector.model = "cylindrical-siddon"`，
+并将 `operator.backprojector = "siddon-ray-driven"` 才会选择严格离散转置。
+`siddon` 保持严格 ray-driven 兼容语义；`siddon-v2` 使用连续探测器坐标
+和 Linear 插值，并用连续圆柱交点射线计算体素交长；`siddon-v3` 使用最近
+像素、Point 纹理和离散像素中心射线。V2/V3 都采用 Z 分组并复用横向求交，
+但它们不是相同数值算法的纯性能版本。详细对照见
+`kernels/README.md` 的“Siddon V2 与 V3 的数值语义”。后二者都是工程近似，
+严格离散转置只能选择 `siddon-ray-driven`。
+
+代数重建统一入口为 `YkCylAlgebraicReconstructor.hpp` 中的
+`AlgebraicReconstructor`。SIRT、SART、OS-SART 和 CGLS 共用相同配置、
+几何、权重和算子枚举，不再由各个重建方法分别持有 Cyl kernel。
 
 底层还保留 `launch_main_axis_forward_texture_matched()`：它要求 Point 体积
 纹理，从纹理读取四个体素后使用完整浮点 Joseph 权重插值，因此可与 Joseph
@@ -88,12 +101,14 @@ Linear 读取，因此作为 `JosephMatchedReference` 对照模型保留，不�
 
 ## 体素驱动 V3 BP
 
-`VoxelDrivenBackprojectorV3` 是独立的高性能近似 BP，与 Joseph 接口实现的
-浮点 Joseph BP 不同。它为每个体素遍历全部 view，从源点到体素的射线与
+`JosephV3` 是 `IBackProjection` 的内部高性能近似策略，与 Joseph 接口实现的
+浮点 Joseph BP 不同。业务代码只能通过
+`makeBackProjection(EBackProjection::JosephV3)` 选择它，不再包含或持有
+具体 projector 类。该策略为每个体素遍历全部 view，从源点到体素的射线与
 一般圆柱面求交，再反解连续通道角和轴向行坐标，通过持久化 3D 投影纹理
 完成双线性采样。一个线程只写自己的体素，因此不使用 `atomicAdd`。
 
-调用分为三个阶段：
+内部实现仍分为三个阶段：
 
 1. `prepare(...)`：预计算圆柱轴、径向/切向基和角度/行距倒数，并一次性
    创建投影 cudaArray 与纹理对象；
@@ -107,8 +122,12 @@ Linear 读取，因此作为 `JosephMatchedReference` 对照模型保留，不�
 
 ## 圆柱 FDK 与 FDK-matched BP
 
-`FdkBackprojector` 和 `FdkMatchedBackprojector` 是面向解析流程的独立体素驱动
-BP。二者都使用 Linear + Border 的持久化投影纹理，调用顺序与 V3 一致：
+这里的 `CylFdkPipeline` 是源中心等角圆柱采样下的项目内解析近似实现，
+不是论文中的平板 C-FDK，也不是 Katsevich、Wang 或 ASSR 螺旋算法。
+它只适用于静态完整圆扫，螺旋圆柱应使用迭代框架。
+
+`FdkBackprojector` 和 `FdkMatchedBackprojector` 是迭代框架可选的 FDK-style
+体素驱动 BP，不是完整解析管线。二者都使用 Linear + Border 的持久化投影纹理，调用顺序与 V3 一致：
 `prepare(...)`、`uploadProjection(...)`、`backproject(...)`。
 
 当前实现只接受 `R=SDD` 的源中心等角弧面。`prepare()` 会逐 view 校验圆柱
@@ -116,21 +135,6 @@ BP。二者都使用 Linear + Border 的持久化投影纹理，调用顺序与 
 投影必须由上游先按真实射线方向重映射到 `R=SDD`，不能直接套用这里的
 解析权重。
 
-设体素为 `X`、源点为 `S`、中央射线单位方向为 `a`、`SID` 为源到旋转
-中心距离，则普通圆柱 FDK BP 使用：
-
-```text
-w_fdk = SID^2 / dot(X-S, a)^2
-```
-
-FDK-matched BP 使用圆柱探测器的曲面 Jacobian。令 `v_det` 为射线落点的
-轴向物理坐标，`L^2=R^2+v_det^2`，则：
-
-```text
-w_matched = L^3 / (R * |X-S|^2) * voxel_volume / (du * dv)
-```
-
-这里 `R` 来自源中心圆柱上的 `n dot ray`，对应平板 matched 公式中的平面
-法向距离项。两种 BP 都只实现反投影采样与空间权重，不包含频域滤波、
-短扫描/Parker 或其他冗余权重，也不包含角度步长归一化；完整 FDK 流程必须
-在外部完成这些阶段。
+它们只执行迭代残差的 BP，不包含频域滤波、短扫描/Parker、解析深度权重或
+其它解析阶段；允许与任意 Cyl FP 自由搭配，但不构成严格 `A^T`。完整解析
+重建必须使用 `Analytic::Reconstruction` -> `CylFdkPipeline` 路径。

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -21,7 +22,10 @@ public:
             geometry.empty()) return false;
 
         std::vector<SKernelView> packed_views;
+        std::vector<SSiddonChannelRay> siddon_channel_rays;
         packed_views.reserve(geometry.size());
+        siddon_channel_rays.reserve(geometry.size() *
+            static_cast<size_t>(channels));
         for (const auto& view : geometry) {
             SCylProjectionFrame frame{};
             if (!deriveCylProjectionFrame(view, channels, rows, frame)) return false;
@@ -39,11 +43,40 @@ public:
             packed.principal_v = frame.principalV;
             packed.channel_angle_step_rad = frame.channelStepRad;
             packed_views.push_back(packed);
+
+            // 圆柱像素可分解为“通道基点 + 行方向偏移”。预计算通道基点
+            // 可以从每次迭代的 FP/BP 中移除 sin/cos，同时 FP 与 BP 使用
+            // 完全相同的射线数据，保持离散 Siddon 伴随关系。
+            for (int channel = 0; channel < channels; ++channel) {
+                const float delta = (channel - frame.principalU) *
+                    frame.channelStepRad;
+                const float sine = std::sin(delta);
+                const float cosine = std::cos(delta);
+                const float3 detector = make_float3(
+                    frame.cylinderCenter.x + frame.radius_mm *
+                        (frame.radialUnit.x * cosine +
+                         frame.tangentUnit.x * sine),
+                    frame.cylinderCenter.y + frame.radius_mm *
+                        (frame.radialUnit.y * cosine +
+                         frame.tangentUnit.y * sine),
+                    frame.cylinderCenter.z + frame.radius_mm *
+                        (frame.radialUnit.z * cosine +
+                         frame.tangentUnit.z * sine));
+                SSiddonChannelRay ray{};
+                ray.ray_at_principal_row = make_float4(
+                    detector.x - view.source.x,
+                    detector.y - view.source.y,
+                    detector.z - view.source.z, 0.f);
+                siddon_channel_rays.push_back(ray);
+            }
         }
 
         YK_CUDA_CHECK(cudaSetDevice(device_id));
         Mem::PodDataController pod;
         device_views_ = pod.allocateAndUpload(packed_views, device_id);
+        device_siddon_channel_rays_ = pod.allocateAndUpload(
+            siddon_channel_rays, device_id);
+        if (!device_views_ || !device_siddon_channel_rays_) return false;
         volume_geometry_ = volume_geometry;
         channels_ = channels;
         rows_ = rows;
@@ -53,6 +86,8 @@ public:
     }
 
     const SKernelView* data() const { return device_views_.data(); }
+    const SSiddonChannelRay* siddonChannelRays() const
+    { return device_siddon_channel_rays_.data(); }
     const SVolGeom& volumeGeometry() const { return volume_geometry_; }
     int channels() const { return channels_; }
     int rows() const { return rows_; }
@@ -61,6 +96,7 @@ public:
 
 private:
     Mem::DeviceLinearBuffer<SKernelView> device_views_{};
+    Mem::DeviceLinearBuffer<SSiddonChannelRay> device_siddon_channel_rays_{};
     SVolGeom volume_geometry_{};
     int channels_ = 0;
     int rows_ = 0;

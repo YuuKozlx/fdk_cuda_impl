@@ -25,6 +25,10 @@ namespace YK {
         BP_Joseph_v3 = 10, // 
         SART = 11,
         OSEM = 12,
+        // Flat 体素驱动 Siddon 的两个既有优化版本。追加枚举值以保持前面
+        // 已公开任务的 ABI 数值不变；三者数值语义不同，不做隐式替换。
+        BP_Siddon_VoxDriven_v2 = 13,
+        BP_Siddon_VoxDriven_v3 = 14,
     };
 
     enum class EFdkFilter : int32_t {

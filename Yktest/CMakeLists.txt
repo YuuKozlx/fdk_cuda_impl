@@ -3,10 +3,12 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     # 测试入口与轻量数值验证
     ${CMAKE_CURRENT_SOURCE_DIR}/testmain.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredReconstruction.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredCylReconstruction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredForwardProjection.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/config/YkConfiguredWfbp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_validation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_forward_projectors.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_geometry_builders.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cuda/YkTextureTestKernels.cu
 
     # 框架、几何与重建冒烟测试
@@ -31,21 +33,22 @@ add_executable(ykcbct_manual_tests
     ${YKCBCT_MANUAL_SUPPORT_SOURCES_ABS}
 )
 
-# toml++ 优先由 vcpkg/CMake package 提供。对于已有的单头文件发行版，可在
-# 配置阶段传入 -DYKCBCT_TOMLPLUSPLUS_INCLUDE_DIR=<包含 toml.hpp 的目录>。
+# toml++ 优先由 vcpkg/CMake package 提供。外部安装目录必须遵循标准布局：
+# <include-root>/toml++/toml.hpp。
 # 这里不记录开发机绝对路径，保证测试工程可以被其他机器和 CI 复现。
-set(YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR "" CACHE PATH
-    "包含 toml.hpp 的 toml++ 单头文件目录")
+set(YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR
+    "${PROJECT_SOURCE_DIR}/thirdparty/tomlplusplus/include" CACHE PATH
+    "toml++ 的 include 根目录（其下应有 toml++/toml.hpp）")
 find_package(tomlplusplus CONFIG QUIET)
-if(TARGET tomlplusplus::tomlplusplus)
-    target_link_libraries(ykcbct_manual_tests PRIVATE tomlplusplus::tomlplusplus)
-elseif(EXISTS "${YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR}/toml.hpp")
+if(EXISTS "${YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR}/toml++/toml.hpp")
     target_include_directories(ykcbct_manual_tests PRIVATE
         "${YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR}")
+elseif(TARGET tomlplusplus::tomlplusplus)
+    target_link_libraries(ykcbct_manual_tests PRIVATE tomlplusplus::tomlplusplus)
 else()
     message(FATAL_ERROR
         "BUILD_TESTS=ON 需要 toml++。请启用 vcpkg manifest，或设置 "
-        "YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR 指向包含 toml.hpp 的目录。")
+        "YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR 指向包含 toml++/toml.hpp 的 include 根目录。")
 endif()
 target_link_libraries(ykcbct_manual_tests PRIVATE
     CUDA::cudart CUDA::cufft OpenMP::OpenMP_CXX)

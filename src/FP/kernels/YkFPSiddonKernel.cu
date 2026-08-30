@@ -2,6 +2,7 @@
 #include "global/YkMacro.hpp"
 #include "global/YkKernelLaunchPolicy.hpp"
 #include <algorithm>
+#include <cuda/std/limits>
 
 #define AABB_LO(o, v)      ((o) - 0.5f * (v))
 #define AABB_HI(o, N, v)   ((o) + ((N) - 0.5f) * (v))
@@ -52,7 +53,7 @@ namespace YK {
                 const float z1 = AABB_HI(vol_origin.z, Nz, vox_z);
 
                 // [F2]
-                float tmin = 0.f, tmax = FLT_MAX;
+                float tmin = 0.f, tmax = cuda::std::numeric_limits<float>::max();
 
 #define SLAB(r, s, b0, b1)                                  \
     if (fabsf(r) > 1e-8f) {                                 \
@@ -168,7 +169,7 @@ namespace YK {
                 const float z0 = AABB_LO(vol_origin.z, vox_z);
                 const float z1 = AABB_HI(vol_origin.z, Nz, vox_z);
 
-                float tmin = 0.f, tmax = FLT_MAX;
+                float tmin = 0.f, tmax = cuda::std::numeric_limits<float>::max();
 
 #define SLAB(valid, rcp_r, s, b0, b1)                           \
     if (valid) {                                                 \

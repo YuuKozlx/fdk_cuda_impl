@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 
 #include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkCBCTParams.h"
 #include "global/YkMacro.hpp"
@@ -86,18 +87,25 @@ public:
         if (!desc.objectFromScanner.empty() && all_geometry_.empty()) {
             if (static_cast<int>(all_angles_.size()) != desc.scan.NAng)
                 return false;
-            const auto rad2deg = [](float radians) {
-                return radians * 180.f / CUDA_PI;
-            };
-            buildCircularConeGeometry(all_geometry_, all_angles_,
-                desc.scan.NAng, desc.scan.Nu, desc.scan.Nv,
-                desc.scan.du_mm, desc.scan.dv_mm,
-                desc.scan.SOD_mm, desc.scan.SDD_mm - desc.scan.SOD_mm,
-                f3(desc.scan.offsetU_mm, 0.f, desc.scan.offsetV_mm),
-                f3(rad2deg(desc.scan.tiltU_rad), rad2deg(desc.scan.tiltN_rad),
-                    rad2deg(desc.scan.tiltV_rad)),
-                f3(desc.scan.sourceOffsetX_mm, desc.scan.sourceOffsetY_mm,
-                    desc.scan.sourceOffsetZ_mm));
+            SCircularTrajectorySpec trajectory{};
+            trajectory.angles_rad = all_angles_;
+            trajectory.sid_mm = desc.scan.SOD_mm;
+            trajectory.sdd_mm = desc.scan.SDD_mm;
+            trajectory.source_offset_mm = make_float3(
+                desc.scan.sourceOffsetX_mm, desc.scan.sourceOffsetY_mm,
+                desc.scan.sourceOffsetZ_mm);
+            SFlatDetectorSpec detector{};
+            detector.channels = desc.scan.Nu;
+            detector.rows = desc.scan.Nv;
+            detector.channel_size_mm = desc.scan.du_mm;
+            detector.row_size_mm = desc.scan.dv_mm;
+            detector.pose.offset_unv_mm = make_float3(
+                desc.scan.offsetU_mm, 0.f, desc.scan.offsetV_mm);
+            detector.pose.tilt_u_rad = desc.scan.tiltU_rad;
+            detector.pose.tilt_v_rad = desc.scan.tiltV_rad;
+            detector.pose.tilt_n_rad = desc.scan.tiltN_rad;
+            if (!buildProjectionGeometry(trajectory, detector, all_geometry_))
+                return false;
         }
         if (!desc.objectFromScanner.empty()) {
             for (size_t i = 0; i < all_geometry_.size(); ++i) {

@@ -127,6 +127,78 @@ inline std::vector<float> makeBasic(const SReconstructionParams& p)
     return volume;
 }
 
+// 均匀球、均匀水圆柱和均匀方柱用于检查解析算法的定量尺度、边缘响应与
+// Z 向均匀性。fraction 均按重建体物理尺寸定义，避免测试参数改变后模体越界。
+inline std::vector<float> makeSphere(const SReconstructionParams& p,
+    float diameter_fraction = 0.65f, float value = 0.02f)
+{
+    std::vector<float> volume(static_cast<size_t>(p.volume.Nx) *
+        p.volume.Ny * p.volume.Nz, 0.f);
+    const float diameter = diameter_fraction * std::min({
+        p.volume.Nx * p.volume.voxelX_mm,
+        p.volume.Ny * p.volume.voxelY_mm,
+        p.volume.Nz * p.volume.voxelZ_mm});
+    const float radius2 = 0.25f * diameter * diameter;
+    for (int z = 0; z < p.volume.Nz; ++z)
+        for (int y = 0; y < p.volume.Ny; ++y)
+            for (int x = 0; x < p.volume.Nx; ++x) {
+                float px, py, pz;
+                voxelCenterMm(p, x, y, z, px, py, pz);
+                if (px * px + py * py + pz * pz <= radius2)
+                    volume[index(p, x, y, z)] = value;
+            }
+    return volume;
+}
+
+inline std::vector<float> makeWaterCylinder(const SReconstructionParams& p,
+    float diameter_fraction = 0.65f, float height_fraction = 0.80f,
+    float value = 0.02f)
+{
+    std::vector<float> volume(static_cast<size_t>(p.volume.Nx) *
+        p.volume.Ny * p.volume.Nz, 0.f);
+    const float diameter = diameter_fraction * std::min(
+        p.volume.Nx * p.volume.voxelX_mm,
+        p.volume.Ny * p.volume.voxelY_mm);
+    const float radius2 = 0.25f * diameter * diameter;
+    const float half_height = 0.5f * height_fraction *
+        p.volume.Nz * p.volume.voxelZ_mm;
+    for (int z = 0; z < p.volume.Nz; ++z)
+        for (int y = 0; y < p.volume.Ny; ++y)
+            for (int x = 0; x < p.volume.Nx; ++x) {
+                float px, py, pz;
+                voxelCenterMm(p, x, y, z, px, py, pz);
+                if (px * px + py * py <= radius2 &&
+                    std::fabs(pz) <= half_height)
+                    volume[index(p, x, y, z)] = value;
+            }
+    return volume;
+}
+
+// "square" 表示横断面为正方形、沿 Z 有限延伸的方柱，而不是无限长二维图形。
+inline std::vector<float> makeSquarePrism(const SReconstructionParams& p,
+    float side_fraction = 0.65f, float height_fraction = 0.80f,
+    float value = 0.02f)
+{
+    std::vector<float> volume(static_cast<size_t>(p.volume.Nx) *
+        p.volume.Ny * p.volume.Nz, 0.f);
+    const float half_side = 0.5f * side_fraction * std::min(
+        p.volume.Nx * p.volume.voxelX_mm,
+        p.volume.Ny * p.volume.voxelY_mm);
+    const float half_height = 0.5f * height_fraction *
+        p.volume.Nz * p.volume.voxelZ_mm;
+    for (int z = 0; z < p.volume.Nz; ++z)
+        for (int y = 0; y < p.volume.Ny; ++y)
+            for (int x = 0; x < p.volume.Nx; ++x) {
+                float px, py, pz;
+                voxelCenterMm(p, x, y, z, px, py, pz);
+                if (std::fabs(px) <= half_side &&
+                    std::fabs(py) <= half_side &&
+                    std::fabs(pz) <= half_height)
+                    volume[index(p, x, y, z)] = value;
+            }
+    return volume;
+}
+
 // 三轴方向箭头模体。形状规则与 gen_arrow_phantom_v2 一致：每根箭头由
 // 实心圆柱箭杆和实心圆锥箭头组成，分别指向 +X/+Y/+Z，尺寸按 X<Y<Z
 // 递增。MATLAB 原版的 uint8 标签 2/4/6 在这里映射为 0.02/0.04/0.06

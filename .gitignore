@@ -407,4 +407,18 @@ FodyWeavers.xsd
 
 #
 [Tt]hirdparty/
+# 项目内置的 toml++ 单头文件遵循 vcpkg 的标准 include 布局，需要纳入版本控制。
+!thirdparty/
+!thirdparty/tomlplusplus/
+!thirdparty/tomlplusplus/include/
+!thirdparty/tomlplusplus/include/toml++/
+!thirdparty/tomlplusplus/include/toml++/toml.hpp
 *.ncu-rep
+
+# 本地 Codex、构建、验证输出和临时分析文件。
+/.codex/
+/build-*/
+/tmp/
+/tmp_*.txt
+/test-configs/output/
+/out/

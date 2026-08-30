@@ -11,6 +11,7 @@
 #include "FP/YkFPGpuContext.hpp"
 #include "FP/kernels/YkFPLaunch.cuh"
 #include "FDK/YkFDKVecGeoDerived.hpp"
+#include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 #include "common/YkExecutionContext.hpp"
 #include "global/YkCudaTextureController.hpp"
 
@@ -47,6 +48,8 @@ inline bool isForwardTask(ETask task)
 inline bool isBackTask(ETask task)
 {
     return task == ETask::BP_Siddon_RayDriven || task == ETask::BP_Siddon_VoxDriven ||
+        task == ETask::BP_Siddon_VoxDriven_v2 ||
+        task == ETask::BP_Siddon_VoxDriven_v3 ||
         task == ETask::BP_Joseph || task == ETask::BP_Joseph_v2 ||
         task == ETask::BP_Joseph_v3 || task == ETask::BP_FDK ||
         task == ETask::BP_FDK_matched;
@@ -54,14 +57,23 @@ inline bool isBackTask(ETask task)
 
 inline void buildCircularViews(const SReconstructionParams& p, std::vector<SConeProjGeomVec>& views)
 {
-    const auto rad2deg = [](float r) { return r * 180.f / CUDA_PI; };
-    views.resize(p.scan.NAng);
-    buildCircularConeGeometry(views, p.scan.angles, p.scan.NAng,
-        p.scan.Nu, p.scan.Nv, p.scan.du_mm, p.scan.dv_mm, p.scan.sid_mm, p.scan.sdd_mm - p.scan.sid_mm,
-        f3(p.scan.offsetU_mm, 0.f, p.scan.offsetV_mm),
-        f3(rad2deg(p.scan.tiltU_rad), rad2deg(p.scan.tiltN_rad),
-           rad2deg(p.scan.tiltV_rad)),
-        f3(p.scan.sourceOffsetX_mm, p.scan.sourceOffsetY_mm, p.scan.sourceOffsetZ_mm));
+    SCircularTrajectorySpec trajectory{};
+    trajectory.angles_rad = p.scan.angles;
+    trajectory.sid_mm = p.scan.sid_mm;
+    trajectory.sdd_mm = p.scan.sdd_mm;
+    trajectory.source_offset_mm = make_float3(p.scan.sourceOffsetX_mm,
+        p.scan.sourceOffsetY_mm, p.scan.sourceOffsetZ_mm);
+    SFlatDetectorSpec detector{};
+    detector.channels = p.scan.Nu;
+    detector.rows = p.scan.Nv;
+    detector.channel_size_mm = p.scan.du_mm;
+    detector.row_size_mm = p.scan.dv_mm;
+    detector.pose.offset_unv_mm = make_float3(p.scan.offsetU_mm, 0.f,
+        p.scan.offsetV_mm);
+    detector.pose.tilt_u_rad = p.scan.tiltU_rad;
+    detector.pose.tilt_v_rad = p.scan.tiltV_rad;
+    detector.pose.tilt_n_rad = p.scan.tiltN_rad;
+    if (!buildProjectionGeometry(trajectory, detector, views)) views.clear();
 }
 
 // External geometry is immutable session data.  A regular FP/BP call may use
@@ -244,6 +256,20 @@ public:
         case ETask::BP_Siddon_VoxDriven:
             Bp::bp_siddon_voxel_launch(d_projection, d_volume, gpu_->geo.d_views_world(), vol,
                 batch.scan.Nu, batch.scan.Nv, na, accumulate, resources.stream());
+            break;
+        case ETask::BP_Siddon_VoxDriven_v2:
+            // V2 使用连续探测器坐标和双线性插值。
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModeLinear);
+            Bp::bp_siddon_voxel_v2_launch(gpu_->sinoTex.tex, d_volume,
+                gpu_->geo.d_views_world(), vol, batch.scan.Nu, batch.scan.Nv,
+                na, accumulate, resources.stream());
+            break;
+        case ETask::BP_Siddon_VoxDriven_v3:
+            // V3 取最近探测器像素，必须使用 Point 纹理。
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModePoint);
+            Bp::bp_siddon_voxel_v3_launch(gpu_->sinoTex.tex, d_volume,
+                gpu_->geo.d_views_world(), vol, batch.scan.Nu, batch.scan.Nv,
+                na, accumulate, resources.stream());
             break;
         case ETask::BP_Joseph: {
             gpu_->sinoTex = makeProjectionTexture(cudaFilterModePoint);

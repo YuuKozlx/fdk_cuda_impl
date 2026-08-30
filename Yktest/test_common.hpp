@@ -15,6 +15,7 @@
 #include "common/YkProjectionOperators.hpp"
 #include <cmath>
 #include <common/YkVecGeo.hpp>
+#include <YKCBCT/geometry/YkModularGeometryBuilder.hpp>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <global/YkCBCTParams.h>
@@ -154,14 +155,37 @@ struct SimGeoConfig {
 YK_INLINE std::vector<SConeProjGeomVec>
 build_sim_geometry(const SimGeoConfig& cfg)
 {
+    using namespace YK;
+    SCircularTrajectorySpec trajectory{};
+    trajectory.angles_rad = cfg.angle_list;
+    trajectory.sid_mm = cfg.SID;
+    trajectory.sdd_mm = cfg.SID + cfg.IDD;
+    SFlatDetectorSpec detector{};
+    detector.channels = cfg.Nu;
+    detector.rows = cfg.Nv;
+    detector.channel_size_mm = cfg.du;
+    detector.row_size_mm = cfg.dv;
+    std::vector<SViewGeometryCalibration> calibration(cfg.angle_list.size());
+    const auto valueAt = [](const std::vector<float3>& values, size_t i) {
+        return values.size() == 1 ? values.front() : values[i];
+    };
+    if ((cfg.src_offsets.size() != 1 && cfg.src_offsets.size() != cfg.angle_list.size()) ||
+        (cfg.det_offsets.size() != 1 && cfg.det_offsets.size() != cfg.angle_list.size()) ||
+        (cfg.detTilt_degs.size() != 1 && cfg.detTilt_degs.size() != cfg.angle_list.size()))
+        return {};
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+    for (size_t i = 0; i < calibration.size(); ++i) {
+        calibration[i].source_offset_mm = valueAt(cfg.src_offsets, i);
+        calibration[i].detector_pose.offset_unv_mm = valueAt(cfg.det_offsets, i);
+        const float3 tilt = valueAt(cfg.detTilt_degs, i);
+        calibration[i].detector_pose.tilt_u_rad = tilt.x * kDegToRad;
+        calibration[i].detector_pose.tilt_n_rad = tilt.y * kDegToRad;
+        calibration[i].detector_pose.tilt_v_rad = tilt.z * kDegToRad;
+    }
     std::vector<SConeProjGeomVec> h_views;
-    build_circular_vec_geometry_perframe(
-        h_views, cfg.angle_list,
-        cfg.Na, cfg.Nu, cfg.Nv,
-        cfg.du, cfg.dv,
-        cfg.SID, cfg.IDD,
-        cfg.det_offsets, cfg.src_offsets,
-        cfg.detTilt_degs);
+    if (cfg.Na != static_cast<int>(cfg.angle_list.size()) ||
+        !buildCalibratedCircularProjectionGeometry(
+            trajectory, detector, calibration, h_views)) return {};
     return h_views;
 }
 
