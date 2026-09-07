@@ -46,9 +46,12 @@ namespace YK {
             const size_t view_elems = (size_t)Nu * Nv;
 
             Mem::MemoryController mc;
-            chunk_in = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
-            chunk_pw = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
-            chunk_flt = mc.allocateDevice3D<float>(view_elems, Kchunk, 1, deviceId);
+            // DeviceLinearBuffer3D 的第一维仍是 int；这里显式转换，避免
+            // size_t 隐式截断警告。Nu*Nv 受 CUDA 纹理尺寸约束，不会超出 int。
+            const int view_elems_i = static_cast<int>(view_elems);
+            chunk_in = mc.allocateDevice3D<float>(view_elems_i, Kchunk, 1, deviceId);
+            chunk_pw = mc.allocateDevice3D<float>(view_elems_i, Kchunk, 1, deviceId);
+            chunk_flt = mc.allocateDevice3D<float>(view_elems_i, Kchunk, 1, deviceId);
 
             Mem::PodDataController dc;
             tex_objs = dc.allocate<cudaTextureObject_t>(Kchunk, deviceId);

@@ -5,6 +5,7 @@
 #include "global/YkGlobals.h"
 #include "global/YkKernelLaunchPolicy.hpp"
 #include "YKCBCT/geometry/YkGeometryBuilderTypes.hpp"
+#include "YKCBCT/geometry/YkProjectionGeometry.hpp"
 
 namespace YK { namespace Helical { namespace Wfbp {
 

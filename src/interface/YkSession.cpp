@@ -5,15 +5,21 @@
 #include <cuda_runtime.h>
 
 #include "FDK/YkFdkPipeline.hpp"
+#include "FDK/XFDK/YkXfdkPipeline.hpp"
+#include "FDK/CFDK/YkCurveFilteredFdkPipeline.hpp"
+#include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
 #include "Iter/YkAlgebraicLegacyAdapters.hpp"
 #include "Iter/YkAlgebraicSartSirtAdapters.hpp"
 #include "Iter/YkCglsLegacyAdapters.hpp"
+#include "Iter/YkPwlsReconstructor.hpp"
+#include "Iter/YkTigreGradientReconstructorEx.hpp"
 #include "common/YkExecutionContext.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkCBCTParams.h"
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 #include "global/YkMacro.hpp"
+#include "global/YkMem3d.hpp"
 
 namespace YK {
 namespace {
@@ -47,6 +53,10 @@ public:
         desc_ = desc;
         device_ = desc.gpu[0];
         if (!geometry_.initialize(desc) || !resources_.initialize(device_)) return false;
+        if (!desc.cyl_geometry.empty() && static_cast<int>(desc.cyl_geometry.size()) != desc.scan.NAng) {
+            YK_LOGE("[Session] cyl_geometry 数量必须等于 NAng。");
+            return false;
+        }
         params_ = geometry_.base();
         params_.scan.angles = geometry_.allAngles();
         if (geometry_.hasExternalGeometry()) {
@@ -74,6 +84,70 @@ public:
                 ? fdk_.prepareWithAngles(params_, params_.scan.angles, kMaxChunkAng,
                     resources_.stream(), device_)
                 : fdk_.prepare(params_, kMaxChunkAng, resources_.stream(), device_);
+            break;
+        case EPipeline::XFDK:
+            if (!geometry_.hasExternalGeometry()) break;
+            params_.reconstruction.filter = makeFilterDesc(desc.algorithm.fdk);
+            ok = xfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
+            break;
+        case EPipeline::CFDK:
+            if (!geometry_.hasExternalGeometry()) break;
+            params_.reconstruction.filter = makeFilterDesc(desc.algorithm.fdk);
+            ok = cfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
+            break;
+        case EPipeline::CylAnalyticFDK: {
+            if (desc.cyl_geometry.empty()) break;
+            CylFpBp::Analytic::ReconstructionConfig config{};
+            config.source_to_detector_mm = desc.scan.SDD_mm;
+            ok = cyl_fdk_.prepare(geometry_.volumeGeometry(), desc.scan.Nu,
+                desc.scan.Nv, desc.cyl_geometry, config,
+                makeFilterDesc(desc.algorithm.fdk), resources_.stream(), device_);
+            break;
+        }
+        case EPipeline::PWLS: {
+            if (!hasCompleteAngles_() || !geometry_.hasExternalGeometry()) break;
+            Iter::PwlsConfig c{};
+            c.iterations = desc.algorithm.iterative.iterations;
+            c.subset_count = std::max(1, desc.algorithm.iterative.subsets);
+            c.relaxation = desc.algorithm.iterative.relaxation;
+            c.regularizer = static_cast<Iter::EPwlsRegularizer>(desc.algorithm.pwls.regularizer);
+            c.regularization = desc.algorithm.pwls.regularization;
+            c.huber_delta = desc.algorithm.pwls.huber_delta;
+            c.epsilon = desc.algorithm.pwls.epsilon;
+            c.lower_bound = desc.algorithm.pwls.lower_bound;
+            c.upper_bound = desc.algorithm.pwls.upper_bound;
+            c.fp_task = desc.algorithm.forward_projector;
+            c.bp_task = desc.algorithm.back_projector;
+            ok = pwls_.prepare(params_, geometry_.allGeometry(), c,
+                resources_.stream(), device_);
+            break;
+        }
+        case EPipeline::TigreGradient: {
+            if (!hasCompleteAngles_() || !geometry_.hasExternalGeometry()) break;
+            Iter::TigreGradientConfig c{};
+            c.algorithm = static_cast<Iter::ETigreGradientAlgorithm>(desc.algorithm.tigre.method);
+            c.iterations = desc.algorithm.iterative.iterations;
+            c.block_size = desc.algorithm.tigre.block_size;
+            c.lambda = desc.algorithm.iterative.relaxation;
+            c.lambda_reduction = desc.algorithm.tigre.lambda_reduction;
+            c.relaxation_mode = desc.algorithm.tigre.nesterov_relaxation
+                ? Iter::ETigreRelaxationMode::Nesterov : Iter::ETigreRelaxationMode::Scalar;
+            c.initialization = desc.algorithm.tigre.fdk_initialization
+                ? Iter::ETigreInitialization::Fdk : Iter::ETigreInitialization::Zero;
+            c.non_negative = desc.algorithm.tigre.non_negative;
+            c.tv_iterations = desc.algorithm.tigre.tv_iterations;
+            c.alpha = desc.algorithm.tigre.tv_alpha;
+            c.alpha_reduction = desc.algorithm.tigre.tv_alpha_reduction;
+            c.maximum_update_ratio = desc.algorithm.tigre.maximum_update_ratio;
+            c.max_l2_error = desc.algorithm.tigre.max_l2_error;
+            c.fp_task = desc.algorithm.forward_projector;
+            c.bp_task = desc.algorithm.back_projector;
+            ok = tigre_.prepare(params_, geometry_.allGeometry(), c,
+                resources_.stream(), device_);
+            break;
+        }
+        case EPipeline::WFBP:
+            YK_LOGE("[Session] WFBP 需要螺旋系统参数，当前公共 Session 尚未提供该请求类型。");
             break;
         case EPipeline::ForwardProjection:
             forward_ = makeForwardOperator(desc.algorithm.forward_projector);
@@ -130,26 +204,36 @@ public:
         }
         switch (desc_.algorithm.pipeline) {
         case EPipeline::FDK: return executeFdk_(r);
+        case EPipeline::XFDK: return executeXfdk_(r);
+        case EPipeline::CFDK: return executeCfdk_(r);
+        case EPipeline::CylAnalyticFDK: return executeCylFdk_(r);
         case EPipeline::ForwardProjection: return executeFp_(r);
         case EPipeline::SIRT:
         case EPipeline::OSSART:
         case EPipeline::CGLS: return executeIterative_(r);
+        case EPipeline::PWLS:
+        case EPipeline::TigreGradient: return executeIterative_(r);
+        case EPipeline::WFBP: return false;
         }
         return false;
     }
 
     void reset() override
     {
-        fdk_.reset(); sirt_.reset(); ossart_.reset();
+        fdk_.reset(); sirt_.reset(); ossart_.reset(); tigre_.reset();
     }
 
     void release() override
     {
         fdk_.release();
+        xfdk_.release();
+        cfdk_.release();
+        cyl_fdk_.release();
         if (forward_) forward_->release();
         if (backward_) backward_->release();
         forward_.reset(); backward_.reset();
         sirt_.release(); ossart_.release(); cgls_.release();
+        pwls_.release(); tigre_.release();
         freeScratch_();
         resources_.release();
         params_ = {};
@@ -202,6 +286,45 @@ private:
             YK_CUDA_CHECK(cudaMemcpyAsync(r.volume.data, d_out, volumeBytes_(),
                 cudaMemcpyDeviceToHost, resources_.stream()));
             YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+        }
+        return true;
+    }
+
+    // xFDK/C-FDK 的重排跨多个视图取样，不能复用普通 FDK 的分批 Execute
+    // 契约。公共 Session 因而只接受完整的 device 投影序列，并在返回前等待
+    // 本次重建完成，避免调用者读到仍在 stream 中累加的体数据。
+    bool executeXfdk_(const ExecuteRequest& r)
+    {
+        if (!hasFullDeviceReconstructionInput_(r, "XFDK")) return false;
+        if (!xfdk_.reconstruct(r.projection.data, r.volume.data, r.clear_output)) return false;
+        YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+        return true;
+    }
+
+    bool executeCfdk_(const ExecuteRequest& r)
+    {
+        if (!hasFullDeviceReconstructionInput_(r, "CFDK")) return false;
+        if (!cfdk_.reconstruct(r.projection.data, r.volume.data, r.clear_output)) return false;
+        YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+        return true;
+    }
+
+    bool executeCylFdk_(const ExecuteRequest& r)
+    {
+        if (!hasFullDeviceReconstructionInput_(r, "CylAnalyticFDK")) return false;
+        if (!cyl_fdk_.reconstruct(r.projection.data, r.volume.data, r.clear_output)) return false;
+        YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+        return true;
+    }
+
+    bool hasFullDeviceReconstructionInput_(const ExecuteRequest& r,
+        const char* algorithm) const
+    {
+        if (r.K != params_.scan.NAng || !r.projection.data || !r.volume.data ||
+            r.projection.location != EMemoryLocation::Device ||
+            r.volume.location != EMemoryLocation::Device) {
+            YK_LOGE("[Session] {} requires complete device projection and device volume buffers.", algorithm);
+            return false;
         }
         return true;
     }
@@ -269,6 +392,12 @@ private:
                 YK_LOGW("[Session] CGLS iteration_count is fixed at initialize time.");
             ok = cgls_.run(r.projection.data, r.volume.data, params_, resources_.stream());
             break;
+        case EPipeline::PWLS:
+            ok = pwls_.reconstruct(r.projection.data, r.volume.data);
+            break;
+        case EPipeline::TigreGradient:
+            ok = tigre_.reconstruct(r.projection.data, r.volume.data);
+            break;
         default: return false;
         }
         if (!ok) return false;
@@ -281,8 +410,10 @@ private:
     float* ensureVolumeScratch_()
     {
         if (!d_volume_scratch_)
-            YK_CUDA_CHECK(cudaMalloc(&d_volume_scratch_, volumeBytes_()));
-        return d_volume_scratch_;
+            d_volume_scratch_ = memory_.allocateDevice3D<float>(
+                params_.volume.Nx, params_.volume.Ny, params_.volume.Nz,
+                device_, false);
+        return d_volume_scratch_.data();
     }
     float* uploadVolume_(const float* host)
     {
@@ -295,17 +426,17 @@ private:
     {
         const size_t needed = static_cast<size_t>(k) * params_.scan.Nu * params_.scan.Nv * sizeof(float);
         if (needed > projection_scratch_bytes_) {
-            if (d_projection_scratch_) cudaFree(d_projection_scratch_);
-            YK_CUDA_CHECK(cudaMalloc(&d_projection_scratch_, needed));
+            d_projection_scratch_ = memory_.allocateDevice3D<float>(
+                params_.scan.Nu, params_.scan.Nv, k, device_, false);
             projection_scratch_bytes_ = needed;
         }
-        return d_projection_scratch_;
+        return d_projection_scratch_.data();
     }
     size_t volumeBytes_() const { return static_cast<size_t>(params_.volume.Nx) * params_.volume.Ny * params_.volume.Nz * sizeof(float); }
     void freeScratch_()
     {
-        if (d_volume_scratch_) { cudaFree(d_volume_scratch_); d_volume_scratch_ = nullptr; }
-        if (d_projection_scratch_) { cudaFree(d_projection_scratch_); d_projection_scratch_ = nullptr; }
+        d_volume_scratch_ = {};
+        d_projection_scratch_ = {};
         projection_scratch_bytes_ = 0;
     }
 
@@ -321,8 +452,14 @@ private:
     SIRT sirt_;
     OSSART ossart_;
     CGLS cgls_;
-    float* d_volume_scratch_ = nullptr;
-    float* d_projection_scratch_ = nullptr;
+    Iter::PwlsReconstructor pwls_;
+    Iter::TigreGradientReconstructorEx tigre_;
+    Fdk::XfdkPipeline xfdk_;
+    Fdk::CurveFilteredFdkPipeline cfdk_;
+    CylFpBp::Analytic::Reconstruction cyl_fdk_;
+    Mem::MemoryController memory_{};
+    Mem::DeviceLinearBuffer3D<float> d_volume_scratch_{};
+    Mem::DeviceLinearBuffer3D<float> d_projection_scratch_{};
     size_t projection_scratch_bytes_ = 0;
 };
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 #include "Heli/analytic/wfbp/YkWfbpProcessors.hpp"
 #include "global/YkLog.h"
@@ -19,6 +20,34 @@ public:
     Pipeline() = default;
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
+
+    // 公共逐视图几何入口。wFBP 的重排仍由 FreeCT 负责，但角度、源点
+    // 高度、SID/SDD 和探测器采样间隔全部从 geometry 派生，调用方不再
+    // 维护第二份 angles/FreeCT 几何。该入口只接受规则螺旋；不规则校准
+    // 几何会在 validate_ 中明确拒绝。
+    bool prepare(const SVolGeom& volume, int channels, int rows,
+        const std::vector<SConeProjGeomVec>& geometry,
+        const Config& config, cudaStream_t stream, int device_id = 0)
+    {
+        InputGeometry input{};
+        float unused_radius = 0.f;
+        if (!derivePublicGeometry_(geometry, channels, rows, input,
+                unused_radius)) return false;
+        return prepare(input, volume, config, stream, device_id);
+    }
+
+    bool prepare(const SVolGeom& volume, int channels, int rows,
+        const std::vector<SCylConeProjGeomVec>& geometry,
+        Config config, cudaStream_t stream, int device_id = 0)
+    {
+        InputGeometry input{};
+        float radius = 0.f;
+        if (!derivePublicGeometry_(geometry, channels, rows, input, radius))
+            return false;
+        config.input_detector = EInputDetector::CylindricalArc;
+        config.arc_curvature_radius_mm = radius;
+        return prepare(input, volume, config, stream, device_id);
+    }
 
     bool prepare(const InputGeometry& input, const SVolGeom& volume,
         const Config& config,
@@ -116,6 +145,76 @@ public:
     const float* filteredData() const { return d_filtered_.data(); }
 
 private:
+    template <typename GeometryView>
+    static bool derivePublicGeometry_(const std::vector<GeometryView>& views,
+        int channels, int rows, InputGeometry& out, float& curvature_radius)
+    {
+        if (views.size() < 4 || channels < 2 || rows < 2) return false;
+        const auto finite = [](float v) { return std::isfinite(v); };
+        out.channels = channels;
+        out.rows = rows;
+        out.trajectory.angles_rad.reserve(views.size());
+        const auto xyz = [](const float4& v) { return make_float3(v.x, v.y, v.z); };
+        const auto norm = [](float3 v) { return std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z); };
+        const auto sub = [](float3 a, float3 b) { return make_float3(a.x-b.x,a.y-b.y,a.z-b.z); };
+        for (size_t i = 0; i < views.size(); ++i) {
+            const auto& g = views[i];
+            float4 source4{}, center4{}, u4{}, v4{};
+            float angle = 0.f;
+            if constexpr (std::is_same_v<GeometryView, SCylConeProjGeomVec>) {
+                source4 = g.source; center4 = g.detectorCenter;
+                u4 = g.detectorU; v4 = g.detectorV; angle = cylViewAngle(g);
+                SCylProjectionFrame frame{};
+                if (!deriveCylProjectionFrame(g, channels, rows, frame)) return false;
+                center4 = make_float4(frame.detectorCenter.x, frame.detectorCenter.y,
+                    frame.detectorCenter.z, 0.f);
+            } else {
+                source4 = g.src; center4 = g.detS;
+                u4 = g.detU; v4 = g.detV; angle = g.angle.x;
+                SProjectionFrame frame{};
+                if (!deriveProjectionFrame(g, channels, rows, frame)) return false;
+                center4 = make_float4(frame.detectorCenter.x, frame.detectorCenter.y,
+                    frame.detectorCenter.z, 0.f);
+            }
+            if (!finite(angle) || !finite(source4.x) || !finite(center4.x)) return false;
+            out.trajectory.angles_rad.push_back(angle);
+            const float sid = norm(xyz(source4));
+            const float sdd = norm(sub(xyz(center4), xyz(source4)));
+            if (i == 0) {
+                if (!(sid > 0.f && sdd > sid)) return false;
+                out.trajectory.sid_mm = sid;
+                out.trajectory.sdd_mm = sdd;
+                out.trajectory.start_z_mm = source4.z;
+                out.channel_spacing_mm = norm(xyz(u4));
+                out.row_spacing_mm = norm(xyz(v4));
+                if (!(out.channel_spacing_mm > 0.f && out.row_spacing_mm > 0.f)) return false;
+                if constexpr (std::is_same_v<GeometryView, SCylConeProjGeomVec>)
+                    curvature_radius = cylDetectorRadius(g);
+            }
+            else {
+                if (std::fabs(sid - out.trajectory.sid_mm) > 1e-3f ||
+                    std::fabs(sdd - out.trajectory.sdd_mm) > 1e-3f) return false;
+            }
+        }
+        // 视图数量和角步长是逐视图 geometry 的唯一真源；views_per_turn
+        // 仅作为 FreeCT 的规则采样元数据派生出来。
+        const float step = out.trajectory.angles_rad[1] - out.trajectory.angles_rad[0];
+        if (!(step > 0.f) || !std::isfinite(step)) return false;
+        const int vpt = static_cast<int>(std::llround(2.0 * CUDA_PI / step));
+        if (vpt < 4 || std::fabs(step - 2.f * CUDA_PI / vpt) > 1e-4f) return false;
+        out.views_per_turn = vpt;
+        const auto sourceZ = [](const GeometryView& g) {
+            if constexpr (std::is_same_v<GeometryView, SCylConeProjGeomVec>)
+                return g.source.z;
+            else return g.src.z;
+        };
+        out.trajectory.pitch_mm_per_turn = (sourceZ(views.back()) -
+            sourceZ(views.front())) * static_cast<float>(vpt) /
+            static_cast<float>(views.size() - 1);
+        out.detector_pose = {};
+        return out.trajectory.pitch_mm_per_turn > 0.f;
+    }
+
     static int phiSpotCount_(EFocalSpotMode mode)
     {
         return mode == EFocalSpotMode::Phi || mode == EFocalSpotMode::PhiAndZ ? 2 : 1;

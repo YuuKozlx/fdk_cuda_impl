@@ -58,12 +58,15 @@ namespace YK {
                 policy_ = cfg_.policy;
                 desc_ = cfg_.desc;
 
-                YK_CUDA_CHECK(cudaMalloc(&d_startu_, static_cast<size_t>(K_) * sizeof(int)));
-                YK_CUDA_CHECK(cudaMalloc(&d_padded_,
-                    static_cast<size_t>(K_) * Nv_ * paddedN_ * sizeof(float)));
-                YK_CUDA_CHECK(cudaMalloc(&d_weights_, static_cast<size_t>(n_cmplx_) * sizeof(float)));
-                YK_CUDA_CHECK(cudaMalloc(&d_complex_buf_,
-                    static_cast<size_t>(K_) * Nv_ * n_cmplx_ * sizeof(cufftComplex)));
+                YK_CUDA_CHECK(cudaGetDevice(&device_id_));
+                d_startu_.alloc(K_, device_id_);
+                d_padded_.alloc(K_ * Nv_ * paddedN_, device_id_);
+                d_weights_.alloc(n_cmplx_, device_id_);
+                d_complex_buf_.alloc(K_ * Nv_ * n_cmplx_, device_id_);
+                if (!d_startu_ || !d_padded_ || !d_weights_ || !d_complex_buf_) {
+                    release();
+                    return false;
+                }
                 host_startu_ = memory_.allocatePinnedCpu3D<int>(K_, 1, 1);
                 YK_CUDA_CHECK(cudaEventCreateWithFlags(
                     &startu_upload_done_, cudaEventDisableTiming));
@@ -100,7 +103,7 @@ namespace YK {
                     host_startu_.data()[i] = detail::fp_computeStartU(
                         Nu_, paddedN_, context.h_gv[i].offsetU_pix);
                 }
-                YK_CUDA_CHECK(cudaMemcpyAsync(d_startu_, host_startu_.data(),
+                YK_CUDA_CHECK(cudaMemcpyAsync(d_startu_.data(), host_startu_.data(),
                     static_cast<size_t>(current_K_) * sizeof(int),
                     cudaMemcpyHostToDevice, stream_));
                 YK_CUDA_CHECK(cudaEventRecord(startu_upload_done_, stream_));
@@ -109,11 +112,11 @@ namespace YK {
 
                 ensureWeights_();
                 if (!weights_ready_) return false;
-                detail::fp_launchPad(d_input, d_padded_, d_startu_, Nu_, Nv_, paddedN_,
+                detail::fp_launchPad(d_input, d_padded_.data(), d_startu_.data(), Nu_, Nv_, paddedN_,
                     current_K_, policy_, stream_);
-                detail::fp_launchFilter(d_padded_, d_complex_buf_, d_weights_, n_cmplx_,
+                detail::fp_launchFilter(d_padded_.data(), d_complex_buf_.data(), d_weights_.data(), n_cmplx_,
                     paddedN_, current_K_, Nv_, fft_batch_, stream_);
-                detail::fp_launchCrop(d_padded_, d_output, d_startu_, Nu_, Nv_, paddedN_,
+                detail::fp_launchCrop(d_padded_.data(), d_output, d_startu_.data(), Nu_, Nv_, paddedN_,
                     current_K_, policy_, stream_);
                 return true;
             }
@@ -126,10 +129,10 @@ namespace YK {
                 fft_batch_.release();
                 kernel_fft_.release();
 
-                if (d_startu_) { cudaFree(d_startu_);      d_startu_ = nullptr; }
-                if (d_padded_) { cudaFree(d_padded_);      d_padded_ = nullptr; }
-                if (d_weights_) { cudaFree(d_weights_);     d_weights_ = nullptr; }
-                if (d_complex_buf_) { cudaFree(d_complex_buf_); d_complex_buf_ = nullptr; }
+                d_startu_ = {};
+                d_padded_ = {};
+                d_weights_ = {};
+                d_complex_buf_ = {};
 
                 host_startu_ = {};
                 if (startu_upload_done_) {
@@ -139,6 +142,7 @@ namespace YK {
                 startu_upload_recorded_ = false;
 
                 Nu_ = Nv_ = K_ = paddedN_ = n_cmplx_ = 0;
+                device_id_ = 0;
                 du_real_ = 1.0f;
                 current_K_ = 0;
                 stream_ = 0;
@@ -180,6 +184,7 @@ namespace YK {
             int          current_K_ = 0;
             int          paddedN_ = 0;
             int          n_cmplx_ = 0;
+            int          device_id_ = 0;
             float        du_real_ = 1.0f;
             cudaStream_t stream_ = 0;
 
@@ -187,10 +192,10 @@ namespace YK {
             SFilterKernelDesc   desc_ = {};
 
             // GPU buffers
-            int* d_startu_ = nullptr;  // [K_]
-            float* d_padded_ = nullptr;  // [K_*Nv_*paddedN_]
-            float* d_weights_ = nullptr;  // [n_cmplx_]
-            cufftComplex* d_complex_buf_ = nullptr;  // [K_*Nv_*n_cmplx_]
+            Mem::DeviceLinearBuffer<int> d_startu_{};  // [K_]
+            Mem::DeviceLinearBuffer<float> d_padded_{};  // [K_*Nv_*paddedN_]
+            Mem::DeviceLinearBuffer<float> d_weights_{};  // [n_cmplx_]
+            Mem::DeviceLinearBuffer<cufftComplex> d_complex_buf_{};  // [K_*Nv_*n_cmplx_]
 
             CudaFFT         fft_batch_;
             YK::Filter::CreateFilterKernelFromFFT kernel_fft_;
@@ -220,7 +225,7 @@ namespace YK {
                 if (weights_ready_ && !weights_dirty_) return;
 
                 kernel_fft_.prepare(paddedN_, stream_);
-                kernel_fft_.build_weights(d_weights_, desc_, du_real_, /*bake_invN=*/true);
+                kernel_fft_.build_weights(d_weights_.data(), desc_, du_real_, /*bake_invN=*/true);
 
                 YK_LOGI("weights built (lazy): source={} kind={} cutoff={:.3f} "
                     "gain={:.3f} dc0={} paddedN={}",

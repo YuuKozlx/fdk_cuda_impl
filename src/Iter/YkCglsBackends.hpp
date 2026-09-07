@@ -233,17 +233,17 @@ namespace YK {
             const size_t sino_n = (size_t)params.scan.NAng * params.scan.Nu * params.scan.Nv;
 
             // r = b - Ax（残差，正弦图空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_r_, sino_n * sizeof(float)));
+            d_r_.allocate(sino_n, deviceId);
             // p = A^T r（搜索方向，体积空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_p_, vol_n * sizeof(float)));
+            d_p_.allocate(vol_n, deviceId);
             // q = A p（正弦图空间）
-            YK_CUDA_CHECK(cudaMalloc(&d_q_, sino_n * sizeof(float)));
+            d_q_.allocate(sino_n, deviceId);
             // s = A^T r（体积空间，临时）
-            YK_CUDA_CHECK(cudaMalloc(&d_s_, vol_n * sizeof(float)));
+            d_s_.allocate(vol_n, deviceId);
             // 上一次 x 的备份（用于发散时回退）
-            YK_CUDA_CHECK(cudaMalloc(&d_x_prev_, vol_n * sizeof(float)));
+            d_x_prev_.allocate(vol_n, deviceId);
             // 正投影临时缓冲
-            YK_CUDA_CHECK(cudaMalloc(&d_ax_, sino_n * sizeof(float)));
+            d_ax_.allocate(sino_n, deviceId);
 
             if (!fp_.init(params, h_views_, cfg.fp_task, deviceId, stream) ||
                 !bp_.init(params, h_views_, cfg.bp_task, deviceId, stream)) {
@@ -386,12 +386,12 @@ namespace YK {
 
         void release()
         {
-            if (d_r_) { cudaFree(d_r_);      d_r_ = nullptr; }
-            if (d_p_) { cudaFree(d_p_);      d_p_ = nullptr; }
-            if (d_q_) { cudaFree(d_q_);      d_q_ = nullptr; }
-            if (d_s_) { cudaFree(d_s_);      d_s_ = nullptr; }
-            if (d_x_prev_) { cudaFree(d_x_prev_); d_x_prev_ = nullptr; }
-            if (d_ax_) { cudaFree(d_ax_);     d_ax_ = nullptr; }
+            d_r_.reset();
+            d_p_.reset();
+            d_q_.reset();
+            d_s_.reset();
+            d_x_prev_.reset();
+            d_ax_.reset();
             h_views_.clear();
             fp_.release();
             bp_.release();
@@ -504,12 +504,12 @@ namespace YK {
         ForwardOperatorAdapter fp_;
         BackOperatorAdapter bp_;
 
-        float* d_r_ = nullptr;   // 残差（正弦图空间）
-        float* d_p_ = nullptr;   // 搜索方向（体积空间）
-        float* d_q_ = nullptr;   // A*p（正弦图空间）
-        float* d_s_ = nullptr;   // A^T*r（体积空间）
-        float* d_x_prev_ = nullptr;   // x 备份
-        float* d_ax_ = nullptr;   // 正投影临时缓冲
+        DeviceWorkspaceF32 d_r_;   // 残差（正弦图空间）
+        DeviceWorkspaceF32 d_p_;   // 搜索方向（体积空间）
+        DeviceWorkspaceF32 d_q_;   // A*p（正弦图空间）
+        DeviceWorkspaceF32 d_s_;   // A^T*r（体积空间）
+        DeviceWorkspaceF32 d_x_prev_;   // x 备份
+        DeviceWorkspaceF32 d_ax_;   // 正投影临时缓冲
         Iter::IterativeConvergenceStatistics statistics_{};
     };
 

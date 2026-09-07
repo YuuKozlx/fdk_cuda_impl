@@ -1,5 +1,6 @@
 ﻿// YkIterKernels.cuh
 #include "YkIterLaunch.cuh"
+#include "common/YkDeviceWorkspace.hpp"
 #include <cuda_runtime.h>
 #include "YkArith.cuh"
 #include <global/YkMacro.hpp>
@@ -407,28 +408,22 @@ namespace YK
             const int grid = (int)std::min(
                 (size_t)max_blocks, (n + block - 1) / block);
 
-            float* d_block = nullptr;
-            YK_CUDA_CHECK(cudaMalloc(&d_block, grid * sizeof(float)));
+            // reduction 的中间结果也走统一工作区，避免异常路径泄漏。
+            DeviceWorkspaceF32 d_block;
+            int device_id = 0;
+            YK_CUDA_CHECK(cudaGetDevice(&device_id));
+            d_block.allocate(grid, device_id);
 
-            // block 内 reduce kernel，无法用 elemwise 实现，保留原始 kernel
-            auto dot_kernel = [] __device__(
-                const float* a, const float* b,
-                float* block_results, size_t n)
-            {
-                // 不能直接用 lambda 作 __global__，此处用独立 kernel
-            };
-
-            // 实际 kernel 定义需放在文件作用域
+            // block 内 reduce kernel，使用文件作用域的专用 kernel。
             const int warps_per_block = (block + 31) / 32;
             dot_reduce_kernel << <grid, block, warps_per_block * sizeof(float), stream >> > (
-                a, b, d_block, n);
+                a, b, d_block.data(), n);
             YK_CUDA_KERNEL_CHECK();
 
             std::vector<float> h_block(grid);
-            YK_CUDA_CHECK(cudaMemcpyAsync(h_block.data(), d_block,
+            YK_CUDA_CHECK(cudaMemcpyAsync(h_block.data(), d_block.data(),
                 grid * sizeof(float), cudaMemcpyDeviceToHost, stream));
             YK_CUDA_CHECK(cudaStreamSynchronize(stream));
-            cudaFree(d_block);
 
             float sum = 0.f;
             for (int i = 0; i < grid; ++i)

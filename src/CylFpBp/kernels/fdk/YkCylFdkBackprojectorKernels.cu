@@ -28,7 +28,28 @@ __global__ void cyl_fdk_preweight_kernel(const float* input, float* output,
         const float cosine = cosf(gamma);
         const float cone = view.radius_mm /
             sqrtf(fmaxf(view.radius_mm * view.radius_mm + q * q, 1e-20f));
-        output[index] = input[index] * cosine * cone * view.dtheta;
+        float parker = 1.f;
+        if (view.parker_enabled && view.parker_redundancy_half_rad > 1e-7f) {
+            const float beta = view.parker_beta_rad;
+            const float delta = view.parker_redundancy_half_rad;
+            const float rise = 2.f * (delta - gamma);
+            const float fall_start = CUDA_PI - 2.f * gamma;
+            const float fall = 2.f * (delta + gamma);
+            if (beta < rise) {
+                const float u = fminf(1.f, fmaxf(0.f, beta / fmaxf(rise, 1e-7f)));
+                parker = sinf(0.5f * CUDA_PI * u) * sinf(0.5f * CUDA_PI * u);
+            }
+            else if (beta > fall_start) {
+                const float u = fminf(1.f, fmaxf(0.f,
+                    (view.parker_scan_range_rad - beta) /
+                    fmaxf(fall, 1e-7f)));
+                parker = sinf(0.5f * CUDA_PI * u) * sinf(0.5f * CUDA_PI * u);
+            }
+        }
+        // 数值误差或极端扇角下，分段计算可能产生微小越界；Parker
+        // 权重物理上必须位于 [0,1]，这里统一钳制，避免负权重污染重建。
+        parker = fminf(1.f, fmaxf(0.f, parker));
+        output[index] = input[index] * cosine * cone * view.dtheta * parker;
     }
 }
 

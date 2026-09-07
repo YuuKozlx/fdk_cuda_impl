@@ -38,5 +38,9 @@ struct SCylFdkView {
     // 探测器数组中心相对于源点的轴向坐标；V offset 不为零时不能省略。
     float detector_axial_offset_mm = 0.f;
     float dtheta = 0.f; // 当前视图在角度积分中的梯度权重
+    float parker_beta_rad = 0.f;
+    float parker_scan_range_rad = 0.f;
+    float parker_redundancy_half_rad = 0.f;
+    unsigned int parker_enabled = 0;
 };
 } // namespace YK::CylFpBp::detail

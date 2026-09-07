@@ -65,22 +65,26 @@ public:
             unwrapped_angles.push_back(angle);
         }
         const float direction = unwrapped_angles[1] - unwrapped_angles[0];
+        const float direction_sign = direction >= 0.f ? 1.f : -1.f;
         for (size_t i = 2; i < unwrapped_angles.size(); ++i) {
             const float delta = unwrapped_angles[i] - unwrapped_angles[i - 1];
             if (delta * direction <= 0.f) return false;
         }
-        float angular_coverage = 0.f;
-        for (size_t i = 0; i < unwrapped_angles.size(); ++i) {
-            angular_coverage += i == 0
-                ? std::fabs(unwrapped_angles[1] - unwrapped_angles[0])
-                : (i + 1 == unwrapped_angles.size()
-                    ? std::fabs(unwrapped_angles[i] - unwrapped_angles[i - 1])
-                    : 0.5f * std::fabs(unwrapped_angles[i + 1] -
-                        unwrapped_angles[i - 1]));
-        }
-        // 当前没有 Parker 或其他冗余权重，只接受不重复终点的完整圆扫。
-        if (std::fabs(angular_coverage - two_pi) > 0.02f * two_pi)
+        // Parker 的扫描范围按“首个视图前半步 + 视图中心跨度 +
+        // 最后一个视图后半步”定义。只使用 last-first 会让最后一帧
+        // 的 beta 超出 scan_range，导致 fall 段被错误钳成零。
+        const float first_step = std::fabs(unwrapped_angles[1] -
+            unwrapped_angles[0]);
+        const float last_step = std::fabs(unwrapped_angles.back() -
+            unwrapped_angles[unwrapped_angles.size() - 2]);
+        const float angular_coverage = std::fabs(unwrapped_angles.back() -
+            unwrapped_angles.front()) + 0.5f * (first_step + last_step);
+        // Cyl Parker 仅对规则扇角圆扫有定义。完整圆扫不加权；短扫必须
+        // 覆盖 π+2Γ，否则边界数据没有完整冗余，继续执行会产生明显截断。
+        if (angular_coverage > two_pi + 0.02f * two_pi)
             return false;
+        const bool parker_enabled = angular_coverage < two_pi - 0.02f * two_pi;
+        float fan_half_angle = 0.f;
         for (size_t i = 0; i < geometry.size(); ++i) {
             const auto& input = geometry[i];
             SCylProjectionFrame frame{};
@@ -123,6 +127,9 @@ public:
             if (i == 0) {
                 arc_step = frame.radius_mm * frame.channelStepRad;
                 channel_angle_step = frame.channelStepRad;
+                fan_half_angle = std::max(frame.principalU,
+                    static_cast<float>(channels - 1) - frame.principalU) *
+                    frame.channelStepRad;
             }
             if (std::fabs(frame.radius_mm * frame.channelStepRad - arc_step) >
                 std::max(1e-4f, 1e-4f * arc_step)) return false;
@@ -157,11 +164,24 @@ public:
                 (frame.detectorCenter.y - source.y) * frame.axisUnit.y +
                 (frame.detectorCenter.z - source.z) * frame.axisUnit.z;
             item.dtheta = dtheta;
+            // Parker 分段只依赖“沿扫描方向的累计角”。反向采集时也
+            // 映射到同一正向参数，避免把反向扫描的起止过渡区颠倒。
+            item.parker_beta_rad = 0.5f * dtheta +
+                direction_sign * (unwrapped_angles[i] - unwrapped_angles.front());
+            item.parker_scan_range_rad = angular_coverage;
+            item.parker_redundancy_half_rad =
+                0.5f * (angular_coverage - static_cast<float>(CUDA_PI));
+            item.parker_enabled = parker_enabled ? 1u : 0u;
             packed.push_back(item);
 
             // FilterProcessor 只需该视图的物理采样间隔和中心偏移。
             filter_geometry[i].du_mm = arc_step;
             filter_geometry[i].offsetU_pix = 0.f;
+        }
+        if (parker_enabled && angular_coverage + 1e-5f <
+            static_cast<float>(CUDA_PI) + 2.f * fan_half_angle) {
+            release();
+            return false;
         }
 
         YK_CUDA_CHECK(cudaSetDevice(device_id));
@@ -175,7 +195,13 @@ public:
         // 等角扇束的相邻射线距离是 R*sin(delta_gamma)，并非弧长
         // R*delta_gamma。用该距离修正离散 Ram-Lak 的非零抽样点；小扇角
         // 下修正趋近 1，从而连续退化为普通平板 ramp。
-        if (filter.kind != EFilterKernel::RamLak) {
+        if (filter.kind == EFilterKernel::None ||
+            filter.kind == EFilterKernel::Custom ||
+            filter.kind == EFilterKernel::Butterworth ||
+            filter.kind == EFilterKernel::Kaiser ||
+            filter.kind == EFilterKernel::Tukey) {
+            // 自定义频谱/参数窗尚无柱面专用解析推导；None 也不能跳过
+            // 柱面 ramp。明确拒绝，避免把 Flat 的频率核误用于角度域。
             release();
             return false;
         }
@@ -199,6 +225,10 @@ public:
         }
         SFilterKernelDesc cylindrical_filter = SFilterKernelDesc::SpatialRamp(
             std::move(cylindrical_ramp), filter.gain);
+        // 保留柱面空域 ramp 的 source，同时把请求的有限带宽窗传给
+        // SpatialRampFFT 分支；该分支现在会实际执行窗函数。
+        cylindrical_filter.kind = filter.kind;
+        cylindrical_filter.cutoff = filter.cutoff;
 
         FdkFilterConfig filter_config{};
         filter_config.dims = { channels, rows, static_cast<int>(geometry.size()) };

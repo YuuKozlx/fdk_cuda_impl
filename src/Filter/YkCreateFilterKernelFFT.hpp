@@ -9,6 +9,7 @@
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
 #include "../global/YkFilterTypes.hpp"
+#include "../global/YkMem3d.hpp"
 #include "YkCreateFilterKernelLaunch.cuh"
 
 namespace YK {
@@ -51,7 +52,7 @@ namespace YK {
                 n_complex_ = paddedN_ / 2 + 1;
                 stream_ = stream;
 
-                YK_CUDA_CHECK(cudaMalloc(&d_tmp_fft_, (size_t)n_complex_ * sizeof(cufftComplex)));
+                d_tmp_fft_.alloc(n_complex_, 0);
 
                 bool ok = fft_r2c_.init(paddedN_, /*batch=*/1, YK::CudaFFT::EPlanMode::R2COnly, stream_);
                 YK_ASSERT(ok && "CudaFFT R2COnly init failed");
@@ -66,10 +67,7 @@ namespace YK {
 
             void release()
             {
-                if (d_tmp_fft_) {
-                    YK_CUDA_CHECK(cudaFree(d_tmp_fft_));
-                    d_tmp_fft_ = nullptr;
-                }
+                d_tmp_fft_.reset();
                 fft_r2c_.release();
 
                 paddedN_ = 0;
@@ -137,21 +135,26 @@ namespace YK {
                     }
                     YK_ASSERT(std::isfinite(desc.spatial_ramp[m / 2]));
 
-                    float* d_spatial = nullptr;
-                    float* d_ramp = nullptr;
-                    YK_CUDA_CHECK(cudaMalloc(&d_spatial, (size_t)paddedN_ * sizeof(float)));
-                    YK_CUDA_CHECK(cudaMalloc(&d_ramp, m * sizeof(float)));
-                    YK_CUDA_CHECK(cudaMemcpyAsync(d_ramp, desc.spatial_ramp.data(),
+                    Mem::DeviceLinearBuffer<float> d_spatial;
+                    Mem::DeviceLinearBuffer<float> d_ramp;
+                    d_spatial.alloc(paddedN_, 0);
+                    d_ramp.alloc(static_cast<int>(m), 0);
+                    YK_CUDA_CHECK(cudaMemcpyAsync(d_ramp.data(), desc.spatial_ramp.data(),
                         m * sizeof(float), cudaMemcpyHostToDevice, stream_));
                     const bool ok = flt_launch_kernel_build_spatial_ramp(
-                        d_spatial, paddedN_, d_ramp, static_cast<int>(m), bake_invN, stream_);
+                        d_spatial.data(), paddedN_, d_ramp.data(), static_cast<int>(m), bake_invN, stream_);
                     YK_ASSERT(ok);
-                    fft_r2c_.fft(d_spatial, d_tmp_fft_);
-                    YK_CUDA_CHECK(cudaFree(d_ramp));
-                    YK_CUDA_CHECK(cudaFree(d_spatial));
+                    fft_r2c_.fft(d_spatial.data(), d_tmp_fft_.data());
                     flt_launch_kernel_extract_weights_from_fft(
-                        d_tmp_fft_, d_weights_fft, n_complex_,
-                        ERampExtractMode::RealPart, stream_);
+                        d_tmp_fft_.data(), d_weights_fft, n_complex_,
+                        desc.extract_mode, stream_);
+                    // 空域柱面 ramp 也必须经过与普通 ramp 一致的窗函数；
+                    // 旧实现直接返回，导致 Hamming/Hann 等配置静默失效。
+                    if (desc.kind != EFilterKernel::RamLak)
+                        flt_launch_kernel_apply_window_to_weights_inplace(
+                            d_weights_fft, n_complex_, paddedN_, desc, stream_);
+                    YK_CUDA_CHECK(cudaMemsetAsync(d_weights_fft, 0,
+                        sizeof(float), stream_));
                     flt_launch_kernel_scale_inplace(
                         d_weights_fft, n_complex_, desc.gain / du_real, stream_);
                     YK_CUDA_KERNEL_CHECK();
@@ -190,23 +193,22 @@ namespace YK {
                 // ---- DiscreteRLFFT path ----
 
                 // Step 1: 生成 du=1 的纯数字离散空域核
-                float* d_spatial = nullptr;
-                YK_CUDA_CHECK(cudaMalloc(&d_spatial, (size_t)paddedN_ * sizeof(float)));
+                Mem::DeviceLinearBuffer<float> d_spatial;
+                d_spatial.alloc(paddedN_, 0);
                 flt_launch_kernel_gen_spatial_rl_kernel_du1(
-                    d_spatial, paddedN_, bake_invN, stream_);
+                    d_spatial.data(), paddedN_, bake_invN, stream_);
                 YK_CUDA_KERNEL_CHECK();
 
 
                 // Step 2: FFT 变换到频域 du = 1
-                fft_r2c_.fft(d_spatial, d_tmp_fft_);
-                YK_CUDA_CHECK(cudaFree(d_spatial));
+                fft_r2c_.fft(d_spatial.data(), d_tmp_fft_.data());
 
                 // Step 3: 提取有限离散 RL 频谱（取实部或模）du = 1。
                 // 截断后的空域核求和通常不严格为零，因此 FFT 会残留一个
                 // O(1/N) 的 DC 偏置。Ram-Lak 必须抑制常量投影分量，这里对
                 // DiscreteRLFFT 路径强制令 k=0 为零，不依赖调用方选项。
                 flt_launch_kernel_extract_weights_from_fft(
-                    d_tmp_fft_, d_weights_fft, n_complex_,
+                    d_tmp_fft_.data(), d_weights_fft, n_complex_,
                     desc.extract_mode, stream_);
                 YK_CUDA_CHECK(cudaMemsetAsync(
                     d_weights_fft, 0, sizeof(float), stream_));
@@ -312,7 +314,7 @@ namespace YK {
                 n_complex_ = o.n_complex_;  o.n_complex_ = 0;
                 stream_ = o.stream_;     o.stream_ = 0;
                 ready_ = o.ready_;      o.ready_ = false;
-                d_tmp_fft_ = o.d_tmp_fft_;  o.d_tmp_fft_ = nullptr;
+                d_tmp_fft_ = std::move(o.d_tmp_fft_);
                 fft_r2c_ = std::move(o.fft_r2c_);
             }
 
@@ -322,7 +324,7 @@ namespace YK {
             cudaStream_t  stream_ = 0;
             bool          ready_ = false;
 
-            cufftComplex* d_tmp_fft_ = nullptr;
+            Mem::DeviceLinearBuffer<cufftComplex> d_tmp_fft_;
             YK::CudaFFT   fft_r2c_;   // R2C only
         };
 

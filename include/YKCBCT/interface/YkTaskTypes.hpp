@@ -1,6 +1,7 @@
 ﻿// YkTaskTypes.hpp
 #pragma once
 #include <cstdint>
+#include <limits>
 #include <cuda_runtime_api.h>
 #include <vector>
 #include "YKCBCT/geometry/YkProjectionGeometry.hpp"
@@ -52,6 +53,12 @@ namespace YK {
         SIRT,
         OSSART,
         CGLS,
+        PWLS,
+        XFDK,
+        CFDK,
+        CylAnalyticFDK,
+        WFBP,
+        TigreGradient,
     };
 
     enum class EMemoryLocation : int32_t {
@@ -132,6 +139,93 @@ namespace YK {
         int   subsets = 1;
     };
 
+    // CGLS 的停止条件独立于通用迭代次数。0 表示关闭对应条件，避免用
+    // 魔数或负数在配置层隐式表达“禁用”。
+    struct SCglsAlgoParams {
+        int minimum_iterations = 0;
+        int check_interval = 1;
+        int patience = 1;
+        float relative_residual = 0.f;
+        bool robust_restart = true;
+    };
+
+    enum class EPwlsRegularizerSpec : int32_t {
+        None,
+        Quadratic,
+        Huber,
+    };
+
+    struct SPwlsAlgoParams {
+        EPwlsRegularizerSpec regularizer = EPwlsRegularizerSpec::Quadratic;
+        float regularization = 1e-3f;
+        float huber_delta = 3e-3f;
+        float epsilon = 1e-6f;
+        float lower_bound = 0.f;
+        float upper_bound = std::numeric_limits<float>::max();
+        // 投影统计权重 W 默认全 1；实际数组由执行请求提供，配置只声明
+        // 是否消费该数组，避免在算法描述中保存有生命周期的设备指针。
+        bool use_projection_weights = false;
+    };
+
+    enum class ETigreGradientMethodSpec : int32_t {
+        Sart,
+        OsSart,
+        Sirt,
+        AsdPocs,
+        OsAsdPocs,
+        BAsdPocsBeta,
+        Pcsd,
+        OsPcsd,
+        AwPcsd,
+        OsAwPcsd,
+        AwAsdPocs,
+        OsAwAsdPocs,
+    };
+
+    struct STigreGradientAlgoParams {
+        ETigreGradientMethodSpec method = ETigreGradientMethodSpec::OsSart;
+        int block_size = 20;
+        float lambda_reduction = 1.f;
+        bool nesterov_relaxation = false;
+        bool fdk_initialization = false;
+        bool non_negative = true;
+        int tv_iterations = 20;
+        float tv_alpha = 0.002f;
+        float tv_alpha_reduction = 0.95f;
+        float maximum_update_ratio = 0.95f;
+        float max_l2_error = -1.f;
+    };
+
+    enum class EWfbpInputDetectorSpec : int32_t {
+        EquiangularArc,
+        FlatPanel,
+        CylindricalArc,
+    };
+
+    enum class EWfbpFocalSpotSpec : int32_t {
+        None,
+        Phi,
+        Z,
+        PhiAndZ,
+    };
+
+    struct SWfbpAlgoParams {
+        EWfbpInputDetectorSpec input_detector = EWfbpInputDetectorSpec::FlatPanel;
+        EWfbpFocalSpotSpec focal_spot = EWfbpFocalSpotSpec::None;
+        float redundancy_flat = 0.6f;
+        float filter_cutoff = 1.f;
+        float filter_apodization = 1.f;
+        float anode_angle_rad = 0.f;
+        bool reverse_row_interleave = false;
+    };
+
+    // 柱面解析 FDK 的后端始终消费 R=SDD 的规范几何。该配置描述前端
+    // 是否自动执行物理曲率到规范曲率的重排，以及短扫冗余权重策略。
+    struct SCylAnalyticFdkParams {
+        bool map_to_canonical_radius = true;
+        bool short_scan_parker = true;
+    };
+
 
     struct GPURes {
         std::vector<int> deviceIds;
@@ -166,6 +260,11 @@ namespace YK {
         ETask back_projector = ETask::BP_Joseph_v2;
         SFdkAlgoParams fdk{};
         SIterAlgoParams iterative{};
+        SCglsAlgoParams cgls{};
+        SPwlsAlgoParams pwls{};
+        STigreGradientAlgoParams tigre{};
+        SWfbpAlgoParams wfbp{};
+        SCylAnalyticFdkParams cyl_analytic_fdk{};
     };
 
     struct SessionDesc {
@@ -177,6 +276,9 @@ namespace YK {
         // 角度来源，长度必须等于 scan.NAng；当前公开 FDK 仅接受初始化时的
         // 完整 geometry，不接受 execute() 逐批改变几何。
         std::vector<SConeProjGeomVec> geometry{};
+        // 柱面逐视图几何，与 Flat geometry 分开保存，供
+        // CylAnalyticFDK 使用；两者不应同时作为同一请求的真源。
+        std::vector<SCylConeProjGeomVec> cyl_geometry{};
         // 将 Scanner 坐标下的逐视图几何转换到固定 Object 坐标系。
         // 空数组表示恒等变换；长度 1 表示所有视图共用；否则必须等于 NAng。
         // 模体体素数组不会被重采样，volume.offsetX/Y/Z 仍是 Object 坐标系下

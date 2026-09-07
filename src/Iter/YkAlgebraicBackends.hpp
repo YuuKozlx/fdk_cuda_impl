@@ -1,6 +1,7 @@
 // YkOSSART.hpp
 #pragma once
 #include "common/YkProjectionOperators.hpp"
+#include "common/YkDeviceWorkspace.hpp"
 #include "kernels/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
@@ -135,9 +136,9 @@ namespace YK {
             const size_t max_sino = max_K * view_n;
 
             // ── 常驻缓冲(块连续 → 无需 d_sino_meas_sub_)────────────────
-            YK_CUDA_CHECK(cudaMalloc(&d_sino_fwd_, max_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_residual_, max_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
+            d_sino_fwd_.allocate(max_sino, deviceId);
+            d_residual_.allocate(max_sino, deviceId);
+            d_bp_.allocate(vol_n, deviceId);
 
             fp_.init(params, geometry, cfg.fp_task, deviceId, stream);
             bp_.init(params, geometry, cfg.bp_task, deviceId, stream);
@@ -166,17 +167,16 @@ namespace YK {
                 SReconstructionParams ps_w = params_lo_;        // 全角度列表
 
                 const size_t w_n = (size_t)Na * view_n;
-                YK_CUDA_CHECK(cudaMalloc(&d_row_w_full_, w_n * sizeof(float)));
+                d_row_w_full_.allocate(w_n, deviceId);
                 YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_full_, 0,
                     w_n * sizeof(float), stream));
 
-                float* d_ones8 = nullptr;
-                YK_CUDA_CHECK(cudaMalloc(&d_ones8, 8 * sizeof(float)));
+                DeviceWorkspaceF32 d_ones8;
+                d_ones8.allocate(8, deviceId);
                 YK::Iter::fill_ones_launch(d_ones8, 8, stream);
 
                 fp_lo_.run(d_ones8, ps_w, d_row_w_full_, stream);
                 YK_CUDA_CHECK(cudaStreamSynchronize(stream));
-                YK_CUDA_CHECK(cudaFree(d_ones8));
 
                 // W[W <= min(真实体素)/2] = inf; W = 1/W (inf → 0)
                 const float real_min_vox = std::min({
@@ -190,7 +190,7 @@ namespace YK {
             // ── V:每块预计算 2D 图 (= TIGRE set_v) ─────────────────────
             // 体积三轴统一缩 max(sx,sy)/hypot(sx,sy)*0.9,BP 全 1,
             // 沿 Z 取平均 → 2D,零值 → inf
-            d_col_w_all_.resize(n_block_, nullptr);
+            d_col_w_all_.resize(n_block_);
             {
                 const float sVolX = params.volume.Nx * params.volume.voxelX_mm;
                 const float sVolY = params.volume.Ny * params.volume.voxelY_mm;
@@ -211,8 +211,7 @@ namespace YK {
                     YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
                     bp_.run(d_residual_, ps_c, d_bp_, stream, /*clear_vol=*/true);
 
-                    YK_CUDA_CHECK(cudaMalloc(&d_col_w_all_[b],
-                        slice_n * sizeof(float)));
+                    d_col_w_all_[b].allocate(slice_n, deviceId);
                     YK::Iter::mean_z_to_2d_launch(
                         d_bp_, d_col_w_all_[b],
                         params.volume.Nx, params.volume.Ny, params.volume.Nz, stream);
@@ -255,7 +254,7 @@ namespace YK {
 
                 // 连续切片:测量与 W 直接指针偏移,零拷贝
                 const float* d_meas_blk = d_sino_meas + (size_t)start * view_n;
-                const float* d_w_blk = d_row_w_full_ + (size_t)start * view_n;
+                const float* d_w_blk = d_row_w_full_.data() + (size_t)start * view_n;
 
                 // Step1: A_b x
                 YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd_, 0,
@@ -317,13 +316,8 @@ namespace YK {
 
         void release()
         {
-            if (d_sino_fwd_) { cudaFree(d_sino_fwd_);   d_sino_fwd_ = nullptr; }
-            if (d_residual_) { cudaFree(d_residual_);   d_residual_ = nullptr; }
-            if (d_bp_) { cudaFree(d_bp_);         d_bp_ = nullptr; }
-            if (d_row_w_full_) { cudaFree(d_row_w_full_); d_row_w_full_ = nullptr; }
-
-            for (auto& p : d_col_w_all_)
-                if (p) { cudaFree(p); p = nullptr; }
+            d_sino_fwd_.reset(); d_residual_.reset(); d_bp_.reset();
+            d_row_w_full_.reset();
             d_col_w_all_.clear();
 
             block_start_.clear();
@@ -357,12 +351,12 @@ namespace YK {
         std::vector<int>         block_size_;
         std::vector<SReconstructionParams> block_params_;
 
-        float* d_sino_fwd_ = nullptr;
-        float* d_residual_ = nullptr;
-        float* d_bp_ = nullptr;
-        float* d_row_w_full_ = nullptr;   // 全角度 W,块用连续切片
+        DeviceWorkspaceF32 d_sino_fwd_;
+        DeviceWorkspaceF32 d_residual_;
+        DeviceWorkspaceF32 d_bp_;
+        DeviceWorkspaceF32 d_row_w_full_;   // 全角度 W,块用连续切片
 
-        std::vector<float*> d_col_w_all_; // 每块一张 2D V 图 (iVX*iVY)
+        std::vector<DeviceWorkspaceF32> d_col_w_all_; // 每块一张 2D V 图 (iVX*iVY)
     };
 
 
@@ -488,13 +482,13 @@ namespace YK {
             const size_t max_subset_sino = max_K * view_n;
 
             // ── 常驻缓冲 ──────────────────────────────────────────────
-            YK_CUDA_CHECK(cudaMalloc(&d_sino_meas_sub_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_sino_fwd_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_residual_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_row_w_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_ones_vol_, vol_n * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
+            d_sino_meas_sub_.allocate(max_subset_sino, deviceId);
+            d_sino_fwd_.allocate(max_subset_sino, deviceId);
+            d_residual_.allocate(max_subset_sino, deviceId);
+            d_row_w_.allocate(max_subset_sino, deviceId);
+            d_bp_.allocate(vol_n, deviceId);
+            d_ones_vol_.allocate(vol_n, deviceId);
+            d_col_w_.allocate(vol_n, deviceId);
 
             fp_.init(params, cfg.fp_task, deviceId, stream);
             bp_.init(params, cfg.bp_task, deviceId, stream);
@@ -543,7 +537,7 @@ namespace YK {
                 // ── 收集子集测量 ──
                 for (int i = 0; i < K; ++i) {
                     YK_CUDA_CHECK(cudaMemcpyAsync(
-                        d_sino_meas_sub_ + i * view_n,
+                        d_sino_meas_sub_.data() + i * view_n,
                         d_sino_meas + subset[i] * view_n,
                         view_n * sizeof(float),
                         cudaMemcpyDeviceToDevice, stream));
@@ -602,13 +596,13 @@ namespace YK {
 
         void release()
         {
-            if (d_sino_meas_sub_) { cudaFree(d_sino_meas_sub_); d_sino_meas_sub_ = nullptr; }
-            if (d_sino_fwd_) { cudaFree(d_sino_fwd_); d_sino_fwd_ = nullptr; }
-            if (d_residual_) { cudaFree(d_residual_); d_residual_ = nullptr; }
-            if (d_row_w_) { cudaFree(d_row_w_); d_row_w_ = nullptr; }
-            if (d_bp_) { cudaFree(d_bp_); d_bp_ = nullptr; }
-            if (d_ones_vol_) { cudaFree(d_ones_vol_); d_ones_vol_ = nullptr; }
-            if (d_col_w_) { cudaFree(d_col_w_); d_col_w_ = nullptr; }
+            d_sino_meas_sub_.reset();
+            d_sino_fwd_.reset();
+            d_residual_.reset();
+            d_row_w_.reset();
+            d_bp_.reset();
+            d_ones_vol_.reset();
+            d_col_w_.reset();
 
             subsets_.clear();
             subset_params_.clear();
@@ -637,13 +631,13 @@ namespace YK {
         std::vector<SReconstructionParams>      subset_params_;
         std::vector<int>              subset_order_;   // 黄金角遍历顺序
 
-        float* d_sino_meas_sub_ = nullptr;
-        float* d_sino_fwd_ = nullptr;
-        float* d_residual_ = nullptr;
-        float* d_row_w_ = nullptr;
-        float* d_bp_ = nullptr;
-        float* d_ones_vol_ = nullptr;
-        float* d_col_w_ = nullptr;
+        DeviceWorkspaceF32 d_sino_meas_sub_;
+        DeviceWorkspaceF32 d_sino_fwd_;
+        DeviceWorkspaceF32 d_residual_;
+        DeviceWorkspaceF32 d_row_w_;
+        DeviceWorkspaceF32 d_bp_;
+        DeviceWorkspaceF32 d_ones_vol_;
+        DeviceWorkspaceF32 d_col_w_;
     };
 
 
@@ -751,13 +745,13 @@ namespace YK {
 
             const size_t max_subset_sino = max_K * view_n;
 
-            YK_CUDA_CHECK(cudaMalloc(&d_sino_meas_sub_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_sino_fwd_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_residual_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_row_w_, max_subset_sino * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_bp_, vol_n * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_ones_vol_, vol_n * sizeof(float)));
-            YK_CUDA_CHECK(cudaMalloc(&d_col_w_, vol_n * sizeof(float)));
+            d_sino_meas_sub_.allocate(max_subset_sino, deviceId);
+            d_sino_fwd_.allocate(max_subset_sino, deviceId);
+            d_residual_.allocate(max_subset_sino, deviceId);
+            d_row_w_.allocate(max_subset_sino, deviceId);
+            d_bp_.allocate(vol_n, deviceId);
+            d_ones_vol_.allocate(vol_n, deviceId);
+            d_col_w_.allocate(vol_n, deviceId);
 
             if (!fp_.init(params, h_views_, cfg.fp_task, deviceId, stream) ||
                 !bp_.init(params, h_views_, cfg.bp_task, deviceId, stream)) {
@@ -808,7 +802,7 @@ namespace YK {
                 // 收集子集正弦图
                 for (int i = 0; i < K; ++i)
                     YK_CUDA_CHECK(cudaMemcpyAsync(
-                        d_sino_meas_sub_ + i * view_n,
+                        d_sino_meas_sub_.data() + i * view_n,
                         d_sino_meas + idx[i] * view_n,
                         view_n * sizeof(float),
                         cudaMemcpyDeviceToDevice, stream));
@@ -863,13 +857,13 @@ namespace YK {
 
         void release()
         {
-            if (d_sino_meas_sub_) { cudaFree(d_sino_meas_sub_); d_sino_meas_sub_ = nullptr; }
-            if (d_sino_fwd_) { cudaFree(d_sino_fwd_);      d_sino_fwd_ = nullptr; }
-            if (d_residual_) { cudaFree(d_residual_);      d_residual_ = nullptr; }
-            if (d_row_w_) { cudaFree(d_row_w_);         d_row_w_ = nullptr; }
-            if (d_bp_) { cudaFree(d_bp_);            d_bp_ = nullptr; }
-            if (d_ones_vol_) { cudaFree(d_ones_vol_);      d_ones_vol_ = nullptr; }
-            if (d_col_w_) { cudaFree(d_col_w_);         d_col_w_ = nullptr; }
+            d_sino_meas_sub_.reset();
+            d_sino_fwd_.reset();
+            d_residual_.reset();
+            d_row_w_.reset();
+            d_bp_.reset();
+            d_ones_vol_.reset();
+            d_col_w_.reset();
 
             subsets_.clear();
             subset_params_.clear();
@@ -904,13 +898,13 @@ namespace YK {
         ForwardOperatorAdapter fp_;
         BackOperatorAdapter bp_;
 
-        float* d_sino_meas_sub_ = nullptr;
-        float* d_sino_fwd_ = nullptr;
-        float* d_residual_ = nullptr;
-        float* d_row_w_ = nullptr;
-        float* d_bp_ = nullptr;
-        float* d_ones_vol_ = nullptr;
-        float* d_col_w_ = nullptr;
+        DeviceWorkspaceF32 d_sino_meas_sub_;
+        DeviceWorkspaceF32 d_sino_fwd_;
+        DeviceWorkspaceF32 d_residual_;
+        DeviceWorkspaceF32 d_row_w_;
+        DeviceWorkspaceF32 d_bp_;
+        DeviceWorkspaceF32 d_ones_vol_;
+        DeviceWorkspaceF32 d_col_w_;
     };
 
     YK_INLINE bool algebraic_ex_backend_reconstruct(

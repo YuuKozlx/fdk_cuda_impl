@@ -8,6 +8,7 @@
 #include "Iter/YkAlgebraicRegularizers.hpp"
 #include "Iter/YkIterativeConvergence.hpp"
 #include "global/YkLog.h"
+#include "global/YkMem3d.hpp"
 
 namespace YK::Iter {
 
@@ -140,7 +141,7 @@ public:
         convergence_patience_ = 0;
         previous_residual_ = std::numeric_limits<float>::quiet_NaN();
         if (d_previous_volume_) {
-            YK_CUDA_CHECK(cudaMemcpyAsync(d_previous_volume_, d_volume,
+            YK_CUDA_CHECK(cudaMemcpyAsync(d_previous_volume_.data(), d_volume,
                 volumeCount_() * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
         }
         for (int outer = 0; outer < config_.iterations; ++outer) {
@@ -191,10 +192,8 @@ public:
         tigre_.release();
         regularizer_.release();
         convergence_fp_.release();
-        if (d_projection_residual_) cudaFree(d_projection_residual_);
-        if (d_previous_volume_) cudaFree(d_previous_volume_);
-        d_projection_residual_ = nullptr;
-        d_previous_volume_ = nullptr;
+        d_projection_residual_ = {};
+        d_previous_volume_ = {};
         params_ = {};
         config_ = {};
         stream_ = nullptr;
@@ -235,14 +234,19 @@ private:
         const auto& convergence = config_.convergence;
         if (convergence.relative_residual_tolerance > 0.f ||
             convergence.relative_improvement_tolerance > 0.f) {
-            YK_CUDA_CHECK(cudaMalloc(&d_projection_residual_,
-                projectionCount_() * sizeof(float)));
+            d_projection_residual_ = memory_.allocateDevice3D<float>(
+                params_.scan.Nu, params_.scan.Nv, params_.scan.NAng,
+                device_id, false);
+            if (!d_projection_residual_) return false;
             if (!convergence_fp_.init(params_, geometry, config_.fp_task,
                     device_id, stream_)) return false;
         }
-        if (convergence.relative_update_tolerance > 0.f)
-            YK_CUDA_CHECK(cudaMalloc(&d_previous_volume_,
-                volumeCount_() * sizeof(float)));
+        if (convergence.relative_update_tolerance > 0.f) {
+            d_previous_volume_ = memory_.allocateDevice3D<float>(
+                params_.volume.Nx, params_.volume.Ny, params_.volume.Nz,
+                device_id, false);
+            if (!d_previous_volume_) return false;
+        }
         return true;
     }
 
@@ -271,13 +275,13 @@ private:
         bool stagnation_satisfied = false;
 
         if (d_projection_residual_) {
-            YK_CUDA_CHECK(cudaMemsetAsync(d_projection_residual_, 0,
+            YK_CUDA_CHECK(cudaMemsetAsync(d_projection_residual_.data(), 0,
                 projectionCount_() * sizeof(float), stream_));
-            if (!convergence_fp_.run(volume, params_, d_projection_residual_, stream_))
+            if (!convergence_fp_.run(volume, params_, d_projection_residual_.data(), stream_))
                 return false;
-            YK::Iter::residual_launch(measured, d_projection_residual_,
-                d_projection_residual_, projectionCount_(), stream_);
-            const float residual = norm_(d_projection_residual_, projectionCount_());
+            YK::Iter::residual_launch(measured, d_projection_residual_.data(),
+                d_projection_residual_.data(), projectionCount_(), stream_);
+            const float residual = norm_(d_projection_residual_.data(), projectionCount_());
             const float measured_norm = norm_(measured, projectionCount_());
             stats.projection_residual_l2 = residual;
             stats.relative_projection_residual = residual /
@@ -299,14 +303,14 @@ private:
         }
 
         if (d_previous_volume_) {
-            const float previous_norm = norm_(d_previous_volume_, volumeCount_());
-            YK::Iter::residual_launch(volume, d_previous_volume_,
-                d_previous_volume_, volumeCount_(), stream_);
-            stats.relative_volume_update = norm_(d_previous_volume_, volumeCount_()) /
+            const float previous_norm = norm_(d_previous_volume_.data(), volumeCount_());
+            YK::Iter::residual_launch(volume, d_previous_volume_.data(),
+                d_previous_volume_.data(), volumeCount_(), stream_);
+            stats.relative_volume_update = norm_(d_previous_volume_.data(), volumeCount_()) /
                 std::max(previous_norm, config_.epsilon);
             update_satisfied = stats.relative_volume_update <=
                 cfg.relative_update_tolerance;
-            YK_CUDA_CHECK(cudaMemcpyAsync(d_previous_volume_, volume,
+            YK_CUDA_CHECK(cudaMemcpyAsync(d_previous_volume_.data(), volume,
                 volumeCount_() * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
         }
 
@@ -393,8 +397,9 @@ private:
     AlgebraicTigreBackend tigre_{};
     AlgebraicRegularizer regularizer_{};
     ForwardOperatorAdapter convergence_fp_{};
-    float* d_projection_residual_ = nullptr;
-    float* d_previous_volume_ = nullptr;
+    Mem::MemoryController memory_{};
+    Mem::DeviceLinearBuffer3D<float> d_projection_residual_{};
+    Mem::DeviceLinearBuffer3D<float> d_previous_volume_{};
     float previous_residual_ = std::numeric_limits<float>::quiet_NaN();
     int convergence_patience_ = 0;
     IterativeConvergenceStatistics convergence_statistics_{};

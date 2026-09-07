@@ -24,6 +24,11 @@ struct SReconstructionSpec {
     ETask back_projector = ETask::BP_Joseph_v2;
     SFdkAlgoParams fdk{};
     SIterAlgoParams iterative{};
+    SCglsAlgoParams cgls{};
+    SPwlsAlgoParams pwls{};
+    STigreGradientAlgoParams tigre{};
+    SWfbpAlgoParams wfbp{};
+    SCylAnalyticFdkParams cyl_analytic_fdk{};
     SParkerScanSpec parker{};
 };
 

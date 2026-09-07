@@ -3,6 +3,7 @@
 #include "Iter/kernels/YkIterLaunch.cuh"
 #include "Iter/kernels/YkTvRegularizationLaunch.cuh"
 #include "global/YkLog.h"
+#include "global/YkMem3d.hpp"
 
 #include <cuda_runtime.h>
 #include <global/YkCBCTParams.h>
@@ -71,11 +72,13 @@ public:
         strength_ = config.strength;
         volume_elements_ = static_cast<size_t>(params.volume.Nx) *
             params.volume.Ny * params.volume.Nz;
-        if (cudaSetDevice(device_id) != cudaSuccess ||
-            cudaMalloc(&d_gradient_, volume_elements_ * sizeof(float)) != cudaSuccess) {
+        if (cudaSetDevice(device_id) != cudaSuccess) {
             release();
             return false;
         }
+        gradient_ = memory_.allocateDevice3D<float>(params.volume.Nx,
+            params.volume.Ny, params.volume.Nz, device_id, false);
+        if (!gradient_) { release(); return false; }
         prepared_ = true;
         return true;
     }
@@ -85,12 +88,12 @@ public:
     {
         if (!prepared_ || !d_volume) return false;
         for (int iteration = 0; iteration < config_.inner_iterations; ++iteration) {
-            tv_gradient_launch(d_volume, d_gradient_,
+            tv_gradient_launch(d_volume, gradient_.data(),
                 params_.volume.Nx, params_.volume.Ny, params_.volume.Nz,
                 params_.volume.voxelX_mm, params_.volume.voxelY_mm, params_.volume.voxelZ_mm,
                 config_.epsilon,
                 static_cast<int>(config_.tv_dimensionality), stream_);
-            axpy_launch(d_volume, d_gradient_, -strength_,
+            axpy_launch(d_volume, gradient_.data(), -strength_,
                 volume_elements_, stream_);
         }
         YK_LOGD("[SmoothedTvRegularizer] outer={} inner={} strength={:.4e}",
@@ -103,8 +106,7 @@ public:
 
     void release() override
     {
-        if (d_gradient_) cudaFree(d_gradient_);
-        d_gradient_ = nullptr;
+        gradient_ = {};
         volume_elements_ = 0;
         stream_ = nullptr;
         strength_ = 0.f;
@@ -115,7 +117,8 @@ private:
     SReconstructionParams params_{};
     AlgebraicRegularizationConfig config_{};
     cudaStream_t stream_ = nullptr;
-    float* d_gradient_ = nullptr;
+    Mem::MemoryController memory_{};
+    Mem::DeviceLinearBuffer3D<float> gradient_{};
     size_t volume_elements_ = 0;
     float strength_ = 0.f;
     bool prepared_ = false;
