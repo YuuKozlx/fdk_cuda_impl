@@ -10,18 +10,36 @@ use_cuda_spectral = true
 
 [geometry_config]
 views = 360
+views_per_turn = 360
+rotation_direction = 1
 detector_u = 1024
 detector_v = 1024
 pixel_u_mm = 0.35
 pixel_v_mm = 0.35
 sid_mm = 500.0
 sdd_mm = 1000.0
+# 探测器局部 U/N/V 偏移：通道切向、表面法向、行方向，单位 mm。
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+# 焦点相对标称轨迹的扫描架局部 XYZ 偏移，单位 mm；随旋转架一起旋转。
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
 volume_x = 512
 volume_y = 512
 volume_z = 256
 voxel_x_mm = 0.25
 voxel_y_mm = 0.25
 voxel_z_mm = 0.5
+# 标签模体在采集世界坐标中的中心，单位 mm；只影响正投影。
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+# 重建网格中心在采集世界坐标中的位置，单位 mm；只影响重建。
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
 
 [[materials]]
 label = 1

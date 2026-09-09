@@ -55,6 +55,16 @@ XCOM 核心及 `data/MDATX3.*` 来自 `nist-xcom-portable`，保留 GPL-3.0-or-l
 随后通过 DLL 的 Flat Circular FDK 重建 `512 x 512 x 256` 体积。投影、路径缓存、
 重建体和 BMP 均写入 `outputs/`，该目录不纳入版本控制。
 
+### 几何偏移参数
+
+`[geometry_config]` 中的偏移均以 mm 表示：`phantom_offset_x/y/z_mm` 定义标签模体
+中心，`reconstruction_offset_x/y/z_mm` 定义重建网格中心，二者分别只作用于正投和重建。
+`source_offset_x/y/z_mm` 定义焦点相对标称轨迹的扫描架局部偏移，该偏移随旋转架一起旋转。探测器支持局部
+`U/N/V` 三方向偏移（`offset_u_mm`、`offset_n_mm`、`offset_v_mm`）；探测器姿态偏转
+暂不在仿真配置中开放，因为不同投影/重建模型对偏转的支持范围不同。`views_per_turn`
+和 `rotation_direction` 控制规则角度采样；这些值最终交给公共 geometry builder，正投和
+重建不会各自解释一份几何。
+
 标签体不随仓库提交，可先由同一个可执行文件生成，再按外部体积输入流程运行：
 
 ```powershell

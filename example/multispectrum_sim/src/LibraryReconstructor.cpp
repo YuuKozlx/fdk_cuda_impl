@@ -130,7 +130,8 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         check(config.reconstruction.pipeline == "fdk",
             "当前 DLL 重建示例只实现 pipeline=fdk");
         auto system = makeLibrarySystem(config, YK::EPipeline::FDK,
-            YK::ETask::FP_Joseph, parseFilter(config.reconstruction.filter));
+            YK::ETask::FP_Joseph, parseFilter(config.reconstruction.filter),
+            GeometryUse::Reconstruction);
         session = YK::ReconstructionSessionFactory::create();
         check(session != nullptr, "无法创建 YKCBCT DLL Session");
         check(session->initialize(system), std::string("YKCBCT FDK 初始化失败: ") + session->lastErrorMessage());

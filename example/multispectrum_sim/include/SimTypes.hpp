@@ -15,14 +15,22 @@ struct DetectorEffectsConfig {
 
 struct GeometryConfig {
     int views = 360;
+    int views_per_turn = 360;
+    int rotation_direction = 1;
     int detector_u = 256;
     int detector_v = 128;
     double pixel_u_mm = 1.0;
     double pixel_v_mm = 1.0;
     double sid_mm = 500.0;
     double sdd_mm = 1000.0;
+    // 探测器局部坐标偏移：U（通道切向）、N（表面法向）、V（行方向）。
     double offset_u_mm = 0.0;
+    double offset_n_mm = 0.0;
     double offset_v_mm = 0.0;
+    // 焦点相对标称旋转轨迹的 XYZ 偏移，单位为 mm。
+    double source_offset_x_mm = 0.0;
+    double source_offset_y_mm = 0.0;
+    double source_offset_z_mm = 0.0;
     double start_angle_rad = 0.0;
     double pitch_mm_per_turn = 0.0;
     double start_z_mm = 0.0;
@@ -32,6 +40,13 @@ struct GeometryConfig {
     int volume_x = 0;
     int volume_y = 0;
     int volume_z = 0;
+    // 标签模体和重建网格分别拥有独立世界坐标中心，单位为 mm。
+    double phantom_offset_x_mm = 0.0;
+    double phantom_offset_y_mm = 0.0;
+    double phantom_offset_z_mm = 0.0;
+    double reconstruction_offset_x_mm = 0.0;
+    double reconstruction_offset_y_mm = 0.0;
+    double reconstruction_offset_z_mm = 0.0;
 };
 
 // 仿真结束后的可选重建设置。投影仍按文件流式读取，chunk_views

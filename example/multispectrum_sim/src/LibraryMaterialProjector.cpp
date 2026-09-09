@@ -32,7 +32,9 @@ bool generatePathCacheWithLibraryFp(const SimulationConfig& config,
             "标签体素数量与配置尺寸不一致");
 
         const YK::SSystemSpec system = makeLibrarySystem(
-            config, YK::EPipeline::ForwardProjection);
+            config, YK::EPipeline::ForwardProjection,
+            YK::ETask::FP_Joseph, YK::EFdkFilter::RamLak,
+            GeometryUse::PhantomProjection);
         session = YK::ReconstructionSessionFactory::create();
         check(session != nullptr, "无法创建 YKCBCT DLL Session");
         if (!session->initialize(system)) {
