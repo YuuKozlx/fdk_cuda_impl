@@ -21,7 +21,9 @@ struct SParkerScanSpec {
 struct SReconstructionSpec {
     EPipeline pipeline = EPipeline::FDK;
     ETask forward_projector = ETask::FP_Joseph;
-    ETask back_projector = ETask::BP_Joseph_v2;
+    // V3 在 Flat/Cyl 中均有明确实现；V2 只属于 Flat，不在柱面上下文中
+    // 隐式替换为其他模型。
+    ETask back_projector = ETask::BP_Joseph_v3;
     SFdkAlgoParams fdk{};
     SIterAlgoParams iterative{};
     SCglsAlgoParams cgls{};
@@ -32,23 +34,6 @@ struct SReconstructionSpec {
     SParkerScanSpec parker{};
 };
 
-// 完整重建请求：宏观系统 geometry 加上一份算法配置。Geometry builder
-// 负责填充 system；执行层只需消费 request.system 和 request.reconstruction。
-template <typename SystemGeometry>
-struct SSystemReconstructionRequest {
-    SystemGeometry system{};
-    SReconstructionSpec reconstruction{};
-};
-
-using SStaticFlatReconstructionRequest =
-    SSystemReconstructionRequest<SStaticFlatSystemSpec>;
-using SStaticCylReconstructionRequest =
-    SSystemReconstructionRequest<SStaticCylSystemSpec>;
-using SHelicalFlatReconstructionRequest =
-    SSystemReconstructionRequest<SHelicalFlatSystemSpec>;
-using SHelicalCylReconstructionRequest =
-    SSystemReconstructionRequest<SHelicalCylSystemSpec>;
-
 template <typename RegularScan>
 inline float regularScanRangeRad(const RegularScan& scan)
 {
@@ -57,13 +42,16 @@ inline float regularScanRangeRad(const RegularScan& scan)
         static_cast<float>(scan.views_per_turn);
 }
 
-inline bool resolveParkerEnabled(const SStaticFlatReconstructionRequest& request)
+inline bool resolveParkerEnabled(const SSystemConfig& system,
+    const SReconstructionSpec& reconstruction)
 {
-    if (request.reconstruction.parker.mode == EParkerMode::Enabled) return true;
-    if (request.reconstruction.parker.mode == EParkerMode::Disabled) return false;
+    if (system.detector != EDetectorKind::Flat ||
+        system.trajectory != ETrajectoryKind::Circular) return false;
+    if (reconstruction.parker.mode == EParkerMode::Enabled) return true;
+    if (reconstruction.parker.mode == EParkerMode::Disabled) return false;
     constexpr float kTwoPi = 6.28318530717958647692f;
     constexpr float kTolerance = 1e-5f;
-    return regularScanRangeRad(request.system.scan) < kTwoPi - kTolerance;
+    return regularScanRangeRad(system.circular) < kTwoPi - kTolerance;
 }
 
 } // namespace YK

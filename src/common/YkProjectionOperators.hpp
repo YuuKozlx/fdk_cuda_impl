@@ -23,7 +23,7 @@ namespace YK {
 class IForwardOperator {
 public:
     virtual ~IForwardOperator() = default;
-    virtual bool prepare(const GeometryContext&, ResourceContext&) = 0;
+    virtual bool prepare(const PreparedGeometry&, ResourceContext&) = 0;
     virtual bool apply(const float* d_volume, const SReconstructionParams& batch,
         float* d_projection, ResourceContext&) = 0;
     virtual void release() = 0;
@@ -32,7 +32,7 @@ public:
 class IBackOperator {
 public:
     virtual ~IBackOperator() = default;
-    virtual bool prepare(const GeometryContext&, ResourceContext&) = 0;
+    virtual bool prepare(const PreparedGeometry&, ResourceContext&) = 0;
     virtual bool apply(const float* d_projection, const SReconstructionParams& batch,
         float* d_volume, bool clear_volume, ResourceContext&) = 0;
     virtual void release() = 0;
@@ -103,10 +103,10 @@ inline bool resolveViews(const std::vector<SConeProjGeomVec>& all,
     return true;
 }
 
-inline GeometryContext makeSubsetGeometry(const SReconstructionParams& batch,
+inline PreparedGeometry makeSubsetGeometry(const SReconstructionParams& batch,
     const std::vector<SConeProjGeomVec>& views)
 {
-    GeometryContext geometry;
+    PreparedGeometry geometry;
     geometry.initialize(batch, views);
     return geometry;
 }
@@ -118,7 +118,7 @@ public:
     explicit ForwardOperator(ETask kind) : kind_(kind) {}
     ~ForwardOperator() override { release(); }
 
-    bool prepare(const GeometryContext& geometry, ResourceContext& resources) override
+    bool prepare(const PreparedGeometry& geometry, ResourceContext& resources) override
     {
         if (!detail::isForwardTask(kind_)) return false;
         release();
@@ -187,7 +187,7 @@ private:
     }
 
     ETask kind_;
-    GeometryContext geometry_{};
+    PreparedGeometry geometry_{};
     std::unique_ptr<Fp::FpGpuContext> gpu_{};
     cudaEvent_t completion_ = nullptr;
     cudaStream_t stream_ = nullptr;
@@ -201,7 +201,7 @@ public:
     explicit BackOperator(ETask kind) : kind_(kind) {}
     ~BackOperator() override { release(); }
 
-    bool prepare(const GeometryContext& geometry, ResourceContext& resources) override
+    bool prepare(const PreparedGeometry& geometry, ResourceContext& resources) override
     {
         if (!detail::isBackTask(kind_)) return false;
         release();
@@ -334,7 +334,7 @@ private:
     }
 
     ETask kind_;
-    GeometryContext geometry_{};
+    PreparedGeometry geometry_{};
     std::unique_ptr<Bp::BpSiddonGpuContext> gpu_{};
     cudaEvent_t completion_ = nullptr;
     cudaStream_t stream_ = nullptr;
@@ -371,7 +371,7 @@ public:
     { return op_ && op_->apply(d_volume, batch, d_projection, resources_); }
     void release() { if (op_) op_->release(); op_.reset(); resources_.release(); }
 private:
-    GeometryContext geometry_{};
+    PreparedGeometry geometry_{};
     ResourceContext resources_{};
     std::unique_ptr<IForwardOperator> op_{};
 };
@@ -398,7 +398,7 @@ public:
     { return op_ && op_->apply(d_projection, batch, d_volume, clear_volume, resources_); }
     void release() { if (op_) op_->release(); op_.reset(); resources_.release(); }
 private:
-    GeometryContext geometry_{};
+    PreparedGeometry geometry_{};
     ResourceContext resources_{};
     std::unique_ptr<IBackOperator> op_{};
 };

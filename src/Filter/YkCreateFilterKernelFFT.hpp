@@ -84,14 +84,13 @@ namespace YK {
             int          n_complex() const { return n_complex_; }
             cudaStream_t stream()    const { return stream_; }
 
-            /// Allocate a device buffer sized for the weight array.
-            /// Caller takes ownership; free with cudaFree().
-            float* alloc_weights() const
+            // 返回拥有所有权的公共 RAII 缓冲；调用方不再直接 cudaFree。
+            Mem::DeviceLinearBuffer<float> alloc_weights() const
             {
                 YK_ASSERT(ready_);
-                float* d_w = nullptr;
-                YK_CUDA_CHECK(cudaMalloc(&d_w, (size_t)n_complex_ * sizeof(float)));
-                return d_w;
+                Mem::DeviceLinearBuffer<float> weights;
+                weights.alloc(n_complex_, 0);
+                return weights;
             }
 
             // --------------------------------------------------------

@@ -1,5 +1,6 @@
 ﻿// YkTaskTypes.hpp
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <cuda_runtime_api.h>
@@ -294,6 +295,9 @@ namespace YK {
     struct Buffer {
         float* data = nullptr;
         EMemoryLocation location = EMemoryLocation::Device;
+        // 连续 float 元素容量。新 DLL API 要求调用方填写，用于在进入 CUDA
+        // 后端前拒绝尺寸不足的投影或体缓冲；旧内部调用可暂时保留 0。
+        size_t element_count = 0;
     };
 
     // 对 FDK 和 FP，angles/K 描述一个批次。FDK 批次按 execute() 调用顺序

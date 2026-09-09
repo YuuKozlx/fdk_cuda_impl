@@ -1,4 +1,5 @@
-#include "YKCBCT/interface/IYkSession.hpp"
+#include "interface/YkExecutionBackend.hpp"
+#include "common/YkExecutionContext.hpp"
 
 #include <algorithm>
 
@@ -8,6 +9,9 @@
 #include "FDK/XFDK/YkXfdkPipeline.hpp"
 #include "FDK/CFDK/YkCurveFilteredFdkPipeline.hpp"
 #include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
+#include "CylFpBp/fp/YkCylForwardProjection.hpp"
+#include "CylFpBp/iter/YkCylAlgebraicReconstructor.hpp"
+#include "CylFpBp/iter/YkCylPwlsReconstructor.hpp"
 #include "Iter/YkAlgebraicLegacyAdapters.hpp"
 #include "Iter/YkAlgebraicSartSirtAdapters.hpp"
 #include "Iter/YkCglsLegacyAdapters.hpp"
@@ -20,6 +24,10 @@
 #include "global/YkLog.h"
 #include "global/YkMacro.hpp"
 #include "global/YkMem3d.hpp"
+
+#if YKCBCT_HAS_HELICAL
+#include "Heli/analytic/wfbp/YkWfbpPipeline.hpp"
+#endif
 
 namespace YK {
 namespace {
@@ -36,32 +44,55 @@ SFilterKernelDesc makeFilterDesc(const SFdkAlgoParams& ap)
     return d;
 }
 
-class Session final : public ISession {
+CylFpBp::EIterativeForwardModel makeCylForwardModel(ETask task)
+{
+    return task == ETask::FP_Siddon
+        ? CylFpBp::EIterativeForwardModel::Siddon
+        : CylFpBp::EIterativeForwardModel::Joseph;
+}
+
+CylFpBp::EIterativeBackprojectorModel makeCylBackModel(ETask task)
+{
+    using Model = CylFpBp::EIterativeBackprojectorModel;
+    switch (task) {
+    case ETask::BP_Siddon_RayDriven: return Model::SiddonRayDriven;
+    case ETask::BP_Siddon_VoxDriven: return Model::Siddon;
+    case ETask::BP_Siddon_VoxDriven_v2: return Model::SiddonV2;
+    case ETask::BP_Siddon_VoxDriven_v3: return Model::SiddonV3;
+    case ETask::BP_Joseph: return Model::Joseph;
+    case ETask::BP_Joseph_v3: return Model::JosephV3;
+    case ETask::BP_Joseph_v2: return Model::JosephV3; // 新 DLL 边界已拒绝；仅供旧内部请求过渡。
+    case ETask::BP_FDK: return Model::Fdk;
+    case ETask::BP_FDK_matched: return Model::FdkMatched;
+    default: return Model::JosephV3;
+    }
+}
+
+class Session final : public detail::IExecutionBackend {
 public:
     ~Session() override { release(); }
 
-    bool initialize(const SessionDesc& desc) override
+    bool initialize(const SSystemConfig& system,
+        const SReconstructionSpec& reconstruction, int device) override
     {
         release();
-        if (desc.gpu.empty() || desc.scan.Nu <= 0 || desc.scan.Nv <= 0 ||
-            desc.scan.NAng <= 0 || desc.volume.Nx <= 0 || desc.volume.Ny <= 0 ||
-            desc.volume.Nz <= 0) {
+        PreparedGeometry prepared;
+        if (!prepared.initialize(system) || device < 0) {
             YK_LOGE("[Session] initialize: invalid geometry or GPU selection.");
             return false;
         }
-
-        desc_ = desc;
-        device_ = desc.gpu[0];
-        if (!geometry_.initialize(desc) || !resources_.initialize(device_)) return false;
-        if (!desc.cyl_geometry.empty() && static_cast<int>(desc.cyl_geometry.size()) != desc.scan.NAng) {
-            YK_LOGE("[Session] cyl_geometry 数量必须等于 NAng。");
-            return false;
-        }
+        reconstruction_ = reconstruction;
+        device_ = device;
+        geometry_ = std::move(prepared);
+        if (!resources_.initialize(device_)) return false;
         params_ = geometry_.base();
+        params_.scan.short_scan = !geometry_.isCylindrical() &&
+            system.trajectory == ETrajectoryKind::Circular &&
+            resolveParkerEnabled(system, reconstruction_);
         params_.scan.angles = geometry_.allAngles();
         if (geometry_.hasExternalGeometry()) {
             // 外部 geometry 的 angle.x 是唯一角度来源。同步写入内部参数仅为
-            // 复用当前 FDK/Parker 配置接口，绝不读取 SessionDesc::angles。
+            // 复用当前 FDK/Parker 配置接口，绝不读取执行请求中的第二份角度。
             params_.scan.angles.resize(geometry_.allGeometry().size());
             for (size_t i = 0; i < geometry_.allGeometry().size(); ++i)
                 params_.scan.angles[i] = geometry_.allGeometry()[i].angle.x;
@@ -70,11 +101,12 @@ public:
                 params_.scan.direction = params_.scan.angles[1] >= params_.scan.angles[0] ? 1 : -1;
         }
         params_.scan.NAng = static_cast<int>(params_.scan.angles.size());
+        cylindrical_ = geometry_.isCylindrical();
 
         bool ok = false;
-        switch (desc.algorithm.pipeline) {
+        switch (reconstruction_.pipeline) {
         case EPipeline::FDK:
-            params_.reconstruction.filter = makeFilterDesc(desc.algorithm.fdk);
+            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
             // geometry 非空时，它是唯一的几何/角度真源。圆轨迹 angles 只在
             // geometry 为空时用于构造同一份完整 geometry。
             ok = geometry_.hasExternalGeometry()
@@ -87,37 +119,57 @@ public:
             break;
         case EPipeline::XFDK:
             if (!geometry_.hasExternalGeometry()) break;
-            params_.reconstruction.filter = makeFilterDesc(desc.algorithm.fdk);
+            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
             ok = xfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
             break;
         case EPipeline::CFDK:
             if (!geometry_.hasExternalGeometry()) break;
-            params_.reconstruction.filter = makeFilterDesc(desc.algorithm.fdk);
+            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
             ok = cfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
             break;
         case EPipeline::CylAnalyticFDK: {
-            if (desc.cyl_geometry.empty()) break;
+            if (geometry_.cylGeometry().empty()) break;
             CylFpBp::Analytic::ReconstructionConfig config{};
-            config.source_to_detector_mm = desc.scan.SDD_mm;
-            ok = cyl_fdk_.prepare(geometry_.volumeGeometry(), desc.scan.Nu,
-                desc.scan.Nv, desc.cyl_geometry, config,
-                makeFilterDesc(desc.algorithm.fdk), resources_.stream(), device_);
+            config.source_to_detector_mm = params_.scan.sdd_mm;
+            ok = cyl_fdk_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
+                params_.scan.Nv, geometry_.cylGeometry(), config,
+                makeFilterDesc(reconstruction_.fdk), resources_.stream(), device_);
             break;
         }
         case EPipeline::PWLS: {
-            if (!hasCompleteAngles_() || !geometry_.hasExternalGeometry()) break;
+            if (!hasCompleteAngles_()) break;
+            if (cylindrical_) {
+                CylFpBp::CylPwlsConfig c{};
+                c.iterations = reconstruction_.iterative.iterations;
+                c.relaxation = reconstruction_.iterative.relaxation;
+                c.regularizer = static_cast<Iter::EPwlsRegularizer>(
+                    reconstruction_.pwls.regularizer);
+                c.regularization = reconstruction_.pwls.regularization;
+                c.huber_delta = reconstruction_.pwls.huber_delta;
+                c.epsilon = reconstruction_.pwls.epsilon;
+                c.lower_bound = reconstruction_.pwls.lower_bound;
+                c.upper_bound = reconstruction_.pwls.upper_bound;
+                c.data_model = reconstruction_.forward_projector == ETask::FP_Siddon
+                    ? CylFpBp::ECylPwlsDataModel::Siddon
+                    : CylFpBp::ECylPwlsDataModel::JosephMatched;
+                ok = cyl_pwls_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
+                    params_.scan.Nv, geometry_.cylGeometry(), c, {}, resources_.stream(),
+                    device_);
+                break;
+            }
+            if (!geometry_.hasExternalGeometry()) break;
             Iter::PwlsConfig c{};
-            c.iterations = desc.algorithm.iterative.iterations;
-            c.subset_count = std::max(1, desc.algorithm.iterative.subsets);
-            c.relaxation = desc.algorithm.iterative.relaxation;
-            c.regularizer = static_cast<Iter::EPwlsRegularizer>(desc.algorithm.pwls.regularizer);
-            c.regularization = desc.algorithm.pwls.regularization;
-            c.huber_delta = desc.algorithm.pwls.huber_delta;
-            c.epsilon = desc.algorithm.pwls.epsilon;
-            c.lower_bound = desc.algorithm.pwls.lower_bound;
-            c.upper_bound = desc.algorithm.pwls.upper_bound;
-            c.fp_task = desc.algorithm.forward_projector;
-            c.bp_task = desc.algorithm.back_projector;
+            c.iterations = reconstruction_.iterative.iterations;
+            c.subset_count = std::max(1, reconstruction_.iterative.subsets);
+            c.relaxation = reconstruction_.iterative.relaxation;
+            c.regularizer = static_cast<Iter::EPwlsRegularizer>(reconstruction_.pwls.regularizer);
+            c.regularization = reconstruction_.pwls.regularization;
+            c.huber_delta = reconstruction_.pwls.huber_delta;
+            c.epsilon = reconstruction_.pwls.epsilon;
+            c.lower_bound = reconstruction_.pwls.lower_bound;
+            c.upper_bound = reconstruction_.pwls.upper_bound;
+            c.fp_task = reconstruction_.forward_projector;
+            c.bp_task = reconstruction_.back_projector;
             ok = pwls_.prepare(params_, geometry_.allGeometry(), c,
                 resources_.stream(), device_);
             break;
@@ -125,63 +177,103 @@ public:
         case EPipeline::TigreGradient: {
             if (!hasCompleteAngles_() || !geometry_.hasExternalGeometry()) break;
             Iter::TigreGradientConfig c{};
-            c.algorithm = static_cast<Iter::ETigreGradientAlgorithm>(desc.algorithm.tigre.method);
-            c.iterations = desc.algorithm.iterative.iterations;
-            c.block_size = desc.algorithm.tigre.block_size;
-            c.lambda = desc.algorithm.iterative.relaxation;
-            c.lambda_reduction = desc.algorithm.tigre.lambda_reduction;
-            c.relaxation_mode = desc.algorithm.tigre.nesterov_relaxation
+            c.algorithm = static_cast<Iter::ETigreGradientAlgorithm>(reconstruction_.tigre.method);
+            c.iterations = reconstruction_.iterative.iterations;
+            c.block_size = reconstruction_.tigre.block_size;
+            c.lambda = reconstruction_.iterative.relaxation;
+            c.lambda_reduction = reconstruction_.tigre.lambda_reduction;
+            c.relaxation_mode = reconstruction_.tigre.nesterov_relaxation
                 ? Iter::ETigreRelaxationMode::Nesterov : Iter::ETigreRelaxationMode::Scalar;
-            c.initialization = desc.algorithm.tigre.fdk_initialization
+            c.initialization = reconstruction_.tigre.fdk_initialization
                 ? Iter::ETigreInitialization::Fdk : Iter::ETigreInitialization::Zero;
-            c.non_negative = desc.algorithm.tigre.non_negative;
-            c.tv_iterations = desc.algorithm.tigre.tv_iterations;
-            c.alpha = desc.algorithm.tigre.tv_alpha;
-            c.alpha_reduction = desc.algorithm.tigre.tv_alpha_reduction;
-            c.maximum_update_ratio = desc.algorithm.tigre.maximum_update_ratio;
-            c.max_l2_error = desc.algorithm.tigre.max_l2_error;
-            c.fp_task = desc.algorithm.forward_projector;
-            c.bp_task = desc.algorithm.back_projector;
+            c.non_negative = reconstruction_.tigre.non_negative;
+            c.tv_iterations = reconstruction_.tigre.tv_iterations;
+            c.alpha = reconstruction_.tigre.tv_alpha;
+            c.alpha_reduction = reconstruction_.tigre.tv_alpha_reduction;
+            c.maximum_update_ratio = reconstruction_.tigre.maximum_update_ratio;
+            c.max_l2_error = reconstruction_.tigre.max_l2_error;
+            c.fp_task = reconstruction_.forward_projector;
+            c.bp_task = reconstruction_.back_projector;
             ok = tigre_.prepare(params_, geometry_.allGeometry(), c,
                 resources_.stream(), device_);
             break;
         }
         case EPipeline::WFBP:
-            YK_LOGE("[Session] WFBP 需要螺旋系统参数，当前公共 Session 尚未提供该请求类型。");
+#if YKCBCT_HAS_HELICAL
+        {
+            if (!cylindrical_ || geometry_.cylGeometry().empty()) break;
+            Helical::Wfbp::Config c{};
+            c.input_detector = Helical::Wfbp::EInputDetector::CylindricalArc;
+            c.focal_spot_mode = static_cast<Helical::Wfbp::EFocalSpotMode>(
+                reconstruction_.wfbp.focal_spot);
+            c.redundancy_flat = reconstruction_.wfbp.redundancy_flat;
+            c.filter.cutoff_c = reconstruction_.wfbp.filter_cutoff;
+            c.filter.apodization_a = reconstruction_.wfbp.filter_apodization;
+            c.anode_angle_rad = reconstruction_.wfbp.anode_angle_rad;
+            c.reverse_row_interleave =
+                reconstruction_.wfbp.reverse_row_interleave;
+            ok = wfbp_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
+                params_.scan.Nv, geometry_.cylGeometry(), c, resources_.stream(), device_);
             break;
+        }
+#else
+            YK_LOGE("[Session] 当前构建未启用 YKCBCT_BUILD_HELICAL，无法使用 wFBP。");
+            break;
+#endif
         case EPipeline::ForwardProjection:
-            forward_ = makeForwardOperator(desc.algorithm.forward_projector);
-            ok = forward_->prepare(geometry_, resources_);
+            if (cylindrical_) {
+                const auto model = reconstruction_.forward_projector == ETask::FP_Siddon
+                    ? CylFpBp::EForwardProjection::Siddon
+                    : CylFpBp::EForwardProjection::Joseph;
+                cyl_forward_ = CylFpBp::makeForwardProjection(model);
+                ok = cyl_forward_->prepare(geometry_.volumeGeometry(),
+                    params_.scan.Nu, params_.scan.Nv, geometry_.cylGeometry(), {}, resources_);
+            } else {
+                forward_ = makeForwardOperator(reconstruction_.forward_projector);
+                ok = forward_->prepare(geometry_, resources_);
+            }
             break;
         case EPipeline::SIRT: {
             if (!hasCompleteAngles_()) break;
+            if (cylindrical_) {
+                ok = prepareCylIterative_(CylFpBp::EIterativeMethod::Sirt);
+                break;
+            }
             SIRT::Config c{};
-            c.n_iter = desc.algorithm.iterative.iterations;
-            c.lambda = desc.algorithm.iterative.relaxation;
-            c.fp_task = desc.algorithm.forward_projector;
-            c.bp_task = desc.algorithm.back_projector;
+            c.n_iter = reconstruction_.iterative.iterations;
+            c.lambda = reconstruction_.iterative.relaxation;
+            c.fp_task = reconstruction_.forward_projector;
+            c.bp_task = reconstruction_.back_projector;
             ok = sirt_.init(params_, c, geometry_.allGeometry(),
                 resources_.stream(), device_);
             break;
         }
         case EPipeline::OSSART: {
             if (!hasCompleteAngles_()) break;
+            if (cylindrical_) {
+                ok = prepareCylIterative_(CylFpBp::EIterativeMethod::Ossart);
+                break;
+            }
             OSSART::Config c{};
-            c.n_iter = desc.algorithm.iterative.iterations;
-            c.n_subset = std::max(1, desc.algorithm.iterative.subsets);
-            c.lambda = desc.algorithm.iterative.relaxation;
-            c.fp_task = desc.algorithm.forward_projector;
-            c.bp_task = desc.algorithm.back_projector;
+            c.n_iter = reconstruction_.iterative.iterations;
+            c.n_subset = std::max(1, reconstruction_.iterative.subsets);
+            c.lambda = reconstruction_.iterative.relaxation;
+            c.fp_task = reconstruction_.forward_projector;
+            c.bp_task = reconstruction_.back_projector;
             ok = ossart_.init(params_, c, geometry_.allGeometry(),
                 resources_.stream(), device_);
             break;
         }
         case EPipeline::CGLS: {
             if (!hasCompleteAngles_()) break;
+            if (cylindrical_) {
+                ok = prepareCylIterative_(CylFpBp::EIterativeMethod::Cgls);
+                break;
+            }
             CGLS::Config c{};
-            c.n_iter = desc.algorithm.iterative.iterations;
-            c.fp_task = desc.algorithm.forward_projector;
-            c.bp_task = desc.algorithm.back_projector;
+            c.n_iter = reconstruction_.iterative.iterations;
+            c.fp_task = reconstruction_.forward_projector;
+            c.bp_task = reconstruction_.back_projector;
             ok = cgls_.init(params_, c, geometry_.allGeometry(),
                 resources_.stream(), device_);
             break;
@@ -202,7 +294,7 @@ public:
             YK_LOGE("[Session] execute: session is not initialized.");
             return false;
         }
-        switch (desc_.algorithm.pipeline) {
+        switch (reconstruction_.pipeline) {
         case EPipeline::FDK: return executeFdk_(r);
         case EPipeline::XFDK: return executeXfdk_(r);
         case EPipeline::CFDK: return executeCfdk_(r);
@@ -213,7 +305,7 @@ public:
         case EPipeline::CGLS: return executeIterative_(r);
         case EPipeline::PWLS:
         case EPipeline::TigreGradient: return executeIterative_(r);
-        case EPipeline::WFBP: return false;
+        case EPipeline::WFBP: return executeWfbp_(r);
         }
         return false;
     }
@@ -232,21 +324,48 @@ public:
         if (forward_) forward_->release();
         if (backward_) backward_->release();
         forward_.reset(); backward_.reset();
+        if (cyl_forward_) cyl_forward_->release();
+        cyl_forward_.reset();
+        cyl_iterative_.release(); cyl_pwls_.release();
+#if YKCBCT_HAS_HELICAL
+        wfbp_.release();
+#endif
         sirt_.release(); ossart_.release(); cgls_.release();
         pwls_.release(); tigre_.release();
         freeScratch_();
         resources_.release();
         params_ = {};
-        desc_ = {};
+        reconstruction_ = {};
         initialized_ = false;
+        cylindrical_ = false;
     }
 
     bool isInitialized() const override { return initialized_; }
 
 private:
+    bool prepareCylIterative_(CylFpBp::EIterativeMethod method)
+    {
+        CylFpBp::IterativeConfig c{};
+        c.method = method;
+        c.iterations = reconstruction_.iterative.iterations;
+        c.subset_count = std::max(1, reconstruction_.iterative.subsets);
+        c.relaxation = reconstruction_.iterative.relaxation;
+        c.forward_model = makeCylForwardModel(reconstruction_.forward_projector);
+        c.backprojector_model = makeCylBackModel(reconstruction_.back_projector);
+        c.convergence.relative_residual_tolerance =
+            reconstruction_.cgls.relative_residual;
+        c.convergence.minimum_iterations =
+            reconstruction_.cgls.minimum_iterations;
+        c.convergence.check_interval =
+            reconstruction_.cgls.check_interval;
+        c.convergence.patience = reconstruction_.cgls.patience;
+        return cyl_iterative_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
+            params_.scan.Nv, geometry_.cylGeometry(), c, {}, resources_.stream(), device_);
+    }
+
     bool hasCompleteAngles_() const
     {
-        if (static_cast<int>(params_.scan.angles.size()) != desc_.scan.NAng) {
+        if (static_cast<int>(params_.scan.angles.size()) != params_.scan.NAng) {
             YK_LOGE("[Session] iterative pipelines require complete angles or per-view geometry.");
             return false;
         }
@@ -317,6 +436,19 @@ private:
         return true;
     }
 
+    bool executeWfbp_(const ExecuteRequest& r)
+    {
+#if YKCBCT_HAS_HELICAL
+        if (!hasFullDeviceReconstructionInput_(r, "WFBP")) return false;
+        if (!wfbp_.reconstruct(r.projection.data, r.volume.data)) return false;
+        YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+        return true;
+#else
+        (void)r;
+        return false;
+#endif
+    }
+
     bool hasFullDeviceReconstructionInput_(const ExecuteRequest& r,
         const char* algorithm) const
     {
@@ -332,6 +464,27 @@ private:
     bool executeFp_(const ExecuteRequest& r)
     {
         if (r.K <= 0 || !r.projection.data || !r.volume.data) return false;
+        if (cylindrical_) {
+            if (r.K != params_.scan.totalViews) {
+                YK_LOGE("[Session] Cyl FP 当前要求一次提交完整视图序列。");
+                return false;
+            }
+            const float* d_volume = r.volume.location == EMemoryLocation::Device
+                ? r.volume.data : uploadVolume_(r.volume.data);
+            float* d_projection = r.projection.location == EMemoryLocation::Device
+                ? r.projection.data : ensureProjectionScratch_(r.K);
+            if (!d_volume || !d_projection || !cyl_forward_ ||
+                !cyl_forward_->apply(d_volume, d_projection, false, resources_))
+                return false;
+            if (r.projection.location == EMemoryLocation::Host) {
+                const size_t bytes = static_cast<size_t>(r.K) *
+                    params_.scan.Nu * params_.scan.Nv * sizeof(float);
+                YK_CUDA_CHECK(cudaMemcpyAsync(r.projection.data, d_projection,
+                    bytes, cudaMemcpyDeviceToHost, resources_.stream()));
+            }
+            YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+            return true;
+        }
         // 外部 geometry 模式下 angle.x 已是唯一角度来源。当前 ExecuteRequest
         // 没有 batch offset，因此只允许一次提交完整序列，避免用另一份 angles
         // 去猜测子集并造成几何/角度分叉。
@@ -375,8 +528,20 @@ private:
             YK_LOGE("[Session] iterative pipelines currently require device projection and volume buffers.");
             return false;
         }
+        if (cylindrical_) {
+            if (r.K != params_.scan.NAng) {
+                YK_LOGE("[Session] Cyl iterative 当前要求完整设备投影序列。");
+                return false;
+            }
+            const bool ok = reconstruction_.pipeline == EPipeline::PWLS
+                ? cyl_pwls_.reconstruct(r.projection.data, r.volume.data)
+                : cyl_iterative_.reconstruct(r.projection.data, r.volume.data);
+            if (!ok) return false;
+            YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+            return true;
+        }
         bool ok = false;
-        switch (desc_.algorithm.pipeline) {
+        switch (reconstruction_.pipeline) {
         case EPipeline::SIRT:
             ok = r.iteration_count > 0
                 ? sirt_.iterate(r.projection.data, r.volume.data, params_, resources_.stream(), r.iteration_count)
@@ -440,15 +605,22 @@ private:
         projection_scratch_bytes_ = 0;
     }
 
-    SessionDesc desc_{};
+    SReconstructionSpec reconstruction_{};
     SReconstructionParams params_{};
     int device_ = 0;
     bool initialized_ = false;
+    bool cylindrical_ = false;
     FdkPipeline fdk_;
-    GeometryContext geometry_;
+    PreparedGeometry geometry_;
     ResourceContext resources_;
     std::unique_ptr<IForwardOperator> forward_;
     std::unique_ptr<IBackOperator> backward_;
+    std::unique_ptr<CylFpBp::IForwardProjection> cyl_forward_;
+    CylFpBp::AlgebraicReconstructor cyl_iterative_{};
+    CylFpBp::CylPwlsReconstructor cyl_pwls_{};
+#if YKCBCT_HAS_HELICAL
+    Helical::Wfbp::Pipeline wfbp_{};
+#endif
     SIRT sirt_;
     OSSART ossart_;
     CGLS cgls_;
@@ -465,7 +637,7 @@ private:
 
 } // namespace
 
-ISession* SessionFactory::create() { return new Session(); }
-void SessionFactory::destroy(ISession* session) { delete session; }
+detail::IExecutionBackend* detail::createExecutionBackend() { return new Session(); }
+void detail::destroyExecutionBackend(detail::IExecutionBackend* backend) { delete backend; }
 
 } // namespace YK

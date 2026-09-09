@@ -544,6 +544,59 @@ namespace YK {
             int deviceId_ = 0;
         };
 
+        // cuFFT 等第三方库按字节报告工作区大小，无法自然表示成某种 T 的
+        // 元素数量。该 RAII 缓冲保留 size_t 字节语义，并统一设备切换与释放。
+        class DeviceByteBuffer {
+        public:
+            DeviceByteBuffer() = default;
+            ~DeviceByteBuffer() { reset(); }
+            DeviceByteBuffer(const DeviceByteBuffer&) = delete;
+            DeviceByteBuffer& operator=(const DeviceByteBuffer&) = delete;
+            DeviceByteBuffer(DeviceByteBuffer&& other) noexcept
+                : ptr_(other.ptr_), bytes_(other.bytes_), deviceId_(other.deviceId_)
+            {
+                other.ptr_ = nullptr;
+                other.bytes_ = 0;
+                other.deviceId_ = 0;
+            }
+            DeviceByteBuffer& operator=(DeviceByteBuffer&& other) noexcept
+            {
+                if (this != &other) {
+                    reset();
+                    ptr_ = other.ptr_; other.ptr_ = nullptr;
+                    bytes_ = other.bytes_; other.bytes_ = 0;
+                    deviceId_ = other.deviceId_; other.deviceId_ = 0;
+                }
+                return *this;
+            }
+            void alloc(size_t bytes, int deviceId = 0)
+            {
+                reset();
+                if (bytes == 0) return;
+                deviceId_ = deviceId;
+                bytes_ = bytes;
+                YK_CUDA_CHECK(cudaSetDevice(deviceId_));
+                YK_CUDA_CHECK(cudaMalloc(&ptr_, bytes_));
+            }
+            void reset() noexcept
+            {
+                if (ptr_) {
+                    cudaSetDevice(deviceId_);
+                    cudaFree(ptr_);
+                }
+                ptr_ = nullptr;
+                bytes_ = 0;
+            }
+            void* data() const noexcept { return ptr_; }
+            size_t bytes() const noexcept { return bytes_; }
+            int deviceId() const noexcept { return deviceId_; }
+            explicit operator bool() const noexcept { return ptr_ != nullptr; }
+        private:
+            void* ptr_ = nullptr;
+            size_t bytes_ = 0;
+            int deviceId_ = 0;
+        };
+
         // ============================================================
         // DeviceLinearBuffer3D  —  3D 线性设备缓冲
         // 用于 vol buffer，pitch = nx*sizeof(T)，无 padding

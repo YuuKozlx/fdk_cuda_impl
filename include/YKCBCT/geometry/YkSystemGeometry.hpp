@@ -8,31 +8,19 @@
 
 namespace YK {
 
-// 四种规则扫描系统均由 scan、detector 和 volume 三个正交部分组成。
-// 调用方填写宏观系统参数，builder 负责生成角度和逐视图 vector geometry。
-struct SStaticFlatSystemSpec {
-    SRegularCircularScanSpec scan{};
-    SFlatDetectorSpec detector{};
-    SVolumeGridSpec volume{};
-};
+enum class EDetectorKind : int32_t { Flat, Cylindrical };
+enum class ETrajectoryKind : int32_t { Circular, Helical };
 
-struct SStaticCylSystemSpec {
-    SRegularCircularScanSpec scan{};
-    SCylDetectorSpec detector{};
-    SVolumeGridSpec volume{};
-};
-
-struct SHelicalFlatSystemSpec {
-    SRegularHelicalScanSpec scan{};
-    SFlatDetectorSpec detector{};
-    SVolumeGridSpec volume{};
-};
-
-// 曲率只存在于 detector 中，不会与 scan.sdd_mm 混为一个字段；
-// 柱面迭代重建允许曲率半径与 SDD 不相等。
-struct SHelicalCylSystemSpec {
-    SRegularHelicalScanSpec scan{};
-    SCylDetectorSpec detector{};
+// 库对外唯一的宏观系统配置。探测器和轨迹通过两个枚举组合成 Flat/Cyl
+// 与 Circular/Helical 四种系统；builder 负责只读取对应分支并生成规范几何。
+// 该结构不包含算法、CUDA 资源或预计算结果。
+struct SSystemConfig {
+    EDetectorKind detector = EDetectorKind::Flat;
+    ETrajectoryKind trajectory = ETrajectoryKind::Circular;
+    SRegularCircularScanSpec circular{};
+    SRegularHelicalScanSpec helical{};
+    SFlatDetectorSpec flat_detector{};
+    SCylDetectorSpec cylindrical_detector{};
     SVolumeGridSpec volume{};
 };
 
@@ -115,56 +103,41 @@ inline bool buildVolumeGeometry(const SVolumeGridSpec& volume,
     return true;
 }
 
-template <typename System, typename Trajectory, typename Geometry>
-inline bool buildSystemGeometry(const System& system, Trajectory& trajectory,
-    std::vector<Geometry>& geometry, SVolGeom& volume)
+// 统一入口：调用方只提交一份 SSystemConfig，所有后端共享这次构造结果。
+inline bool buildSystemGeometry(const SSystemConfig& system,
+    std::vector<SConeProjGeomVec>& flat_geometry,
+    std::vector<SCylConeProjGeomVec>& cyl_geometry,
+    SVolGeom& volume)
 {
-    return buildVolumeGeometry(system.volume, volume) &&
-        buildProjectionGeometry(trajectory, system.detector, geometry);
-}
-
-inline bool buildStaticFlatGeometry(const SStaticFlatSystemSpec& system,
-    std::vector<SConeProjGeomVec>& geometry, SVolGeom& volume)
-{
-    SCircularTrajectorySpec trajectory{};
-    return buildCircularTrajectory(system.scan, trajectory) &&
-        buildSystemGeometry(system, trajectory, geometry, volume);
-}
-inline bool buildStaticFlatGeometry(const SStaticFlatSystemSpec& system,
-    std::vector<SConeProjGeomVec>& geometry)
-{ SVolGeom volume{}; return buildStaticFlatGeometry(system, geometry, volume); }
-
-inline bool buildStaticCylGeometry(const SStaticCylSystemSpec& system,
-    std::vector<SCylConeProjGeomVec>& geometry, SVolGeom& volume)
-{
-    SCircularTrajectorySpec trajectory{};
-    return buildCircularTrajectory(system.scan, trajectory) &&
-        buildSystemGeometry(system, trajectory, geometry, volume);
-}
-inline bool buildStaticCylGeometry(const SStaticCylSystemSpec& system,
-    std::vector<SCylConeProjGeomVec>& geometry)
-{ SVolGeom volume{}; return buildStaticCylGeometry(system, geometry, volume); }
-
-inline bool buildHelicalFlatGeometry(const SHelicalFlatSystemSpec& system,
-    std::vector<SConeProjGeomVec>& geometry, SVolGeom& volume)
-{
+    flat_geometry.clear(); cyl_geometry.clear();
+    if (system.detector != EDetectorKind::Flat &&
+        system.detector != EDetectorKind::Cylindrical) return false;
+    if (system.trajectory != ETrajectoryKind::Circular &&
+        system.trajectory != ETrajectoryKind::Helical) return false;
+    if (!buildVolumeGeometry(system.volume, volume)) return false;
+    if (system.detector == EDetectorKind::Flat) {
+        if (system.trajectory == ETrajectoryKind::Circular) {
+            SCircularTrajectorySpec trajectory{};
+            return buildCircularTrajectory(system.circular, trajectory) &&
+                buildProjectionGeometry(trajectory, system.flat_detector, flat_geometry);
+        }
+        SHelicalTrajectorySpec trajectory{};
+        return buildHelicalTrajectory(system.helical, trajectory) &&
+            buildProjectionGeometry(trajectory, system.flat_detector, flat_geometry);
+    }
+    if (system.trajectory == ETrajectoryKind::Circular) {
+        SCircularTrajectorySpec trajectory{};
+        return buildCircularTrajectory(system.circular, trajectory) &&
+            buildProjectionGeometry(trajectory, system.cylindrical_detector, cyl_geometry);
+    }
     SHelicalTrajectorySpec trajectory{};
-    return buildHelicalTrajectory(system.scan, trajectory) &&
-        buildSystemGeometry(system, trajectory, geometry, volume);
+    return buildHelicalTrajectory(system.helical, trajectory) &&
+        buildProjectionGeometry(trajectory, system.cylindrical_detector, cyl_geometry);
 }
-inline bool buildHelicalFlatGeometry(const SHelicalFlatSystemSpec& system,
-    std::vector<SConeProjGeomVec>& geometry)
-{ SVolGeom volume{}; return buildHelicalFlatGeometry(system, geometry, volume); }
 
-inline bool buildHelicalCylGeometry(const SHelicalCylSystemSpec& system,
-    std::vector<SCylConeProjGeomVec>& geometry, SVolGeom& volume)
-{
-    SHelicalTrajectorySpec trajectory{};
-    return buildHelicalTrajectory(system.scan, trajectory) &&
-        buildSystemGeometry(system, trajectory, geometry, volume);
-}
-inline bool buildHelicalCylGeometry(const SHelicalCylSystemSpec& system,
-    std::vector<SCylConeProjGeomVec>& geometry)
-{ SVolGeom volume{}; return buildHelicalCylGeometry(system, geometry, volume); }
+inline bool buildSystemGeometry(const SSystemConfig& system,
+    std::vector<SConeProjGeomVec>& flat_geometry,
+    std::vector<SCylConeProjGeomVec>& cyl_geometry)
+{ SVolGeom volume{}; return buildSystemGeometry(system, flat_geometry, cyl_geometry, volume); }
 
 } // namespace YK

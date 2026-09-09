@@ -43,6 +43,7 @@ option(YKCBCT_BUILD_CVP "构建实验性 CVP 正投影算法" OFF)
 option(BUILD_TESTS "构建 Yktest 集成与数值回归测试" OFF)
 option(BUILD_UNIT_TESTS "构建轻量 GoogleTest 单元测试" OFF)
 option(BUILD_DLLTEST "构建 DLL 公共接口测试" OFF)
+option(BUILD_MULTISPECTRUM_SIM "构建独立多能谱 CBCT 仿真示例" OFF)
 
 # ============================================================================
 # 工具链和全局默认值
@@ -94,6 +95,7 @@ add_library(YKCBCT::YKCBCT ALIAS YKCBCT)
 
 target_compile_definitions(YKCBCT PRIVATE
     YKCBCT_EXPORTS
+    YKCBCT_HAS_HELICAL=$<BOOL:${YKCBCT_BUILD_HELICAL}>
     $<$<PLATFORM_ID:Windows>:_WINDOWS>
     $<$<CONFIG:Release>:NDEBUG>
     $<$<CONFIG:Debug>:_DEBUG>
@@ -185,6 +187,8 @@ function(ykcbct_collect_manual_test_sources output_variable)
         if(absolute_source STREQUAL
                 "${PROJECT_SOURCE_DIR}/src/interface/YkSession.cpp" OR
            absolute_source STREQUAL
+                "${PROJECT_SOURCE_DIR}/src/interface/YkReconstructionApi.cpp" OR
+           absolute_source STREQUAL
                 "${PROJECT_SOURCE_DIR}/src/interface/YkLibraryAnchor.cpp")
             continue()
         endif()
@@ -205,6 +209,10 @@ endif()
 
 if(BUILD_DLLTEST)
     add_subdirectory(dlltest)
+endif()
+
+if(BUILD_MULTISPECTRUM_SIM)
+    add_subdirectory(example/multispectrum_sim)
 endif()
 
 # ============================================================================

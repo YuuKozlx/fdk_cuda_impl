@@ -9,6 +9,12 @@ target_compile_options(dlltest PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W3 /Zc:__cplusplus /utf-8>
 )
 
+# 测试需要区分“后端未编译进 DLL”和“wFBP 执行失败”两种情况。
+# 该宏只描述构建能力，不向公共 API 暴露内部实现细节。
+target_compile_definitions(dlltest PRIVATE
+    YKCBCT_HAS_HELICAL=$<BOOL:${YKCBCT_BUILD_HELICAL}>
+)
+
 set_target_properties(dlltest PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
 add_custom_command(TARGET dlltest POST_BUILD

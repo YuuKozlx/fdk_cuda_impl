@@ -75,20 +75,30 @@ SRegularHelicalScanSpec sampleHelicalScan()
     return scan;
 }
 
-template <typename System, typename Geometry>
-SReconstructionParams makeInternalParams(const System& system,
+template <typename Geometry>
+SReconstructionParams makeInternalParams(const SSystemConfig& system,
     const std::vector<Geometry>& geometry)
 {
     SReconstructionParams params{};
-    params.scan.Nu = system.detector.channels;
-    params.scan.Nv = system.detector.rows;
+    const bool cylindrical = system.detector == EDetectorKind::Cylindrical;
+    const bool helical = system.trajectory == ETrajectoryKind::Helical;
+    params.scan.Nu = cylindrical ? system.cylindrical_detector.channels : system.flat_detector.channels;
+    params.scan.Nv = cylindrical ? system.cylindrical_detector.rows : system.flat_detector.rows;
     params.scan.NAng = static_cast<int>(geometry.size());
     params.scan.totalViews = params.scan.NAng;
-    params.scan.sid_mm = system.scan.sid_mm;
-    params.scan.sdd_mm = system.scan.sdd_mm;
-    params.scan.start_angle_rad = system.scan.start_angle_rad;
-    params.scan.direction = system.scan.rotation_direction;
-    params.scan.range_rad = regularScanRangeRad(system.scan);
+    if (helical) {
+        params.scan.sid_mm = system.helical.sid_mm;
+        params.scan.sdd_mm = system.helical.sdd_mm;
+        params.scan.start_angle_rad = system.helical.start_angle_rad;
+        params.scan.direction = system.helical.rotation_direction;
+        params.scan.range_rad = regularScanRangeRad(system.helical);
+    } else {
+        params.scan.sid_mm = system.circular.sid_mm;
+        params.scan.sdd_mm = system.circular.sdd_mm;
+        params.scan.start_angle_rad = system.circular.start_angle_rad;
+        params.scan.direction = system.circular.rotation_direction;
+        params.scan.range_rad = regularScanRangeRad(system.circular);
+    }
     params.scan.angles.resize(geometry.size());
     for (size_t i = 0; i < geometry.size(); ++i) {
         if constexpr (std::is_same_v<Geometry, SConeProjGeomVec>)
@@ -165,56 +175,70 @@ bool writeRaw(const std::filesystem::path& path,
 int main_system_reconstruction_four_geometries()
 {
     using namespace YK;
-    SStaticFlatReconstructionRequest static_flat{};
-    static_flat.system.scan = sampleCircularScan();
-    static_flat.system.detector = sampleFlatDetector();
-    static_flat.system.volume = sampleVolume();
-    static_flat.reconstruction.fdk.filter = EFdkFilter::SheppLogan;
-    static_flat.reconstruction.parker.mode = EParkerMode::Auto;
+    SSystemConfig static_flat{};
+    static_flat.detector = EDetectorKind::Flat;
+    static_flat.trajectory = ETrajectoryKind::Circular;
+    static_flat.circular = sampleCircularScan();
+    static_flat.flat_detector = sampleFlatDetector();
+    static_flat.volume = sampleVolume();
+    SReconstructionSpec static_flat_reconstruction{};
+    static_flat_reconstruction.fdk.filter = EFdkFilter::SheppLogan;
+    static_flat_reconstruction.parker.mode = EParkerMode::Auto;
 
-    SStaticCylReconstructionRequest static_cyl{};
-    static_cyl.system.scan = sampleCircularScan();
-    static_cyl.system.detector = sampleCylDetector();
-    static_cyl.system.volume = sampleVolume();
+    SSystemConfig static_cyl{};
+    static_cyl.detector = EDetectorKind::Cylindrical;
+    static_cyl.trajectory = ETrajectoryKind::Circular;
+    static_cyl.circular = sampleCircularScan();
+    static_cyl.cylindrical_detector = sampleCylDetector();
+    static_cyl.volume = sampleVolume();
+    SReconstructionSpec static_cyl_reconstruction{};
     // 当前 Cyl analytic FDK 使用柱面采样修正的离散 Ram-Lak，尚未实现
     // Shepp-Logan 窗；这里的 Shepp-Logan 指四条路径共用的输入模体。
-    static_cyl.reconstruction.fdk.filter = EFdkFilter::RamLak;
+    static_cyl_reconstruction.fdk.filter = EFdkFilter::RamLak;
 
-    SHelicalFlatReconstructionRequest helical_flat{};
-    helical_flat.system.scan = sampleHelicalScan();
-    helical_flat.system.detector = sampleFlatDetector();
-    helical_flat.system.volume = sampleVolume();
-    helical_flat.reconstruction.pipeline = EPipeline::OSSART;
-    helical_flat.reconstruction.iterative = {3, 0.25f, 12};
+    SSystemConfig helical_flat{};
+    helical_flat.detector = EDetectorKind::Flat;
+    helical_flat.trajectory = ETrajectoryKind::Helical;
+    helical_flat.helical = sampleHelicalScan();
+    helical_flat.flat_detector = sampleFlatDetector();
+    helical_flat.volume = sampleVolume();
+    SReconstructionSpec helical_flat_reconstruction{};
+    helical_flat_reconstruction.pipeline = EPipeline::OSSART;
+    helical_flat_reconstruction.iterative = {3, 0.25f, 12};
 
-    SHelicalCylReconstructionRequest helical_cyl{};
-    helical_cyl.system.scan = sampleHelicalScan();
-    helical_cyl.system.detector = sampleCylDetector();
-    helical_cyl.system.volume = sampleVolume();
-    helical_cyl.reconstruction.pipeline = EPipeline::OSSART;
-    helical_cyl.reconstruction.iterative = {3, 0.2f, 12};
+    SSystemConfig helical_cyl{};
+    helical_cyl.detector = EDetectorKind::Cylindrical;
+    helical_cyl.trajectory = ETrajectoryKind::Helical;
+    helical_cyl.helical = sampleHelicalScan();
+    helical_cyl.cylindrical_detector = sampleCylDetector();
+    helical_cyl.volume = sampleVolume();
+    SReconstructionSpec helical_cyl_reconstruction{};
+    helical_cyl_reconstruction.pipeline = EPipeline::OSSART;
+    helical_cyl_reconstruction.iterative = {3, 0.2f, 12};
 
     std::vector<SConeProjGeomVec> static_flat_geometry, helical_flat_geometry;
     std::vector<SCylConeProjGeomVec> static_cyl_geometry, helical_cyl_geometry;
     SVolGeom volume{};
-    bool ok = buildStaticFlatGeometry(static_flat.system,
-            static_flat_geometry, volume) &&
-        buildStaticCylGeometry(static_cyl.system, static_cyl_geometry) &&
-        buildHelicalFlatGeometry(helical_flat.system, helical_flat_geometry) &&
-        buildHelicalCylGeometry(helical_cyl.system, helical_cyl_geometry);
+    std::vector<SCylConeProjGeomVec> unused_cyl;
+    std::vector<SConeProjGeomVec> unused_flat;
+    bool ok = buildSystemGeometry(static_flat, static_flat_geometry,
+            unused_cyl, volume) &&
+        buildSystemGeometry(static_cyl, unused_flat, static_cyl_geometry) &&
+        buildSystemGeometry(helical_flat, helical_flat_geometry, unused_cyl) &&
+        buildSystemGeometry(helical_cyl, unused_flat, helical_cyl_geometry);
     if (!ok) return 1;
 
-    const auto phantom_params = makeInternalParams(static_flat.system,
+    const auto phantom_params = makeInternalParams(static_flat,
         static_flat_geometry);
     const auto truth = TestPhantom::makeAstraSheppLogan3D(
         phantom_params, 28.f, true, 0.02f);
     const size_t volume_elements = truth.size();
     const size_t static_projection_elements = static_cast<size_t>(
-        static_flat.system.detector.channels) *
-        static_flat.system.detector.rows * static_flat_geometry.size();
+        static_flat.flat_detector.channels) *
+        static_flat.flat_detector.rows * static_flat_geometry.size();
     const size_t helical_projection_elements = static_cast<size_t>(
-        helical_flat.system.detector.channels) *
-        helical_flat.system.detector.rows * helical_flat_geometry.size();
+        helical_flat.flat_detector.channels) *
+        helical_flat.flat_detector.rows * helical_flat_geometry.size();
 
     cudaStream_t stream = nullptr;
     if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
@@ -222,37 +246,37 @@ int main_system_reconstruction_four_geometries()
     auto d_truth = memory.allocateDevice3D<float>(volume.Nx, volume.Ny,
         volume.Nz, 0, false);
     auto d_static_flat_projection = memory.allocateDevice3D<float>(
-        static_flat.system.detector.channels, static_flat.system.detector.rows,
+        static_flat.flat_detector.channels, static_flat.flat_detector.rows,
         static_cast<int>(static_flat_geometry.size()), 0, false);
     auto d_static_cyl_projection = memory.allocateDevice3D<float>(
-        static_cyl.system.detector.channels, static_cyl.system.detector.rows,
+        static_cyl.cylindrical_detector.channels, static_cyl.cylindrical_detector.rows,
         static_cast<int>(static_cyl_geometry.size()), 0, false);
     auto d_helical_flat_projection = memory.allocateDevice3D<float>(
-        helical_flat.system.detector.channels, helical_flat.system.detector.rows,
+        helical_flat.flat_detector.channels, helical_flat.flat_detector.rows,
         static_cast<int>(helical_flat_geometry.size()), 0, false);
     auto d_helical_cyl_projection = memory.allocateDevice3D<float>(
-        helical_cyl.system.detector.channels, helical_cyl.system.detector.rows,
+        helical_cyl.cylindrical_detector.channels, helical_cyl.cylindrical_detector.rows,
         static_cast<int>(helical_cyl_geometry.size()), 0, false);
     YK_CUDA_CHECK(cudaMemcpyAsync(d_truth.data(), truth.data(),
         volume_elements * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-    const auto static_flat_params = makeInternalParams(static_flat.system,
+    const auto static_flat_params = makeInternalParams(static_flat,
         static_flat_geometry);
-    const auto helical_flat_params = makeInternalParams(helical_flat.system,
+    const auto helical_flat_params = makeInternalParams(helical_flat,
         helical_flat_geometry);
     const bool static_flat_fp = simulateFlat(static_flat_params,
         static_flat_geometry, d_truth.data(), d_static_flat_projection.data(),
         stream);
     const bool static_cyl_fp = simulateCyl(volume,
-            static_cyl.system.detector.channels,
-            static_cyl.system.detector.rows, static_cyl_geometry,
+            static_cyl.cylindrical_detector.channels,
+            static_cyl.cylindrical_detector.rows, static_cyl_geometry,
             d_truth.data(), d_static_cyl_projection.data(), stream);
     const bool helical_flat_fp = simulateFlat(helical_flat_params,
         helical_flat_geometry, d_truth.data(), d_helical_flat_projection.data(),
         stream);
     const bool helical_cyl_fp = simulateCyl(volume,
-            helical_cyl.system.detector.channels,
-            helical_cyl.system.detector.rows, helical_cyl_geometry,
+            helical_cyl.cylindrical_detector.channels,
+            helical_cyl.cylindrical_detector.rows, helical_cyl_geometry,
             d_truth.data(), d_helical_cyl_projection.data(), stream);
     const bool fp_sync = cudaStreamSynchronize(stream) == cudaSuccess;
     YK_LOGI("[SystemExample] FP static-flat={} static-cyl={} heli-flat={} heli-cyl={} sync={}",
@@ -278,15 +302,16 @@ int main_system_reconstruction_four_geometries()
     FdkPipeline flat_fdk;
     const FdkProjectionBatch flat_batch{host_static_flat_projection.data(),
         nullptr, nullptr, static_cast<int>(static_flat_geometry.size())};
-    const bool static_flat_recon = flat_fdk.prepare(static_flat, 32, stream) &&
+    const bool static_flat_recon = flat_fdk.prepare(static_flat,
+            static_flat_reconstruction, 32, stream) &&
         flat_fdk.processBatchSync(flat_batch, d_static_flat.data(), true);
     ok = static_flat_recon && ok;
     flat_fdk.release();
 
     CylFpBp::CylFdkPipeline cyl_fdk;
     const bool static_cyl_recon = cyl_fdk.prepare(volume,
-            static_cyl.system.detector.channels,
-            static_cyl.system.detector.rows, static_cyl_geometry,
+            static_cyl.cylindrical_detector.channels,
+            static_cyl.cylindrical_detector.rows, static_cyl_geometry,
             SFilterKernelDesc::RamLak(), stream) &&
         cyl_fdk.reconstruct(d_static_cyl_projection.data(),
             d_static_cyl.data(), true);
@@ -297,11 +322,11 @@ int main_system_reconstruction_four_geometries()
     Helical::Iterative::FlatConfig flat_iter_config{};
     flat_iter_config.method = Helical::Iterative::EMethod::Ossart;
     flat_iter_config.algebraic.iterations =
-        helical_flat.reconstruction.iterative.iterations;
+        helical_flat_reconstruction.iterative.iterations;
     flat_iter_config.algebraic.subset_count =
-        helical_flat.reconstruction.iterative.subsets;
+        helical_flat_reconstruction.iterative.subsets;
     flat_iter_config.algebraic.relaxation =
-        helical_flat.reconstruction.iterative.relaxation;
+        helical_flat_reconstruction.iterative.relaxation;
     Helical::Iterative::FlatReconstructor flat_iter;
     const bool helical_flat_recon = flat_iter.prepare(helical_flat_params,
             helical_flat_geometry,
@@ -314,15 +339,15 @@ int main_system_reconstruction_four_geometries()
     Helical::Iterative::CylConfig cyl_iter_config{};
     cyl_iter_config.method = Helical::Iterative::EMethod::Ossart;
     cyl_iter_config.algebraic.iterations =
-        helical_cyl.reconstruction.iterative.iterations;
+        helical_cyl_reconstruction.iterative.iterations;
     cyl_iter_config.algebraic.subset_count =
-        helical_cyl.reconstruction.iterative.subsets;
+        helical_cyl_reconstruction.iterative.subsets;
     cyl_iter_config.algebraic.relaxation =
-        helical_cyl.reconstruction.iterative.relaxation;
+        helical_cyl_reconstruction.iterative.relaxation;
     Helical::Iterative::CylReconstructor cyl_iter;
     const bool helical_cyl_recon = cyl_iter.prepare(volume,
-            helical_cyl.system.detector.channels,
-            helical_cyl.system.detector.rows, helical_cyl_geometry,
+            helical_cyl.cylindrical_detector.channels,
+            helical_cyl.cylindrical_detector.rows, helical_cyl_geometry,
             cyl_iter_config, stream) &&
         cyl_iter.reconstruct(d_helical_cyl_projection.data(),
             d_helical_cyl.data());

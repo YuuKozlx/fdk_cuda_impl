@@ -2243,30 +2243,33 @@ int main_fdk_calibrated_geometry_smoke()
 // 新系统级请求必须能直接初始化 Flat FDK，并由扫描几何自动判断 Parker。
 int main_fdk_system_request_smoke()
 {
-    SStaticFlatReconstructionRequest request{};
-    request.system.scan.total_views = 6;
-    request.system.scan.views_per_turn = 10; // 1.2π，满足当前小扇角短扫。
-    request.system.scan.sid_mm = 80.f;
-    request.system.scan.sdd_mm = 160.f;
-    request.system.detector.channels = 16;
-    request.system.detector.rows = 8;
-    request.system.detector.channel_size_mm = 1.f;
-    request.system.detector.row_size_mm = 1.f;
-    request.system.volume = {8, 8, 8, 1.f, 1.f, 1.f,
+    SSystemConfig system{};
+    system.detector = EDetectorKind::Flat;
+    system.trajectory = ETrajectoryKind::Circular;
+    system.circular.total_views = 6;
+    system.circular.views_per_turn = 10; // 1.2π，满足当前小扇角短扫。
+    system.circular.sid_mm = 80.f;
+    system.circular.sdd_mm = 160.f;
+    system.flat_detector.channels = 16;
+    system.flat_detector.rows = 8;
+    system.flat_detector.channel_size_mm = 1.f;
+    system.flat_detector.row_size_mm = 1.f;
+    system.volume = {8, 8, 8, 1.f, 1.f, 1.f,
         make_float3(2.f, -1.f, 3.f)};
-    request.reconstruction.parker.mode = EParkerMode::Auto;
-    request.reconstruction.fdk.filter = EFdkFilter::Hann;
+    SReconstructionSpec reconstruction{};
+    reconstruction.parker.mode = EParkerMode::Auto;
+    reconstruction.fdk.filter = EFdkFilter::Hann;
 
     cudaStream_t stream = nullptr;
     bool ok = checkCuda(cudaStreamCreate(&stream), "create system FDK stream");
     FdkPipeline pipeline;
-    ok = ok && resolveParkerEnabled(request) &&
-        pipeline.prepare(request, 4, stream);
+    ok = ok && resolveParkerEnabled(system, reconstruction) &&
+        pipeline.prepare(system, reconstruction, 4, stream);
     pipeline.release();
 
-    request.system.scan.total_views = request.system.scan.views_per_turn;
-    ok = ok && !resolveParkerEnabled(request) &&
-        pipeline.prepare(request, 4, stream);
+    system.circular.total_views = system.circular.views_per_turn;
+    ok = ok && !resolveParkerEnabled(system, reconstruction) &&
+        pipeline.prepare(system, reconstruction, 4, stream);
     pipeline.release();
     if (stream) cudaStreamDestroy(stream);
     std::printf("FDK system reconstruction request: %s\n",

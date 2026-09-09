@@ -101,47 +101,59 @@ inline SVolumeGridSpec volumeGrid(const SHeliCTParam& p)
 
 inline std::vector<SConeProjGeomVec> helicalFlat(const SHeliCTParam& p)
 {
-    SHelicalFlatSystemSpec system{};
-    system.scan = regularHelicalScan(p);
-    system.detector = flatDetector(p);
+    SSystemConfig system{};
+    system.detector = EDetectorKind::Flat;
+    system.trajectory = ETrajectoryKind::Helical;
+    system.helical = regularHelicalScan(p);
+    system.flat_detector = flatDetector(p);
     system.volume = volumeGrid(p);
     std::vector<SConeProjGeomVec> geometry;
-    buildHelicalFlatGeometry(system, geometry);
+    std::vector<SCylConeProjGeomVec> unused;
+    buildSystemGeometry(system, geometry, unused);
     return geometry;
 }
 
 inline std::vector<SConeProjGeomVec> staticFlat(const SHeliCTParam& p)
 {
-    SStaticFlatSystemSpec system{};
-    system.scan = regularCircularScan(p);
-    system.detector = flatDetector(p);
+    SSystemConfig system{};
+    system.detector = EDetectorKind::Flat;
+    system.trajectory = ETrajectoryKind::Circular;
+    system.circular = regularCircularScan(p);
+    system.flat_detector = flatDetector(p);
     system.volume = volumeGrid(p);
     std::vector<SConeProjGeomVec> geometry;
-    buildStaticFlatGeometry(system, geometry);
+    std::vector<SCylConeProjGeomVec> unused;
+    buildSystemGeometry(system, geometry, unused);
     return geometry;
 }
 
 inline std::vector<SCylConeProjGeomVec> staticCyl(const SHeliCTParam& p,
     float radius_mm, float channel_angle_step_rad = 0.f)
 {
-    SStaticCylSystemSpec system{};
-    system.scan = regularCircularScan(p);
-    system.detector = cylDetector(p, radius_mm, channel_angle_step_rad);
+    SSystemConfig system{};
+    system.detector = EDetectorKind::Cylindrical;
+    system.trajectory = ETrajectoryKind::Circular;
+    system.circular = regularCircularScan(p);
+    system.cylindrical_detector = cylDetector(p, radius_mm, channel_angle_step_rad);
     system.volume = volumeGrid(p);
     std::vector<SCylConeProjGeomVec> geometry;
-    buildStaticCylGeometry(system, geometry);
+    std::vector<SConeProjGeomVec> unused;
+    buildSystemGeometry(system, unused, geometry);
     return geometry;
 }
 
 inline std::vector<SCylConeProjGeomVec> helicalCyl(const SHeliCTParam& p,
     float radius_mm, float channel_angle_step_rad = 0.f)
 {
-    SHelicalCylSystemSpec system{};
-    system.scan = regularHelicalScan(p);
-    system.detector = cylDetector(p, radius_mm, channel_angle_step_rad);
+    SSystemConfig system{};
+    system.detector = EDetectorKind::Cylindrical;
+    system.trajectory = ETrajectoryKind::Helical;
+    system.helical = regularHelicalScan(p);
+    system.cylindrical_detector = cylDetector(p, radius_mm, channel_angle_step_rad);
     system.volume = volumeGrid(p);
     std::vector<SCylConeProjGeomVec> geometry;
-    buildHelicalCylGeometry(system, geometry);
+    std::vector<SConeProjGeomVec> unused;
+    buildSystemGeometry(system, unused, geometry);
     return geometry;
 }
 

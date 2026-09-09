@@ -1,0 +1,42 @@
+[simulation]
+geometry = "flat_cbct"
+label_volume = "../inputs/water-cylinder-512x512x256-u8.raw"
+spectrum_file = "../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../thirdparty/nist_xcom/data"
+output_file = "../outputs/projections/water-cylinder-120kv-fullfov.raw"
+path_cache_file = "../outputs/path-cache/water-cylinder-120kv-fullfov.ykpc"
+use_library_fp = true
+use_cuda_spectral = true
+
+[geometry_config]
+views = 360
+detector_u = 1024
+detector_v = 1024
+pixel_u_mm = 0.35
+pixel_v_mm = 0.35
+sid_mm = 500.0
+sdd_mm = 1000.0
+volume_x = 512
+volume_y = 512
+volume_z = 256
+voxel_x_mm = 0.25
+voxel_y_mm = 0.25
+voxel_z_mm = 0.5
+
+[[materials]]
+label = 1
+name = "water"
+formula = "H2O"
+density_g_cm3 = 1.0
+
+[detector_effects]
+efficiency_enabled = true
+efficiency = 0.85
+
+[reconstruction]
+enabled = true
+pipeline = "fdk"
+filter = "shepp-logan"
+chunk_views = 8
+output_volume_file = "../outputs/reconstructions/water-cylinder-120kv-fullfov-fdk-volume.raw"
+slice_prefix = "../outputs/images/water-cylinder-120kv-fullfov-fdk"

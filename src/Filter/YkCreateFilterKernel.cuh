@@ -14,7 +14,7 @@
 //
 //   YK::Filter::FilterKernelFFT fk;
 //   fk.prepare(paddedN, stream);
-//   float* d_w = fk.alloc_weights();
+//   auto d_w = fk.alloc_weights();
 //   fk.build_weights(d_w, desc);
 
 #include "YkCreateFilterKernelHelpers.cuh"

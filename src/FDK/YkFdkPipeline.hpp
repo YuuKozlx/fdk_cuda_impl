@@ -231,25 +231,29 @@ class FdkPipeline {
 public:
     // 新系统级入口：宏观 Flat CBCT 几何和 FDK 配置一次传入。扫描范围从
     // total_views/views_per_turn 派生，Parker 不再依赖调用方重复填写旧参数。
-    bool prepare(const SStaticFlatReconstructionRequest& request,
+    bool prepare(const SSystemConfig& system,
+        const SReconstructionSpec& reconstruction,
         int requested_chunk, cudaStream_t stream, int device_id = 0)
     {
-        if (request.reconstruction.pipeline != EPipeline::FDK) {
+        if (system.detector != EDetectorKind::Flat ||
+            system.trajectory != ETrajectoryKind::Circular ||
+            reconstruction.pipeline != EPipeline::FDK) {
             YK_LOGE("[FdkPipeline] 系统级入口只接受 FDK 重建请求。");
             return false;
         }
         std::vector<SConeProjGeomVec> geometry;
         SVolGeom volume{};
-        if (!buildStaticFlatGeometry(request.system, geometry, volume)) {
+        std::vector<SCylConeProjGeomVec> unused;
+        if (!buildSystemGeometry(system, geometry, unused, volume)) {
             YK_LOGE("[FdkPipeline] Flat 系统 geometry 构造失败。");
             return false;
         }
 
         SReconstructionParams params{};
-        if (!buildParams_(request, volume, params)) return false;
+        if (!buildParams_(system, reconstruction, volume, params)) return false;
         if (params.scan.short_scan &&
-            !validateParkerCoverage_(geometry, request.system.detector.channels,
-                request.system.detector.rows, params.scan.range_rad))
+            !validateParkerCoverage_(geometry, system.flat_detector.channels,
+                system.flat_detector.rows, params.scan.range_rad))
             return false;
         return prepareWithGeometry(params, geometry, requested_chunk,
             stream, device_id);
@@ -266,6 +270,26 @@ public:
         stream_ = stream;
 
         const SProjDims chunk_dims{ params_.scan.Nu, params_.scan.Nv, chunk_size_ };
+        // 当前反投影为每个视图建立 pitch2D texture。除行 pitch 外，每个
+        // slice 的起始地址也必须满足 textureAlignment；否则 CUDA runtime
+        // 会在创建第二个 texture 时返回 invalid argument。这里提前拒绝，
+        // 使 DLL 初始化得到可诊断的 false，而不是由底层检查宏终止进程。
+        cudaDeviceProp device_property{};
+        const cudaError_t property_status = cudaGetDeviceProperties(
+            &device_property, device_id);
+        const size_t row_bytes = static_cast<size_t>(params_.scan.Nu) * sizeof(float);
+        const size_t view_bytes = row_bytes * params_.scan.Nv;
+        if (property_status != cudaSuccess ||
+            row_bytes % device_property.texturePitchAlignment != 0 ||
+            view_bytes % device_property.textureAlignment != 0) {
+            YK_LOGE("[FdkPipeline] 探测器尺寸 {}x{} 不满足 pitch2D texture "
+                "对齐要求（pitch={} bytes, slice={} bytes, 要求 {}/{}）。",
+                params_.scan.Nu, params_.scan.Nv, row_bytes, view_bytes,
+                device_property.texturePitchAlignment,
+                device_property.textureAlignment);
+            release();
+            return false;
+        }
         gpu_.init(chunk_dims, params_.scan.totalViews, stream_, device_id);
 
         PreweightConfig preweight_config{};
@@ -527,33 +551,35 @@ private:
         return EFilterKernel::RamLak;
     }
 
-    static bool buildParams_(const SStaticFlatReconstructionRequest& request,
+    static bool buildParams_(const SSystemConfig& system,
+        const SReconstructionSpec& reconstruction,
         const SVolGeom& volume, SReconstructionParams& params)
     {
-        const auto& system = request.system;
-        const float range = regularScanRangeRad(system.scan);
+        const auto& scan = system.circular;
+        const auto& detector = system.flat_detector;
+        const float range = regularScanRangeRad(scan);
         if (!std::isfinite(range) || range <= 0.f) return false;
         params = {};
-        params.scan.Nu = system.detector.channels;
-        params.scan.Nv = system.detector.rows;
-        params.scan.NAng = system.scan.total_views;
-        params.scan.totalViews = system.scan.total_views;
-        params.scan.du_mm = system.detector.channel_size_mm;
-        params.scan.dv_mm = system.detector.row_size_mm;
-        params.scan.offsetU_mm = system.detector.pose.offset_unv_mm.x;
-        params.scan.offsetV_mm = system.detector.pose.offset_unv_mm.z;
-        params.scan.tiltU_rad = system.detector.pose.tilt_u_rad;
-        params.scan.tiltV_rad = system.detector.pose.tilt_v_rad;
-        params.scan.tiltN_rad = system.detector.pose.tilt_n_rad;
-        params.scan.sourceOffsetX_mm = system.scan.source_offset_mm.x;
-        params.scan.sourceOffsetY_mm = system.scan.source_offset_mm.y;
-        params.scan.sourceOffsetZ_mm = system.scan.source_offset_mm.z;
+        params.scan.Nu = detector.channels;
+        params.scan.Nv = detector.rows;
+        params.scan.NAng = scan.total_views;
+        params.scan.totalViews = scan.total_views;
+        params.scan.du_mm = detector.channel_size_mm;
+        params.scan.dv_mm = detector.row_size_mm;
+        params.scan.offsetU_mm = detector.pose.offset_unv_mm.x;
+        params.scan.offsetV_mm = detector.pose.offset_unv_mm.z;
+        params.scan.tiltU_rad = detector.pose.tilt_u_rad;
+        params.scan.tiltV_rad = detector.pose.tilt_v_rad;
+        params.scan.tiltN_rad = detector.pose.tilt_n_rad;
+        params.scan.sourceOffsetX_mm = scan.source_offset_mm.x;
+        params.scan.sourceOffsetY_mm = scan.source_offset_mm.y;
+        params.scan.sourceOffsetZ_mm = scan.source_offset_mm.z;
         params.scan.range_rad = range;
-        params.scan.start_angle_rad = system.scan.start_angle_rad;
-        params.scan.direction = system.scan.rotation_direction;
-        params.scan.sid_mm = system.scan.sid_mm;
-        params.scan.sdd_mm = system.scan.sdd_mm;
-        params.scan.short_scan = resolveParkerEnabled(request);
+        params.scan.start_angle_rad = scan.start_angle_rad;
+        params.scan.direction = scan.rotation_direction;
+        params.scan.sid_mm = scan.sid_mm;
+        params.scan.sdd_mm = scan.sdd_mm;
+        params.scan.short_scan = resolveParkerEnabled(system, reconstruction);
         params.volume.Nx = volume.Nx; params.volume.Ny = volume.Ny;
         params.volume.Nz = volume.Nz;
         params.volume.voxelX_mm = volume.vox_x;
@@ -562,7 +588,7 @@ private:
         params.volume.centerX_mm = volume.center.x;
         params.volume.centerY_mm = volume.center.y;
         params.volume.centerZ_mm = volume.center.z;
-        const auto& input = request.reconstruction.fdk;
+        const auto& input = reconstruction.fdk;
         auto& filter = params.reconstruction.filter;
         filter.kind = mapFilter_(input.filter);
         filter.source = EWeightsBuildSource::AnalyticFreq;

@@ -413,6 +413,8 @@ FodyWeavers.xsd
 !thirdparty/tomlplusplus/include/
 !thirdparty/tomlplusplus/include/toml++/
 !thirdparty/tomlplusplus/include/toml++/toml.hpp
+!thirdparty/nist_xcom/
+!thirdparty/nist_xcom/**
 *.ncu-rep
 
 # 本地 Codex、构建、验证输出和临时分析文件。
@@ -422,3 +424,5 @@ FodyWeavers.xsd
 /tmp_*.txt
 /test-configs/output/
 /out/
+/nist-xcom-portable-review/
+/example/multispectrum_sim/outputs/

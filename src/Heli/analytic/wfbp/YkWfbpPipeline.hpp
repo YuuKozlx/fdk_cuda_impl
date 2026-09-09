@@ -178,7 +178,9 @@ private:
             }
             if (!finite(angle) || !finite(source4.x) || !finite(center4.x)) return false;
             out.trajectory.angles_rad.push_back(angle);
-            const float sid = norm(xyz(source4));
+            // 螺旋源点的 z 随视图变化；SID 是源点到旋转轴的径向距离，
+            // 不能使用三维模长，否则同一条规则螺旋会被误判为 SID 漂移。
+            const float sid = std::hypot(source4.x, source4.y);
             const float sdd = norm(sub(xyz(center4), xyz(source4)));
             if (i == 0) {
                 if (!(sid > 0.f && sdd > sid)) return false;

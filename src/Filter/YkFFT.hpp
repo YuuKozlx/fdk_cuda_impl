@@ -6,6 +6,7 @@
 
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
+#include "../global/YkMem3d.hpp"
 
 namespace YK {
 
@@ -119,14 +120,13 @@ namespace YK {
                 YK_CUDA_CHECK(cudaGetDevice(&dev2));
                 YK_ASSERT(dev2 == device_ && "CudaFFT::init: current device changed unexpectedly");
 
-                YK_CUDA_CHECK(cudaMalloc(&d_work_, work_bytes_));
+                work_.alloc(work_bytes_, device_);
 
-                if (plan_r2c_) YK_CUFFT_CHECK(cufftSetWorkArea(plan_r2c_, d_work_));
-                if (plan_c2r_) YK_CUFFT_CHECK(cufftSetWorkArea(plan_c2r_, d_work_));
+                if (plan_r2c_) YK_CUFFT_CHECK(cufftSetWorkArea(plan_r2c_, work_.data()));
+                if (plan_c2r_) YK_CUFFT_CHECK(cufftSetWorkArea(plan_c2r_, work_.data()));
             }
             else {
-                // 明确置空，避免误用
-                d_work_ = nullptr;
+                work_.reset();
             }
 
             return true;
@@ -181,20 +181,7 @@ namespace YK {
             destroy_plan(plan_r2c_, "R2C");
             destroy_plan(plan_c2r_, "C2R");
 
-            if (d_work_) {
-                cudaError_t e = cudaFree(d_work_);
-                if (strict) {
-                    YK_CUDA_CHECK(e);
-                }
-                else {
-                    if (e != cudaSuccess) {
-                        std::fprintf(stderr,
-                            "[CudaFFT] warning: cudaFree(work) failed: %s\n",
-                            cudaGetErrorString(e));
-                    }
-                }
-                d_work_ = nullptr;
-            }
+            work_.reset();
 
             N_ = 0;
             batch_ = 0;
@@ -217,7 +204,7 @@ namespace YK {
         void move_from(CudaFFT& o) noexcept {
             plan_r2c_ = o.plan_r2c_; o.plan_r2c_ = 0;
             plan_c2r_ = o.plan_c2r_; o.plan_c2r_ = 0;
-            d_work_ = o.d_work_;   o.d_work_ = nullptr;
+            work_ = std::move(o.work_);
 
             work_bytes_ = o.work_bytes_; o.work_bytes_ = 0;
 
@@ -234,7 +221,7 @@ namespace YK {
         cufftHandle plan_r2c_ = 0;
         cufftHandle plan_c2r_ = 0;
 
-        void* d_work_ = nullptr;
+        Mem::DeviceByteBuffer work_{};
         size_t work_bytes_ = 0;
 
         int N_ = 0;

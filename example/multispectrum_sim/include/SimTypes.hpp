@@ -1,0 +1,47 @@
+#pragma once
+#include <cstdint>
+#include <filesystem>
+#include <string>
+#include <vector>
+namespace yk::spectral {
+enum class GeometryKind { FlatCbct, FlatHelical, CylCbct, CylHelical };
+struct MaterialSpec { std::uint8_t label=0; std::string name; std::string formula; double density_g_cm3=1.0; };
+struct SpectrumPoint { double energy_keV=0.0; double relative_photons=0.0; };
+struct DetectorEffectsConfig {
+    bool efficiency_enabled=false; double efficiency=1.0; bool scatter_enabled=false;
+    bool optical_crosstalk_enabled=false; bool afterglow_enabled=false;
+    bool electronic_noise_enabled=false; double electronic_noise_sigma=0.0;
+};
+
+struct GeometryConfig {
+    int views = 360;
+    int detector_u = 256;
+    int detector_v = 128;
+    double pixel_u_mm = 1.0;
+    double pixel_v_mm = 1.0;
+    double sid_mm = 500.0;
+    double sdd_mm = 1000.0;
+    double offset_u_mm = 0.0;
+    double offset_v_mm = 0.0;
+    double start_angle_rad = 0.0;
+    double pitch_mm_per_turn = 0.0;
+    double start_z_mm = 0.0;
+    double voxel_x_mm = 1.0;
+    double voxel_y_mm = 1.0;
+    double voxel_z_mm = 1.0;
+    int volume_x = 0;
+    int volume_y = 0;
+    int volume_z = 0;
+};
+
+// 仿真结束后的可选重建设置。投影仍按文件流式读取，chunk_views
+// 只控制单次 DLL execute() 的视图数，不改变投影文件布局。
+struct ReconstructionConfig {
+    bool enabled = false;
+    std::string pipeline = "fdk";
+    std::string filter = "shepp-logan";
+    std::filesystem::path output_volume_file;
+    std::filesystem::path slice_prefix;
+    int chunk_views = 32;
+};
+}
