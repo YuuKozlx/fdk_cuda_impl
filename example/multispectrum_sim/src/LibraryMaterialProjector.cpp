@@ -49,8 +49,7 @@ bool generatePathCacheWithLibraryFp(const SimulationConfig& config,
         check(writer.open(cache_file, g.views, g.detector_u, g.detector_v,
             static_cast<std::uint32_t>(config.materials.size()), diagnostic),
             "无法创建 DLL FP 路径缓存");
-        std::vector<float> view_paths(config.materials.size() * pixels_per_view,
-            0.f);
+        std::vector<float> view_paths(pixels_per_view, 0.f);
 
         for (size_t material = 0; material < config.materials.size(); ++material) {
             std::fill(host_volume.begin(), host_volume.end(), 0.f);
@@ -71,11 +70,12 @@ bool generatePathCacheWithLibraryFp(const SimulationConfig& config,
                     static_cast<size_t>(view) * pixels_per_view;
                 // YKCBCT FP 返回毫米，SpectralTransmissionModel 的路径单位为厘米。
                 std::transform(begin, begin + pixels_per_view,
-                    view_paths.begin() + material * pixels_per_view,
+                    view_paths.begin(),
                     [](float value) { return value * 0.1f; });
-                if (material + 1 == config.materials.size())
-                    check(writer.writeView(view_paths, diagnostic),
-                        "写入 DLL FP 路径缓存失败");
+                check(writer.writeMaterialView(static_cast<std::uint32_t>(view),
+                    static_cast<std::uint32_t>(material), view_paths.data(),
+                    view_paths.size(), diagnostic),
+                    "写入 DLL FP 路径缓存失败");
             }
         }
         writer.close();

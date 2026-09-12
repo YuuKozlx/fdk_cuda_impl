@@ -1,6 +1,8 @@
 #include "SimConfig.hpp"
+#include "XcomAttenuationProvider.hpp"
 #include <toml++/toml.hpp>
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -53,7 +55,8 @@ SimulationConfig loadConfig(const std::filesystem::path& path){
         c.geometry_config.phantom_offset_x_mm=number("phantom_offset_x_mm",0.0); c.geometry_config.phantom_offset_y_mm=number("phantom_offset_y_mm",0.0); c.geometry_config.phantom_offset_z_mm=number("phantom_offset_z_mm",0.0); c.geometry_config.reconstruction_offset_x_mm=number("reconstruction_offset_x_mm",0.0); c.geometry_config.reconstruction_offset_y_mm=number("reconstruction_offset_y_mm",0.0); c.geometry_config.reconstruction_offset_z_mm=number("reconstruction_offset_z_mm",0.0);
     }
     if(auto* e=t["detector_effects"].as_table()){c.detector_effects.efficiency_enabled=(*e)["efficiency_enabled"].value_or(false);c.detector_effects.efficiency=(*e)["efficiency"].value_or(1.0);c.detector_effects.scatter_enabled=(*e)["scatter_enabled"].value_or(false);c.detector_effects.optical_crosstalk_enabled=(*e)["optical_crosstalk_enabled"].value_or(false);c.detector_effects.afterglow_enabled=(*e)["afterglow_enabled"].value_or(false);c.detector_effects.electronic_noise_enabled=(*e)["electronic_noise_enabled"].value_or(false);c.detector_effects.electronic_noise_sigma=(*e)["electronic_noise_sigma"].value_or(0.0);}
-    if(auto* a=t["materials"].as_array())for(auto& n:*a){auto* m=n.as_table();if(!m)throw std::runtime_error("materials 必须是表数组");MaterialSpec x; x.label=(std::uint8_t)(*m)["label"].value_or(0);x.name=(*m)["name"].value_or(std::string("material"));x.formula=(*m)["formula"].value_or(std::string{});x.density_g_cm3=(*m)["density_g_cm3"].value_or(1.0);if(!x.label||x.formula.empty()||x.density_g_cm3<=0)throw std::runtime_error("材料配置无效");c.materials.push_back(std::move(x));}
+    std::array<bool, 256> used_labels{};
+    if(auto* a=t["materials"].as_array())for(auto& n:*a){auto* m=n.as_table();if(!m)throw std::runtime_error("materials 必须是表数组");MaterialSpec x; x.label=(std::uint8_t)(*m)["label"].value_or(0);x.name=(*m)["name"].value_or(std::string("material"));x.formula=(*m)["formula"].value_or(std::string{});x.preset=(*m)["preset"].value_or(std::string{});x.density_g_cm3=(*m)["density_g_cm3"].value_or(1.0);if((x.formula.empty() == x.preset.empty())||x.density_g_cm3<=0)throw std::runtime_error("材料配置必须且只能填写 formula 或 preset，且密度必须为正");if(used_labels[x.label])throw std::runtime_error("材料 label 不得重复: "+std::to_string(x.label));used_labels[x.label]=true;if(!x.preset.empty()){const auto* b=findBuiltinMaterial(x.preset);if(!b)throw std::runtime_error("未知内置材料 preset: "+x.preset);if(!m->contains("density_g_cm3"))x.density_g_cm3=b->density_g_cm3;}c.materials.push_back(std::move(x));}
     if(c.materials.empty())throw std::runtime_error("至少需要一个材料映射"); return c;
 }
 std::vector<SpectrumPoint> loadSpectrum(const std::filesystem::path& p){std::ifstream f(p);if(!f)throw std::runtime_error("无法读取能谱文件: "+p.string());std::vector<SpectrumPoint> r;std::string l;while(std::getline(f,l)){if(l.empty()||l[0]=='#')continue;std::replace(l.begin(),l.end(),',',' ');std::istringstream s(l);SpectrumPoint x;if(s>>x.energy_keV>>x.relative_photons&&x.energy_keV>0&&x.relative_photons>=0)r.push_back(x);}if(r.empty())throw std::runtime_error("能谱没有有效数据");return r;}

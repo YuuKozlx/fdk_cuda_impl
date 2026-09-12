@@ -3,7 +3,63 @@
 #include <memory>
 #include <stdexcept>
 namespace yk::spectral {
-bool PathCacheWriter::open(const std::filesystem::path& path,std::uint32_t views,std::uint32_t u,std::uint32_t v,std::uint32_t materials,std::string& error){try{owned_=std::make_unique<std::ofstream>(path,std::ios::binary);if(!*owned_)throw std::runtime_error("无法创建路径积分缓存: "+path.string());PathCacheHeader h;h.views=views;h.detector_u=u;h.detector_v=v;h.material_count=materials;owned_->write(reinterpret_cast<const char*>(&h),sizeof(h));stream_=owned_.get();written_=0;return true;}catch(const std::exception& e){error=e.what();return false;}}
+bool PathCacheWriter::open(const std::filesystem::path& path,
+    std::uint32_t views, std::uint32_t u, std::uint32_t v,
+    std::uint32_t materials, std::string& error)
+{
+    try {
+        owned_ = std::make_unique<std::ofstream>(path,
+            std::ios::binary | std::ios::trunc);
+        if (!*owned_)
+            throw std::runtime_error("无法创建路径积分缓存: " + path.string());
+        header_ = {};
+        header_.views = views;
+        header_.detector_u = u;
+        header_.detector_v = v;
+        header_.material_count = materials;
+        owned_->write(reinterpret_cast<const char*>(&header_), sizeof(header_));
+
+        // 先确定文件最终尺寸，随后 DLL FP 可按材料随机写入各视图槽位。
+        const std::uint64_t bytes = static_cast<std::uint64_t>(views) *
+            materials * u * v * sizeof(float);
+        if (bytes) {
+            owned_->seekp(static_cast<std::streamoff>(sizeof(header_) + bytes - 1));
+            const char zero = 0;
+            owned_->write(&zero, 1);
+        }
+        if (!*owned_) throw std::runtime_error("初始化路径积分缓存失败");
+        owned_->seekp(static_cast<std::streamoff>(sizeof(header_)));
+        stream_ = owned_.get();
+        written_ = 0;
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool PathCacheWriter::writeMaterialView(std::uint32_t view,
+    std::uint32_t material, const float* paths, std::size_t count,
+    std::string& error)
+{
+    if (!stream_) { error = "路径积分缓存未打开"; return false; }
+    const std::size_t pixels = static_cast<std::size_t>(header_.detector_u) *
+        header_.detector_v;
+    if (view >= header_.views || material >= header_.material_count ||
+        count != pixels || !paths) {
+        error = "路径积分缓存写入范围无效";
+        return false;
+    }
+    const std::uint64_t index =
+        (static_cast<std::uint64_t>(view) * header_.material_count + material) *
+        pixels;
+    stream_->seekp(static_cast<std::streamoff>(
+        sizeof(header_) + index * sizeof(float)));
+    stream_->write(reinterpret_cast<const char*>(paths),
+        static_cast<std::streamsize>(count * sizeof(float)));
+    if (!*stream_) { error = "写入路径积分缓存失败"; return false; }
+    return true;
+}
 bool PathCacheWriter::writeView(const std::vector<float>& paths,std::string& error){
     if(!stream_){error="路径积分缓存未打开";return false;}
     if(written_ >= 0xFFFFFFFFu){error="路径积分缓存视图数量溢出";return false;}

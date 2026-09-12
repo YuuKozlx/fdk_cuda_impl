@@ -1,0 +1,110 @@
+# BrainWeb 120 kVp 柱面螺旋正投与 FreeCT 风格 wFBP 重建。
+[simulation]
+geometry = "cyl_helical"
+label_volume = "../inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw"
+spectrum_file = "../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../thirdparty/nist_xcom/data"
+output_file = "../outputs/projections/brainweb-normal-1mm-heli-cyl-120kv.raw"
+path_cache_file = "../outputs/path-cache/brainweb-normal-1mm-heli-cyl-120kv.ykpc"
+use_library_fp = true
+use_cuda_spectral = true
+
+[geometry_config]
+# 六圈覆盖约 240 mm。wFBP 会对重排边界视图做对称裁剪，剩余有效
+# 轨迹仍覆盖整个 181 mm 标签体。
+views = 2160
+views_per_turn = 360
+rotation_direction = 1
+detector_u = 768
+detector_v = 128
+pixel_u_mm = 0.630124
+pixel_v_mm = 0.630124
+sid_mm = 709.0
+sdd_mm = 1143.699951
+pitch_mm_per_turn = 40.0
+start_z_mm = -120.0
+start_angle_rad = 0.0
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+volume_x = 181
+volume_y = 217
+volume_z = 181
+voxel_x_mm = 1.0
+voxel_y_mm = 1.0
+voxel_z_mm = 1.0
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+[[materials]]
+label = 0
+name = "background-air"
+preset = "mixture.air"
+density_g_cm3 = 0.001205
+[[materials]]
+label = 1
+name = "csf"
+preset = "compound.water"
+density_g_cm3 = 1.007
+[[materials]]
+label = 2
+name = "grey-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.045
+[[materials]]
+label = 3
+name = "white-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.041
+[[materials]]
+label = 4
+name = "fat"
+preset = "tissue.icru_adipose_adult2"
+density_g_cm3 = 0.95
+[[materials]]
+label = 5
+name = "muscle-skin"
+preset = "tissue.icru_muscle_adult"
+density_g_cm3 = 1.05
+[[materials]]
+label = 6
+name = "skin"
+preset = "tissue.icru_skin_adult"
+density_g_cm3 = 1.09
+[[materials]]
+label = 7
+name = "skull"
+preset = "tissue.ncat_skull"
+density_g_cm3 = 1.61
+[[materials]]
+label = 8
+name = "glial-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.04
+[[materials]]
+label = 9
+name = "connective"
+preset = "tissue.icru_muscle_adult"
+density_g_cm3 = 1.12
+
+[detector_effects]
+efficiency_enabled = false
+scatter_enabled = false
+optical_crosstalk_enabled = false
+afterglow_enabled = false
+electronic_noise_enabled = false
+
+[reconstruction]
+enabled = true
+pipeline = "wfbp"
+filter = "ramlak"
+chunk_views = 2160
+output_volume_file = "../outputs/reconstructions/brainweb-normal-1mm-heli-cyl-120kv-wfbp.raw"
+slice_prefix = "../outputs/images/brainweb-normal-1mm-heli-cyl-120kv-wfbp"

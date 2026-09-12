@@ -48,5 +48,17 @@ if(BUILD_TESTING)
     target_link_libraries(multispectrum_xcom_test PRIVATE nist_xcom_core)
     target_compile_definitions(multispectrum_xcom_test PRIVATE
         XCOM_TEST_DATA_DIRECTORY="${SPECTRAL_XCOM_ROOT}/data")
+    if(MSVC)
+        target_compile_options(multispectrum_xcom_test PRIVATE /utf-8)
+    endif()
     add_test(NAME multispectrum_xcom_water COMMAND multispectrum_xcom_test)
+
+    add_executable(multispectrum_path_cache_test
+        tests/test_path_cache.cpp
+        src/PathCache.cpp)
+    target_include_directories(multispectrum_path_cache_test PRIVATE include)
+    if(MSVC)
+        target_compile_options(multispectrum_path_cache_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_path_cache_layout COMMAND multispectrum_path_cache_test)
 endif()

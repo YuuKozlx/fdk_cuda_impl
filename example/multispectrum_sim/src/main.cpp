@@ -15,6 +15,29 @@
 
 namespace {
 
+void listBuiltinMaterials()
+{
+    std::cout << "id\tcategory\tdensity_g_cm3\tdisplay_name\n";
+    for (auto material = yk::spectral::builtinMaterialsBegin();
+         material != yk::spectral::builtinMaterialsEnd(); ++material) {
+        std::cout << material->id << '\t' << material->category << '\t'
+            << material->density_g_cm3 << '\t' << material->display_name << '\n';
+    }
+}
+
+bool printBuiltinMaterial(std::string_view name)
+{
+    const auto* material = yk::spectral::findBuiltinMaterial(name);
+    if (!material) return false;
+    std::cout << "id=" << material->id << '\n'
+        << "category=" << material->category << '\n'
+        << "display_name=" << material->display_name << '\n'
+        << "density_g_cm3=" << material->density_g_cm3 << '\n'
+        << "aliases=" << material->aliases << '\n'
+        << "mass_fractions=" << material->composition << '\n';
+    return true;
+}
+
 std::vector<std::uint8_t> makeWaterCylinder(const yk::spectral::SimulationConfig& config)
 {
     const auto& g = config.geometry_config;
@@ -31,7 +54,9 @@ std::vector<std::uint8_t> makeWaterCylinder(const yk::spectral::SimulationConfig
     const double radius = 0.4 * std::min(width, height);
     const auto water = std::find_if(config.materials.begin(), config.materials.end(),
         [](const yk::spectral::MaterialSpec& material) {
-            return material.name == "water" || material.formula == "H2O";
+            const auto* preset = yk::spectral::findBuiltinMaterial(material.preset);
+            return material.name == "water" || material.formula == "H2O" ||
+                (preset && std::string_view(preset->id) == "compound.water");
         });
     if (water == config.materials.end())
         throw std::runtime_error("纯水圆柱模体需要 name=water 或 formula=H2O 的材料");
@@ -59,6 +84,17 @@ std::vector<std::uint8_t> makeWaterCylinder(const yk::spectral::SimulationConfig
 int main(int argc, char** argv)
 {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--list-materials") {
+            listBuiltinMaterials();
+            return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "--material-info") {
+            if (!printBuiltinMaterial(argv[2])) {
+                std::cerr << "未知内置材料: " << argv[2] << '\n';
+                return 2;
+            }
+            return 0;
+        }
         const bool water_cylinder = argc == 3 &&
             std::string(argv[1]) == "--water-cylinder";
         const bool export_water_cylinder = argc == 4 &&
@@ -66,7 +102,9 @@ int main(int argc, char** argv)
         if (argc != 2 && !water_cylinder && !export_water_cylinder) {
             std::cerr << "用法: multispectrum_sim <config.toml>\n"
                 << "   或: multispectrum_sim --water-cylinder <config.toml>\n"
-                << "   或: multispectrum_sim --export-water-cylinder <config.toml> <labels.raw>\n";
+                << "   或: multispectrum_sim --export-water-cylinder <config.toml> <labels.raw>\n"
+                << "   或: multispectrum_sim --list-materials\n"
+                << "   或: multispectrum_sim --material-info <id-or-alias>\n";
             return 2;
         }
         const std::filesystem::path config_path =
@@ -116,7 +154,8 @@ int main(int argc, char** argv)
                     config.reconstruction.output_volume_file,
                     config.reconstruction.slice_prefix, error))
                 throw std::runtime_error(error);
-            std::cout << "reconstruction=fdk volume="
+            std::cout << "reconstruction=" << config.reconstruction.pipeline
+                << " volume="
                 << config.reconstruction.output_volume_file.string()
                 << " slices=" << config.reconstruction.slice_prefix.string() << "-{axial,coronal,sagittal}.bmp\n";
         }

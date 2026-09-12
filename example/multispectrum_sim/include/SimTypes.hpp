@@ -5,7 +5,9 @@
 #include <vector>
 namespace yk::spectral {
 enum class GeometryKind { FlatCbct, FlatHelical, CylCbct, CylHelical };
-struct MaterialSpec { std::uint8_t label=0; std::string name; std::string formula; double density_g_cm3=1.0; };
+// 材料可以用 formula 表示单一化合物，也可以用 preset 引用内置的
+// 元素质量分数表。preset 适合人体组织等不能用单一化学式准确表达的材料。
+struct MaterialSpec { std::uint8_t label=0; std::string name; std::string formula; std::string preset; double density_g_cm3=1.0; };
 struct SpectrumPoint { double energy_keV=0.0; double relative_photons=0.0; };
 struct DetectorEffectsConfig {
     bool efficiency_enabled=false; double efficiency=1.0; bool scatter_enabled=false;

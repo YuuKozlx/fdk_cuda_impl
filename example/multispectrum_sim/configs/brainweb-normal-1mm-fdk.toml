@@ -1,0 +1,124 @@
+# BrainWeb normal 1 mm 标签模体的 120 kVp 多能谱正投与 FDK 重建。
+# 标签映射来自 modern_example/BrainWeb/metadata/material_mapping.csv。
+[simulation]
+geometry = "flat_cbct"
+label_volume = "../inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw"
+spectrum_file = "../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../thirdparty/nist_xcom/data"
+output_file = "../outputs/projections/brainweb-normal-1mm-120kv.raw"
+path_cache_file = "../outputs/path-cache/brainweb-normal-1mm-120kv.ykpc"
+use_library_fp = true
+use_cuda_spectral = true
+
+[geometry_config]
+views = 360
+views_per_turn = 360
+rotation_direction = 1
+detector_u = 768
+detector_v = 640
+# 保持原 MC-GPU 配置约 483.94 mm 的探测器宽度。640 行对应约
+# 403.3 mm 高度，可覆盖头部靠近射线源一侧的最大几何放大投影。
+pixel_u_mm = 0.630124
+pixel_v_mm = 0.630124
+sid_mm = 709.0
+sdd_mm = 1143.699951
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
+volume_x = 181
+volume_y = 217
+volume_z = 181
+voxel_x_mm = 1.0
+voxel_y_mm = 1.0
+voxel_z_mm = 1.0
+# 当前示例将 BrainWeb 体积中心对准扫描等中心。
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+# 背景标签参与空气衰减。材料配比与密度独立，灰质、白质和胶质
+# 使用相同脑组织配比，仅用密度覆盖表达低对比度差异。
+[[materials]]
+label = 0
+name = "background-air"
+preset = "mixture.air"
+density_g_cm3 = 0.001205
+
+[[materials]]
+label = 1
+name = "csf"
+preset = "compound.water"
+density_g_cm3 = 1.007
+
+[[materials]]
+label = 2
+name = "grey-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.045
+
+[[materials]]
+label = 3
+name = "white-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.041
+
+[[materials]]
+label = 4
+name = "fat"
+preset = "tissue.icru_adipose_adult2"
+density_g_cm3 = 0.95
+
+[[materials]]
+label = 5
+name = "muscle-skin"
+preset = "tissue.icru_muscle_adult"
+density_g_cm3 = 1.05
+
+[[materials]]
+label = 6
+name = "skin"
+preset = "tissue.icru_skin_adult"
+density_g_cm3 = 1.09
+
+[[materials]]
+label = 7
+name = "skull"
+preset = "tissue.ncat_skull"
+density_g_cm3 = 1.61
+
+[[materials]]
+label = 8
+name = "glial-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.04
+
+[[materials]]
+label = 9
+name = "connective"
+preset = "tissue.icru_muscle_adult"
+density_g_cm3 = 1.12
+
+[detector_effects]
+# 本轮先验证无噪声的一次透射主射线和材料 CT 值，不叠加散射与噪声。
+efficiency_enabled = false
+scatter_enabled = false
+optical_crosstalk_enabled = false
+afterglow_enabled = false
+electronic_noise_enabled = false
+
+[reconstruction]
+enabled = true
+pipeline = "fdk"
+filter = "shepp-logan"
+chunk_views = 8
+output_volume_file = "../outputs/reconstructions/brainweb-normal-1mm-120kv-fdk.raw"
+slice_prefix = "../outputs/images/brainweb-normal-1mm-120kv-fdk"
