@@ -65,6 +65,16 @@ XCOM 核心及 `data/MDATX3.*` 来自 `nist-xcom-portable`，保留 GPL-3.0-or-l
 和 `rotation_direction` 控制规则角度采样；这些值最终交给公共 geometry builder，正投和
 重建不会各自解释一份几何。
 
+多能谱 TOML 保留 `reconstruction.pipeline` 字段。材料路径积分固定调用公共
+`ForwardProjection`；当前示例的 DLL 重建实现仍只执行 `pipeline = "fdk"`。其他管线的
+配置字段可以继续保留给后续接入，但未接入时会明确报错，不会静默改用 FDK。
+
+offset 的处理按算法能力执行：Flat FDK、FP 和迭代算子保留配置中的 offset；XFDK、
+C-FDK、Cyl Analytic FDK、wFBP 等要求规范采集几何的管线，在 DLL Session 初始化时将
+后端几何副本中不支持的源端/探测器 offset 分量强制置为 0，并通过日志输出中文提示。
+wFBP 保留其支持的 U/V 主点 offset，仅清除源端和 N 分量。调用方配置、正投影几何和
+体积中心 offset 均不改变。探测器 tilt 仍未在 TOML 中开放。
+
 标签体不随仓库提交，可先由同一个可执行文件生成，再按外部体积输入流程运行：
 
 ```powershell

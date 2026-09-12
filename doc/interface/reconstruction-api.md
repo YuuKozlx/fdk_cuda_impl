@@ -97,3 +97,27 @@ DLL 主路径直接将 `SSystemConfig + SReconstructionSpec + device` 交给内�
 `IExecutionBackend`，`PreparedGeometry` 只构造一次。`Session` 不再构造或保存旧
 `SessionDesc` 副本；旧结构仅保留给尚未迁移的内部测试/适配入口使用，不应继续扩展为
 第二套公开配置。
+
+## 探测器 offset 与偏转的能力边界
+
+公共 geometry builder 和具体算法是两个层次。builder 能将探测器局部 U/N/V offset
+以及绕 U/V/N 的 tilt 展开成逐视图向量，并不表示每条解析重建公式都能消费这些自由度。
+公共接口不得因为 builder 构造成功就宣称算法支持，也不得在后端静默清零姿态参数；
+若某算法只能消费规范采集参数，必须在进入后端前明确记录归零提示。
+
+| 算法族 | detector offset | detector tilt | 当前接口语义 |
+| :--- | :---: | :---: | :--- |
+| Flat Joseph/Siddon FP、BP | 支持 | 支持 | 使用完整逐视图 vector geometry |
+| Flat SIRT/OSSART/CGLS/PWLS/TIGRE | 支持 | 支持 | 能力随所选 Flat FP/BP 算子 |
+| Flat FDK | 支持 | 支持 | 使用完整 geometry；非理想轨迹属于近似 FDK，并输出诊断 |
+| XFDK、C-FDK | 不支持 | 不支持 | 论文实现只接受理想平面圆轨迹 |
+| Cyl Joseph/Siddon FP、BP 与迭代 | 支持 | 暂未放行 | offset 使用柱面逐视图 geometry；tilt 尚缺完整回归 |
+| Cyl Analytic FDK | 不支持 | 不支持 | 只接受规范同轴圆柱；非标准曲率先 map 到 `R=SDD` |
+| wFBP | 支持 U/V；N 和源端不支持 | 不支持 | 公共 DLL 入口仅归零不支持的分量 |
+
+多能谱仿真 TOML 公开 `reconstruction.pipeline`，但探测器 tilt 仍封闭，只开放 U/N/V
+offset。材料路径投影固定使用公共 FP。对于明确要求理想 offset 的 XFDK、C-FDK、
+Cyl Analytic FDK 和 wFBP，公共 Session 不直接拒绝；进入后端前会复制系统几何、将
+不支持的 offset 分量置零并输出提示，调用方原配置不会被修改。wFBP 保留其支持的
+U/V 主点偏移，仅归零源端和 N 分量。体积中心 offset 始终保留。Flat FDK、FP 和迭代
+算子则使用原始 offset。尚未接入示例的 pipeline 会返回明确错误，不会隐式降级成其他算法。

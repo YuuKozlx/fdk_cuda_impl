@@ -287,6 +287,18 @@ public:
     const Iter::IterativeConvergenceStatistics& convergenceStatistics() const
     { return convergence_statistics_; }
 
+    void reset()
+    {
+        if (!prepared_) return;
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        convergence_statistics_ = {};
+        previous_residual_ = std::numeric_limits<float>::quiet_NaN();
+        convergence_patience_ = 0;
+        uploaded_views_.clear();
+        uploaded_view_count_ = 0;
+        d_uploaded_projection_ = {};
+    }
+
     void release()
     {
         if (stream_) YK_CUDA_CHECK(cudaStreamSynchronize(stream_));

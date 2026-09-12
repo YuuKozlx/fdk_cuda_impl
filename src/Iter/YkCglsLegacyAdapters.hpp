@@ -52,6 +52,7 @@ public:
     bool run(const float* measured, float* volume,
         const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
+    void reset() { implementation_.reset(); }
     void release() { implementation_.release(); }
 private:
     Iter::CglsReconstructorEx implementation_{};
@@ -71,6 +72,7 @@ public:
     bool run(const float* measured, float* volume,
         const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
+    void reset() { implementation_.reset(); }
     void release() { implementation_.release(); }
 private:
     Iter::CglsReconstructorEx implementation_{};
@@ -103,6 +105,7 @@ public:
     bool run(const float* measured, float* volume,
         const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
+    void reset() { implementation_.reset(); }
     void release() { implementation_.release(); }
 private:
     Iter::CglsReconstructor implementation_{};

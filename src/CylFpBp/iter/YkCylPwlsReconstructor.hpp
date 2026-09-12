@@ -143,6 +143,16 @@ public:
         return true;
     }
 
+    void reset()
+    {
+        if (!prepared_) return;
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        YK_CUDA_CHECK(cudaMemsetAsync(d_residual_.data(), 0,
+            projection_count_ * sizeof(float), stream_));
+        YK_CUDA_CHECK(cudaMemsetAsync(d_gradient_.data(), 0,
+            volume_count_ * sizeof(float), stream_));
+    }
+
     void release()
     {
         if (stream_) YK_CUDA_CHECK(cudaStreamSynchronize(stream_));

@@ -312,7 +312,16 @@ public:
 
     void reset() override
     {
-        fdk_.reset(); sirt_.reset(); ossart_.reset(); tigre_.reset();
+        // reset 只清除一次执行产生的瞬态状态，保留 initialize() 已准备的
+        // 几何、纹理和工作区；release() 才负责销毁完整后端资源。
+        fdk_.reset();
+        sirt_.reset();
+        ossart_.reset();
+        cgls_.reset();
+        pwls_.reset();
+        tigre_.reset();
+        cyl_iterative_.reset();
+        cyl_pwls_.reset();
     }
 
     void release() override

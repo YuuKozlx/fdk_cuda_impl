@@ -1,6 +1,8 @@
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
 #include "interface/YkExecutionBackend.hpp"
+#include "global/YkLog.h"
 
+#include <cmath>
 #include <string>
 
 namespace YK {
@@ -61,6 +63,61 @@ bool validProjectorSelection(const SSystemSpec& source)
     return true;
 }
 
+bool requiresCanonicalAcquisitionOffsets(EPipeline pipeline)
+{
+    // 这些解析重建使用各自论文中的规范采集参数，当前没有从完整
+    // vector geometry 严格派生任意源端/探测器平移的公式。
+    switch (pipeline) {
+    case EPipeline::XFDK:
+    case EPipeline::CFDK:
+    case EPipeline::CylAnalyticFDK:
+    case EPipeline::WFBP:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool hasNonzeroAcquisitionOffset(const SSystemConfig& geometry,
+    EPipeline pipeline)
+{
+    const float3 source = geometry.trajectory == ETrajectoryKind::Helical
+        ? geometry.helical.source_offset_mm
+        : geometry.circular.source_offset_mm;
+    const auto& pose = geometry.detector == EDetectorKind::Cylindrical
+        ? geometry.cylindrical_detector.pose
+        : geometry.flat_detector.pose;
+    constexpr float tolerance = 1e-7f;
+    const bool source_offset = std::fabs(source.x) > tolerance ||
+        std::fabs(source.y) > tolerance || std::fabs(source.z) > tolerance;
+    const bool detector_offset = pipeline == EPipeline::WFBP
+        ? std::fabs(pose.offset_unv_mm.y) > tolerance
+        : std::fabs(pose.offset_unv_mm.x) > tolerance ||
+            std::fabs(pose.offset_unv_mm.y) > tolerance ||
+            std::fabs(pose.offset_unv_mm.z) > tolerance;
+    return source_offset || detector_offset;
+}
+
+void clearUnsupportedAcquisitionOffsets(SSystemConfig& geometry,
+    EPipeline pipeline)
+{
+    if (geometry.trajectory == ETrajectoryKind::Helical)
+        geometry.helical.source_offset_mm = make_float3(0.f, 0.f, 0.f);
+    else
+        geometry.circular.source_offset_mm = make_float3(0.f, 0.f, 0.f);
+
+    auto& pose = geometry.detector == EDetectorKind::Cylindrical
+        ? geometry.cylindrical_detector.pose
+        : geometry.flat_detector.pose;
+    if (pipeline == EPipeline::WFBP) {
+        // FreeCT/wFBP 入口可使用柱面通道和行主点偏移；法向平移仍
+        // 没有对应的参数化公式，不能假装已经被消费。
+        pose.offset_unv_mm.y = 0.f;
+    } else {
+        pose.offset_unv_mm = make_float3(0.f, 0.f, 0.f);
+    }
+}
+
 class ReconstructionSession final : public IReconstructionSession {
 public:
     ~ReconstructionSession() override { release(); }
@@ -87,8 +144,18 @@ public:
             return fail_(EApiErrorCode::UnsupportedCombination,
                 "当前 DLL 构建未启用 YKCBCT_BUILD_HELICAL，缺少 wFBP 后端");
 #endif
+        SSystemConfig backend_geometry = system.geometry;
+        if (requiresCanonicalAcquisitionOffsets(system.reconstruction.pipeline) &&
+            hasNonzeroAcquisitionOffset(backend_geometry,
+                system.reconstruction.pipeline)) {
+            clearUnsupportedAcquisitionOffsets(backend_geometry,
+                system.reconstruction.pipeline);
+            YK_LOGW("[ReconstructionApi] 当前算法要求规范采集几何；"
+                "不支持的源端/探测器 offset 已强制置为 0。"
+                "体积中心 offset 保持不变。");
+        }
         session_ = detail::createExecutionBackend();
-        if (!session_ || !session_->initialize(system.geometry,
+        if (!session_ || !session_->initialize(backend_geometry,
                 system.reconstruction, system.device)) {
             release();
             return fail_(EApiErrorCode::InvalidGeometry, "几何或算法初始化失败");

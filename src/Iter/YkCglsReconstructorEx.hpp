@@ -91,6 +91,15 @@ public:
         return robust_.run(measured_projection, volume, params_, stream_);
     }
 
+    void reset()
+    {
+        if (!prepared_) return;
+        if (config_.strategy == ECglsStrategy::AstraClassic)
+            astra_.reset(stream_);
+        else
+            robust_.reset(stream_);
+    }
+
     void release()
     {
         if (stream_)

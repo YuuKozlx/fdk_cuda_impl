@@ -17,8 +17,10 @@ SimulationConfig loadConfig(const std::filesystem::path& path){
     c.use_library_fp=(*s)["use_library_fp"].value_or(false);
     c.use_cuda_spectral=(*s)["use_cuda_spectral"].value_or(false);
     if (auto* r = t["reconstruction"].as_table()) {
+        if (r->contains("pipeline"))
+            c.reconstruction.pipeline = (*r)["pipeline"].value_or(
+                std::string("fdk"));
         c.reconstruction.enabled = (*r)["enabled"].value_or(false);
-        c.reconstruction.pipeline = (*r)["pipeline"].value_or(std::string("fdk"));
         c.reconstruction.filter = (*r)["filter"].value_or(std::string("shepp-logan"));
         c.reconstruction.chunk_views = static_cast<int>(
             (*r)["chunk_views"].value_or(32));
@@ -38,6 +40,10 @@ SimulationConfig loadConfig(const std::filesystem::path& path){
     if (c.reconstruction.chunk_views <= 0)
         throw std::runtime_error("reconstruction.chunk_views 必须为正");
     if(auto* g=t["geometry_config"].as_table()) {
+        if (g->contains("tilt_u_rad") || g->contains("tilt_v_rad") ||
+            g->contains("tilt_n_rad"))
+            throw std::runtime_error(
+                "geometry_config 当前不开放探测器 tilt；仅支持 offset_u/n/v_mm");
         auto number=[&](const char* k,double d){return (*g)[k].value_or(d);};
         c.geometry_config.views=(int)number("views",360); c.geometry_config.views_per_turn=(int)number("views_per_turn",c.geometry_config.views); c.geometry_config.rotation_direction=(int)number("rotation_direction",1); c.geometry_config.detector_u=(int)number("detector_u",256); c.geometry_config.detector_v=(int)number("detector_v",128);
         c.geometry_config.pixel_u_mm=number("pixel_u_mm",1.0); c.geometry_config.pixel_v_mm=number("pixel_v_mm",1.0); c.geometry_config.sid_mm=number("sid_mm",500.0); c.geometry_config.sdd_mm=number("sdd_mm",1000.0);

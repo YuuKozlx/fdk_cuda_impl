@@ -157,6 +157,26 @@ namespace YK {
             is_initialized_ = false;
         }
 
+        // reset 只清理递推工作区，保留已经准备好的 FP/BP 和几何。
+        // 这样同一个 Session 可以在 reset 后安全复用，而无需重新上传几何。
+        void reset(cudaStream_t stream)
+        {
+            if (!is_initialized_) return;
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+            const size_t vol_n = static_cast<size_t>(params_.volume.Nx) *
+                params_.volume.Ny * params_.volume.Nz;
+            const size_t sino_n = static_cast<size_t>(params_.scan.NAng) *
+                params_.scan.Nu * params_.scan.Nv;
+            if (d_r_) YK_CUDA_CHECK(cudaMemsetAsync(d_r_, 0,
+                sino_n * sizeof(float), stream));
+            if (d_w_) YK_CUDA_CHECK(cudaMemsetAsync(d_w_, 0,
+                sino_n * sizeof(float), stream));
+            if (d_p_) YK_CUDA_CHECK(cudaMemsetAsync(d_p_, 0,
+                vol_n * sizeof(float), stream));
+            if (d_z_) YK_CUDA_CHECK(cudaMemsetAsync(d_z_, 0,
+                vol_n * sizeof(float), stream));
+        }
+
         ~CglsAstraBackend() { release(); }
 
     private:
@@ -396,6 +416,30 @@ namespace YK {
             fp_.release();
             bp_.release();
             is_initialized_ = false;
+        }
+
+        // 清零 CGLS 暂存向量并重置统计量；FP/BP prepared 状态保持不变。
+        void reset(cudaStream_t stream)
+        {
+            if (!is_initialized_) return;
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+            const size_t vol_n = static_cast<size_t>(params_.volume.Nx) *
+                params_.volume.Ny * params_.volume.Nz;
+            const size_t sino_n = static_cast<size_t>(params_.scan.NAng) *
+                params_.scan.Nu * params_.scan.Nv;
+            if (d_r_) YK_CUDA_CHECK(cudaMemsetAsync(d_r_, 0,
+                sino_n * sizeof(float), stream));
+            if (d_p_) YK_CUDA_CHECK(cudaMemsetAsync(d_p_, 0,
+                vol_n * sizeof(float), stream));
+            if (d_q_) YK_CUDA_CHECK(cudaMemsetAsync(d_q_, 0,
+                sino_n * sizeof(float), stream));
+            if (d_s_) YK_CUDA_CHECK(cudaMemsetAsync(d_s_, 0,
+                vol_n * sizeof(float), stream));
+            if (d_x_prev_) YK_CUDA_CHECK(cudaMemsetAsync(d_x_prev_, 0,
+                vol_n * sizeof(float), stream));
+            if (d_ax_) YK_CUDA_CHECK(cudaMemsetAsync(d_ax_, 0,
+                sino_n * sizeof(float), stream));
+            statistics_ = {};
         }
 
         ~CglsRobustBackend() { release(); }

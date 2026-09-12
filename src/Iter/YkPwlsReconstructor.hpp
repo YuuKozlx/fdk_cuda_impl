@@ -147,6 +147,18 @@ public:
         return true;
     }
 
+    void reset()
+    {
+        if (!prepared_) return;
+        YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        const size_t residual_count = static_cast<size_t>(params_.scan.Nu) *
+            params_.scan.Nv * max_subset_views_;
+        YK_CUDA_CHECK(cudaMemsetAsync(d_residual_.data(), 0,
+            residual_count * sizeof(float), stream_));
+        YK_CUDA_CHECK(cudaMemsetAsync(d_gradient_.data(), 0,
+            volumeCount_() * sizeof(float), stream_));
+    }
+
     void release()
     {
         if (stream_)

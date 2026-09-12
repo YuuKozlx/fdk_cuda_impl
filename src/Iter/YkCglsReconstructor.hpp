@@ -20,6 +20,8 @@ public:
     bool reconstruct(const float* measured_projection, float* volume)
     { return implementation_.reconstruct(measured_projection, volume); }
 
+    void reset() { implementation_.reset(); }
+
     void release() { implementation_.release(); }
     bool isPrepared() const { return implementation_.isPrepared(); }
 

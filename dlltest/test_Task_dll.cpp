@@ -216,6 +216,71 @@ bool testIterative(YK::SSystemSpec desc, const char* name) {
     return ok;
 }
 
+bool testSessionResetReuse()
+{
+    auto desc = makeDesc(YK::EPipeline::SIRT);
+    desc.geometry.circular.total_views = kAnalyticAngles;
+    desc.geometry.circular.views_per_turn = kAnalyticAngles;
+    desc.reconstruction.iterative.iterations = 2;
+    desc.reconstruction.iterative.subsets = 1;
+    desc.reconstruction.iterative.relaxation = 0.2f;
+    auto* session = YK::SessionFactory::create();
+    if (!session || !session->initialize(desc)) {
+        if (session) std::fprintf(stderr, "Session reset initialize: %s\n",
+            session->lastErrorMessage());
+        YK::SessionFactory::destroy(session);
+        return false;
+    }
+
+    const size_t volumeN = size_t(kNx) * kNy * kNz;
+    const size_t projectionN = size_t(kAnalyticAngles) * kNu * kNv;
+    std::vector<float> hProjection;
+    fillProjection(hProjection, kAnalyticAngles);
+    float* dProjection = nullptr;
+    float* dVolume = nullptr;
+    bool ok = cudaOk(cudaMalloc(reinterpret_cast<void**>(&dProjection),
+            projectionN * sizeof(float)), "cudaMalloc(reset projection)") &&
+        cudaOk(cudaMalloc(reinterpret_cast<void**>(&dVolume),
+            volumeN * sizeof(float)), "cudaMalloc(reset volume)") &&
+        cudaOk(cudaMemcpy(dProjection, hProjection.data(),
+            projectionN * sizeof(float), cudaMemcpyHostToDevice),
+            "cudaMemcpy(reset projection)") &&
+        cudaOk(cudaMemset(dVolume, 0, volumeN * sizeof(float)),
+            "cudaMemset(reset volume)");
+
+    std::vector<float> first(volumeN), second(volumeN);
+    if (ok) {
+        YK::SExecutionRequest request{};
+        request.view_count = kAnalyticAngles;
+        request.projection = {dProjection, YK::EMemoryLocation::Device, projectionN};
+        request.volume = {dVolume, YK::EMemoryLocation::Device, volumeN};
+        ok = session->execute(request) &&
+            cudaOk(cudaDeviceSynchronize(), "reset first execute") &&
+            cudaOk(cudaMemcpy(first.data(), dVolume, volumeN * sizeof(float),
+                cudaMemcpyDeviceToHost), "cudaMemcpy(reset first)");
+        if (ok) {
+            session->reset();
+            ok = cudaOk(cudaMemset(dVolume, 0, volumeN * sizeof(float)),
+                "cudaMemset(reset second volume)") &&
+                session->execute(request) &&
+                cudaOk(cudaDeviceSynchronize(), "reset second execute") &&
+                cudaOk(cudaMemcpy(second.data(), dVolume, volumeN * sizeof(float),
+                    cudaMemcpyDeviceToHost), "cudaMemcpy(reset second)");
+        }
+    }
+    double maxDiff = 0.0;
+    if (ok) {
+        for (size_t i = 0; i < volumeN; ++i)
+            maxDiff = std::max(maxDiff, std::abs(static_cast<double>(first[i]) - second[i]));
+        ok = maxDiff <= 1e-5;
+        if (!ok) std::fprintf(stderr, "Session reset changed result: maxDiff=%g\n", maxDiff);
+    }
+    cudaFree(dProjection);
+    cudaFree(dVolume);
+    YK::SessionFactory::destroy(session);
+    return ok;
+}
+
 YK::SSystemSpec makeAnalyticDesc(YK::EPipeline pipeline, int views)
 {
     auto d = makeDesc(pipeline);
@@ -401,6 +466,33 @@ bool testFdkPolicies() {
     return fdkRejected && xfdkRejected;
 }
 
+bool testOffsetNormalization()
+{
+    // XFDK 和柱面解析 FDK 当前只消费规范采集几何。公共 Session 应复制
+    // 并归零不支持的采集 offset，而不是拒绝整个算法或静默让后端丢失参数。
+    auto* session = YK::SessionFactory::create();
+    if (!session) return false;
+
+    auto xfdk = makeAnalyticDesc(YK::EPipeline::XFDK, kAnalyticAngles);
+    xfdk.geometry.circular.source_offset_mm = make_float3(1.f, 0.f, 0.f);
+    xfdk.geometry.flat_detector.pose.offset_unv_mm = make_float3(2.f, 3.f, 4.f);
+    const bool xfdkOk = session->initialize(xfdk);
+
+    auto cyl = makeCylDesc(YK::EPipeline::CylAnalyticFDK);
+    cyl.geometry.circular.total_views = kAnalyticAngles;
+    cyl.geometry.circular.views_per_turn = kAnalyticAngles;
+    cyl.geometry.cylindrical_detector.curvature_radius_mm = 1000.f;
+    cyl.geometry.circular.source_offset_mm = make_float3(0.f, 0.f, 1.f);
+    cyl.geometry.cylindrical_detector.pose.offset_unv_mm = make_float3(2.f, 0.f, 0.f);
+    const bool cylOk = session->initialize(cyl);
+
+    if (!xfdkOk || !cylOk)
+        std::fprintf(stderr, "offset normalization initialize failed: %s\n",
+            session->lastErrorMessage());
+    YK::SessionFactory::destroy(session);
+    return xfdkOk && cylOk;
+}
+
 }
 
 int main() {
@@ -416,12 +508,14 @@ int main() {
     const bool executionValidationOk = testExecutionValidation();
     const bool policyOk = testUnderTestPolicy();
     const bool fdkPolicyOk = testFdkPolicies();
+    const bool offsetNormalizationOk = testOffsetNormalization();
     const bool flatHelicalIter = testIterative(makeHelical(
         makeDesc(YK::EPipeline::SIRT)), "Flat helical SIRT");
     const bool cylCircularIter = testIterative(
         makeCylDesc(YK::EPipeline::SIRT), "Cyl circular SIRT");
     const bool cylHelicalIter = testIterative(makeHelical(
         makeCylDesc(YK::EPipeline::SIRT)), "Cyl helical SIRT");
+    const bool sessionResetReuse = testSessionResetReuse();
     const bool flatFdk = testReconstruction(
         makeAnalyticDesc(YK::EPipeline::FDK, kAnalyticAngles),
         kAnalyticAngles, "Flat circular FDK", true);
@@ -455,10 +549,12 @@ int main() {
         << " FlatHeliIter=" << status(flatHelicalIter)
         << " CylCirIter=" << status(cylCircularIter)
         << " CylHeliIter=" << status(cylHelicalIter)
+        << " SessionReset=" << status(sessionResetReuse)
         << " validation=" << status(validationOk)
         << " executionValidation=" << status(executionValidationOk)
         << " policy=" << status(policyOk)
         << " fdkPolicy=" << status(fdkPolicyOk)
+        << " offsetNormalization=" << status(offsetNormalizationOk)
         << " FlatFDK=" << status(flatFdk)
         << " FDKStreaming=" << status(fdkStreaming)
         << " FlatXFDK=" << status(flatXfdk)
@@ -466,8 +562,8 @@ int main() {
         << " FlatTigre=" << status(flatTigre)
         << " WFBP=" << status(wfbp) << '\n';
     return flatCircularFp && flatHelicalFp && cylCircularFp && cylHelicalFp &&
-        flatHelicalIter && cylCircularIter && cylHelicalIter && validationOk &&
+        flatHelicalIter && cylCircularIter && cylHelicalIter && sessionResetReuse && validationOk &&
         executionValidationOk &&
-        policyOk && fdkPolicyOk && flatFdk && fdkStreaming && flatXfdk && cylFdk &&
+        policyOk && fdkPolicyOk && offsetNormalizationOk && flatFdk && fdkStreaming && flatXfdk && cylFdk &&
         flatTigre && wfbp ? 0 : 1;
 }

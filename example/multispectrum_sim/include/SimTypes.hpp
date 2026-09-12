@@ -53,6 +53,8 @@ struct GeometryConfig {
 // 只控制单次 DLL execute() 的视图数，不改变投影文件布局。
 struct ReconstructionConfig {
     bool enabled = false;
+    // 保留配置层算法选择。当前示例真正执行的 DLL 重建管线仍由
+    // LibraryReconstructor 校验；未知或尚未接入的值不得静默降级。
     std::string pipeline = "fdk";
     std::string filter = "shepp-logan";
     std::filesystem::path output_volume_file;
