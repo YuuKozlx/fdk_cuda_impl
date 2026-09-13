@@ -426,3 +426,7 @@ FodyWeavers.xsd
 /out/
 /nist-xcom-portable-review/
 /example/multispectrum_sim/outputs/
+# BrainWeb 官方标签体由下载脚本生成，不纳入版本库。
+/example/multispectrum_sim/inputs/brainweb/
+# vcpkg manifest 在未指定安装根时可能生成此目录。
+/vcpkg_installed/

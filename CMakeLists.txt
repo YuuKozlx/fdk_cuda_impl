@@ -44,6 +44,7 @@ option(BUILD_TESTS "构建 Yktest 集成与数值回归测试" OFF)
 option(BUILD_UNIT_TESTS "构建轻量 GoogleTest 单元测试" OFF)
 option(BUILD_DLLTEST "构建 DLL 公共接口测试" OFF)
 option(BUILD_MULTISPECTRUM_SIM "构建独立多能谱 CBCT 仿真示例" OFF)
+option(BUILD_MULTISPECTRUM_PLOT_TOOLS "构建基于 Matplot++ 的重建结果分析工具" OFF)
 
 # ============================================================================
 # 工具链和全局默认值
@@ -213,6 +214,18 @@ endif()
 
 if(BUILD_MULTISPECTRUM_SIM)
     add_subdirectory(example/multispectrum_sim)
+endif()
+
+if(BUILD_MULTISPECTRUM_PLOT_TOOLS)
+    find_package(Matplot++ CONFIG REQUIRED)
+    find_program(GNUPLOT_EXECUTABLE gnuplot)
+    if(NOT GNUPLOT_EXECUTABLE)
+        message(FATAL_ERROR
+            "BUILD_MULTISPECTRUM_PLOT_TOOLS requires the gnuplot executable "
+            "at build/runtime; install gnuplot and add it to PATH")
+    endif()
+    message(STATUS "Matplot++ plotting backend: ${GNUPLOT_EXECUTABLE}")
+    add_subdirectory(example/multispectrum_sim/plot)
 endif()
 
 # ============================================================================

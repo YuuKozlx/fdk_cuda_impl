@@ -64,6 +64,22 @@ multispectrum_sim configs/water-cylinder-120kv-fullfov.toml
 
 XCOM 核心及 `data/MDATX3.*` 来自 `nist-xcom-portable`，保留 GPL-3.0-or-later 和第三方声明。
 
+## Matplot++ 分析工具（可选）
+
+仓库提供一个可选的 Matplot++ 分析工具，用于查看 float32 重建体的 z 向均值、中心轴曲线和数值直方图。当前 Matplot++ 使用 Gnuplot 后端，因此除了 vcpkg 的 `matplotplusplus` 库，还需要 `gnuplot` 可执行程序，并将其加入 `PATH`。它不属于 DLL 或默认测试依赖，只有启用 vcpkg 的 `plotting` feature 和 CMake 选项时才构建：
+
+```powershell
+vcpkg install --triplet x64-windows --x-feature=plotting
+winget install --id gnuplot.gnuplot --scope user
+cmake -S . -B out/plot-tools -DBUILD_MULTISPECTRUM_PLOT_TOOLS=ON
+cmake --build out/plot-tools --config Release
+out/plot-tools/example/multispectrum_sim/plot/Release/multispectrum_plot_reconstruction.exe `
+  --input example/multispectrum_sim/outputs/reconstructions/volume.raw `
+  --size 512 512 256 --output volume-profile.png
+```
+
+启用该选项时，CMake 通过 `find_package(Matplot++ CONFIG REQUIRED)` 查找 vcpkg 提供的 `Matplot++::matplot` 目标，并通过 `find_program(gnuplot)` 检查运行时后端；任一依赖缺失都会在配置阶段明确失败，不会影响默认构建。Matplot++ 只负责绘图 API，真正生成 PNG 的是 Gnuplot 子进程。
+
 ## 典型水模测试
 
 仓库只保留 `configs/water-cylinder-120kv-fullfov.toml` 这一份完整示例。它使用

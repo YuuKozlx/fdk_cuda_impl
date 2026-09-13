@@ -15,5 +15,13 @@
       "name": "tomlplusplus",
       "version>=": "3.4.0"
     }
-  ]
+  ],
+  "features": {
+    "plotting": {
+      "description": "Matplot++ based reconstruction and z-profile analysis tools",
+      "dependencies": [
+        "matplotplusplus"
+      ]
+    }
+  }
 }
