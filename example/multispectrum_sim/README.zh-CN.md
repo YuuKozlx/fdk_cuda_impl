@@ -29,7 +29,10 @@ python example/multispectrum_sim/scripts/download_brainweb.py
 BrainWeb TOML 使用相对于配置文件的路径，输出统一写入 `example/multispectrum_sim/outputs/`。因此复制仓库并完成上述数据准备后，无需修改 `D:/...`、`C:/...` 等本机路径即可运行，例如：
 
 ```powershell
-out/multispectrum_sim/multispectrum_sim.exe example/multispectrum_sim/configs/brainweb-normal-1mm-fdk.toml
+cmake -S . -B out/brainweb -G "Visual Studio 17 2022" -A x64 -DBUILD_MULTISPECTRUM_SIM=ON -DMULTISPECTRUM_USE_LIBRARY_FP=ON -DYKCBCT_BUILD_HELICAL=ON
+cmake --build out/brainweb --config Release --target multispectrum_sim
+out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/brainweb-center33-small-cone-fdk.toml
+out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/brainweb-center33-small-cone-heli-cyl-wfbp.toml
 ```
 
 示例文件按职责分开保存：
@@ -97,8 +100,49 @@ out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot
 重建不会各自解释一份几何。
 
 多能谱 TOML 保留 `reconstruction.pipeline` 字段。材料路径积分固定调用公共
-`ForwardProjection`；当前示例的 DLL 重建实现仍只执行 `pipeline = "fdk"`。其他管线的
-配置字段可以继续保留给后续接入，但未接入时会明确报错，不会静默改用 FDK。
+`ForwardProjection`；示例接入 `flat_cbct + fdk` 和 `cyl_helical + wfbp`。
+其他组合在配置读取时拒绝。BrainWeb 示例要求顶层 DLL 构建，独立 CPU 构建不能运行这些配置。
+FDK 的 filter 支持 ramlak/ram-lak、shepp-logan、cosine、hann、hamming；拼写错误直接拒绝。
+wFBP 的 filter 仅接受 ramlak/ram-lak，它表示 FreeCT ramp 核；使用
+`wfbp_cutoff`（默认 1，范围 (0,1]）和 `wfbp_apodization`（默认 1，范围 [0,1]）调节核。
+这些参数在 FDK 配置中会被拒绝，运行日志打印实际选择。
+
+wFBP 仍为全量执行，`chunk_views` 对它无效。示例提交 Host 投影和 Host 体积，
+Session 用库内 MemoryController 管理设备暂存，并在返回前完成下载。
+日志中的 input/volume 字节数不包含重排、滤波等算法工作区；暂存分配前检查剩余显存。
+此检查不是完整峰值显存保证，底层算法工作区仍在初始化时分配。
+WDDM 空闲物理显存不足时仅告警，因为驱动可能通过分页满足分配。
+底层分配器仍使用项目既有 CUDA 错误宏，实际分配失败的处理尚非完整可恢复异常契约。
+已有投影可通过 `multispectrum_sim --reconstruct-only <config.toml>` 单独重建，
+不重新计算材料路径与多能积分；使用者须保证配置与已有投影的几何相符（入口校验文件尺寸）。
+
+### 材料 ROI 回归
+
+分析脚本需要 Python 3.11+ 和 numpy；路径均以输入 TOML 所在目录解析。
+
+```powershell
+python -m pip install numpy
+python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/brainweb-center33-small-cone-fdk.toml --contrast-labels 2 3
+python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/brainweb-center33-small-cone-heli-cyl-wfbp.toml --contrast-labels 2 3
+```
+
+默认标签 ROI 腐蚀一个体素（26 邻域），排除首尾四层；输出 RAW 同目录的 `.roi.json`，
+包括样本数、均值、标准差和可选标签均值差，单位 mm^-1。不同模体/重建 offset 会拒绝分析，
+防止错位标签统计。使用 `--reference reference.json` 可检查显式材料基准与绝对容差：
+
+```json
+{"labels":{"2":{"mean_mm_inv":0.021,"tolerance_mm_inv":0.001}}}
+```
+
+以上数字仅示范格式，不代表灰质真值。超差退出码为 1；无参考值时 reference_passed 为 null。
+`tests/reference-brainweb-center33-fdk.json` 与 `tests/reference-brainweb-center33-wfbp.json`
+保存本次对应 TOML 的 CSF/灰质/白质/骨组织回归基准，绝对容差为 0.00001 mm^-1；
+可分别传给 `--reference`。它们用于发现实现变化，不是物理正确性定标；修改能谱、几何或材料后不能沿用。
+多能谱结果不能直接当作某个单能的衰减真值。BrainWeb 整层均值受组织面积影响，不能作为
+z 均匀性指标；水模可加 `--fixed-radius-mm 20`，生成固定中心圆形 ROI 的 z 均值曲线、
+标准差及极差。脚本要求这个 ROI 在保留的所有 z 层中只有一种材料，否则拒绝统计。
+内部水模须先用 `--export-water-cylinder` 导出标签体，再通过报告脚本的
+`--labels <labels.raw>` 指定该标签文件（此命令行路径相对于当前目录）。
 
 offset 的处理按算法能力执行：Flat FDK、FP 和迭代算子保留配置中的 offset；XFDK、
 C-FDK、Cyl Analytic FDK、wFBP 等要求规范采集几何的管线，在 DLL Session 初始化时将
@@ -190,6 +234,9 @@ name = "white_matter"
 preset = "ICRU_brain_adult"
 density_g_cm3 = 1.050
 ```
+
+接口组合回归、BrainWeb 数值基线与水模固定 ROI 纵向对比，见
+[重建验证记录](tests/VALIDATION.zh-CN.md)。记录包含复现命令、结果及尚未消除的数值偏差。
 
 示例输出包括 `[view][v][u]` 排列的 float32 投影、材料路径缓存、`[z][y][x]`
 排列的 float32 FDK 重建体，以及轴位、冠状位和矢状位中心切片 BMP。BMP 仅用于观察，

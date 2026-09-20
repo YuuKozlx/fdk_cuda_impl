@@ -59,6 +59,9 @@ struct ReconstructionConfig {
     // LibraryReconstructor 校验；未知或尚未接入的值不得静默降级。
     std::string pipeline = "fdk";
     std::string filter = "shepp-logan";
+    // FreeCT 空间域核参数，与 Flat FDK 的滤波枚举独立。
+    double wfbp_cutoff = 1.0;
+    double wfbp_apodization = 1.0;
     std::filesystem::path output_volume_file;
     std::filesystem::path slice_prefix;
     int chunk_views = 32;

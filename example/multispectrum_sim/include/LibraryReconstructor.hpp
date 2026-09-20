@@ -7,8 +7,8 @@
 
 namespace yk::spectral {
 
-// 从多能谱仿真生成的 float32 -log 投影中调用 DLL FDK。
-// 读取按视图分块进行，避免一次性复制完整投影到显存。
+// 从 float32 -log 投影调用 DLL：FDK 分包，wFBP 全量 Host 输入。
+// 两条路径的显存均由 DLL Session 管理；wFBP 尚不支持分包。
 bool reconstructWithLibraryFdk(const SimulationConfig& config,
     const std::filesystem::path& projection_file,
     const std::filesystem::path& volume_file,

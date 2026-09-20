@@ -40,6 +40,26 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    if(TARGET YKCBCT AND MULTISPECTRUM_USE_LIBRARY_FP AND YKCBCT_BUILD_HELICAL)
+        add_executable(multispectrum_wfbp_buffers_test tests/test_wfbp_buffers.cpp src/LibraryGeometry.cpp)
+        target_include_directories(multispectrum_wfbp_buffers_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+        target_link_libraries(multispectrum_wfbp_buffers_test PRIVATE YKCBCT)
+        if(MSVC)
+            target_compile_options(multispectrum_wfbp_buffers_test PRIVATE /utf-8)
+        endif()
+        add_custom_command(TARGET multispectrum_wfbp_buffers_test POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:multispectrum_wfbp_buffers_test>)
+        add_test(NAME multispectrum_wfbp_buffers COMMAND multispectrum_wfbp_buffers_test)
+    endif()
+    add_executable(multispectrum_config_test tests/test_config_validation.cpp
+        src/SimConfig.cpp src/XcomAttenuationProvider.cpp)
+    target_include_directories(multispectrum_config_test PRIVATE include
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
+    target_link_libraries(multispectrum_config_test PRIVATE nist_xcom_core)
+    if(MSVC)
+        target_compile_options(multispectrum_config_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_config_validation COMMAND multispectrum_config_test)
     add_executable(multispectrum_xcom_test
         tests/test_xcom_adapter.cpp
         src/XcomAttenuationProvider.cpp)

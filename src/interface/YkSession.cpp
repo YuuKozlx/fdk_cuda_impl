@@ -448,8 +448,43 @@ private:
     bool executeWfbp_(const ExecuteRequest& r)
     {
 #if YKCBCT_HAS_HELICAL
-        if (!hasFullDeviceReconstructionInput_(r, "WFBP")) return false;
-        if (!wfbp_.reconstruct(r.projection.data, r.volume.data)) return false;
+        if (r.K != params_.scan.NAng || !r.projection.data || !r.volume.data)
+            return false;
+        // Host 适配统一复用 Session 分配器；仍为全量执行，不表示支持分包。
+        const size_t bytes = static_cast<size_t>(r.K) * params_.scan.Nu *
+            params_.scan.Nv * sizeof(float);
+        YK_LOGI("[Session] WFBP full input={} bytes, volume={} bytes; workspace additional",
+            bytes, volumeBytes_());
+        size_t free_bytes = 0, total_bytes = 0;
+        const size_t needed = (r.projection.location == EMemoryLocation::Host &&
+            projection_scratch_bytes_ < bytes ? bytes : 0) +
+            (r.volume.location == EMemoryLocation::Host && !d_volume_scratch_ ? volumeBytes_() : 0);
+        const auto memory_status = cudaMemGetInfo(&free_bytes, &total_bytes);
+        if (memory_status != cudaSuccess) {
+            YK_LOGE("[Session] cudaMemGetInfo failed: {}", cudaGetErrorString(memory_status));
+            return false;
+        }
+        if (needed > free_bytes) {
+            // WDDM 可通过分页满足超过当前空闲物理显存的分配；查询值只用于诊断，
+            // 不能作为硬性拒绝条件，否则会拒绝原本可执行的全量重建。
+            YK_LOGW("[Session] WFBP staging needs {} bytes, physical free {} bytes; allocation may page or fail (workspace already allocated)",
+                needed, free_bytes);
+        }
+        float* projection = r.projection.location == EMemoryLocation::Device
+            ? r.projection.data : ensureProjectionScratch_(r.K);
+        float* volume = r.volume.location == EMemoryLocation::Device
+            ? r.volume.data : ensureVolumeScratch_();
+        if (!projection || !volume) return false;
+        if (r.projection.location == EMemoryLocation::Host)
+            YK_CUDA_CHECK(cudaMemcpyAsync(projection, r.projection.data, bytes,
+                cudaMemcpyHostToDevice, resources_.stream()));
+        if (!wfbp_.reconstruct(projection, volume)) {
+            cudaStreamSynchronize(resources_.stream());
+            return false;
+        }
+        if (r.volume.location == EMemoryLocation::Host)
+            YK_CUDA_CHECK(cudaMemcpyAsync(r.volume.data, volume, volumeBytes_(),
+                cudaMemcpyDeviceToHost, resources_.stream()));
         YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
         return true;
 #else

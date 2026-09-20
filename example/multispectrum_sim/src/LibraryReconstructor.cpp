@@ -10,7 +10,7 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
-#include <cuda_runtime.h>
+#include <iostream>
 
 namespace yk::spectral {
 namespace {
@@ -80,7 +80,8 @@ YK::EFdkFilter parseFilter(const std::string& name)
     if (name == "cosine") return YK::EFdkFilter::Cosine;
     if (name == "hann") return YK::EFdkFilter::Hann;
     if (name == "hamming") return YK::EFdkFilter::Hamming;
-    return YK::EFdkFilter::SheppLogan;
+    if (name == "shepp-logan") return YK::EFdkFilter::SheppLogan;
+    throw std::runtime_error("未知滤波核: " + name);
 }
 
 void writeSlices(const std::filesystem::path& prefix, const std::vector<float>& volume,
@@ -140,10 +141,20 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         if (wfbp) {
             system.reconstruction.wfbp.input_detector =
                 YK::EWfbpInputDetectorSpec::CylindricalArc;
+            system.reconstruction.wfbp.filter_cutoff = static_cast<float>(config.reconstruction.wfbp_cutoff);
+            system.reconstruction.wfbp.filter_apodization = static_cast<float>(config.reconstruction.wfbp_apodization);
         }
+        std::cout << "reconstruction=" << config.reconstruction.pipeline
+            << " filter=" << (wfbp ? "freect-ramp" : config.reconstruction.filter);
+        if (wfbp) std::cout << " cutoff=" << config.reconstruction.wfbp_cutoff
+            << " apodization=" << config.reconstruction.wfbp_apodization
+            << " full_input_bytes=" << projection_elements * sizeof(float)
+            << " chunk_views=not-applicable";
+        std::cout << std::endl;
         session = YK::ReconstructionSessionFactory::create();
         check(session != nullptr, "无法创建 YKCBCT DLL Session");
-        check(session->initialize(system), std::string("YKCBCT FDK 初始化失败: ") + session->lastErrorMessage());
+        const bool initialized = session->initialize(system);
+        check(initialized, std::string("YKCBCT 初始化失败: ") + session->lastErrorMessage());
 
         std::vector<float> volume(volume_elements, 0.f);
         if (fdk) {
@@ -168,40 +179,19 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                     "YKCBCT FDK 执行失败: ") + session->lastErrorMessage());
             }
         } else {
-            // 公共 wFBP 契约当前要求完整 Device 投影。示例只在此边界保留
-            // 一份完整 host 输入和一份 device 输入，算法工作区仍由 DLL 管理。
+            // 全量 Host 输入交给 DLL；显存由 Session 的统一分配器管理。
             std::vector<float> projection(projection_elements);
             input.read(reinterpret_cast<char*>(projection.data()),
                 static_cast<std::streamsize>(projection.size() * sizeof(float)));
             check(static_cast<bool>(input), "读取完整 wFBP 投影失败");
-            float* device_projection = nullptr;
-            float* device_volume = nullptr;
-            check(cudaMalloc(reinterpret_cast<void**>(&device_projection),
-                projection.size() * sizeof(float)) == cudaSuccess,
-                "分配 wFBP Device 投影失败");
-            if (cudaMalloc(reinterpret_cast<void**>(&device_volume),
-                    volume.size() * sizeof(float)) != cudaSuccess) {
-                cudaFree(device_projection);
-                throw std::runtime_error("分配 wFBP Device 体积失败");
-            }
-            const bool copied = cudaMemcpy(device_projection, projection.data(),
-                projection.size() * sizeof(float), cudaMemcpyHostToDevice) ==
-                cudaSuccess && cudaMemset(device_volume, 0,
-                volume.size() * sizeof(float)) == cudaSuccess;
             YK::SExecutionRequest request{};
-            request.projection = {device_projection, YK::EMemoryLocation::Device,
+            request.projection = {projection.data(), YK::EMemoryLocation::Host,
                 projection.size()};
-            request.volume = {device_volume, YK::EMemoryLocation::Device,
+            request.volume = {volume.data(), YK::EMemoryLocation::Host,
                 volume.size()};
             request.view_count = g.views;
-            const bool reconstructed = copied && session->execute(request);
-            const std::string execute_error = session->lastErrorMessage();
-            const bool downloaded = reconstructed && cudaMemcpy(volume.data(),
-                device_volume, volume.size() * sizeof(float),
-                cudaMemcpyDeviceToHost) == cudaSuccess;
-            cudaFree(device_volume);
-            cudaFree(device_projection);
-            check(downloaded, "YKCBCT wFBP 执行失败: " + execute_error);
+            const bool reconstructed = session->execute(request);
+            check(reconstructed, std::string("YKCBCT wFBP 执行失败: ") + session->lastErrorMessage());
         }
         std::ofstream output(volume_file, std::ios::binary);
         check(static_cast<bool>(output), "无法创建重建体输出: " + volume_file.string());

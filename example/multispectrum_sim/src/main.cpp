@@ -97,19 +97,35 @@ int main(int argc, char** argv)
         }
         const bool water_cylinder = argc == 3 &&
             std::string(argv[1]) == "--water-cylinder";
+        const bool reconstruction_only = argc == 3 &&
+            std::string(argv[1]) == "--reconstruct-only";
         const bool export_water_cylinder = argc == 4 &&
             std::string(argv[1]) == "--export-water-cylinder";
-        if (argc != 2 && !water_cylinder && !export_water_cylinder) {
+        if (argc != 2 && !water_cylinder && !export_water_cylinder && !reconstruction_only) {
             std::cerr << "用法: multispectrum_sim <config.toml>\n"
                 << "   或: multispectrum_sim --water-cylinder <config.toml>\n"
+                << "   或: multispectrum_sim --reconstruct-only <config.toml>\n"
                 << "   或: multispectrum_sim --export-water-cylinder <config.toml> <labels.raw>\n"
                 << "   或: multispectrum_sim --list-materials\n"
                 << "   或: multispectrum_sim --material-info <id-or-alias>\n";
             return 2;
         }
         const std::filesystem::path config_path =
-            water_cylinder || export_water_cylinder ? argv[2] : argv[1];
+            water_cylinder || export_water_cylinder || reconstruction_only ? argv[2] : argv[1];
         auto config = yk::spectral::loadConfig(config_path);
+        if (reconstruction_only) {
+            if (!config.reconstruction.enabled)
+                throw std::runtime_error("--reconstruct-only requires reconstruction.enabled=true");
+            for (const auto& path : {config.reconstruction.output_volume_file,
+                     config.reconstruction.slice_prefix})
+                if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+            std::string error;
+            if (!yk::spectral::reconstructWithLibraryFdk(config, config.output_file,
+                    config.reconstruction.output_volume_file, config.reconstruction.slice_prefix, error))
+                throw std::runtime_error(error);
+            std::cout << "reconstruction_only volume=" << config.reconstruction.output_volume_file << '\n';
+            return 0;
+        }
         if (export_water_cylinder) {
             const auto labels = makeWaterCylinder(config);
             const std::filesystem::path output = argv[3];

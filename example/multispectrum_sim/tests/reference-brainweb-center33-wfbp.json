@@ -1,0 +1,12 @@
+{
+  "description": "2026-09-20 pitch=4 implementation regression baseline, not physical ground truth; 26-neighbour erosion=1, z_margin=4; tolerance 0.00001 mm^-1",
+  "pipeline": "wfbp",
+  "erosion_voxels": 1,
+  "z_margin": 4,
+  "labels": {
+    "1": {"mean_mm_inv": 0.02070270881163915, "tolerance_mm_inv": 0.00001},
+    "2": {"mean_mm_inv": 0.021626999955140065, "tolerance_mm_inv": 0.00001},
+    "3": {"mean_mm_inv": 0.021402854766351224, "tolerance_mm_inv": 0.00001},
+    "7": {"mean_mm_inv": 0.04339894496497656, "tolerance_mm_inv": 0.00001}
+  }
+}

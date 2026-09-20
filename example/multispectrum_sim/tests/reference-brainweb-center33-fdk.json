@@ -1,0 +1,12 @@
+{
+  "description": "2026-09-20 implementation regression baseline, not physical ground truth; 26-neighbour erosion=1, z_margin=4; tolerance 0.00001 mm^-1",
+  "pipeline": "fdk",
+  "erosion_voxels": 1,
+  "z_margin": 4,
+  "labels": {
+    "1": {"mean_mm_inv": 0.02012100456021705, "tolerance_mm_inv": 0.00001},
+    "2": {"mean_mm_inv": 0.021048709666389796, "tolerance_mm_inv": 0.00001},
+    "3": {"mean_mm_inv": 0.02082720825776783, "tolerance_mm_inv": 0.00001},
+    "7": {"mean_mm_inv": 0.04295900318522556, "tolerance_mm_inv": 0.00001}
+  }
+}
