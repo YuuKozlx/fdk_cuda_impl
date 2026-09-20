@@ -40,6 +40,22 @@
         "VCPKG_MANIFEST_MODE": "true",
         "VCPKG_INSTALLED_DIR": "${sourceDir}/thirdparty/vcpkg_installed"
       }
+    },
+    {
+      "name": "x64-Release-plotting",
+      "displayName": "x64 Release with Matplot++ tools",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/x64-Release-plotting",
+      "installDir": "${sourceDir}/install/Release/YKCBCT",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_MANIFEST_MODE": "true",
+        "VCPKG_MANIFEST_FEATURES": "plotting",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/thirdparty/vcpkg_installed",
+        "BUILD_MULTISPECTRUM_PLOT_TOOLS": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "86"
+      }
     }
   ]
 }

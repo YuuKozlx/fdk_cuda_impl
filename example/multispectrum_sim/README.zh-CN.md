@@ -69,11 +69,10 @@ XCOM 核心及 `data/MDATX3.*` 来自 `nist-xcom-portable`，保留 GPL-3.0-or-l
 仓库提供一个可选的 Matplot++ 分析工具，用于查看 float32 重建体的 z 向均值、中心轴曲线和数值直方图。当前 Matplot++ 使用 Gnuplot 后端，因此除了 vcpkg 的 `matplotplusplus` 库，还需要 `gnuplot` 可执行程序，并将其加入 `PATH`。它不属于 DLL 或默认测试依赖，只有启用 vcpkg 的 `plotting` feature 和 CMake 选项时才构建：
 
 ```powershell
-vcpkg install --triplet x64-windows --x-feature=plotting
 winget install --id gnuplot.gnuplot --scope user
-cmake -S . -B out/plot-tools -DBUILD_MULTISPECTRUM_PLOT_TOOLS=ON
-cmake --build out/plot-tools --config Release
-out/plot-tools/example/multispectrum_sim/plot/Release/multispectrum_plot_reconstruction.exe `
+cmake --preset x64-Release-plotting
+cmake --build out/build/x64-Release-plotting --config Release --target multispectrum_plot_reconstruction
+out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot_reconstruction.exe `
   --input example/multispectrum_sim/outputs/reconstructions/volume.raw `
   --size 512 512 256 --output volume-profile.png
 ```

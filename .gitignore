@@ -430,3 +430,5 @@ FodyWeavers.xsd
 /example/multispectrum_sim/inputs/brainweb/
 # vcpkg manifest 在未指定安装根时可能生成此目录。
 /vcpkg_installed/
+# JetBrains/IDEA 本地工程配置。
+/.idea/
