@@ -1,0 +1,68 @@
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
+[projection]
+label_volume = "../../inputs/generated/tungsten-wire-0p05.raw"
+spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
+output_file = "../../outputs/quality/tungsten-wire-0p05-projection.raw"
+energy_output_file = "../../outputs/quality/tungsten-wire-0p05-energy.raw"
+path_cache_file = "../../outputs/quality/tungsten-wire-0p05-paths.ykpc"
+use_library_fp = true
+use_cuda_spectral = true
+apply_geometry_flux = true
+
+[projection.focal_spot]
+enabled = true
+size_u_mm = 1.2
+size_v_mm = 0.9
+samples_u = 3
+samples_v = 3
+
+[geometry]
+kind = "flat_cbct"
+views = 540
+views_per_turn = 540
+detector_u = 1536
+detector_v = 128
+pixel_u_mm = 0.10
+pixel_v_mm = 0.10
+sid_mm = 500.0
+sdd_mm = 1000.0
+volume_x = 101
+volume_y = 101
+volume_z = 401
+voxel_x_mm = 0.01
+voxel_y_mm = 0.01
+voxel_z_mm = 0.01
+reconstruction_volume_x = 512
+reconstruction_volume_y = 512
+reconstruction_volume_z = 128
+reconstruction_voxel_x_mm = 0.15
+reconstruction_voxel_y_mm = 0.15
+reconstruction_voxel_z_mm = 0.05
+
+[[projection.materials]]
+label = 3
+name = "tungsten"
+formula = "W"
+density_g_cm3 = 19.25
+
+[projection.detector_effects]
+efficiency_enabled = false
+scatter_enabled = false
+optical_crosstalk_enabled = false
+afterglow_enabled = false
+electronic_noise_enabled = false
+
+[reconstruction]
+type = "analytic"
+output_volume_file = "../../outputs/quality/tungsten-wire-0p05-fdk-512x512x128-f32.raw"
+slice_prefix = "../../outputs/quality/tungsten-wire-0p05-fdk-512x512x128"
+
+[reconstruction.analytic]
+pipeline = "fdk"
+filter = "ramlak"
+chunk_views = 8

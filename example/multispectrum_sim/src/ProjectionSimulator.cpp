@@ -13,6 +13,27 @@ namespace yk::spectral {
 struct Vec3 { double x,y,z; };
 
 namespace {
+void writeProjectionMetadata(const std::filesystem::path& raw_file,
+    int columns, int rows, int frames, const char* signal)
+{
+    auto metadata_file = raw_file;
+    metadata_file += ".json";
+    std::ofstream metadata(metadata_file);
+    if (!metadata)
+        throw std::runtime_error("无法创建投影元数据文件: " + metadata_file.string());
+    metadata << "{\n"
+        << "  \"columns\": " << columns << ",\n"
+        << "  \"rows\": " << rows << ",\n"
+        << "  \"frames\": " << frames << ",\n"
+        << "  \"data_type\": \"float32\",\n"
+        << "  \"byte_order\": \"little_endian\",\n"
+        << "  \"layout\": \"frame_row_column\",\n"
+        << "  \"signal\": \"" << signal << "\"\n"
+        << "}\n";
+    if (!metadata)
+        throw std::runtime_error("写入投影元数据文件失败: " + metadata_file.string());
+}
+
 bool intersectBox(const Vec3& source, const Vec3& direction,
                   const Vec3& minimum, const Vec3& maximum,
                   double& entry, double& exit)
@@ -40,7 +61,7 @@ bool intersectBox(const Vec3& source, const Vec3& direction,
 
 void validate(const SimulationConfig& config, const std::vector<std::uint8_t>& labels)
 {
-    const auto& g = config.geometry_config;
+    const auto& g = config.geometry.parameters;
     if (g.views <= 0 || g.detector_u <= 0 || g.detector_v <= 0 ||
         g.volume_x <= 0 || g.volume_y <= 0 || g.volume_z <= 0 ||
         g.voxel_x_mm <= 0 || g.voxel_y_mm <= 0 || g.voxel_z_mm <= 0 ||
@@ -54,13 +75,13 @@ std::vector<float> calculateViewPaths(const SimulationConfig& config,
                                       const std::vector<std::uint8_t>& labels,
                                       int view)
 {
-    const auto& g = config.geometry_config;
+    const auto& g = config.geometry.parameters;
     const std::size_t pixels = static_cast<std::size_t>(g.detector_u) * g.detector_v;
-    std::vector<float> paths(config.materials.size() * pixels, 0.0f);
+    std::vector<float> paths(config.projection.materials.size() * pixels, 0.0f);
     std::array<int, 256> material_index{};
     material_index.fill(-1);
-    for (std::size_t i = 0; i < config.materials.size(); ++i)
-        material_index[config.materials[i].label] = static_cast<int>(i);
+    for (std::size_t i = 0; i < config.projection.materials.size(); ++i)
+        material_index[config.projection.materials[i].label] = static_cast<int>(i);
 
     const double pi = std::acos(-1.0);
     const double angle = g.start_angle_rad + 2.0 * pi * view / g.views;
@@ -77,7 +98,7 @@ std::vector<float> calculateViewPaths(const SimulationConfig& config,
         const double uu = (u - (g.detector_u - 1) * 0.5) * g.pixel_u_mm + g.offset_u_mm;
         const double vv = (v - (g.detector_v - 1) * 0.5) * g.pixel_v_mm + g.offset_v_mm;
         Vec3 detector{};
-        if (config.geometry == GeometryKind::CylCbct || config.geometry == GeometryKind::CylHelical) {
+        if (config.geometry.kind == GeometryKind::CylCbct || config.geometry.kind == GeometryKind::CylHelical) {
             // 等角柱面以光源为圆心，通道坐标 uu 为弧长，因此 gamma=uu/SDD。
             const double gamma = uu / g.sdd_mm;
             detector = {source.x - g.sdd_mm * std::cos(angle + gamma),
@@ -110,11 +131,11 @@ std::vector<float> calculateViewPaths(const SimulationConfig& config,
 
 std::vector<float> flatGeometryFlux(const SimulationConfig& config, int view)
 {
-    const auto& g = config.geometry_config;
+    const auto& g = config.geometry.parameters;
     const std::size_t pixels = static_cast<std::size_t>(g.detector_u) * g.detector_v;
     std::vector<float> result(pixels, 1.f);
-    if (!config.apply_geometry_flux ||
-        (config.geometry != GeometryKind::FlatCbct && config.geometry != GeometryKind::FlatHelical))
+    if (!config.projection.apply_geometry_flux ||
+        (config.geometry.kind != GeometryKind::FlatCbct && config.geometry.kind != GeometryKind::FlatHelical))
         return result;
     const double pi = std::acos(-1.0);
     const double angle = g.start_angle_rad + 2.0 * pi * view / g.views;
@@ -124,9 +145,9 @@ std::vector<float> flatGeometryFlux(const SimulationConfig& config, int view)
     const Vec3 source = rotate(g.source_offset_x_mm, -g.sid_mm + g.source_offset_y_mm,
         g.source_offset_z_mm);
     const Vec3 center = rotate(0.0, g.sdd_mm - g.sid_mm, 0.0);
-    const Vec3 u_axis{-sa, ca, 0.0};
+    const Vec3 u_axis{ca, sa, 0.0};
     const Vec3 v_axis{0.0, 0.0, 1.0};
-    const Vec3 n_axis{ca, sa, 0.0};
+    const Vec3 n_axis{-sa, ca, 0.0};
     const Vec3 reference_ray{center.x + g.offset_n_mm*n_axis.x - source.x,
                              center.y + g.offset_n_mm*n_axis.y - source.y,
                              center.z - source.z};
@@ -156,8 +177,8 @@ std::vector<float> flatGeometryFlux(const SimulationConfig& config, int view)
 
 std::vector<float> ProjectionSimulator::run(const std::vector<std::uint8_t>& labels) const {
     validate(config_, labels);
-    const auto& g=config_.geometry_config; const std::size_t pixels=static_cast<std::size_t>(g.detector_u)*g.detector_v;
-    std::vector<float> output(static_cast<std::size_t>(g.views)*pixels,0.0f); std::vector<double> ray_paths(config_.materials.size());
+    const auto& g=config_.geometry.parameters; const std::size_t pixels=static_cast<std::size_t>(g.detector_u)*g.detector_v;
+    std::vector<float> output(static_cast<std::size_t>(g.views)*pixels,0.0f); std::vector<double> ray_paths(config_.projection.materials.size());
     for(int view=0;view<g.views;++view){const auto paths=calculateViewPaths(config_,labels,view);for(std::size_t p=0;p<pixels;++p){for(std::size_t m=0;m<ray_paths.size();++m)ray_paths[m]=paths[m*pixels+p];output[static_cast<std::size_t>(view)*pixels+p]=static_cast<float>(model_.simulate(ray_paths).line_integral);}}
     return output;
 }
@@ -165,17 +186,87 @@ std::vector<float> ProjectionSimulator::run(const std::vector<std::uint8_t>& lab
 bool ProjectionSimulator::runToFile(const std::vector<std::uint8_t>& labels,
                                     const std::filesystem::path& output_file,
                                     std::string& error) const {
-    if (config_.use_library_fp) {
-        if (!generatePathCacheWithLibraryFp(config_, labels, config_.path_cache_file, error)) return false;
-    } else if (!generatePathCache(labels, config_.path_cache_file, error)) return false;
-    return runFromPathCache(config_.path_cache_file, output_file, error);
+    const auto& spot = config_.projection.focal_spot;
+    if (spot.enabled && spot.samples_u * spot.samples_v > 1) {
+        try {
+            const int sample_count = spot.samples_u * spot.samples_v;
+            std::vector<std::filesystem::path> projections, energies, caches;
+            for (int v = 0; v < spot.samples_v; ++v) for (int u = 0; u < spot.samples_u; ++u) {
+                const int index = v * spot.samples_u + u;
+                auto sub = config_;
+                sub.projection.focal_spot.enabled = false;
+                sub.geometry.parameters.source_offset_x_mm +=
+                    ((u + 0.5) / spot.samples_u - 0.5) * spot.size_u_mm;
+                sub.geometry.parameters.source_offset_z_mm +=
+                    ((v + 0.5) / spot.samples_v - 0.5) * spot.size_v_mm;
+                auto suffix = std::string(".focal-") + std::to_string(index);
+                auto projection = output_file; projection += suffix;
+                auto energy = config_.projection.energy_output_file; energy += suffix;
+                auto cache = config_.projection.path_cache_file; cache += suffix;
+                sub.projection.energy_output_file = energy;
+                sub.projection.path_cache_file = cache;
+                ProjectionSimulator simulator(sub, model_);
+                if (!simulator.runToFile(labels, projection, error)) return false;
+                projections.push_back(projection); energies.push_back(energy); caches.push_back(cache);
+            }
+            std::vector<std::ifstream> projection_inputs, energy_inputs;
+            for (int i = 0; i < sample_count; ++i) {
+                projection_inputs.emplace_back(projections[i], std::ios::binary);
+                energy_inputs.emplace_back(energies[i], std::ios::binary);
+                if (!projection_inputs.back() || !energy_inputs.back())
+                    throw std::runtime_error("无法读取子焦点投影");
+            }
+            std::ofstream projection_out(output_file, std::ios::binary);
+            std::ofstream energy_out(config_.projection.energy_output_file, std::ios::binary);
+            const std::size_t pixels = static_cast<std::size_t>(config_.geometry.parameters.detector_u) *
+                config_.geometry.parameters.detector_v;
+            std::vector<float> input(pixels), transmission(pixels), energy_sum(pixels), output(pixels);
+            for (int view = 0; view < config_.geometry.parameters.views; ++view) {
+                std::fill(transmission.begin(), transmission.end(), 0.f);
+                std::fill(energy_sum.begin(), energy_sum.end(), 0.f);
+                for (int sample = 0; sample < sample_count; ++sample) {
+                    projection_inputs[sample].read(reinterpret_cast<char*>(input.data()), pixels * sizeof(float));
+                    for (std::size_t i = 0; i < pixels; ++i) transmission[i] += std::exp(-input[i]);
+                    energy_inputs[sample].read(reinterpret_cast<char*>(input.data()), pixels * sizeof(float));
+                    for (std::size_t i = 0; i < pixels; ++i) energy_sum[i] += input[i];
+                }
+                for (std::size_t i = 0; i < pixels; ++i) {
+                    output[i] = -std::log(std::max(transmission[i] / sample_count, 1e-30f));
+                    energy_sum[i] /= sample_count;
+                }
+                projection_out.write(reinterpret_cast<const char*>(output.data()), pixels * sizeof(float));
+                energy_out.write(reinterpret_cast<const char*>(energy_sum.data()), pixels * sizeof(float));
+            }
+            writeProjectionMetadata(output_file, config_.geometry.parameters.detector_u,
+                config_.geometry.parameters.detector_v, config_.geometry.parameters.views,
+                "negative_log_transmission");
+            writeProjectionMetadata(config_.projection.energy_output_file,
+                config_.geometry.parameters.detector_u, config_.geometry.parameters.detector_v,
+                config_.geometry.parameters.views, "transmitted_energy_keV_per_incident_photon");
+            projection_inputs.clear();
+            energy_inputs.clear();
+            for (int i = 0; i < sample_count; ++i) {
+                std::error_code ignored;
+                std::filesystem::remove(projections[i], ignored);
+                std::filesystem::remove(projections[i].string() + ".json", ignored);
+                std::filesystem::remove(energies[i], ignored);
+                std::filesystem::remove(energies[i].string() + ".json", ignored);
+                std::filesystem::remove(caches[i], ignored);
+            }
+            return true;
+        } catch (const std::exception& e) { error = e.what(); return false; }
+    }
+    if (config_.projection.use_library_fp) {
+        if (!generatePathCacheWithLibraryFp(config_, labels, config_.projection.path_cache_file, error)) return false;
+    } else if (!generatePathCache(labels, config_.projection.path_cache_file, error)) return false;
+    return runFromPathCache(config_.projection.path_cache_file, output_file, error);
 }
 
 bool ProjectionSimulator::generatePathCache(const std::vector<std::uint8_t>& labels,
                                             const std::filesystem::path& cache_file,
                                             std::string& error) const {
-    try { validate(config_, labels); const auto& g=config_.geometry_config; PathCacheWriter writer;
-        if(!writer.open(cache_file,g.views,g.detector_u,g.detector_v,static_cast<std::uint32_t>(config_.materials.size()),error))return false;
+    try { validate(config_, labels); const auto& g=config_.geometry.parameters; PathCacheWriter writer;
+        if(!writer.open(cache_file,g.views,g.detector_u,g.detector_v,static_cast<std::uint32_t>(config_.projection.materials.size()),error))return false;
         for(int view=0;view<g.views;++view)if(!writer.writeView(calculateViewPaths(config_,labels,view),error))return false;
         writer.close(); return true;
     } catch(const std::exception& e){error=e.what();return false;}
@@ -188,26 +279,26 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
         PathCacheReader reader;
         PathCacheHeader header;
         if (!reader.open(cache_file, header, error)) return false;
-        const auto& g = config_.geometry_config;
+        const auto& g = config_.geometry.parameters;
         if (header.views != static_cast<std::uint32_t>(g.views) ||
             header.detector_u != static_cast<std::uint32_t>(g.detector_u) ||
             header.detector_v != static_cast<std::uint32_t>(g.detector_v) ||
-            header.material_count != config_.materials.size())
+            header.material_count != config_.projection.materials.size())
             throw std::runtime_error("路径积分缓存与当前配置不匹配");
         std::ofstream out(output_file, std::ios::binary);
         if (!out) throw std::runtime_error("无法创建投影输出文件: " + output_file.string());
         std::ofstream energy_out;
-        if (!config_.energy_output_file.empty()) {
-            energy_out.open(config_.energy_output_file, std::ios::binary);
-            if (!energy_out) throw std::runtime_error("无法创建能量积分输出文件: " + config_.energy_output_file.string());
+        if (!config_.projection.energy_output_file.empty()) {
+            energy_out.open(config_.projection.energy_output_file, std::ios::binary);
+            if (!energy_out) throw std::runtime_error("无法创建能量积分输出文件: " + config_.projection.energy_output_file.string());
         }
         const std::size_t pixels = static_cast<std::size_t>(g.detector_u) *
             g.detector_v;
         std::vector<float> paths, projection(pixels), energy_signal(pixels);
-        std::vector<double> ray_paths(config_.materials.size());
+        std::vector<double> ray_paths(config_.projection.materials.size());
 #if defined(YK_MULTISPECTRUM_CUDA_SPECTRAL)
         CudaSpectralIntegrator cuda_integrator;
-        if (config_.use_cuda_spectral) {
+        if (config_.projection.use_cuda_spectral) {
             std::vector<float> weights(model_.spectrum().size());
             for (std::size_t energy = 0; energy < weights.size(); ++energy)
                 weights[energy] = static_cast<float>(
@@ -215,37 +306,37 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
             std::vector<float> energies(model_.spectrum().size());
             for (std::size_t energy = 0; energy < energies.size(); ++energy)
                 energies[energy] = static_cast<float>(model_.spectrum()[energy].energy_keV);
-            std::vector<float> table(config_.materials.size() * weights.size());
+            std::vector<float> table(config_.projection.materials.size() * weights.size());
             for (std::size_t material = 0;
-                material < config_.materials.size(); ++material) {
+                material < config_.projection.materials.size(); ++material) {
                 const auto& attenuation = model_.massAttenuation(
-                    config_.materials[material].label);
+                    config_.projection.materials[material].label);
                 if (attenuation.size() != weights.size())
                     throw std::runtime_error("材料衰减表长度与能谱长度不一致");
                 for (std::size_t energy = 0; energy < weights.size(); ++energy)
                     table[material * weights.size() + energy] =
-                        static_cast<float>(config_.materials[material].density_g_cm3 *
+                        static_cast<float>(config_.projection.materials[material].density_g_cm3 *
                             attenuation[energy]);
             }
             if (!cuda_integrator.initialize(weights, energies, table,
-                    static_cast<int>(config_.materials.size()), pixels, error))
+                    static_cast<int>(config_.projection.materials.size()), pixels, error))
                 return false;
         }
 #else
-        if (config_.use_cuda_spectral) {
+        if (config_.projection.use_cuda_spectral) {
             error = "当前构建未启用 CUDA 多能谱积分，请关闭 use_cuda_spectral 或使用顶层 DLL 构建";
             return false;
         }
 #endif
-        if (!config_.energy_output_file.empty() && !config_.use_cuda_spectral) {
+        if (!config_.projection.energy_output_file.empty() && !config_.projection.use_cuda_spectral) {
             error = "Energy-integrating detector output requires use_cuda_spectral=true";
             return false;
         }
         for (int view = 0; view < g.views; ++view) {
             if (!reader.readView(paths, error)) return false;
 #if defined(YK_MULTISPECTRUM_CUDA_SPECTRAL)
-            if (config_.use_cuda_spectral) {
-                const auto flux = config_.apply_geometry_flux ? flatGeometryFlux(config_, view) : std::vector<float>{};
+            if (config_.projection.use_cuda_spectral) {
+                const auto flux = config_.projection.apply_geometry_flux ? flatGeometryFlux(config_, view) : std::vector<float>{};
                 if (!cuda_integrator.integrate(paths, flux, projection, energy_signal, error))
                     return false;
             } else
@@ -269,6 +360,15 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
             }
         }
         reader.close();
+        out.close();
+        writeProjectionMetadata(output_file, g.detector_u, g.detector_v,
+            g.views, "negative_log_transmission");
+        if (energy_out) {
+            energy_out.close();
+            writeProjectionMetadata(config_.projection.energy_output_file,
+                g.detector_u, g.detector_v, g.views,
+                "transmitted_energy_keV_per_incident_photon");
+        }
         return true;
     } catch (const std::exception& e) {
         error = e.what();
