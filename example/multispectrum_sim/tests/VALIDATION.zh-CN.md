@@ -13,7 +13,7 @@
 
 ## BrainWeb 回归
 
-中心 33 层已有投影通过 `--reconstruct-only` 重建。FDK 与 wFBP pitch4 的 RAW 均与本轮改动前逐字节一致：
+中心 33 层已有投影通过 `workflow.mode = "reconstruct"` 重建。FDK 与 wFBP pitch4 的 RAW 均与本轮改动前逐字节一致：
 
 | 算法 | RAW SHA256 |
 | --- | --- |
@@ -57,11 +57,10 @@ volume.roi.json 和 `water-roi-comparison.png`。对比图上栏为绝对值，�
 ```powershell
 $exe = 'out/top-multispectrum-dll-vs/example/multispectrum_sim/Release/multispectrum_sim.exe'
 $base = 'example/multispectrum_sim'
-& $exe --water-cylinder "$base/configs/water-small-cone-fdk-calibration.toml"
-& $exe --water-cylinder "$base/configs/water-small-cone-heli-cyl-wfbp-calibration.toml"
-& $exe --export-water-cylinder "$base/configs/water-small-cone-fdk-calibration.toml" "$base/outputs/calibration/water-labels.raw"
-python "$base/scripts/report_material_roi.py" "$base/configs/water-small-cone-fdk-calibration.toml" --labels "$base/outputs/calibration/water-labels.raw" --fixed-radius-mm 20
-python "$base/scripts/report_material_roi.py" "$base/configs/water-small-cone-heli-cyl-wfbp-calibration.toml" --labels "$base/outputs/calibration/water-labels.raw" --fixed-radius-mm 20
+& $exe "$base/configs/pipelines/water-small-cone-fdk-calibration.toml"
+& $exe "$base/configs/pipelines/water-small-cone-heli-cyl-wfbp-calibration.toml"
+python "$base/scripts/report_material_roi.py" "$base/configs/pipelines/water-small-cone-fdk-calibration.toml" --fixed-radius-mm 20
+python "$base/scripts/report_material_roi.py" "$base/configs/pipelines/water-small-cone-heli-cyl-wfbp-calibration.toml" --fixed-radius-mm 20
 python "$base/scripts/plot_water_roi.py" "$base/outputs/calibration/water-fdk-volume.roi.json" "$base/outputs/calibration/water-wfbp-volume.roi.json" --output "$base/outputs/calibration/water-roi-comparison.png"
 ctest --test-dir out/top-multispectrum-dll-vs/example/multispectrum_sim -C Release --output-on-failure
 python -m unittest discover -s "$base/scripts" -p test_report_material_roi.py
@@ -74,5 +73,5 @@ Python 需要 3.11+、numpy；绘图另需 matplotlib。
 - wFBP 仍一次处理完整投影。该水模输入 619315200 字节，输出体积 5184564 字节，另有内部工作区。
 - WDDM 实测空闲物理显存查询为 0 时仍可分配并完成重建，因此容量检查只作警告，不硬性拒绝。不能由此承诺任意尺寸可运行或不会分页。
 - 既有 CUDA 分配失败仍可能经底层检查宏终止进程；本轮没有将整个库的错误处理改为可恢复机制。
-- `--reconstruct-only` 检查 RAW 尺寸，但没有几何指纹；同尺寸不同几何的投影仍需调用者确认。
+- `workflow.mode = "reconstruct"` 检查 RAW 尺寸，但没有几何指纹；同尺寸不同几何的投影仍需调用者确认。
 - 本轮运行验证限于 Windows，未新增 Linux 实机运行结论。

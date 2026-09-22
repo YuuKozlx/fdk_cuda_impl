@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SimConfig.hpp"
+#include "config/SimConfig.hpp"
 
 #include <filesystem>
 #include <string>

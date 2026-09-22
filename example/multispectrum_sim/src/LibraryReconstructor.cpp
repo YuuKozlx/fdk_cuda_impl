@@ -132,9 +132,10 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
 {
     YK::IReconstructionSession* session = nullptr;
     try {
-        const auto& g = config.geometry_config;
+        const auto& g = config.geometry.parameters;
         const std::size_t pixels = static_cast<std::size_t>(g.detector_u) * g.detector_v;
-        const std::size_t volume_elements = static_cast<std::size_t>(g.volume_x) * g.volume_y * g.volume_z;
+    const std::size_t volume_elements = static_cast<std::size_t>(g.reconstruction_volume_x) *
+        g.reconstruction_volume_y * g.reconstruction_volume_z;
         const std::size_t projection_elements = static_cast<std::size_t>(g.views) * pixels;
         std::ifstream input(projection_file, std::ios::binary);
         check(static_cast<bool>(input), "无法读取投影文件: " + projection_file.string());
@@ -150,9 +151,9 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         const bool iterative = !analytic;
         const auto pipeline = parsePipeline(pipeline_name);
         check(fdk || wfbp || iterative, "不支持的 DLL 重建管线");
-        check(!fdk || config.geometry == GeometryKind::FlatCbct,
+        check(!fdk || config.geometry.kind == GeometryKind::FlatCbct,
             "DLL FDK 示例只放行 flat_cbct");
-        check(!wfbp || config.geometry == GeometryKind::CylHelical,
+        check(!wfbp || config.geometry.kind == GeometryKind::CylHelical,
             "DLL wFBP 当前只放行 cyl_helical");
         auto system = makeLibrarySystem(config, pipeline,
             YK::ETask::FP_Joseph, parseFilter(config.reconstruction.analytic.filter),
@@ -252,7 +253,8 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         output.write(reinterpret_cast<const char*>(volume.data()),
             static_cast<std::streamsize>(volume.size() * sizeof(float)));
         check(static_cast<bool>(output), "写入重建体失败");
-        writeSlices(slice_prefix, volume, g.volume_x, g.volume_y, g.volume_z);
+        writeSlices(slice_prefix, volume, g.reconstruction_volume_x,
+            g.reconstruction_volume_y, g.reconstruction_volume_z);
         YK::ReconstructionSessionFactory::destroy(session);
         session = nullptr;
         diagnostic = pipeline_name +

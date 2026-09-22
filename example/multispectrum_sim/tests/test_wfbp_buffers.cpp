@@ -19,8 +19,8 @@ void cudaCheck(cudaError_t result) {
 int main() {
     try {
         yk::spectral::SimulationConfig config;
-        config.geometry = yk::spectral::GeometryKind::CylHelical;
-        auto& g = config.geometry_config;
+        config.geometry.kind = yk::spectral::GeometryKind::CylHelical;
+        auto& g = config.geometry.parameters;
         g.views = 360; g.views_per_turn = 120;
         g.detector_u = 64; g.detector_v = 16;
         g.pixel_u_mm = g.pixel_v_mm = 1;

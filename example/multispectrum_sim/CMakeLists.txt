@@ -8,13 +8,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SPECTRAL_SIM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 # 无论独立配置还是作为顶层子目录加入，示例目录到仓库 thirdparty 均为 ../../。
 set(SPECTRAL_XCOM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nist_xcom")
-option(MULTISPECTRUM_USE_LIBRARY_FP "通过 YKCBCT DLL 启用 FP 适配器" OFF)
+option(MULTISPECTRUM_USE_LIBRARY_FP "Use YKCBCT DLL  FP " ON)
 add_library(nist_xcom_core STATIC
     "${SPECTRAL_XCOM_ROOT}/xcom.cpp"
     "${SPECTRAL_XCOM_ROOT}/xcom_c_api.cpp")
 target_include_directories(nist_xcom_core PUBLIC "${SPECTRAL_XCOM_ROOT}")
 target_compile_definitions(nist_xcom_core PUBLIC XCOM_C_API_STATIC)
-add_executable(multispectrum_sim src/main.cpp src/SimConfig.cpp src/SpectralModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp src/PathCache.cpp)
+add_executable(multispectrum_sim app/main.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp src/PathCache.cpp)
 target_include_directories(multispectrum_sim PRIVATE
     include "${SPECTRAL_XCOM_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
 target_link_libraries(multispectrum_sim PRIVATE nist_xcom_core)
@@ -52,7 +52,7 @@ if(BUILD_TESTING)
         add_test(NAME multispectrum_wfbp_buffers COMMAND multispectrum_wfbp_buffers_test)
     endif()
     add_executable(multispectrum_config_test tests/test_config_validation.cpp
-        src/SimConfig.cpp src/XcomAttenuationProvider.cpp)
+        src/config/SimConfig.cpp src/XcomAttenuationProvider.cpp)
     target_include_directories(multispectrum_config_test PRIVATE include
         "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
     target_link_libraries(multispectrum_config_test PRIVATE nist_xcom_core)

@@ -1,19 +1,24 @@
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
 # BrainWeb 120 kVp 柱面螺旋正投与 FreeCT 风格 wFBP 重建。
-[simulation]
-geometry = "cyl_helical"
-label_volume = "../inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw"
-spectrum_file = "../spectra/spectrum-120kv-150.csv"
-xcom_data_directory = "../../../thirdparty/nist_xcom/data"
-output_file = "../outputs/projections/brainweb-normal-1mm-heli-cyl-120kv.raw"
-path_cache_file = "../outputs/path-cache/brainweb-normal-1mm-heli-cyl-120kv.ykpc"
+[projection]
+label_volume = "../../inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw"
+spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
+output_file = "../../outputs/projections/brainweb-normal-1mm-heli-cyl-120kv.raw"
+path_cache_file = "../../outputs/path-cache/brainweb-normal-1mm-heli-cyl-120kv.ykpc"
 use_library_fp = true
 use_cuda_spectral = true
 
-[projection]
-energy_output_file = "../outputs/projections/brainweb-normal-1mm-heli-cyl-120kv-energy.raw"
+
+energy_output_file = "../../outputs/projections/brainweb-normal-1mm-heli-cyl-120kv-energy.raw"
 apply_geometry_flux = true
 
-[geometry_config]
+[geometry]
+kind = "cyl_helical"
 # 六圈覆盖约 240 mm。wFBP 会对重排边界视图做对称裁剪，剩余有效
 # 轨迹仍覆盖整个 181 mm 标签体。
 views = 2160
@@ -47,58 +52,58 @@ reconstruction_offset_x_mm = 0.0
 reconstruction_offset_y_mm = 0.0
 reconstruction_offset_z_mm = 0.0
 
-[[materials]]
+[[projection.materials]]
 label = 0
 name = "background-air"
 preset = "mixture.air"
 density_g_cm3 = 0.001205
-[[materials]]
+[[projection.materials]]
 label = 1
 name = "csf"
 preset = "compound.water"
 density_g_cm3 = 1.007
-[[materials]]
+[[projection.materials]]
 label = 2
 name = "grey-matter"
 preset = "tissue.icru_brain_adult"
 density_g_cm3 = 1.045
-[[materials]]
+[[projection.materials]]
 label = 3
 name = "white-matter"
 preset = "tissue.icru_brain_adult"
 density_g_cm3 = 1.041
-[[materials]]
+[[projection.materials]]
 label = 4
 name = "fat"
 preset = "tissue.icru_adipose_adult2"
 density_g_cm3 = 0.95
-[[materials]]
+[[projection.materials]]
 label = 5
 name = "muscle-skin"
 preset = "tissue.icru_muscle_adult"
 density_g_cm3 = 1.05
-[[materials]]
+[[projection.materials]]
 label = 6
 name = "skin"
 preset = "tissue.icru_skin_adult"
 density_g_cm3 = 1.09
-[[materials]]
+[[projection.materials]]
 label = 7
 name = "skull"
 preset = "tissue.ncat_skull"
 density_g_cm3 = 1.61
-[[materials]]
+[[projection.materials]]
 label = 8
 name = "glial-matter"
 preset = "tissue.icru_brain_adult"
 density_g_cm3 = 1.04
-[[materials]]
+[[projection.materials]]
 label = 9
 name = "connective"
 preset = "tissue.icru_muscle_adult"
 density_g_cm3 = 1.12
 
-[detector_effects]
+[projection.detector_effects]
 efficiency_enabled = false
 scatter_enabled = false
 optical_crosstalk_enabled = false
@@ -106,12 +111,12 @@ afterglow_enabled = false
 electronic_noise_enabled = false
 
 [reconstruction]
-enabled = true
+output_volume_file = "../../outputs/reconstructions/brainweb-normal-1mm-heli-cyl-120kv-wfbp.raw"
+slice_prefix = "../../outputs/images/brainweb-normal-1mm-heli-cyl-120kv-wfbp"
+
 type = "analytic"
 
 [reconstruction.analytic]
 pipeline = "wfbp"
 filter = "ramlak"
 chunk_views = 2160
-output_volume_file = "../outputs/reconstructions/brainweb-normal-1mm-heli-cyl-120kv-wfbp.raw"
-slice_prefix = "../outputs/images/brainweb-normal-1mm-heli-cyl-120kv-wfbp"

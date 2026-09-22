@@ -1,0 +1,47 @@
+schema_version = 2
+
+[workflow]
+mode = "reconstruct"
+
+[geometry]
+kind = "flat_cbct"
+views = 720
+views_per_turn = 720
+rotation_direction = 1
+detector_u = 1536
+detector_v = 224
+pixel_u_mm = 0.315
+pixel_v_mm = 0.315
+sid_mm = 709.0
+sdd_mm = 1143.699951
+start_angle_rad = 0.0
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+volume_x = 181
+volume_y = 217
+volume_z = 33
+voxel_x_mm = 1.0
+voxel_y_mm = 1.0
+voxel_z_mm = 1.0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+[reconstruction]
+input_projection_file = "../../outputs/projections/brainweb-center33-fdk.raw"
+output_volume_file = "../../outputs/reconstructions/brainweb-center33-sirt-50.raw"
+slice_prefix = "../../outputs/images/brainweb-center33-sirt-50"
+type = "iterative"
+
+[reconstruction.iterative]
+algorithm = "sirt"
+iterations = 50
+relaxation = 0.8
+subsets = 1
+forward_projector = "joseph"
+back_projector = "joseph_v3"
+non_negative = true

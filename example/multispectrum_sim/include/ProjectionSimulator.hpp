@@ -1,5 +1,5 @@
 #pragma once
-#include "SimConfig.hpp"
+#include "config/SimConfig.hpp"
 #include "SpectralModel.hpp"
 #include <vector>
 #include <filesystem>

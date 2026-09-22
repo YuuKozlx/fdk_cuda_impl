@@ -21,7 +21,7 @@ bool generatePathCacheWithLibraryFp(const SimulationConfig& config,
     YK::IReconstructionSession* session = nullptr;
     PathCacheWriter writer;
     try {
-        const auto& g = config.geometry_config;
+        const auto& g = config.geometry.parameters;
         const size_t volume_elements = static_cast<size_t>(g.volume_x) *
             g.volume_y * g.volume_z;
         const size_t pixels_per_view = static_cast<size_t>(g.detector_u) *
@@ -47,14 +47,14 @@ bool generatePathCacheWithLibraryFp(const SimulationConfig& config,
         std::vector<float> host_volume(volume_elements, 0.f);
         std::vector<float> host_projection(projection_elements, 0.f);
         check(writer.open(cache_file, g.views, g.detector_u, g.detector_v,
-            static_cast<std::uint32_t>(config.materials.size()), diagnostic),
+            static_cast<std::uint32_t>(config.projection.materials.size()), diagnostic, true),
             "无法创建 DLL FP 路径缓存");
         std::vector<float> view_paths(pixels_per_view, 0.f);
 
-        for (size_t material = 0; material < config.materials.size(); ++material) {
+        for (size_t material = 0; material < config.projection.materials.size(); ++material) {
             std::fill(host_volume.begin(), host_volume.end(), 0.f);
             for (size_t i = 0; i < volume_elements; ++i)
-                host_volume[i] = labels[i] == config.materials[material].label
+                host_volume[i] = labels[i] == config.projection.materials[material].label
                     ? 1.f : 0.f;
             YK::SExecutionRequest request{};
             request.view_count = g.views;

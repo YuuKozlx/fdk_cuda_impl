@@ -1,0 +1,79 @@
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
+[projection]
+label_volume = "../../inputs/generated/low-contrast-21.raw"
+spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
+output_file = "../../outputs/quality/low-contrast-21-projection.raw"
+energy_output_file = "../../outputs/quality/low-contrast-21-energy.raw"
+path_cache_file = "../../outputs/quality/low-contrast-21-paths.ykpc"
+use_library_fp = true
+use_cuda_spectral = true
+apply_geometry_flux = true
+
+[geometry]
+kind = "flat_cbct"
+views = 540
+views_per_turn = 540
+detector_u = 1536
+detector_v = 128
+pixel_u_mm = 0.10
+pixel_v_mm = 0.20
+sid_mm = 500.0
+sdd_mm = 1000.0
+volume_x = 704
+volume_y = 704
+volume_z = 51
+voxel_x_mm = 0.10
+voxel_y_mm = 0.10
+voxel_z_mm = 0.10
+reconstruction_volume_x = 512
+reconstruction_volume_y = 512
+reconstruction_volume_z = 128
+reconstruction_voxel_x_mm = 0.15
+reconstruction_voxel_y_mm = 0.15
+reconstruction_voxel_z_mm = 0.10
+
+[[projection.materials]]
+label = 1
+name = "water"
+formula = "H2O"
+density_g_cm3 = 1.0
+
+[[projection.materials]]
+label = 2
+name = "water_minus_0p3"
+formula = "H2O"
+density_g_cm3 = 0.997
+
+[[projection.materials]]
+label = 3
+name = "water_minus_0p5"
+formula = "H2O"
+density_g_cm3 = 0.995
+
+[[projection.materials]]
+label = 4
+name = "water_minus_1p0"
+formula = "H2O"
+density_g_cm3 = 0.990
+
+[projection.detector_effects]
+efficiency_enabled = false
+scatter_enabled = false
+optical_crosstalk_enabled = false
+afterglow_enabled = false
+electronic_noise_enabled = false
+
+[reconstruction]
+type = "analytic"
+output_volume_file = "../../outputs/quality/low-contrast-21-fdk-512x512x128-f32.raw"
+slice_prefix = "../../outputs/quality/low-contrast-21-fdk-512x512x128"
+
+[reconstruction.analytic]
+pipeline = "fdk"
+filter = "shepp-logan"
+chunk_views = 8

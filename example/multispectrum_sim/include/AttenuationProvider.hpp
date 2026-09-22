@@ -1,5 +1,5 @@
 #pragma once
-#include "SimTypes.hpp"
+#include "config/SimTypes.hpp"
 #include <vector>
 #include <string>
 namespace yk::spectral {

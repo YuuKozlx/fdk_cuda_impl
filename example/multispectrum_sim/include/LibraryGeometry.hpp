@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SimConfig.hpp"
+#include "config/SimConfig.hpp"
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
 
 namespace yk::spectral {

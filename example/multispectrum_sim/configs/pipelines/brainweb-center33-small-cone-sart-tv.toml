@@ -1,19 +1,24 @@
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
 # BrainWeb 中心 33 层小锥角圆扫，用作多能谱重建数值基准。
-[simulation]
-geometry = "flat_cbct"
-label_volume = "../inputs/brainweb/brainweb-normal-1mm-center33-181x217x33-u8.raw"
-spectrum_file = "../spectra/spectrum-120kv-150.csv"
-xcom_data_directory = "../../../thirdparty/nist_xcom/data"
-output_file = "../outputs/projections/brainweb-center33-fdk.raw"
-path_cache_file = "../outputs/path-cache/brainweb-center33-fdk.ykpc"
+[projection]
+label_volume = "../../inputs/brainweb/brainweb-normal-1mm-center33-181x217x33-u8.raw"
+spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
+output_file = "../../outputs/projections/brainweb-center33-fdk.raw"
+path_cache_file = "../../outputs/path-cache/brainweb-center33-fdk.ykpc"
 use_library_fp = true
 use_cuda_spectral = true
 
-[projection]
-energy_output_file = "../outputs/projections/brainweb-center33-fdk-energy.raw"
+
+energy_output_file = "../../outputs/projections/brainweb-center33-fdk-energy.raw"
 apply_geometry_flux = true
 
-[geometry_config]
+[geometry]
+kind = "flat_cbct"
 views = 720
 views_per_turn = 720
 rotation_direction = 1
@@ -44,58 +49,58 @@ reconstruction_offset_x_mm = 0.0
 reconstruction_offset_y_mm = 0.0
 reconstruction_offset_z_mm = 0.0
 
-[[materials]]
+[[projection.materials]]
 label=0
 name="background-air"
 preset="mixture.air"
 density_g_cm3=0.001205
-[[materials]]
+[[projection.materials]]
 label=1
 name="csf"
 preset="compound.water"
 density_g_cm3=1.007
-[[materials]]
+[[projection.materials]]
 label=2
 name="grey-matter"
 preset="tissue.icru_brain_adult"
 density_g_cm3=1.045
-[[materials]]
+[[projection.materials]]
 label=3
 name="white-matter"
 preset="tissue.icru_brain_adult"
 density_g_cm3=1.041
-[[materials]]
+[[projection.materials]]
 label=4
 name="fat"
 preset="tissue.icru_adipose_adult2"
 density_g_cm3=0.95
-[[materials]]
+[[projection.materials]]
 label=5
 name="muscle-skin"
 preset="tissue.icru_muscle_adult"
 density_g_cm3=1.05
-[[materials]]
+[[projection.materials]]
 label=6
 name="skin"
 preset="tissue.icru_skin_adult"
 density_g_cm3=1.09
-[[materials]]
+[[projection.materials]]
 label=7
 name="skull"
 preset="tissue.ncat_skull"
 density_g_cm3=1.61
-[[materials]]
+[[projection.materials]]
 label=8
 name="glial-matter"
 preset="tissue.icru_brain_adult"
 density_g_cm3=1.04
-[[materials]]
+[[projection.materials]]
 label=9
 name="connective"
 preset="tissue.icru_muscle_adult"
 density_g_cm3=1.12
 
-[detector_effects]
+[projection.detector_effects]
 efficiency_enabled=false
 scatter_enabled=false
 optical_crosstalk_enabled=false
@@ -103,10 +108,10 @@ afterglow_enabled=false
 electronic_noise_enabled=false
 
 [reconstruction]
-enabled = true
+output_volume_file = "../../outputs/reconstructions/brainweb-center33-sart-tv.raw"
+slice_prefix = "../../outputs/images/brainweb-center33-sart-tv"
+
 type = "iterative"
-output_volume_file = "../outputs/reconstructions/brainweb-center33-sart-tv.raw"
-slice_prefix = "../outputs/images/brainweb-center33-sart-tv"
 
 [reconstruction.iterative]
 algorithm = "tigre_sart_tv"

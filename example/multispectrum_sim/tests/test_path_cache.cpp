@@ -12,7 +12,8 @@ int main()
         "yk_multispectrum_path_cache_test.ykpc";
     std::string error;
     yk::spectral::PathCacheWriter writer;
-    if (!writer.open(cache, 3, 2, 1, 2, error)) return 1;
+    if (!writer.open(cache, 3, 2, 1, 2, error, true)) return 1;
+    if (fs::file_size(cache) != sizeof(yk::spectral::PathCacheHeader)) return 6;
 
     // DLL FP 按材料完成整套视图，因此刻意使用 material-major 顺序写入。
     for (std::uint32_t material = 0; material < 2; ++material) {
@@ -23,6 +24,9 @@ int main()
             if (!writer.writeMaterialView(view, material, values, 2, error))
                 return 2;
         }
+        const auto expected_size = sizeof(yk::spectral::PathCacheHeader) +
+            static_cast<std::uintmax_t>(material + 1) * 3 * 2 * sizeof(float);
+        if (fs::file_size(cache) != expected_size) return 7;
     }
     writer.close();
 

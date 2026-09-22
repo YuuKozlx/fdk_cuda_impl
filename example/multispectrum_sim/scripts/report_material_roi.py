@@ -51,20 +51,22 @@ def main():
     args = parser.parse_args()
     config = tomllib.loads(args.config.read_text(encoding="utf-8-sig"))
     base = args.config.resolve().parent
-    g = config["geometry_config"]
+    g = config["geometry"]
     for axis in "xyz":
         if g.get(f"phantom_offset_{axis}_mm", 0) != g.get(f"reconstruction_offset_{axis}_mm", 0):
             raise ValueError("ROI requires aligned phantom/reconstruction grids; offsets differ")
     shape = tuple(g[f"volume_{a}"] for a in "zyx")
-    label_path = args.labels or base / config["simulation"]["label_volume"]
+    label_path = args.labels or base / config["projection"]["label_volume"]
     labels = np.fromfile(label_path, dtype=np.uint8).reshape(shape)
     path = base / config["reconstruction"]["output_volume_file"]
     volume = np.fromfile(path, dtype="<f4").reshape(shape)
     stats = measure(volume, labels, args.erosion, args.z_margin)
-    for material in config["materials"]:
+    for material in config["projection"]["materials"]:
         if str(material["label"]) in stats:
             stats[str(material["label"])]["name"] = material["name"]
-    report = {"pipeline": config["reconstruction"]["pipeline"],
+    reconstruction = config["reconstruction"]
+    pipeline = (reconstruction.get("analytic") or reconstruction.get("iterative"))["pipeline" if reconstruction["type"] == "analytic" else "algorithm"]
+    report = {"pipeline": pipeline,
         "erosion_voxels": args.erosion, "z_margin": args.z_margin,
         "labels": stats, "reference_passed": None}
     if args.fixed_radius_mm is not None:

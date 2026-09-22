@@ -29,9 +29,17 @@ class RoiTests(unittest.TestCase):
             root = Path(directory)
             np.ones((9,9,9), dtype=np.uint8).tofile(root/'labels.raw')
             np.full((9,9,9), 0.02, dtype='<f4').tofile(root/'volume.raw')
-            text = """[simulation]
+            text = """schema_version=2
+[workflow]
+mode='project_and_reconstruct'
+[projection]
 label_volume='labels.raw'
-[geometry_config]
+[[projection.materials]]
+label=1
+name='water'
+formula='H2O'
+[geometry]
+kind='flat_cbct'
 volume_x=9
 volume_y=9
 volume_z=9
@@ -39,11 +47,10 @@ voxel_x_mm=1
 voxel_y_mm=1
 voxel_z_mm=1
 [reconstruction]
-pipeline='fdk'
+type='analytic'
 output_volume_file='volume.raw'
-[[materials]]
-label=1
-name='water'
+[reconstruction.analytic]
+pipeline='fdk'
 """
             config = root/'test.toml'
             config.write_text(text)
@@ -57,7 +64,7 @@ name='water'
                 self.assertEqual(run.returncode, status, run.stderr)
             report = json.loads((root/'volume.roi.json').read_text())
             self.assertEqual(report['fixed_roi']['z_range_mm_inv'], 0)
-            config.write_text(text.replace('[geometry_config]', '[geometry_config]\nphantom_offset_z_mm=1'))
+            config.write_text(text.replace('[geometry]', '[geometry]\nphantom_offset_z_mm=1'))
             self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
 
 

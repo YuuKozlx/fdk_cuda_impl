@@ -1,0 +1,50 @@
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
+# 小锥角柱面螺旋 wFBP 水模标定；通过 --water-cylinder 运行。
+[projection]
+spectrum_file="../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory="../../../../thirdparty/nist_xcom/data"
+output_file="../../outputs/calibration/water-wfbp-projection.raw"
+path_cache_file="../../outputs/calibration/water-wfbp-paths.ykpc"
+use_library_fp=true
+use_cuda_spectral=true
+
+energy_output_file = "../../outputs/calibration/water-wfbp-projection-energy.raw"
+apply_geometry_flux = true
+
+[geometry]
+kind = "cyl_helical"
+views=1800
+views_per_turn=360
+detector_u=768
+detector_v=112
+pixel_u_mm=0.630124
+pixel_v_mm=0.630124
+sid_mm=709.0
+sdd_mm=1143.699951
+pitch_mm_per_turn=8.0
+start_z_mm=-20.0
+volume_x=181
+volume_y=217
+volume_z=33
+voxel_x_mm=1.0
+voxel_y_mm=1.0
+voxel_z_mm=1.0
+[[projection.materials]]
+label=1
+name="water"
+preset="compound.water"
+density_g_cm3=1.0
+[reconstruction]
+output_volume_file = "../../outputs/calibration/water-wfbp-volume.raw"
+slice_prefix = "../../outputs/calibration/water-wfbp"
+
+type="analytic"
+
+[reconstruction.analytic]
+pipeline="wfbp"
+filter="ramlak"
+chunk_views=1800
