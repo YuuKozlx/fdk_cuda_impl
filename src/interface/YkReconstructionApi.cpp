@@ -29,6 +29,7 @@ EReleaseDecision releaseDecision(const SSystemSpec& source)
     case EPipeline::XFDK:
         return !cyl && !helical
             ? EReleaseDecision::Released : EReleaseDecision::UnderTest;
+    case EPipeline::SART:
     case EPipeline::SIRT:
     case EPipeline::OSSART:
     case EPipeline::CGLS:
@@ -56,7 +57,7 @@ bool validProjectorSelection(const SSystemSpec& source)
         source.reconstruction.forward_projector != ETask::FP_Siddon)
         return false;
     if (source.geometry.detector == EDetectorKind::Cylindrical &&
-        (pipeline == EPipeline::SIRT || pipeline == EPipeline::OSSART ||
+        (pipeline == EPipeline::SART || pipeline == EPipeline::SIRT || pipeline == EPipeline::OSSART ||
          pipeline == EPipeline::CGLS || pipeline == EPipeline::PWLS) &&
         source.reconstruction.back_projector == ETask::BP_Joseph_v2)
         return false;

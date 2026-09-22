@@ -1,4 +1,4 @@
-﻿// YkTaskTypes.hpp
+// YkTaskTypes.hpp
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -60,6 +60,7 @@ namespace YK {
         CylAnalyticFDK,
         WFBP,
         TigreGradient,
+        SART,
     };
 
     enum class EMemoryLocation : int32_t {

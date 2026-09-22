@@ -233,6 +233,17 @@ public:
                 ok = forward_->prepare(geometry_, resources_);
             }
             break;
+        case EPipeline::SART: {
+            if (!hasCompleteAngles_()) break;
+            SART::Config c{};
+            c.n_iter = reconstruction_.iterative.iterations;
+            c.lambda = reconstruction_.iterative.relaxation;
+            c.fp_task = reconstruction_.forward_projector;
+            c.bp_task = reconstruction_.back_projector;
+            ok = sart_.init(params_, c, geometry_.allGeometry(),
+                resources_.stream(), device_);
+            break;
+        }
         case EPipeline::SIRT: {
             if (!hasCompleteAngles_()) break;
             if (cylindrical_) {
@@ -300,6 +311,7 @@ public:
         case EPipeline::CFDK: return executeCfdk_(r);
         case EPipeline::CylAnalyticFDK: return executeCylFdk_(r);
         case EPipeline::ForwardProjection: return executeFp_(r);
+        case EPipeline::SART:
         case EPipeline::SIRT:
         case EPipeline::OSSART:
         case EPipeline::CGLS: return executeIterative_(r);
@@ -315,6 +327,7 @@ public:
         // reset 只清除一次执行产生的瞬态状态，保留 initialize() 已准备的
         // 几何、纹理和工作区；release() 才负责销毁完整后端资源。
         fdk_.reset();
+        sart_.reset();
         sirt_.reset();
         ossart_.reset();
         cgls_.reset();
@@ -339,7 +352,7 @@ public:
 #if YKCBCT_HAS_HELICAL
         wfbp_.release();
 #endif
-        sirt_.release(); ossart_.release(); cgls_.release();
+        sart_.release(); sirt_.release(); ossart_.release(); cgls_.release();
         pwls_.release(); tigre_.release();
         freeScratch_();
         resources_.release();
@@ -586,6 +599,9 @@ private:
         }
         bool ok = false;
         switch (reconstruction_.pipeline) {
+        case EPipeline::SART:
+            ok = sart_.run(r.projection.data, r.volume.data, params_, resources_.stream());
+            break;
         case EPipeline::SIRT:
             ok = r.iteration_count > 0
                 ? sirt_.iterate(r.projection.data, r.volume.data, params_, resources_.stream(), r.iteration_count)
@@ -665,6 +681,7 @@ private:
 #if YKCBCT_HAS_HELICAL
     Helical::Wfbp::Pipeline wfbp_{};
 #endif
+    SART sart_;
     SIRT sirt_;
     OSSART ossart_;
     CGLS cgls_;
