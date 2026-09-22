@@ -250,6 +250,8 @@ public:
             SART::Config c{};
             c.n_iter = reconstruction_.iterative.iterations;
             c.lambda = reconstruction_.iterative.relaxation;
+            c.use_min = reconstruction_.tigre.non_negative;
+            c.min_constraint = 0.f;
             c.fp_task = reconstruction_.forward_projector;
             c.bp_task = reconstruction_.back_projector;
             ok = sart_.init(params_, c, geometry_.allGeometry(),
@@ -265,6 +267,8 @@ public:
             SIRT::Config c{};
             c.n_iter = reconstruction_.iterative.iterations;
             c.lambda = reconstruction_.iterative.relaxation;
+            c.use_min = reconstruction_.tigre.non_negative;
+            c.min_constraint = 0.f;
             c.fp_task = reconstruction_.forward_projector;
             c.bp_task = reconstruction_.back_projector;
             ok = sirt_.init(params_, c, geometry_.allGeometry(),
@@ -281,6 +285,8 @@ public:
             c.n_iter = reconstruction_.iterative.iterations;
             c.n_subset = std::max(1, reconstruction_.iterative.subsets);
             c.lambda = reconstruction_.iterative.relaxation;
+            c.use_min = reconstruction_.tigre.non_negative;
+            c.min_constraint = 0.f;
             c.fp_task = reconstruction_.forward_projector;
             c.bp_task = reconstruction_.back_projector;
             ok = ossart_.init(params_, c, geometry_.allGeometry(),
@@ -384,6 +390,7 @@ private:
         c.iterations = reconstruction_.iterative.iterations;
         c.subset_count = std::max(1, reconstruction_.iterative.subsets);
         c.relaxation = reconstruction_.iterative.relaxation;
+        c.nonnegative = reconstruction_.tigre.non_negative;
         c.forward_model = makeCylForwardModel(reconstruction_.forward_projector);
         c.backprojector_model = makeCylBackModel(reconstruction_.back_projector);
         c.convergence.relative_residual_tolerance =
@@ -621,7 +628,9 @@ private:
             break;
         case EPipeline::OSSART:
             ok = r.iteration_count > 0
-                ? ossart_.iterate(r.projection.data, r.volume.data, params_, resources_.stream(), r.iteration_count)
+                ? ossart_.iterate(r.projection.data, r.volume.data, params_, resources_.stream(),
+                    static_cast<unsigned int>(r.iteration_count) *
+                        static_cast<unsigned int>(std::max(1, reconstruction_.iterative.subsets)))
                 : ossart_.run(r.projection.data, r.volume.data, params_, resources_.stream());
             break;
         case EPipeline::CGLS:
