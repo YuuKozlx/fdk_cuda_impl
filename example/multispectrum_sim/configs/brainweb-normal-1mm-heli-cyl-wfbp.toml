@@ -9,6 +9,10 @@ path_cache_file = "../outputs/path-cache/brainweb-normal-1mm-heli-cyl-120kv.ykpc
 use_library_fp = true
 use_cuda_spectral = true
 
+[projection]
+energy_output_file = "../outputs/projections/brainweb-normal-1mm-heli-cyl-120kv-energy.raw"
+apply_geometry_flux = true
+
 [geometry_config]
 # 六圈覆盖约 240 mm。wFBP 会对重排边界视图做对称裁剪，剩余有效
 # 轨迹仍覆盖整个 181 mm 标签体。
@@ -103,6 +107,9 @@ electronic_noise_enabled = false
 
 [reconstruction]
 enabled = true
+type = "analytic"
+
+[reconstruction.analytic]
 pipeline = "wfbp"
 filter = "ramlak"
 chunk_views = 2160

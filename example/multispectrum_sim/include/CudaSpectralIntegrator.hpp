@@ -18,10 +18,13 @@ public:
 
     // density_attenuation is [material][energy] and includes density.
     bool initialize(const std::vector<float>& spectrum_weights,
+        const std::vector<float>& spectrum_energies,
         const std::vector<float>& density_attenuation, int material_count,
         std::size_t pixels, std::string& diagnostic);
     bool integrate(const std::vector<float>& material_paths_cm,
-        std::vector<float>& projection, std::string& diagnostic);
+        const std::vector<float>& geometry_flux,
+        std::vector<float>& projection, std::vector<float>& energy_signal,
+        std::string& diagnostic);
 
 private:
     struct Impl;

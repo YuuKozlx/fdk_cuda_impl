@@ -7,6 +7,10 @@ output_file="../outputs/calibration/water-wfbp-projection.raw"
 path_cache_file="../outputs/calibration/water-wfbp-paths.ykpc"
 use_library_fp=true
 use_cuda_spectral=true
+[projection]
+energy_output_file = "../outputs/calibration/water-wfbp-projection-energy.raw"
+apply_geometry_flux = true
+
 [geometry_config]
 views=1800
 views_per_turn=360
@@ -31,6 +35,9 @@ preset="compound.water"
 density_g_cm3=1.0
 [reconstruction]
 enabled=true
+type="analytic"
+
+[reconstruction.analytic]
 pipeline="wfbp"
 filter="ramlak"
 chunk_views=1800

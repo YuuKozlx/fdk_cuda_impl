@@ -51,19 +51,36 @@ struct GeometryConfig {
     double reconstruction_offset_z_mm = 0.0;
 };
 
-// 仿真结束后的可选重建设置。投影仍按文件流式读取，chunk_views
-// 只控制单次 DLL execute() 的视图数，不改变投影文件布局。
-struct ReconstructionConfig {
-    bool enabled = false;
-    // 保留配置层算法选择。当前示例真正执行的 DLL 重建管线仍由
-    // LibraryReconstructor 校验；未知或尚未接入的值不得静默降级。
+// 仿真结束后的可选重建设置。投影仍按文件流式读取；FDK 使用 chunk_views
+// 分包，wFBP/迭代管线要求单次提交完整投影，不改变投影文件布局。
+struct AnalyticReconstructionConfig {
     std::string pipeline = "fdk";
     std::string filter = "shepp-logan";
-    // FreeCT 空间域核参数，与 Flat FDK 的滤波枚举独立。
     double wfbp_cutoff = 1.0;
     double wfbp_apodization = 1.0;
+    int chunk_views = 32;
+};
+
+struct IterativeReconstructionConfig {
+    std::string algorithm = "os_sart_tv";
+    int iterations = 10;
+    double relaxation = 1.0;
+    int subsets = 1;
+    std::string forward_projector = "joseph";
+    std::string back_projector = "joseph_v3";
+    int tv_iterations = 20;
+    double tv_alpha = 0.002;
+    double tv_alpha_reduction = 0.95;
+    double maximum_update_ratio = 0.95;
+    bool non_negative = true;
+};
+
+struct ReconstructionConfig {
+    bool enabled = false;
+    std::string type = "analytic";
+    AnalyticReconstructionConfig analytic;
+    IterativeReconstructionConfig iterative;
     std::filesystem::path output_volume_file;
     std::filesystem::path slice_prefix;
-    int chunk_views = 32;
 };
 }

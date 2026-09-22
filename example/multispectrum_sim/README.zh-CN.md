@@ -2,6 +2,40 @@
 
 本例通过 `YKCBCT` 公共 DLL 完成材料路径正投影。TOML 指定标签模体、材料（标签、化学式、密度）、能谱、XCOM 数据目录和四类几何名称：`flat_cbct`、`flat_helical`、`cyl_cbct`、`cyl_helical`。几何 offset 等系统参数由公共 geometry builder 生成。
 
+重建管线支持 `fdk`、`wfbp`，以及 DLL 已放行的迭代管线 `tigre_sart`、`tigre_sirt`、`tigre_os_sart`、`tigre_sart_tv`、`tigre_os_sart_tv`，以及原有的 `sirt`、`ossart`、`cgls`。解析重建和迭代重建分别放在 `reconstruction.analytic` 与 `reconstruction.iterative` 下，避免参数混用。迭代管线必须一次提交完整投影，不使用 `chunk_views` 分包；它们使用显存中的投影/体缓冲，程序负责 Host 与 Device 之间的拷贝。迭代参数示例：
+
+```toml
+[reconstruction]
+enabled = true
+output_volume_file = "../outputs/reconstructions/iterative.raw"
+slice_prefix = "../outputs/images/iterative"
+
+[reconstruction.iterative]
+algorithm = "tigre_os_sart_tv"
+iterations = 20
+relaxation = 0.8
+subsets = 8               # sirt/cgls 可保持 1
+forward_projector = "joseph" # joseph / siddon
+back_projector = "joseph_v3" # joseph / joseph_v3 / siddon / siddon_v2 / siddon_v3
+tv_iterations = 20
+tv_alpha = 0.002
+tv_alpha_reduction = 0.95
+maximum_update_ratio = 0.95
+non_negative = true
+```
+
+TIGRE 梯度族使用 `tigre_` 前缀：普通迭代为 `tigre_sart`、`tigre_sirt`、`tigre_os_sart`；TV 版本为 `tigre_sart_tv`、`tigre_os_sart_tv`，且 `tv_alpha` 必须大于 0。
+
+迭代重建目前支持四类宏观几何；实际组合仍由 DLL 的公开能力校验，若某个构建未放行会在初始化时报错，不会静默退回 FDK。
+
+## 能量积分探测器输出
+
+CSV 第二列按光子数谱解释。CUDA 多能谱积分对每个能量 bin 计算“光子数 * energy_keV * exp(-路径衰减)”，并同时写出两种 float32 投影：
+
+- simulation.output_file：以同一像素空场能量归一化后的 -log(E/E0) 衰减域投影，供 FDK 和迭代重建使用；几何通量因子在空场归一化中抵消。
+- projection.energy_output_file：未做空场归一化的相对能量积分信号。平板探测器按实际源点和像素位置应用 cos(theta)/r^2，并考虑 source_offset_x/y/z_mm 与 offset_u/n/v_mm。系数相对探测器主点归一化，因此结果是相对能量信号，不是绝对剂量。
+
+projection.apply_geometry_flux = true 控制上述平板几何通量修正。柱面探测器目前保持系数 1。能量积分输出只走 CUDA 模拟器层，不修改 YKCBCT DLL 接口，并要求 simulation.use_cuda_spectral = true。
 当前已实现标签/材料到 XCOM 质量衰减系数，再到多能量透射积分和逐视图 CBCT 投影输出的闭环。投影按照 `view、v、u` 顺序写入 float32 二进制文件；`runToFile()` 按视图流式写盘，避免完整投影长期驻留内存。路径长度单位是 cm，质量衰减系数单位是 cm²/g；每个材料的线性系数为 `density * mu_over_rho`。
 
 配置中的 `path_cache_file` 指定材料路径积分缓存文件。程序采用两阶段流式流程：第一阶段逐视图读取标签体并写入缓存，第二阶段逐视图读取缓存、执行多能谱积分并写出最终投影，因此不会同时在内存中保存完整投影或全部视图的材料路径。
@@ -99,8 +133,10 @@ out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot
 和 `rotation_direction` 控制规则角度采样；这些值最终交给公共 geometry builder，正投和
 重建不会各自解释一份几何。
 
-多能谱 TOML 保留 `reconstruction.pipeline` 字段。材料路径积分固定调用公共
-`ForwardProjection`；示例接入 `flat_cbct + fdk` 和 `cyl_helical + wfbp`。
+多能谱 TOML 将解析重建和迭代重建分开配置：在 `[reconstruction]` 中用 `type = "analytic"`
+或 `type = "iterative"` 选择类别，再分别填写 `[reconstruction.analytic]` 或
+`[reconstruction.iterative]`。材料路径积分固定调用公共 `ForwardProjection`；示例接入
+`flat_cbct + fdk` 和 `cyl_helical + wfbp`，迭代重建支持 `sart_tv` 和 `os_sart_tv`。
 其他组合在配置读取时拒绝。BrainWeb 示例要求顶层 DLL 构建，独立 CPU 构建不能运行这些配置。
 FDK 的 filter 支持 ramlak/ram-lak、shepp-logan、cosine、hann、hamming；拼写错误直接拒绝。
 wFBP 的 filter 仅接受 ramlak/ram-lak，它表示 FreeCT ramp 核；使用

@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <vector>
 #include <iostream>
+#include <cuda_runtime_api.h>
 
 namespace yk::spectral {
 namespace {
@@ -84,6 +85,20 @@ YK::EFdkFilter parseFilter(const std::string& name)
     throw std::runtime_error("未知滤波核: " + name);
 }
 
+YK::EPipeline parsePipeline(const std::string& name)
+{
+    if (name == "fdk") return YK::EPipeline::FDK;
+    if (name == "wfbp") return YK::EPipeline::WFBP;
+    if (name == "tigre_sart" || name == "tigre_sirt" ||
+        name == "tigre_os_sart" || name == "tigre_sart_tv" ||
+        name == "tigre_os_sart_tv")
+        return YK::EPipeline::TigreGradient;
+    if (name == "sirt") return YK::EPipeline::SIRT;
+    if (name == "ossart") return YK::EPipeline::OSSART;
+    if (name == "cgls") return YK::EPipeline::CGLS;
+    throw std::runtime_error("未知重建管线: " + name);
+}
+
 void writeSlices(const std::filesystem::path& prefix, const std::vector<float>& volume,
     int nx, int ny, int nz)
 {
@@ -127,27 +142,35 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             "投影文件大小与 geometry_config 不匹配");
         input.seekg(0, std::ios::beg);
 
-        const bool fdk = config.reconstruction.pipeline == "fdk";
-        const bool wfbp = config.reconstruction.pipeline == "wfbp";
-        check(fdk || wfbp, "DLL 重建示例只实现 pipeline=fdk 或 wfbp");
+        const bool analytic = config.reconstruction.type == "analytic";
+        const std::string& pipeline_name = analytic ? config.reconstruction.analytic.pipeline : config.reconstruction.iterative.algorithm;
+        const bool fdk = pipeline_name == "fdk";
+        const bool wfbp = pipeline_name == "wfbp";
+        const bool iterative = !analytic;
+        const auto pipeline = parsePipeline(pipeline_name);
+        check(fdk || wfbp || iterative, "不支持的 DLL 重建管线");
         check(!fdk || config.geometry == GeometryKind::FlatCbct,
             "DLL FDK 示例只放行 flat_cbct");
         check(!wfbp || config.geometry == GeometryKind::CylHelical,
             "DLL wFBP 当前只放行 cyl_helical");
-        auto system = makeLibrarySystem(config,
-            fdk ? YK::EPipeline::FDK : YK::EPipeline::WFBP,
-            YK::ETask::FP_Joseph, parseFilter(config.reconstruction.filter),
+        auto system = makeLibrarySystem(config, pipeline,
+            YK::ETask::FP_Joseph, parseFilter(config.reconstruction.analytic.filter),
             GeometryUse::Reconstruction);
         if (wfbp) {
             system.reconstruction.wfbp.input_detector =
                 YK::EWfbpInputDetectorSpec::CylindricalArc;
-            system.reconstruction.wfbp.filter_cutoff = static_cast<float>(config.reconstruction.wfbp_cutoff);
-            system.reconstruction.wfbp.filter_apodization = static_cast<float>(config.reconstruction.wfbp_apodization);
+            system.reconstruction.wfbp.filter_cutoff = static_cast<float>(config.reconstruction.analytic.wfbp_cutoff);
+            system.reconstruction.wfbp.filter_apodization = static_cast<float>(config.reconstruction.analytic.wfbp_apodization);
         }
-        std::cout << "reconstruction=" << config.reconstruction.pipeline
-            << " filter=" << (wfbp ? "freect-ramp" : config.reconstruction.filter);
-        if (wfbp) std::cout << " cutoff=" << config.reconstruction.wfbp_cutoff
-            << " apodization=" << config.reconstruction.wfbp_apodization
+        if (iterative) {
+            std::cout << " iterations=" << config.reconstruction.iterative.iterations
+                << " relaxation=" << config.reconstruction.iterative.relaxation
+                << " subsets=" << config.reconstruction.iterative.subsets;
+        }
+        std::cout << "reconstruction=" << pipeline_name
+            << " filter=" << (wfbp ? "freect-ramp" : config.reconstruction.analytic.filter);
+        if (wfbp) std::cout << " cutoff=" << config.reconstruction.analytic.wfbp_cutoff
+            << " apodization=" << config.reconstruction.analytic.wfbp_apodization
             << " full_input_bytes=" << projection_elements * sizeof(float)
             << " chunk_views=not-applicable";
         std::cout << std::endl;
@@ -160,7 +183,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         if (fdk) {
             std::vector<float> chunk;
             const int chunk_views = std::min(g.views,
-                std::max(1, config.reconstruction.chunk_views));
+                std::max(1, config.reconstruction.analytic.chunk_views));
             for (int offset = 0; offset < g.views; offset += chunk_views) {
                 const int count = std::min(chunk_views, g.views - offset);
                 chunk.resize(static_cast<std::size_t>(count) * pixels);
@@ -178,7 +201,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 check(session->execute(request), std::string(
                     "YKCBCT FDK 执行失败: ") + session->lastErrorMessage());
             }
-        } else {
+        } else if (wfbp) {
             // 全量 Host 输入交给 DLL；显存由 Session 的统一分配器管理。
             std::vector<float> projection(projection_elements);
             input.read(reinterpret_cast<char*>(projection.data()),
@@ -192,6 +215,36 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             request.view_count = g.views;
             const bool reconstructed = session->execute(request);
             check(reconstructed, std::string("YKCBCT wFBP 执行失败: ") + session->lastErrorMessage());
+        } else {
+            // DLL 迭代后端要求 Device 上的完整投影和体缓冲，且一次提交全部视图。
+            std::vector<float> projection(projection_elements);
+            input.read(reinterpret_cast<char*>(projection.data()),
+                static_cast<std::streamsize>(projection.size() * sizeof(float)));
+            check(static_cast<bool>(input), "读取完整迭代重建投影失败");
+            float* d_projection = nullptr;
+            float* d_volume = nullptr;
+            auto cudaCheck = [](cudaError_t e, const char* what) {
+                if (e != cudaSuccess) throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(e));
+            };
+            try {
+                cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_projection), projection.size() * sizeof(float)), "分配迭代投影显存失败");
+                cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_volume), volume.size() * sizeof(float)), "分配迭代体显存失败");
+                cudaCheck(cudaMemcpy(d_projection, projection.data(), projection.size() * sizeof(float), cudaMemcpyHostToDevice), "上传迭代投影失败");
+                cudaCheck(cudaMemset(d_volume, 0, volume.size() * sizeof(float)), "清零迭代体失败");
+                YK::SExecutionRequest request{};
+                request.projection = {d_projection, YK::EMemoryLocation::Device, projection.size()};
+                request.volume = {d_volume, YK::EMemoryLocation::Device, volume.size()};
+                request.view_count = g.views;
+                request.iteration_count = config.reconstruction.iterative.iterations;
+                check(session->execute(request), std::string("YKCBCT 迭代重建执行失败: ") + session->lastErrorMessage());
+                cudaCheck(cudaMemcpy(volume.data(), d_volume, volume.size() * sizeof(float), cudaMemcpyDeviceToHost), "下载迭代重建体失败");
+            } catch (...) {
+                if (d_projection) cudaFree(d_projection);
+                if (d_volume) cudaFree(d_volume);
+                throw;
+            }
+            cudaFree(d_projection);
+            cudaFree(d_volume);
         }
         std::ofstream output(volume_file, std::ios::binary);
         check(static_cast<bool>(output), "无法创建重建体输出: " + volume_file.string());
@@ -201,7 +254,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         writeSlices(slice_prefix, volume, g.volume_x, g.volume_y, g.volume_z);
         YK::ReconstructionSessionFactory::destroy(session);
         session = nullptr;
-        diagnostic = std::string(fdk ? "FDK" : "wFBP") +
+        diagnostic = pipeline_name +
             " 重建完成，输出体素=" + std::to_string(volume.size());
         return true;
     } catch (const std::exception& e) {

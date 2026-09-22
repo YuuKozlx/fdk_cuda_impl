@@ -8,6 +8,10 @@ path_cache_file = "../outputs/path-cache/water-cylinder-120kv-fullfov.ykpc"
 use_library_fp = true
 use_cuda_spectral = true
 
+[projection]
+energy_output_file = "../outputs/projections/water-cylinder-120kv-fullfov-energy.raw"
+apply_geometry_flux = true
+
 [geometry_config]
 views = 360
 views_per_turn = 360
@@ -53,6 +57,9 @@ efficiency = 0.85
 
 [reconstruction]
 enabled = true
+type = "analytic"
+
+[reconstruction.analytic]
 pipeline = "fdk"
 filter = "shepp-logan"
 chunk_views = 8

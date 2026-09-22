@@ -10,16 +10,20 @@ path_cache_file = "../outputs/path-cache/brainweb-normal-1mm-120kv.ykpc"
 use_library_fp = true
 use_cuda_spectral = true
 
+[projection]
+energy_output_file = "../outputs/projections/brainweb-normal-1mm-120kv-energy.raw"
+apply_geometry_flux = true
+
 [geometry_config]
-views = 360
-views_per_turn = 360
+views = 960
+views_per_turn = 960
 rotation_direction = 1
-detector_u = 768
-detector_v = 640
+detector_u = 1536
+detector_v = 1024
 # 保持原 MC-GPU 配置约 483.94 mm 的探测器宽度。640 行对应约
 # 403.3 mm 高度，可覆盖头部靠近射线源一侧的最大几何放大投影。
-pixel_u_mm = 0.630124
-pixel_v_mm = 0.630124
+pixel_u_mm = 0.315
+pixel_v_mm = 0.315
 sid_mm = 709.0
 sdd_mm = 1143.699951
 offset_u_mm = 0.0
@@ -117,6 +121,9 @@ electronic_noise_enabled = false
 
 [reconstruction]
 enabled = true
+type = "analytic"
+
+[reconstruction.analytic]
 pipeline = "fdk"
 filter = "shepp-logan"
 chunk_views = 8

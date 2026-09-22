@@ -100,6 +100,38 @@ YK::SSystemSpec makeLibrarySystem(const SimulationConfig& config,
         static_cast<float>(g.voxel_z_mm), volume_offset};
     system.reconstruction.pipeline = pipeline;
     system.reconstruction.forward_projector = forward_projector;
+    system.reconstruction.back_projector = YK::ETask::BP_Joseph_v3;
+    const auto& iterative = config.reconstruction.iterative;
+    if (iterative.forward_projector == "siddon")
+        system.reconstruction.forward_projector = YK::ETask::FP_Siddon;
+    if (iterative.back_projector == "joseph")
+        system.reconstruction.back_projector = YK::ETask::BP_Joseph;
+    else if (iterative.back_projector == "siddon")
+        system.reconstruction.back_projector = YK::ETask::BP_Siddon_RayDriven;
+    else if (iterative.back_projector == "siddon_v2")
+        system.reconstruction.back_projector = YK::ETask::BP_Siddon_VoxDriven_v2;
+    else if (iterative.back_projector == "siddon_v3")
+        system.reconstruction.back_projector = YK::ETask::BP_Siddon_VoxDriven_v3;
+    system.reconstruction.iterative.iterations = iterative.iterations;
+    system.reconstruction.iterative.relaxation = static_cast<float>(iterative.relaxation);
+    system.reconstruction.iterative.subsets = iterative.subsets;
+    if (iterative.algorithm == "tigre_sart")
+        system.reconstruction.tigre.method = YK::ETigreGradientMethodSpec::Sart;
+    else if (iterative.algorithm == "tigre_sirt")
+        system.reconstruction.tigre.method = YK::ETigreGradientMethodSpec::Sirt;
+    else if (iterative.algorithm == "tigre_os_sart")
+        system.reconstruction.tigre.method = YK::ETigreGradientMethodSpec::OsSart;
+    else if (iterative.algorithm == "tigre_sart_tv")
+        system.reconstruction.tigre.method = YK::ETigreGradientMethodSpec::AsdPocs;
+    else if (iterative.algorithm == "tigre_os_sart_tv")
+        system.reconstruction.tigre.method = YK::ETigreGradientMethodSpec::OsAsdPocs;
+    system.reconstruction.tigre.block_size = iterative.subsets > 1 ?
+        std::max(1, g.views / iterative.subsets) : g.views;
+    system.reconstruction.tigre.tv_iterations = iterative.tv_iterations;
+    system.reconstruction.tigre.tv_alpha = static_cast<float>(iterative.tv_alpha);
+    system.reconstruction.tigre.tv_alpha_reduction = static_cast<float>(iterative.tv_alpha_reduction);
+    system.reconstruction.tigre.maximum_update_ratio = static_cast<float>(iterative.maximum_update_ratio);
+    system.reconstruction.tigre.non_negative = iterative.non_negative;
     system.reconstruction.fdk.filter = filter;
     return system;
 }

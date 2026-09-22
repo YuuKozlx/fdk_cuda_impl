@@ -107,6 +107,51 @@ std::vector<float> calculateViewPaths(const SimulationConfig& config,
     }
     return paths;
 }
+
+std::vector<float> flatGeometryFlux(const SimulationConfig& config, int view)
+{
+    const auto& g = config.geometry_config;
+    const std::size_t pixels = static_cast<std::size_t>(g.detector_u) * g.detector_v;
+    std::vector<float> result(pixels, 1.f);
+    if (!config.apply_geometry_flux ||
+        (config.geometry != GeometryKind::FlatCbct && config.geometry != GeometryKind::FlatHelical))
+        return result;
+    const double pi = std::acos(-1.0);
+    const double angle = g.start_angle_rad + 2.0 * pi * view / g.views;
+    const double z = g.start_z_mm + g.pitch_mm_per_turn * view / g.views;
+    const double ca = std::cos(angle), sa = std::sin(angle);
+    auto rotate = [&](double x, double y, double zz) { return Vec3{ca*x-sa*y, sa*x+ca*y, zz+z}; };
+    const Vec3 source = rotate(g.source_offset_x_mm, -g.sid_mm + g.source_offset_y_mm,
+        g.source_offset_z_mm);
+    const Vec3 center = rotate(0.0, g.sdd_mm - g.sid_mm, 0.0);
+    const Vec3 u_axis{-sa, ca, 0.0};
+    const Vec3 v_axis{0.0, 0.0, 1.0};
+    const Vec3 n_axis{ca, sa, 0.0};
+    const Vec3 reference_ray{center.x + g.offset_n_mm*n_axis.x - source.x,
+                             center.y + g.offset_n_mm*n_axis.y - source.y,
+                             center.z - source.z};
+    const double reference_distance = std::sqrt(
+        reference_ray.x*reference_ray.x + reference_ray.y*reference_ray.y +
+        reference_ray.z*reference_ray.z);
+    const double reference_cosine = std::max(1e-9,
+        (reference_ray.x*n_axis.x + reference_ray.y*n_axis.y +
+         reference_ray.z*n_axis.z) / std::max(reference_distance, 1e-9));
+    const double reference = reference_cosine /
+        std::max(reference_distance*reference_distance, 1e-18);
+    for (int v = 0; v < g.detector_v; ++v) for (int u = 0; u < g.detector_u; ++u) {
+        const double du = (u - (g.detector_u - 1) * .5) * g.pixel_u_mm + g.offset_u_mm;
+        const double dv = (v - (g.detector_v - 1) * .5) * g.pixel_v_mm + g.offset_v_mm;
+        const Vec3 p{center.x + du*u_axis.x + g.offset_n_mm*n_axis.x,
+                     center.y + du*u_axis.y + g.offset_n_mm*n_axis.y,
+                     center.z + dv};
+        const Vec3 d{p.x-source.x, p.y-source.y, p.z-source.z};
+        const double r = std::sqrt(d.x*d.x+d.y*d.y+d.z*d.z);
+        const double inv = 1.0 / std::max(r, 1e-9);
+        const double cosine = std::max(0.0, (d.x*n_axis.x+d.y*n_axis.y+d.z*n_axis.z)*inv);
+        result[static_cast<std::size_t>(v)*g.detector_u+u] = static_cast<float>((cosine/(r*r))/reference);
+    }
+    return result;
+}
 }
 
 std::vector<float> ProjectionSimulator::run(const std::vector<std::uint8_t>& labels) const {
@@ -151,9 +196,14 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
             throw std::runtime_error("路径积分缓存与当前配置不匹配");
         std::ofstream out(output_file, std::ios::binary);
         if (!out) throw std::runtime_error("无法创建投影输出文件: " + output_file.string());
+        std::ofstream energy_out;
+        if (!config_.energy_output_file.empty()) {
+            energy_out.open(config_.energy_output_file, std::ios::binary);
+            if (!energy_out) throw std::runtime_error("无法创建能量积分输出文件: " + config_.energy_output_file.string());
+        }
         const std::size_t pixels = static_cast<std::size_t>(g.detector_u) *
             g.detector_v;
-        std::vector<float> paths, projection(pixels);
+        std::vector<float> paths, projection(pixels), energy_signal(pixels);
         std::vector<double> ray_paths(config_.materials.size());
 #if defined(YK_MULTISPECTRUM_CUDA_SPECTRAL)
         CudaSpectralIntegrator cuda_integrator;
@@ -162,6 +212,9 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
             for (std::size_t energy = 0; energy < weights.size(); ++energy)
                 weights[energy] = static_cast<float>(
                     model_.spectrum()[energy].relative_photons);
+            std::vector<float> energies(model_.spectrum().size());
+            for (std::size_t energy = 0; energy < energies.size(); ++energy)
+                energies[energy] = static_cast<float>(model_.spectrum()[energy].energy_keV);
             std::vector<float> table(config_.materials.size() * weights.size());
             for (std::size_t material = 0;
                 material < config_.materials.size(); ++material) {
@@ -174,7 +227,7 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
                         static_cast<float>(config_.materials[material].density_g_cm3 *
                             attenuation[energy]);
             }
-            if (!cuda_integrator.initialize(weights, table,
+            if (!cuda_integrator.initialize(weights, energies, table,
                     static_cast<int>(config_.materials.size()), pixels, error))
                 return false;
         }
@@ -184,11 +237,16 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
             return false;
         }
 #endif
+        if (!config_.energy_output_file.empty() && !config_.use_cuda_spectral) {
+            error = "Energy-integrating detector output requires use_cuda_spectral=true";
+            return false;
+        }
         for (int view = 0; view < g.views; ++view) {
             if (!reader.readView(paths, error)) return false;
 #if defined(YK_MULTISPECTRUM_CUDA_SPECTRAL)
             if (config_.use_cuda_spectral) {
-                if (!cuda_integrator.integrate(paths, projection, error))
+                const auto flux = config_.apply_geometry_flux ? flatGeometryFlux(config_, view) : std::vector<float>{};
+                if (!cuda_integrator.integrate(paths, flux, projection, energy_signal, error))
                     return false;
             } else
 #endif
@@ -204,6 +262,11 @@ bool ProjectionSimulator::runFromPathCache(const std::filesystem::path& cache_fi
             out.write(reinterpret_cast<const char*>(projection.data()),
                 static_cast<std::streamsize>(projection.size() * sizeof(float)));
             if (!out) throw std::runtime_error("写入投影文件失败");
+            if (energy_out) {
+                energy_out.write(reinterpret_cast<const char*>(energy_signal.data()),
+                    static_cast<std::streamsize>(energy_signal.size() * sizeof(float)));
+                if (!energy_out) throw std::runtime_error("写入能量积分文件失败");
+            }
         }
         reader.close();
         return true;
