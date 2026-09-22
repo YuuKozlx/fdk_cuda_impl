@@ -93,9 +93,14 @@ namespace yk::spectral {
                     rc.algorithm == "tigre_os_sart_tv";
                 if (uses_tv && rc.tv_alpha <= 0)
                     throw std::runtime_error("TIGRE TV algorithm requires tv_alpha > 0");
+                const bool uses_subsets = rc.algorithm == "ossart" ||
+                    rc.algorithm == "tigre_os_sart" ||
+                    rc.algorithm == "tigre_os_sart_tv";
+                if (!uses_subsets && rc.subsets != 1)
+                    throw std::runtime_error("该 iterative.algorithm 不使用 subsets，配置值必须为 1");
                 if (rc.iterations <= 0 || !std::isfinite(rc.relaxation) || rc.relaxation <= 0 || rc.subsets <= 0 ||
-                    rc.tv_iterations <= 0 || !std::isfinite(rc.tv_alpha) || rc.tv_alpha < 0 ||
-                    !std::isfinite(rc.tv_alpha_reduction) || rc.tv_alpha_reduction <= 0 ||
+                    (uses_tv && (rc.tv_iterations <= 0 || !std::isfinite(rc.tv_alpha) || rc.tv_alpha < 0 ||
+                    !std::isfinite(rc.tv_alpha_reduction) || rc.tv_alpha_reduction <= 0)) ||
                     !std::isfinite(rc.maximum_update_ratio) || rc.maximum_update_ratio <= 0)
                     throw std::runtime_error("iterative 参数必须为正数");
                 if (rc.forward_projector != "joseph" && rc.forward_projector != "siddon")
