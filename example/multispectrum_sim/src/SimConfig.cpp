@@ -85,7 +85,8 @@ namespace yk::spectral {
                 rc.non_negative = (*i)["non_negative"].value_or(true);
                 if (rc.algorithm != "tigre_sart" && rc.algorithm != "tigre_sirt" &&
                     rc.algorithm != "tigre_os_sart" && rc.algorithm != "tigre_sart_tv" &&
-                    rc.algorithm != "tigre_os_sart_tv" && rc.algorithm != "sirt" &&
+                    rc.algorithm != "tigre_os_sart_tv" && rc.algorithm != "sart" &&
+                    rc.algorithm != "sirt" &&
                     rc.algorithm != "ossart" && rc.algorithm != "cgls")
                     throw std::runtime_error("iterative.algorithm 不支持该值");
                 const bool uses_tv = rc.algorithm == "tigre_sart_tv" ||

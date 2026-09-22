@@ -93,6 +93,7 @@ YK::EPipeline parsePipeline(const std::string& name)
         name == "tigre_os_sart" || name == "tigre_sart_tv" ||
         name == "tigre_os_sart_tv")
         return YK::EPipeline::TigreGradient;
+    if (name == "sart") return YK::EPipeline::SART;
     if (name == "sirt") return YK::EPipeline::SIRT;
     if (name == "ossart") return YK::EPipeline::OSSART;
     if (name == "cgls") return YK::EPipeline::CGLS;

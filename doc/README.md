@@ -4,6 +4,7 @@
 
 - [TOML 测试配置说明](toml_test_config_zh.md)：外部测试配置、任务类型、几何字段、输入输出和算法参数。
 - [迭代重建指南](iterative_reconstruction_guide.md)：SIRT、SART、OS-SART、CGLS、PWLS 及收敛配置。
+- [CT 迭代代数重建推导](ART_algebraic_reconstruction_derivation_zh.md)：从离散投影模型推导 ART，并说明噪声、约束与 SART 的关系。
 - [螺旋模块说明](../src/Heli/README.md)：Heli 解析 wFBP 与 Flat/Cyl 迭代门面的职责边界。
 
 ## 几何与算子

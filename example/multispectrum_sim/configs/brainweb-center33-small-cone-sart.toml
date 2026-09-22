@@ -105,18 +105,18 @@ electronic_noise_enabled=false
 [reconstruction]
 enabled = true
 type = "iterative"
-output_volume_file = "../outputs/reconstructions/brainweb-center33-ossart.raw"
-slice_prefix = "../outputs/images/brainweb-center33-ossart"
+output_volume_file = "../outputs/reconstructions/brainweb-center33-sart.raw"
+slice_prefix = "../outputs/images/brainweb-center33-sart"
 
 [reconstruction.iterative]
-algorithm = "ossart"
-iterations = 400
+algorithm = "sart"
+iterations = 20
 relaxation = 0.8
-subsets = 20
+subsets = 1
 forward_projector = "joseph"
 back_projector = "joseph_v3"
 tv_iterations = 20
-tv_alpha = 0.0
+tv_alpha = 0.002
 tv_alpha_reduction = 0.95
 maximum_update_ratio = 0.95
 non_negative = true
