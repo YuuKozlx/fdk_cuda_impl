@@ -9,11 +9,15 @@ spectrum_file = "../../spectra/spectrum-120kv-150.csv"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/projections/brainweb-center33-fdk.raw"
 energy_output_file = "../../outputs/projections/brainweb-center33-fdk-energy.raw"
-path_cache_file = "../../outputs/path-cache/brainweb-center33-fdk.ykpc"
-engine = "deterministic"
-use_library_fp = true
-use_cuda_spectral = true
+engine = "pixel_local_random"
 apply_geometry_flux = true
+
+[projection.pixel_local_random]
+samples_per_pixel = 50
+photons_per_pixel = 100000
+photon_count_mode = "fixed"
+spatial_seed = 12345
+photon_seed = 67890
 
 [projection.focal_spot]
 enabled = false

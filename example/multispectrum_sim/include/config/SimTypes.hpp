@@ -31,6 +31,10 @@ struct GeometryConfig {
     double offset_u_mm = 0.0;
     double offset_n_mm = 0.0;
     double offset_v_mm = 0.0;
+    // Detector pose perturbation in the local U/V/N frame, in radians.
+    double tilt_u_rad = 0.0;
+    double tilt_v_rad = 0.0;
+    double tilt_n_rad = 0.0;
     // 焦点相对标称旋转轨迹的 XYZ 偏移，单位为 mm。
     double source_offset_x_mm = 0.0;
     double source_offset_y_mm = 0.0;
@@ -85,11 +89,8 @@ struct ProjectionConfig {
     std::filesystem::path xcom_data_directory;
     std::filesystem::path output_file;
     std::filesystem::path energy_output_file;
-    std::filesystem::path path_cache_file;
     bool apply_geometry_flux = true;
-    bool use_library_fp = false;
-    bool use_cuda_spectral = false;
-    std::string engine = "deterministic";
+    std::string engine = "pixel_local_random";
     std::vector<MaterialSpec> materials;
     DetectorEffectsConfig detector_effects;
     FocalSpotConfig focal_spot;

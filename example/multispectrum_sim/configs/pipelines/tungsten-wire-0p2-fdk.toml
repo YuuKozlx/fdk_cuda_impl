@@ -9,10 +9,7 @@ spectrum_file = "../../spectra/spectrum-120kv-150.csv"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/quality/tungsten-wire-0p2-projection.raw"
 energy_output_file = "../../outputs/quality/tungsten-wire-0p2-energy.raw"
-path_cache_file = "../../outputs/quality/tungsten-wire-0p2-paths.ykpc"
 engine = "pixel_local_random"
-use_library_fp = true
-use_cuda_spectral = true
 apply_geometry_flux = true
 
 [projection.pixel_local_random]

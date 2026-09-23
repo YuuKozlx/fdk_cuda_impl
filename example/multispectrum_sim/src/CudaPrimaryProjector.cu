@@ -17,7 +17,22 @@ void writeMetadata(const std::filesystem::path& file, int u, int v, int views, c
       << ",\n  \"data_type\": \"float32\",\n  \"byte_order\": \"little_endian\",\n"
       << "  \"layout\": \"frame_row_column\",\n  \"signal\": \"" << signal << "\"\n}\n";
 }
-struct DeviceGeometry { int nu, nv, views, samples, nx, ny, nz, nm, ne; float pu, pv, sid, sdd, vx, vy, vz, fu, fv; float start, pitch, start_z; int apply_flux; };
+struct DeviceGeometry { int nu, nv, views, views_per_turn, rotation_direction, samples, nx, ny, nz, nm, ne; float pu, pv, sid, sdd, vx, vy, vz, fu, fv; float offset_u, offset_n, offset_v, source_x, source_y, source_z; float tilt_u, tilt_v, tilt_n; float start, pitch, start_z; int cylindrical, apply_flux; };
+
+__device__ float3 add3(float3 a, float3 b) { return make_float3(a.x+b.x, a.y+b.y, a.z+b.z); }
+__device__ float3 scale3(float3 a, float s) { return make_float3(a.x*s, a.y*s, a.z*s); }
+__device__ float3 cross3(float3 a, float3 b) { return make_float3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
+__device__ float3 rotateAxis(float3 value, float3 axis, float angle) {
+    const float c=cosf(angle), s=sinf(angle);
+    return add3(add3(scale3(value,c),scale3(cross3(axis,value),s)),scale3(axis,(axis.x*value.x+axis.y*value.y+axis.z*value.z)*(1.f-c)));
+}
+__device__ void detectorFrame(DeviceGeometry g, float angle, float3& u, float3& v, float3& n) {
+    const float ca=cosf(angle), sa=sinf(angle);
+    u=make_float3(-sa,ca,0.f); v=make_float3(0.f,0.f,1.f); n=make_float3(-ca,-sa,0.f);
+    v=rotateAxis(v,u,g.tilt_u); n=rotateAxis(n,u,g.tilt_u);
+    u=rotateAxis(u,v,g.tilt_v); n=rotateAxis(n,v,g.tilt_v);
+    u=rotateAxis(u,n,g.tilt_n); v=rotateAxis(v,n,g.tilt_n);
+}
 
 __device__ unsigned hash32(unsigned x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; return x ^ (x >> 16); }
 __device__ float uniform(unsigned seed) { return (hash32(seed) & 0x00ffffffU) / 16777216.0f; }
@@ -98,9 +113,12 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     float sum_energy = 0.f;
     float sum_air_energy = 0.f;
     const float pi = 3.14159265358979323846f;
-    const float angle = g.start + 2.f*pi*view / g.views;
-    const float ca = cosf(angle), sa = sinf(angle);
-    const float z = g.start_z + g.pitch * view / g.views;
+    const float angle = g.start + static_cast<float>(g.rotation_direction) * 2.f*pi*view / g.views_per_turn;
+    // The library frame at angle zero has source at -Y, U at +X, and N at
+    // +Y. Apply the same phase to both flat and cylindrical detectors.
+    const float frame_angle = angle - 0.5f*pi;
+    const float ca = cosf(frame_angle), sa = sinf(frame_angle);
+    const float z = g.start_z + g.pitch * (angle - g.start) / (2.f*pi);
     float3 lo = make_float3(-0.5f*g.nx*g.vx, -0.5f*g.ny*g.vy, -0.5f*g.nz*g.vz);
     float3 hi = make_float3(-lo.x, -lo.y, -lo.z);
     for (int sample=0; sample<g.samples; ++sample) {
@@ -109,13 +127,31 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         float fsv = (uniform(base+2)-.5f)*g.fv;
         float du = ((float)u0 - .5f*(g.nu-1) + uniform(base+3)-.5f)*g.pu;
         float dv = ((float)v0 - .5f*(g.nv-1) + uniform(base+4)-.5f)*g.pv;
-        float3 source = make_float3((g.sid+fsu)*ca, (g.sid+fsu)*sa, z+fsv);
-        float3 det = make_float3(source.x - g.sdd*ca - du*sa, source.y - g.sdd*sa + du*ca, z+dv);
+        float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
+        float3 source = make_float3((g.sid+fsu)*ca + g.source_x*ca - g.source_y*sa,
+            (g.sid+fsu)*sa + g.source_x*sa + g.source_y*ca, z+fsv+g.source_z);
+        const float center_u = du + g.offset_u;
+        const float center_v = dv + g.offset_v;
+        // Flat-detector SDD is measured from isocenter; the source-to-panel
+        // distance is therefore SDD - SID. Cylindrical geometry uses SDD as
+        // its curvature radius and is handled separately below.
+        const float detector_distance = g.sdd - g.sid;
+        float3 detector_center = add3(add3(add3(source, scale3(naxis, detector_distance + g.offset_n)), scale3(uaxis, center_u)), scale3(vaxis, center_v));
+        float3 det;
+        if (g.cylindrical) {
+            const float gamma = center_u / g.sdd;
+            // Positive detector U follows the library tangent direction.
+            // The previous plus sign mirrored U on the cylindrical surface.
+            det = make_float3(source.x - g.sdd*cosf(frame_angle - gamma),
+                source.y - g.sdd*sinf(frame_angle - gamma), z + center_v);
+        } else {
+            det = detector_center;
+        }
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
         float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z); d.x/=length; d.y/=length; d.z/=length;
         float paths[32] = {}; if (g.nm > 32) return;
         accumulatePaths(g, labels, label_to_material, source, d, lo, hi, paths);
-        float r2=length*length; float flux=g.apply_flux ? g.sdd*g.sdd/fmaxf(r2,1e-6f) : 1.f;
+        float r2=length*length; float flux=(!g.cylindrical && g.apply_flux) ? g.sdd*g.sdd/fmaxf(r2,1e-6f) : 1.f;
         sum_air_energy += photons_per_pixel / static_cast<float>(g.samples) * flux * incident;
         float noisy_energy = 0.f;
         const float photons_per_sample = photons_per_pixel / static_cast<float>(g.samples);
@@ -139,9 +175,10 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
     const std::uint64_t thread_id = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     const std::uint64_t stride = static_cast<std::uint64_t>(gridDim.x) * blockDim.x;
     const float pi = 3.14159265358979323846f;
-    const float angle = g.start + 2.f*pi*view / g.views;
-    const float ca = cosf(angle), sa = sinf(angle);
-    const float z = g.start_z + g.pitch * view / g.views;
+    const float angle = g.start + static_cast<float>(g.rotation_direction) * 2.f*pi*view / g.views_per_turn;
+    const float frame_angle = angle - 0.5f*pi;
+    const float ca = cosf(frame_angle), sa = sinf(frame_angle);
+    const float z = g.start_z + g.pitch * (angle - g.start) / (2.f*pi);
     const float3 lo = make_float3(-0.5f*g.nx*g.vx, -0.5f*g.ny*g.vy, -0.5f*g.nz*g.vz);
     const float3 hi = make_float3(-lo.x, -lo.y, -lo.z);
     for (std::uint64_t sample = thread_id; sample < total_samples; sample += stride) {
@@ -154,16 +191,28 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
         const int pixel = v * g.nu + u;
         const float fsu = (uniform(base + 3) - .5f) * g.fu;
         const float fsv = (uniform(base + 4) - .5f) * g.fv;
-        const float3 source = make_float3((g.sid+fsu)*ca, (g.sid+fsu)*sa, z+fsv);
-        const float3 det = make_float3(source.x - g.sdd*ca - detector_u*sa,
-            source.y - g.sdd*sa + detector_u*ca, z+detector_v);
+        float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
+        const float3 source = make_float3((g.sid+fsu)*ca + g.source_x*ca - g.source_y*sa,
+            (g.sid+fsu)*sa + g.source_x*sa + g.source_y*ca, z+fsv+g.source_z);
+        const float center_u = detector_u + g.offset_u;
+        const float center_v = detector_v + g.offset_v;
+        float3 det;
+        if (g.cylindrical) {
+            const float gamma = center_u / g.sdd;
+            // Positive detector U follows the library tangent direction.
+            det = make_float3(source.x - g.sdd*cosf(frame_angle - gamma),
+                source.y - g.sdd*sinf(frame_angle - gamma), z + center_v);
+        } else {
+            const float detector_distance = g.sdd - g.sid;
+            det = add3(add3(add3(source, scale3(naxis, detector_distance + g.offset_n)), scale3(uaxis, center_u)), scale3(vaxis, center_v));
+        }
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
         const float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z);
         d.x/=length; d.y/=length; d.z/=length;
         float paths[32] = {}; if (g.nm > 32) return;
         accumulatePaths(g, labels, label_to_material, source, d, lo, hi, paths);
         const float r2=length*length;
-        const float flux=g.apply_flux ? g.sdd*g.sdd/fmaxf(r2,1e-6f) : 1.f;
+        const float flux=(!g.cylindrical && g.apply_flux) ? g.sdd*g.sdd/fmaxf(r2,1e-6f) : 1.f;
         atomicAdd(&air_accum[pixel], photons_per_sample * flux * incident);
         float noisy_energy=0.f;
         for(int e=0;e<g.ne;++e){float exponent=0.f;for(int m=0;m<g.nm;++m) exponent+=paths[m]*mu[m*g.ne+e]; const float lambda=photons_per_sample*spectrum[e]*flux*expf(-exponent); const float count=use_poisson ? static_cast<float>(poisson(lambda, photon_seed ^ base ^ (unsigned)e*0x27d4eb2dU)) : lambda; noisy_energy += count*energies[e];}
@@ -181,7 +230,8 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
         const auto& g=c.geometry.parameters; const int pixels=g.detector_u*g.detector_v; const int nm=(int)c.projection.materials.size(), ne=(int)model.spectrum().size();
         if(g.volume_x<=0||g.volume_y<=0||g.volume_z<=0||labels.size()!=(size_t)g.volume_x*g.volume_y*g.volume_z) throw std::runtime_error("CUDA前投标签体尺寸不匹配");
         if(nm > 32) throw std::runtime_error("CUDA primary projector supports at most 32 materials");
-        DeviceGeometry dg{g.detector_u,g.detector_v,g.views,c.projection.sampling.samples_per_pixel,g.volume_x,g.volume_y,g.volume_z,nm,ne,(float)g.pixel_u_mm,(float)g.pixel_v_mm,(float)g.sid_mm,(float)g.sdd_mm,(float)g.voxel_x_mm,(float)g.voxel_y_mm,(float)g.voxel_z_mm,(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_u_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_v_mm:0),(float)g.start_angle_rad,(float)g.pitch_mm_per_turn,(float)g.start_z_mm,c.projection.apply_geometry_flux ? 1 : 0};
+        const int cylindrical = (c.geometry.kind == GeometryKind::CylCbct || c.geometry.kind == GeometryKind::CylHelical) ? 1 : 0;
+        DeviceGeometry dg{g.detector_u,g.detector_v,g.views,g.views_per_turn,g.rotation_direction,c.projection.sampling.samples_per_pixel,g.volume_x,g.volume_y,g.volume_z,nm,ne,(float)g.pixel_u_mm,(float)g.pixel_v_mm,(float)g.sid_mm,(float)g.sdd_mm,(float)g.voxel_x_mm,(float)g.voxel_y_mm,(float)g.voxel_z_mm,(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_u_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_v_mm:0),(float)g.offset_u_mm,(float)g.offset_n_mm,(float)g.offset_v_mm,(float)g.source_offset_x_mm,(float)g.source_offset_y_mm,(float)g.source_offset_z_mm,(float)g.tilt_u_rad,(float)g.tilt_v_rad,(float)g.tilt_n_rad,(float)g.start_angle_rad,(float)g.pitch_mm_per_turn,(float)g.start_z_mm,cylindrical,c.projection.apply_geometry_flux ? 1 : 0};
         std::vector<int> map(256,-1); for(int m=0;m<nm;++m)map[c.projection.materials[m].label]=m;
         std::vector<float> mu(nm*ne), sw(ne), en(ne); float incident=0, spectrum_sum=0;
         for(int e=0;e<ne;++e) spectrum_sum+=(float)model.spectrum()[e].relative_photons;

@@ -9,10 +9,7 @@ spectrum_file = "../../spectra/spectrum-120kv-150.csv"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/quality/tungsten-wire-0p05-stochastic-smoke-projection.raw"
 energy_output_file = "../../outputs/quality/tungsten-wire-0p05-stochastic-smoke-energy.raw"
-path_cache_file = "paths.ykpc"
 engine = "detector_global_random"
-use_library_fp = false
-use_cuda_spectral = false
 apply_geometry_flux = true
 
 [projection.detector_global_random]

@@ -1,6 +1,6 @@
 # 多能谱 CBCT 仿真示例
 
-本例通过 `YKCBCT` 公共 DLL 完成材料路径正投影。TOML 指定标签模体、材料（标签、化学式、密度）、能谱、XCOM 数据目录和四类几何名称：`flat_cbct`、`flat_helical`、`cyl_cbct`、`cyl_helical`。几何 offset 等系统参数由公共 geometry builder 生成。
+本例使用独立 CUDA kernel 在线完成多能谱前投，不生成材料路径缓存，也不通过 DLL 做 FP。DLL 只作为 FDK、wFBP 和迭代算法的重建后端。
 
 重建管线支持 `fdk`、`wfbp`，以及 DLL 已放行的迭代管线 `tigre_sart`、`tigre_sirt`、`tigre_os_sart`、`tigre_sart_tv`、`tigre_os_sart_tv`，以及原有的 `sirt`、`ossart`、`cgls`。解析重建和迭代重建分别放在 `reconstruction.analytic` 与 `reconstruction.iterative` 下，避免参数混用。迭代管线必须一次提交完整投影，不使用 `chunk_views` 分包；它们使用显存中的投影/体缓冲，程序负责 Host 与 Device 之间的拷贝。迭代参数示例：
 
@@ -35,16 +35,14 @@ CSV 第二列按光子数谱解释。CUDA 多能谱积分对每个能量 bin 计
 - simulation.output_file：以同一像素空场能量归一化后的 -log(E/E0) 衰减域投影，供 FDK 和迭代重建使用；几何通量因子在空场归一化中抵消。
 - projection.energy_output_file：未做空场归一化的相对能量积分信号。平板探测器按实际源点和像素位置应用 cos(theta)/r^2，并考虑 source_offset_x/y/z_mm 与 offset_u/n/v_mm。系数相对探测器主点归一化，因此结果是相对能量信号，不是绝对剂量。
 
-projection.apply_geometry_flux = true 控制上述平板几何通量修正。柱面探测器目前保持系数 1。能量积分输出只走 CUDA 模拟器层，不修改 YKCBCT DLL 接口，并要求 simulation.use_cuda_spectral = true。
+`projection.apply_geometry_flux = true` 控制上述平板几何通量修正。能量积分输出由独立 CUDA 前投直接产生，不需要额外开关。
 当前已实现标签/材料到 XCOM 质量衰减系数，再到多能量透射积分和逐视图 CBCT 投影输出的闭环。投影按照 `view、v、u` 顺序写入 float32 二进制文件；`runToFile()` 按视图流式写盘，避免完整投影长期驻留内存。路径长度单位是 cm，质量衰减系数单位是 cm²/g；每个材料的线性系数为 `density * mu_over_rho`。
 
-配置中的 `path_cache_file` 指定材料路径积分缓存文件。程序采用两阶段流式流程：第一阶段逐视图读取标签体并写入缓存，第二阶段逐视图读取缓存、执行多能谱积分并写出最终投影，因此不会同时在内存中保存完整投影或全部视图的材料路径。
-
-缓存布局为：固定头 `PathCacheHeader`，随后按视图排列；每个视图依次存储每种材料的一张 `detector_v × detector_u` `float32` 路径积分图。头部包含 magic、版本、视图数、探测器尺寸和材料数，读取时会严格校验这些字段。缓存是中间产物，可以在后续实现 GPU 路径积分时直接复用。
+在线前投直接完成焦点与探测器位置采样、射线与体素盒求交、材料路径累计和能谱积分，并逐视图写出能量域与对数投影，不保存中间路径表。
 
 当前已实现的物理过程是材料路径积分、能谱指数衰减和常数探测器效率。散射、电子/光学串扰、余晖和电子噪声保留配置字段与扩展位置，但尚未宣称已经生效。
 
-在顶层工程开启 `BUILD_MULTISPECTRUM_SIM=ON` 并同时设置 CMake 选项 `MULTISPECTRUM_USE_LIBRARY_FP=ON` 时，配置中的 `use_library_fp = true` 会链接 `YKCBCT` 的公开导入库，并在运行时调用 `YKCBCT.dll` 的 `ReconstructionSessionFactory` 和 `IReconstructionSession`。适配器为每种材料构造二值标签体，通过公共 `ForwardProjection` Session 生成路径投影，再写入同样的路径缓存；它不访问 `src` 内部 kernel、geometry 或内存类。Flat/Cyl、Circular/Helical 四种组合均使用同一套 `SSystemSpec` 构造。适配器使用 Host buffer，CUDA 工作区由 DLL 管理。独立构建或未开启该 CMake 选项时，启用配置会明确报错，不会静默退回 CPU。默认关闭该选项，保证常规示例构建稳定。
+顶层工程开启 `BUILD_MULTISPECTRUM_SIM=ON` 后会编译在线 CUDA 前投；链接 YKCBCT 时同时提供重建能力。配置中不再区分 DLL FP 或 CPU/CUDA 能谱积分。
 
 探测器效率、散射、光学串扰、余晖、电子噪声均已保留配置字段。当前仅效率常数参与积分，其余字段明确为关闭占位，后续通过可组合效果接口实现。
 
@@ -63,7 +61,7 @@ python example/multispectrum_sim/scripts/download_brainweb.py
 BrainWeb TOML 使用相对于配置文件的路径，输出统一写入 `example/multispectrum_sim/outputs/`。因此复制仓库并完成上述数据准备后，无需修改 `D:/...`、`C:/...` 等本机路径即可运行，例如：
 
 ```powershell
-cmake -S . -B out/brainweb -G "Visual Studio 17 2022" -A x64 -DBUILD_MULTISPECTRUM_SIM=ON -DMULTISPECTRUM_USE_LIBRARY_FP=ON -DYKCBCT_BUILD_HELICAL=ON
+cmake -S . -B out/brainweb -G "Visual Studio 17 2022" -A x64 -DBUILD_MULTISPECTRUM_SIM=ON -DYKCBCT_BUILD_HELICAL=ON
 cmake --build out/brainweb --config Release --target multispectrum_sim
 out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/brainweb-center33-small-cone-fdk.toml
 out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/brainweb-center33-small-cone-heli-cyl-wfbp.toml
@@ -74,7 +72,6 @@ out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/mul
 - `configs/projection/`：纯投影配置；`configs/reconstruction/`：纯重建配置；`configs/pipelines/`：投影后立即重建的组合配置；
 - `spectra/`：原始能谱和转换后的 CSV；
 - `inputs/`：外部标签体；
-- `outputs/path-cache/`：材料路径积分缓存；
 - `outputs/projections/`：最终 `-log(I/I0)` 投影；
 - `outputs/reconstructions/`：float32 重建体；
 - `outputs/images/`：用于观察的中心切片图。
@@ -85,10 +82,7 @@ out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/mul
 
 ## CUDA 多能谱积分
 
-顶层 DLL 构建支持 `projection.use_cuda_spectral = true`。CUDA 积分器让任意长度的
-能谱权重和各材料 `density * mu_over_rho` 表常驻显存，每次只上传当前视图的
-`[material][v][u]` 路径并回传一张投影，不缓存完整扫描。配置关闭该开关时仍使用 CPU
-实现，便于回归比较；独立无 CUDA 构建若开启该选项会明确报错。
+`pixel_local_random` 在每个探测器像素内随机采样，`detector_global_random` 在整个探测器面上随机采样。两种路线均直接在 CUDA 前投 kernel 中计算并生成能量积分信号和对数投影；`photon_count_mode` 可选择 `fixed` 或 `poisson`。
 
 `water-cylinder-120kv-fullfov.toml` 使用从原始 `.spc` 转换得到的 150 点 120 kV 谱。
 150 不是程序限制，CSV 中任意正数个有效 `(energy_keV, relative_photons)` 数据行均可读取。
@@ -114,7 +108,7 @@ out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot
 
 仓库只保留 `configs/pipelines/water-cylinder-120kv-fullfov.toml` 这一份完整示例。它使用
 `512 x 512 x 256` 标签体、`1024 x 1024` 平板探测器、360 个视图和 120 kV 能谱，
-随后通过 DLL 的 Flat Circular FDK 重建 `512 x 512 x 256` 体积。投影、路径缓存、
+随后通过 DLL 的 Flat Circular FDK 重建 `512 x 512 x 256` 体积。投影、
 重建体和 BMP 均写入 `outputs/`，该目录不纳入版本控制。
 
 ### 几何偏移参数
@@ -260,6 +254,6 @@ density_g_cm3 = 1.050
 接口组合回归、BrainWeb 数值基线与水模固定 ROI 纵向对比，见
 [重建验证记录](tests/VALIDATION.zh-CN.md)。记录包含复现命令、结果及尚未消除的数值偏差。
 
-示例输出包括 `[view][v][u]` 排列的 float32 投影、材料路径缓存、`[z][y][x]`
+示例输出包括 `[view][v][u]` 排列的 float32 投影、`[z][y][x]`
 排列的 float32 FDK 重建体，以及轴位、冠状位和矢状位中心切片 BMP。BMP 仅用于观察，
 数值分析应读取重建体 raw。

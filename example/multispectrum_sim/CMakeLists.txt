@@ -8,31 +8,30 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SPECTRAL_SIM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 # 无论独立配置还是作为顶层子目录加入，示例目录到仓库 thirdparty 均为 ../../。
 set(SPECTRAL_XCOM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nist_xcom")
-option(MULTISPECTRUM_USE_LIBRARY_FP "Use YKCBCT DLL  FP " ON)
 add_library(nist_xcom_core STATIC
     "${SPECTRAL_XCOM_ROOT}/xcom.cpp"
     "${SPECTRAL_XCOM_ROOT}/xcom_c_api.cpp")
 target_include_directories(nist_xcom_core PUBLIC "${SPECTRAL_XCOM_ROOT}")
 target_compile_definitions(nist_xcom_core PUBLIC XCOM_C_API_STATIC)
-add_executable(multispectrum_sim app/main.cpp src/SimLogger.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp src/PathCache.cpp)
+add_executable(multispectrum_sim app/main.cpp src/SimLogger.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp)
 target_include_directories(multispectrum_sim PRIVATE
     include "${SPECTRAL_XCOM_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
 target_link_libraries(multispectrum_sim PRIVATE nist_xcom_core)
 
-# 顶层工程中通过公共 DLL 接口调用 YKCBCT FP；独立配置时不要求 CUDA。
-if(TARGET YKCBCT AND MULTISPECTRUM_USE_LIBRARY_FP)
-    target_sources(multispectrum_sim PRIVATE src/LibraryGeometry.cpp src/LibraryMaterialProjector.cpp src/LibraryReconstructor.cpp src/CudaSpectralIntegrator.cu src/CudaPrimaryProjector.cu)
+# 在线多能谱前投由示例自身的 CUDA kernel 完成；YKCBCT DLL 只提供重建后端。
+if(TARGET YKCBCT)
+    target_sources(multispectrum_sim PRIVATE src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/CudaPrimaryProjector.cu)
     target_include_directories(multispectrum_sim PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
     target_link_libraries(multispectrum_sim PRIVATE YKCBCT)
     target_compile_definitions(multispectrum_sim PRIVATE
-        YK_MULTISPECTRUM_LIBRARY_FP=1 YK_MULTISPECTRUM_CUDA_SPECTRAL=1 YK_MULTISPECTRUM_CUDA_PRIMARY=1)
+        YK_MULTISPECTRUM_CUDA_PRIMARY=1)
     add_custom_command(TARGET multispectrum_sim POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:multispectrum_sim>)
 else()
-    target_sources(multispectrum_sim PRIVATE src/LibraryMaterialProjectorStub.cpp)
+    target_sources(multispectrum_sim PRIVATE src/LibraryReconstructorStub.cpp)
 endif()
 if(MSVC)
     target_compile_options(multispectrum_sim PRIVATE
@@ -41,7 +40,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-    if(TARGET YKCBCT AND MULTISPECTRUM_USE_LIBRARY_FP AND YKCBCT_BUILD_HELICAL)
+    if(TARGET YKCBCT AND YKCBCT_BUILD_HELICAL)
         add_executable(multispectrum_wfbp_buffers_test tests/test_wfbp_buffers.cpp src/LibraryGeometry.cpp)
         target_include_directories(multispectrum_wfbp_buffers_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
         target_link_libraries(multispectrum_wfbp_buffers_test PRIVATE YKCBCT)
@@ -74,12 +73,4 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME multispectrum_xcom_water COMMAND multispectrum_xcom_test)
 
-    add_executable(multispectrum_path_cache_test
-        tests/test_path_cache.cpp
-        src/PathCache.cpp)
-    target_include_directories(multispectrum_path_cache_test PRIVATE include)
-    if(MSVC)
-        target_compile_options(multispectrum_path_cache_test PRIVATE /utf-8)
-    endif()
-    add_test(NAME multispectrum_path_cache_layout COMMAND multispectrum_path_cache_test)
 endif()

@@ -9,10 +9,7 @@ spectrum_file = "../../spectra/spectrum_120kVp_2mmAl.csv"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/projections/water-cylinder-200mm-pmma5mm-fdk-nofocal-1536x256x540-f32.raw"
 energy_output_file = "../../outputs/projections/water-cylinder-200mm-pmma5mm-fdk-nofocal-energy-1536x256x540-f32.raw"
-path_cache_file = "../../outputs/path-cache/water-cylinder-200mm-pmma5mm-nofocal-1536x256x540.ykpc"
 engine = "pixel_local_random"
-use_library_fp = true
-use_cuda_spectral = true
 apply_geometry_flux = true
 
 [projection.pixel_local_random]

@@ -33,13 +33,13 @@ namespace yk::spectral {
         if (!g) throw std::runtime_error("缺少 [geometry] 配置表");
         c.geometry.kind = geometry((*g)["kind"].value_or<std::string>("flat_cbct"));
         if (p) {
+            for (const char* removed : { "path_cache_file", "use_library_fp", "use_cuda_spectral" })
+                if (p->contains(removed))
+                    throw std::runtime_error(std::string("projection.") + removed + " 已删除");
             c.projection.label_volume = resolve(base, (*p)["label_volume"].value_or(std::string{}));
             c.projection.spectrum_file = resolve(base, (*p)["spectrum_file"].value_or(std::string{}));
             c.projection.xcom_data_directory = resolve(base, (*p)["xcom_data_directory"].value_or(std::string{}));
             c.projection.output_file = resolve(base, (*p)["output_file"].value_or(std::string("projection.raw")));
-            c.projection.path_cache_file = resolve(base, (*p)["path_cache_file"].value_or(std::string("paths.ykpc")));
-            c.projection.use_library_fp = (*p)["use_library_fp"].value_or(false);
-            c.projection.use_cuda_spectral = (*p)["use_cuda_spectral"].value_or(false);
             c.projection.energy_output_file = resolve(base, (*p)["energy_output_file"].value_or(std::string{}));
             c.projection.apply_geometry_flux = (*p)["apply_geometry_flux"].value_or(true);
         }
@@ -151,21 +151,23 @@ namespace yk::spectral {
                 c.reconstruction.slice_prefix = default_prefix;
         }
         if (auto* g = t["geometry"].as_table()) {
-            if (g->contains("tilt_u_rad") || g->contains("tilt_v_rad") ||
-                g->contains("tilt_n_rad"))
-                throw std::runtime_error(
-                    "geometry_config 当前不开放探测器 tilt；仅支持 offset_u/n/v_mm");
-            auto number = [&](const char* k, double d) {return (*g)[k].value_or(d); };
-            c.geometry.parameters.views = (int)number("views", 360); c.geometry.parameters.views_per_turn = (int)number("views_per_turn", c.geometry.parameters.views); c.geometry.parameters.rotation_direction = (int)number("rotation_direction", 1); c.geometry.parameters.detector_u = (int)number("detector_u", 256); c.geometry.parameters.detector_v = (int)number("detector_v", 128);
-            c.geometry.parameters.pixel_u_mm = number("pixel_u_mm", 1.0); c.geometry.parameters.pixel_v_mm = number("pixel_v_mm", 1.0); c.geometry.parameters.sid_mm = number("sid_mm", 500.0); c.geometry.parameters.sdd_mm = number("sdd_mm", 1000.0);
-            c.geometry.parameters.offset_u_mm = number("offset_u_mm", 0.0); c.geometry.parameters.offset_n_mm = number("offset_n_mm", 0.0); c.geometry.parameters.offset_v_mm = number("offset_v_mm", 0.0);
-            c.geometry.parameters.source_offset_x_mm = number("source_offset_x_mm", 0.0); c.geometry.parameters.source_offset_y_mm = number("source_offset_y_mm", 0.0); c.geometry.parameters.source_offset_z_mm = number("source_offset_z_mm", 0.0); c.geometry.parameters.start_angle_rad = number("start_angle_rad", 0.0); c.geometry.parameters.pitch_mm_per_turn = number("pitch_mm_per_turn", 0.0); c.geometry.parameters.start_z_mm = number("start_z_mm", 0.0);
-            c.geometry.parameters.voxel_x_mm = number("voxel_x_mm", 1.0); c.geometry.parameters.voxel_y_mm = number("voxel_y_mm", 1.0); c.geometry.parameters.voxel_z_mm = number("voxel_z_mm", 1.0); c.geometry.parameters.volume_x = (int)number("volume_x", 0); c.geometry.parameters.volume_y = (int)number("volume_y", 0); c.geometry.parameters.volume_z = (int)number("volume_z", 0);
-            c.geometry.parameters.reconstruction_volume_x = (int)number("reconstruction_volume_x", c.geometry.parameters.volume_x); c.geometry.parameters.reconstruction_volume_y = (int)number("reconstruction_volume_y", c.geometry.parameters.volume_y); c.geometry.parameters.reconstruction_volume_z = (int)number("reconstruction_volume_z", c.geometry.parameters.volume_z); c.geometry.parameters.reconstruction_voxel_x_mm = number("reconstruction_voxel_x_mm", c.geometry.parameters.voxel_x_mm); c.geometry.parameters.reconstruction_voxel_y_mm = number("reconstruction_voxel_y_mm", c.geometry.parameters.voxel_y_mm); c.geometry.parameters.reconstruction_voxel_z_mm = number("reconstruction_voxel_z_mm", c.geometry.parameters.voxel_z_mm);
-            c.geometry.parameters.phantom_offset_x_mm = number("phantom_offset_x_mm", 0.0); c.geometry.parameters.phantom_offset_y_mm = number("phantom_offset_y_mm", 0.0); c.geometry.parameters.phantom_offset_z_mm = number("phantom_offset_z_mm", 0.0); c.geometry.parameters.reconstruction_offset_x_mm = number("reconstruction_offset_x_mm", 0.0); c.geometry.parameters.reconstruction_offset_y_mm = number("reconstruction_offset_y_mm", 0.0); c.geometry.parameters.reconstruction_offset_z_mm = number("reconstruction_offset_z_mm", 0.0);
+            auto integer = [&](const char* k, int d) { return (*g)[k].value_or(d); };
+            auto real = [&](const char* k, double d) { return (*g)[k].value_or(d); };
+            c.geometry.parameters.views = integer("views", 360); c.geometry.parameters.views_per_turn = integer("views_per_turn", c.geometry.parameters.views); c.geometry.parameters.rotation_direction = integer("rotation_direction", 1); c.geometry.parameters.detector_u = integer("detector_u", 256); c.geometry.parameters.detector_v = integer("detector_v", 128);
+            c.geometry.parameters.pixel_u_mm = real("pixel_u_mm", 1.0); c.geometry.parameters.pixel_v_mm = real("pixel_v_mm", 1.0); c.geometry.parameters.sid_mm = real("sid_mm", 500.0); c.geometry.parameters.sdd_mm = real("sdd_mm", 1000.0);
+            c.geometry.parameters.offset_u_mm = real("offset_u_mm", 0.0); c.geometry.parameters.offset_n_mm = real("offset_n_mm", 0.0); c.geometry.parameters.offset_v_mm = real("offset_v_mm", 0.0);
+            c.geometry.parameters.tilt_u_rad = real("tilt_u_rad", 0.0); c.geometry.parameters.tilt_v_rad = real("tilt_v_rad", 0.0); c.geometry.parameters.tilt_n_rad = real("tilt_n_rad", 0.0);
+            c.geometry.parameters.source_offset_x_mm = real("source_offset_x_mm", 0.0); c.geometry.parameters.source_offset_y_mm = real("source_offset_y_mm", 0.0); c.geometry.parameters.source_offset_z_mm = real("source_offset_z_mm", 0.0); c.geometry.parameters.start_angle_rad = real("start_angle_rad", 0.0); c.geometry.parameters.pitch_mm_per_turn = real("pitch_mm_per_turn", 0.0); c.geometry.parameters.start_z_mm = real("start_z_mm", 0.0);
+            c.geometry.parameters.voxel_x_mm = real("voxel_x_mm", 1.0); c.geometry.parameters.voxel_y_mm = real("voxel_y_mm", 1.0); c.geometry.parameters.voxel_z_mm = real("voxel_z_mm", 1.0); c.geometry.parameters.volume_x = integer("volume_x", 0); c.geometry.parameters.volume_y = integer("volume_y", 0); c.geometry.parameters.volume_z = integer("volume_z", 0);
+            c.geometry.parameters.reconstruction_volume_x = integer("reconstruction_volume_x", c.geometry.parameters.volume_x); c.geometry.parameters.reconstruction_volume_y = integer("reconstruction_volume_y", c.geometry.parameters.volume_y); c.geometry.parameters.reconstruction_volume_z = integer("reconstruction_volume_z", c.geometry.parameters.volume_z); c.geometry.parameters.reconstruction_voxel_x_mm = real("reconstruction_voxel_x_mm", c.geometry.parameters.voxel_x_mm); c.geometry.parameters.reconstruction_voxel_y_mm = real("reconstruction_voxel_y_mm", c.geometry.parameters.voxel_y_mm); c.geometry.parameters.reconstruction_voxel_z_mm = real("reconstruction_voxel_z_mm", c.geometry.parameters.voxel_z_mm);
+            c.geometry.parameters.phantom_offset_x_mm = real("phantom_offset_x_mm", 0.0); c.geometry.parameters.phantom_offset_y_mm = real("phantom_offset_y_mm", 0.0); c.geometry.parameters.phantom_offset_z_mm = real("phantom_offset_z_mm", 0.0); c.geometry.parameters.reconstruction_offset_x_mm = real("reconstruction_offset_x_mm", 0.0); c.geometry.parameters.reconstruction_offset_y_mm = real("reconstruction_offset_y_mm", 0.0); c.geometry.parameters.reconstruction_offset_z_mm = real("reconstruction_offset_z_mm", 0.0);
         }
         if (p) {
-            c.projection.engine = (*p)["engine"].value_or(std::string("deterministic"));
+            c.projection.engine = (*p)["engine"].value_or(std::string("pixel_local_random"));
+            if (c.projection.engine != "pixel_local_random" &&
+                c.projection.engine != "detector_global_random")
+                throw std::runtime_error(
+                    "projection.engine 仅支持 pixel_local_random/detector_global_random");
             if (c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") {
                 auto* s = (*p)[c.projection.engine].as_table();
                 if (!s) throw std::runtime_error("projection.engine 对应的配置块缺失: [projection." + c.projection.engine + "]");
@@ -181,11 +183,11 @@ namespace yk::spectral {
                     throw std::runtime_error("[projection.detector_global_random] 需要 total_samples");
             }
         }
-        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
-            c.geometry.kind != GeometryKind::FlatCbct &&
-            c.geometry.kind != GeometryKind::FlatHelical)
-            throw std::runtime_error("随机多能谱前投仅支持平板探测器");
-        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+        if (c.runsProjection() && (c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+            c.geometry.kind != GeometryKind::FlatCbct && c.geometry.kind != GeometryKind::FlatHelical &&
+            c.geometry.kind != GeometryKind::CylCbct && c.geometry.kind != GeometryKind::CylHelical)
+            throw std::runtime_error("随机多能谱前投不支持该几何类型");
+        if (c.runsProjection() && (c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
             c.projection.materials.size() > 32)
             throw std::runtime_error("随机多能谱前投当前最多支持32种材料");
         if (auto* e = p ? (*p)["detector_effects"].as_table() : nullptr) {
@@ -227,7 +229,6 @@ namespace yk::spectral {
         if (c.runsReconstruction() && c.reconstruction.input_projection_file.empty())
             throw std::runtime_error("重建工作流需要 reconstruction.input_projection_file");
         if (c.runsReconstruction()) {
-            if (c.runsProjection() && !c.projection.use_library_fp) throw std::runtime_error("投影并重建要求 projection.use_library_fp=true");
             if ((c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "fdk" && c.geometry.kind != GeometryKind::FlatCbct) ||
                 (c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "wfbp" && c.geometry.kind != GeometryKind::CylHelical))
                 throw std::runtime_error("示例重建仅支持 flat_cbct+fdk、cyl_helical+wfbp；迭代重建支持四类几何");

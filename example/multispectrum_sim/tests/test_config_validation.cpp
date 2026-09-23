@@ -17,7 +17,7 @@ int main() {
         bool accepted = false;
         std::string diagnostic;
         try { yk::spectral::loadConfig(path); accepted = true; }
-        catch (const std::runtime_error& e) { diagnostic = e.what(); }
+        catch (const std::exception& e) { diagnostic = e.what(); }
         if (accepted != valid) throw std::runtime_error(
             "unexpected config validation result: " + reconstruction +
             (diagnostic.empty() ? std::string{} : "\nreason: " + diagnostic));
@@ -94,7 +94,8 @@ int main() {
             "[workflow]\nmode='project_and_reconstruct'\n"
             "[geometry]\nkind='flat_cbct'\nviews=1\nviews_per_turn=1\n"
             "detector_u=1\ndetector_v=1\nvolume_x=1\nvolume_y=1\nvolume_z=1\n"
-            "[projection]\noutput_file='projection.raw'\nuse_library_fp=true\n"
+            "[projection]\noutput_file='projection.raw'\nengine='pixel_local_random'\n"
+            "[projection.pixel_local_random]\nsamples_per_pixel=1\nphotons_per_pixel=1\nphoton_count_mode='fixed'\n"
             "[[projection.materials]]\nlabel=1\nname='water'\nformula='H2O'\n"
             "[reconstruction]\ntype='analytic'\n"
             "[reconstruction.analytic]\npipeline='fdk'\n", true);

@@ -99,7 +99,7 @@ int main(int argc, char** argv)
             config.projection.materials, spectrum, attenuation, config.projection.detector_effects);
         yk::spectral::ProjectionSimulator simulator(config, model);
         std::string error;
-        for (const auto& path : { config.projection.output_file, config.projection.path_cache_file,
+        for (const auto& path : { config.projection.output_file,
                  config.projection.energy_output_file,
                  config.reconstruction.output_volume_file,
                  config.reconstruction.slice_prefix }) {
@@ -119,9 +119,6 @@ int main(int argc, char** argv)
             << " labels=" << labels.size()
             << " output=" << config.projection.output_file.string() << '\n';
         if (config.runsReconstruction()) {
-            if (!config.projection.use_library_fp)
-                throw std::runtime_error(
-                    "project_and_reconstruct 要求 projection.use_library_fp=true，以便调用 DLL 重建后端");
             if (!yk::spectral::reconstructWithLibraryFdk(config,
                 config.reconstruction.input_projection_file,
                 config.reconstruction.output_volume_file,
