@@ -56,7 +56,7 @@ public:
         map.target_principal_u = geometry.central_channel;
         map.physical_principal_v = geometry.raw_central_row;
         map.target_principal_v = geometry.raw_central_row;
-        map.target_angle_step_rad = geometry.fan_angle_step;
+        map.target_du_mm = geometry.sdd * geometry.fan_angle_step;
         map.launch = config.launch;
         return mapper_.prepare(map);
     }

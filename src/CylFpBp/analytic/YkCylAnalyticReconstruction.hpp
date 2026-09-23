@@ -3,7 +3,7 @@
 #include <cmath>
 #include <vector>
 
-#include "CylFpBp/analytic/YkCylFdkPipeline.hpp"
+#include "FDK/YkFdkPipeline.hpp"
 #include "CylFpBp/analytic/YkCylAnalyticProjectionMapper.hpp"
 #include "CylFpBp/analytic/YkCylAnalyticGeometryCanonicalizer.hpp"
 #include "CylFpBp/YkCylFpBpTypes.hpp"
@@ -23,9 +23,7 @@ struct ReconstructionConfig {
 // 柱面解析重建的通用输入适配层。
 //
 // 物理探测器可以使用任意曲率半径 R；本适配器先将投影重采样到
-// 源中心、半径为 SDD 的等角虚拟柱面，再交给现有 FDK 管线。这样
-// R=SDD 与 R!=SDD 走同一条解析重建路径，而迭代 FP/BP 仍直接使用
-// 原始物理几何，不会意外引入重排或 FDK 权重。
+// 物理柱面先重采样到内部零姿态平板，再交给标准 Flat-FDK 管线。
 //
 // 当前契约是标准同轴、无切向 U 偏移、无轴向 V 偏移的圆柱；逐视图
 // 姿态、倾斜探测器和复杂轨迹应继续使用迭代算子。
@@ -65,9 +63,30 @@ public:
                 canonical_config, canonical)) return false;
         const auto& corrected_geometry = canonical.corrected_geometry;
 
+        SReconstructionParams params{};
+        params.scan.Nu = channels;
+        params.scan.Nv = rows;
+        params.scan.totalViews = static_cast<int>(physical_geometry.size());
+        params.scan.NAng = params.scan.totalViews;
+        params.scan.du_mm = canonical.projection_map.target_du_mm;
+        params.scan.dv_mm = canonical.projection_map.target_row_step_mm;
+        params.scan.sdd_mm = config.source_to_detector_mm;
+        params.scan.sid_mm = config.source_to_detector_mm;
+        params.scan.range_rad = 2.f * static_cast<float>(CUDA_PI);
+        params.scan.angles.reserve(canonical.flat_geometry.size());
+        for (const auto& g : canonical.flat_geometry) params.scan.angles.push_back(g.angle.x);
+        params.volume.Nx = volume.Nx; params.volume.Ny = volume.Ny;
+        params.volume.Nz = volume.Nz;
+        params.volume.voxelX_mm = volume.vox_x;
+        params.volume.voxelY_mm = volume.vox_y;
+        params.volume.voxelZ_mm = volume.vox_z;
+        params.volume.centerX_mm = volume.center.x;
+        params.volume.centerY_mm = volume.center.y;
+        params.volume.centerZ_mm = volume.center.z;
+        params.reconstruction.filter = filter;
         if (!mapper_.prepare(canonical.projection_map) ||
-            !fdk_.prepare(volume, channels, rows, canonical.canonical_geometry,
-                filter, stream, device_id)) {
+            !fdk_.prepareWithGeometry(params, canonical.flat_geometry,
+                static_cast<int>(physical_geometry.size()), stream, device_id)) {
             release();
             return false;
         }
@@ -89,7 +108,8 @@ public:
         if (!prepared_ || !physical_projection || !volume) return false;
         if (!mapper_.apply(physical_projection, mapped_.data(), stream_))
             return false;
-        return fdk_.reconstruct(mapped_.data(), volume, clear_output);
+        return fdk_.processBatchSync({ mapped_.data(), nullptr, nullptr, views_ },
+            volume, clear_output);
     }
 
     void release()
@@ -106,7 +126,7 @@ public:
 
 private:
     ProjectionMapper mapper_{};
-    ::YK::CylFpBp::FdkPipeline fdk_{};
+    ::YK::FdkPipeline fdk_{};
     Mem::MemoryController memory_{};
     Mem::DeviceLinearBuffer3D<float> mapped_{};
     int channels_ = 0, rows_ = 0, views_ = 0;

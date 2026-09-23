@@ -6,6 +6,7 @@
 
 #include "CylFpBp/YkCylFpBpTypes.hpp"
 #include "CylFpBp/kernels/YkCylFpBpLaunch.cuh"
+#include "CylFpBp/iter/kernel/YkCylIterFdkLaunch.cuh"
 #include "global/YkCudaTextureController.hpp"
 #include "global/YkMem3d.hpp"
 
@@ -123,24 +124,14 @@ public:
     {
         if (!prepared_ || !volume) return false;
         if constexpr (MatchedWeight) {
-            launch_cyl_fdk_matched_bp(projection_texture_.tex,
+            launch_cyl_iter_fdk_matched_bp(projection_texture_.tex,
                 d_geometry_.data(), volume, views_, volume_geometry_, stream_,
                 accumulate);
         }
         else {
-            launch_cyl_fdk_bp(projection_texture_.tex, d_geometry_.data(),
+            launch_cyl_iter_fdk_bp(projection_texture_.tex, d_geometry_.data(),
                 volume, views_, volume_geometry_, stream_, accumulate);
         }
-        record_();
-        return true;
-    }
-
-    // 仅供独立解析 Cyl-FDK 管线调用；不改变迭代 FDK-style BP 的权重语义。
-    bool backprojectAnalytic(float* volume, bool accumulate = false)
-    {
-        if (!prepared_ || !volume) return false;
-        launch_cyl_analytic_fdk_bp(projection_texture_.tex, d_geometry_.data(),
-            volume, views_, volume_geometry_, stream_, accumulate);
         record_();
         return true;
     }
