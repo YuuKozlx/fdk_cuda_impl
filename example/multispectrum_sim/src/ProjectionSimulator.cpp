@@ -13,6 +13,38 @@ namespace yk::spectral {
 struct Vec3 { double x,y,z; };
 
 namespace {
+struct GaussLegendreRule { std::vector<double> nodes; std::vector<double> weights; };
+
+GaussLegendreRule gaussLegendreRule(int count)
+{
+    switch (count) {
+    case 1: return {{0.0}, {2.0}};
+    case 2: return {{-0.5773502691896258, 0.5773502691896258}, {1.0, 1.0}};
+    case 3: return {{-0.7745966692414834, 0.0, 0.7745966692414834},
+        {0.5555555555555556, 0.8888888888888888, 0.5555555555555556}};
+    case 4: return {{-0.8611363115940526, -0.3399810435848563,
+        0.3399810435848563, 0.8611363115940526},
+        {0.3478548451374539, 0.6521451548625461,
+         0.6521451548625461, 0.3478548451374539}};
+    case 5: return {{-0.9061798459386640, -0.5384693101056831, 0.0,
+        0.5384693101056831, 0.9061798459386640},
+        {0.2369268850561891, 0.4786286704993665, 0.5688888888888889,
+         0.4786286704993665, 0.2369268850561891}};
+    case 6: return {{-0.9324695142031521, -0.6612093864662645,
+        -0.2386191860831969, 0.2386191860831969,
+        0.6612093864662645, 0.9324695142031521},
+        {0.1713244923791704, 0.3607615730481386, 0.4679139345726910,
+         0.4679139345726910, 0.3607615730481386, 0.1713244923791704}};
+    case 7: return {{-0.9491079123427585, -0.7415311855993945,
+        -0.4058451513773972, 0.0, 0.4058451513773972,
+        0.7415311855993945, 0.9491079123427585},
+        {0.1294849661688697, 0.2797053914892766, 0.3818300505051189,
+         0.4179591836734694, 0.3818300505051189, 0.2797053914892766,
+         0.1294849661688697}};
+    default: throw std::runtime_error("矩形焦点 Gauss-Legendre 采样点数仅支持 1..7");
+    }
+}
+
 void writeProjectionMetadata(const std::filesystem::path& raw_file,
     int columns, int rows, int frames, const char* signal)
 {
@@ -189,6 +221,8 @@ bool ProjectionSimulator::runToFile(const std::vector<std::uint8_t>& labels,
     const auto& spot = config_.projection.focal_spot;
     if (spot.enabled && spot.samples_u * spot.samples_v > 1) {
         try {
+            const auto rule_u = gaussLegendreRule(spot.samples_u);
+            const auto rule_v = gaussLegendreRule(spot.samples_v);
             const int sample_count = spot.samples_u * spot.samples_v;
             std::vector<std::filesystem::path> projections, energies, caches;
             for (int v = 0; v < spot.samples_v; ++v) for (int u = 0; u < spot.samples_u; ++u) {
@@ -196,9 +230,9 @@ bool ProjectionSimulator::runToFile(const std::vector<std::uint8_t>& labels,
                 auto sub = config_;
                 sub.projection.focal_spot.enabled = false;
                 sub.geometry.parameters.source_offset_x_mm +=
-                    ((u + 0.5) / spot.samples_u - 0.5) * spot.size_u_mm;
+                    0.5 * rule_u.nodes[u] * spot.size_u_mm;
                 sub.geometry.parameters.source_offset_z_mm +=
-                    ((v + 0.5) / spot.samples_v - 0.5) * spot.size_v_mm;
+                    0.5 * rule_v.nodes[v] * spot.size_v_mm;
                 auto suffix = std::string(".focal-") + std::to_string(index);
                 auto projection = output_file; projection += suffix;
                 auto energy = config_.projection.energy_output_file; energy += suffix;
@@ -226,13 +260,15 @@ bool ProjectionSimulator::runToFile(const std::vector<std::uint8_t>& labels,
                 std::fill(energy_sum.begin(), energy_sum.end(), 0.f);
                 for (int sample = 0; sample < sample_count; ++sample) {
                     projection_inputs[sample].read(reinterpret_cast<char*>(input.data()), pixels * sizeof(float));
-                    for (std::size_t i = 0; i < pixels; ++i) transmission[i] += std::exp(-input[i]);
+                    const int u = sample % spot.samples_u;
+                    const int v = sample / spot.samples_u;
+                    const float weight = static_cast<float>(rule_u.weights[u] * rule_v.weights[v] / 4.0);
+                    for (std::size_t i = 0; i < pixels; ++i) transmission[i] += weight * std::exp(-input[i]);
                     energy_inputs[sample].read(reinterpret_cast<char*>(input.data()), pixels * sizeof(float));
-                    for (std::size_t i = 0; i < pixels; ++i) energy_sum[i] += input[i];
+                    for (std::size_t i = 0; i < pixels; ++i) energy_sum[i] += weight * input[i];
                 }
                 for (std::size_t i = 0; i < pixels; ++i) {
-                    output[i] = -std::log(std::max(transmission[i] / sample_count, 1e-30f));
-                    energy_sum[i] /= sample_count;
+                    output[i] = -std::log(std::max(transmission[i], 1e-30f));
                 }
                 projection_out.write(reinterpret_cast<const char*>(output.data()), pixels * sizeof(float));
                 energy_out.write(reinterpret_cast<const char*>(energy_sum.data()), pixels * sizeof(float));

@@ -18,7 +18,7 @@ apply_geometry_flux = true
 enabled = true
 size_u_mm = 1.2
 size_v_mm = 0.9
-samples_u = 3
+samples_u = 4
 samples_v = 3
 
 [geometry]

@@ -181,8 +181,8 @@ namespace yk::spectral {
             spot.samples_u = (*f)["samples_u"].value_or(3);
             spot.samples_v = (*f)["samples_v"].value_or(3);
             if (f->contains("rotation_deg")) throw std::runtime_error("矩形焦点第一版不支持 rotation_deg");
-            if (spot.enabled && (spot.size_u_mm <= 0 || spot.size_v_mm <= 0 || spot.samples_u <= 0 || spot.samples_v <= 0 || spot.samples_u * spot.samples_v > 64))
-                throw std::runtime_error("矩形焦点参数无效");
+            if (spot.enabled && (spot.size_u_mm <= 0 || spot.size_v_mm <= 0 || spot.samples_u <= 0 || spot.samples_v <= 0 || spot.samples_u > 7 || spot.samples_v > 7))
+                throw std::runtime_error("矩形焦点参数无效，Gauss-Legendre 采样点数必须在 1..7");
         }
         std::array<bool, 256> used_labels{};
         if (auto* a = p ? (*p)["materials"].as_array() : nullptr)for (auto& n : *a) { auto* m = n.as_table(); if (!m)throw std::runtime_error("projection.materials 必须是表数组"); MaterialSpec x; x.label = (std::uint8_t)(*m)["label"].value_or(0); x.name = (*m)["name"].value_or(std::string("material")); x.formula = (*m)["formula"].value_or(std::string{}); x.preset = (*m)["preset"].value_or(std::string{}); x.density_g_cm3 = (*m)["density_g_cm3"].value_or(1.0); if ((x.formula.empty() == x.preset.empty()) || x.density_g_cm3 <= 0)throw std::runtime_error("材料配置必须且只能填写 formula 或 preset，且密度必须为正"); if (used_labels[x.label])throw std::runtime_error("材料 label 不得重复: " + std::to_string(x.label)); used_labels[x.label] = true; if (!x.preset.empty()) { const auto* b = findBuiltinMaterial(x.preset); if (!b)throw std::runtime_error("未知内置材料 preset: " + x.preset); if (!m->contains("density_g_cm3"))x.density_g_cm3 = b->density_g_cm3; }c.projection.materials.push_back(std::move(x)); }
