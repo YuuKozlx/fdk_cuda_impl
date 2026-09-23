@@ -1,19 +1,26 @@
 schema_version = 2
 
 [workflow]
-mode = "project_and_reconstruct"
+mode = "project"
 
 [projection]
-label_volume = "../../inputs/generated/tungsten-wire-slanted-tan0p42.raw"
+label_volume = "../../inputs/generated/tungsten-wire-0p05.raw"
 spectrum_file = "../../spectra/spectrum-120kv-150.csv"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
-output_file = "../../outputs/quality/tungsten-wire-slanted-tan0p42-projection.raw"
-energy_output_file = "../../outputs/quality/tungsten-wire-slanted-tan0p42-energy.raw"
-path_cache_file = "../../outputs/quality/tungsten-wire-slanted-tan0p42-paths.ykpc"
-engine = "deterministic"
+output_file = "../../outputs/quality/tungsten-wire-0p05-one-view-1000-nofocal-projection.raw"
+energy_output_file = "../../outputs/quality/tungsten-wire-0p05-one-view-1000-nofocal-energy.raw"
+path_cache_file = "paths.ykpc"
+engine = "pixel_local_random"
 use_library_fp = true
 use_cuda_spectral = true
 apply_geometry_flux = true
+
+[projection.pixel_local_random]
+samples_per_pixel = 1000
+photons_per_pixel = 100000
+photon_count_mode = "poisson"
+spatial_seed = 12345
+photon_seed = 67890
 
 [projection.focal_spot]
 enabled = false
@@ -22,13 +29,13 @@ size_v_mm = 0.0
 
 [geometry]
 kind = "flat_cbct"
-views = 540
-views_per_turn = 540
+views = 1
+views_per_turn = 1
 rotation_direction = 1
 detector_u = 1536
 detector_v = 128
 pixel_u_mm = 0.1
-pixel_v_mm = 0.05
+pixel_v_mm = 0.1
 sid_mm = 500.0
 sdd_mm = 1000.0
 offset_u_mm = 0.0
@@ -40,9 +47,9 @@ source_offset_z_mm = 0.0
 start_angle_rad = 0.0
 pitch_mm_per_turn = 0.0
 start_z_mm = 0.0
-volume_x = 401
+volume_x = 101
 volume_y = 101
-volume_z = 201
+volume_z = 401
 voxel_x_mm = 0.0005
 voxel_y_mm = 0.0005
 voxel_z_mm = 0.0005
@@ -73,13 +80,3 @@ optical_crosstalk_enabled = false
 afterglow_enabled = false
 electronic_noise_enabled = false
 electronic_noise_sigma = 0.0
-
-[reconstruction]
-type = "analytic"
-output_volume_file = "../../outputs/quality/tungsten-wire-slanted-tan0p42-fdk-512x512x128-f32.raw"
-slice_prefix = "../../outputs/quality/tungsten-wire-slanted-tan0p42-fdk-512x512x128"
-
-[reconstruction.analytic]
-pipeline = "fdk"
-filter = "ramlak"
-chunk_views = 8

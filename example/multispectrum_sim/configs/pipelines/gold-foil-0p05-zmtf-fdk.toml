@@ -10,32 +10,54 @@ xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/quality/gold-foil-0p05-zmtf-projection.raw"
 energy_output_file = "../../outputs/quality/gold-foil-0p05-zmtf-energy.raw"
 path_cache_file = "../../outputs/quality/gold-foil-0p05-zmtf-paths.ykpc"
+engine = "deterministic"
 use_library_fp = true
 use_cuda_spectral = true
 apply_geometry_flux = true
+
+[projection.focal_spot]
+enabled = false
+size_u_mm = 0.0
+size_v_mm = 0.0
 
 [geometry]
 kind = "flat_cbct"
 views = 540
 views_per_turn = 540
+rotation_direction = 1
 detector_u = 1536
 detector_v = 128
-pixel_u_mm = 0.10
+pixel_u_mm = 0.1
 pixel_v_mm = 0.01
 sid_mm = 500.0
 sdd_mm = 1000.0
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
 volume_x = 401
 volume_y = 401
 volume_z = 51
 voxel_x_mm = 0.0005
 voxel_y_mm = 0.0005
 voxel_z_mm = 0.0005
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
 reconstruction_volume_x = 512
 reconstruction_volume_y = 512
 reconstruction_volume_z = 128
 reconstruction_voxel_x_mm = 0.15
 reconstruction_voxel_y_mm = 0.15
 reconstruction_voxel_z_mm = 0.01
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
 
 [[projection.materials]]
 label = 3
@@ -45,10 +67,12 @@ density_g_cm3 = 19.32
 
 [projection.detector_effects]
 efficiency_enabled = false
+efficiency = 1.0
 scatter_enabled = false
 optical_crosstalk_enabled = false
 afterglow_enabled = false
 electronic_noise_enabled = false
+electronic_noise_sigma = 0.0
 
 [reconstruction]
 type = "analytic"

@@ -10,7 +10,7 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     foreach(type IN ITEMS shepp_logan tungsten_wire tungsten_wire_slanted gold_foil water_cylinder
-            water_ellipse catphan low_contrast)
+            water_ellipse water_cylinder_200mm catphan low_contrast)
         add_test(NAME phantom_generator_${type}
             COMMAND ${CMAKE_COMMAND}
                 -DGENERATOR=$<TARGET_FILE:phantom_generator>

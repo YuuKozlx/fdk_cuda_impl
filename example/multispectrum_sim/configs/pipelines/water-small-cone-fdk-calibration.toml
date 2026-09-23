@@ -3,46 +3,83 @@ schema_version = 2
 [workflow]
 mode = "project_and_reconstruct"
 
-# 小锥角 FDK 水模标定；通过 --water-cylinder 运行。
 [projection]
-spectrum_file="../../spectra/spectrum-120kv-150.csv"
-xcom_data_directory="../../../../thirdparty/nist_xcom/data"
-output_file="../../outputs/calibration/water-fdk-projection.raw"
-path_cache_file="../../outputs/calibration/water-fdk-paths.ykpc"
-use_library_fp=true
-use_cuda_spectral=true
-
+label_volume = ""
+spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
+output_file = "../../outputs/calibration/water-fdk-projection.raw"
 energy_output_file = "../../outputs/calibration/water-fdk-projection-energy.raw"
+path_cache_file = "../../outputs/calibration/water-fdk-paths.ykpc"
+engine = "deterministic"
+use_library_fp = true
+use_cuda_spectral = true
 apply_geometry_flux = true
+
+[projection.focal_spot]
+enabled = false
+size_u_mm = 0.0
+size_v_mm = 0.0
 
 [geometry]
 kind = "flat_cbct"
-views=360
-views_per_turn=360
-detector_u=768
-detector_v=112
-pixel_u_mm=0.630124
-pixel_v_mm=0.630124
-sid_mm=709.0
-sdd_mm=1143.699951
-volume_x=181
-volume_y=217
-volume_z=33
-voxel_x_mm=1.0
-voxel_y_mm=1.0
-voxel_z_mm=1.0
+views = 360
+views_per_turn = 360
+rotation_direction = 1
+detector_u = 768
+detector_v = 112
+pixel_u_mm = 0.630124
+pixel_v_mm = 0.630124
+sid_mm = 709.0
+sdd_mm = 1143.699951
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
+volume_x = 181
+volume_y = 217
+volume_z = 33
+voxel_x_mm = 1.0
+voxel_y_mm = 1.0
+voxel_z_mm = 1.0
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+reconstruction_volume_x = 181
+reconstruction_volume_y = 217
+reconstruction_volume_z = 33
+reconstruction_voxel_x_mm = 1.0
+reconstruction_voxel_y_mm = 1.0
+reconstruction_voxel_z_mm = 1.0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
 [[projection.materials]]
-label=1
-name="water"
-preset="compound.water"
-density_g_cm3=1.0
+label = 1
+name = "water"
+preset = "compound.water"
+density_g_cm3 = 1.0
+
+[projection.detector_effects]
+efficiency_enabled = false
+efficiency = 1.0
+scatter_enabled = false
+optical_crosstalk_enabled = false
+afterglow_enabled = false
+electronic_noise_enabled = false
+electronic_noise_sigma = 0.0
+
 [reconstruction]
+type = "analytic"
 output_volume_file = "../../outputs/calibration/water-fdk-volume.raw"
 slice_prefix = "../../outputs/calibration/water-fdk"
 
-type="analytic"
-
 [reconstruction.analytic]
-pipeline="fdk"
-filter="ramlak"
-chunk_views=8
+pipeline = "fdk"
+filter = "ramlak"
+chunk_views = 8

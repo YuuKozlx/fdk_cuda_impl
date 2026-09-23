@@ -87,6 +87,23 @@ void fillWaterShell(Phantom& p, bool elliptical)
         "circular PMMA shell water phantom";
 }
 
+void makeWaterCylinder200mm(Phantom& p)
+{
+    constexpr double outer_radius = 100.0;
+    constexpr double shell = 5.0;
+    const double inner_radius = outer_radius - shell;
+    for (int z = 0; z < p.nz; ++z) for (int y = 0; y < p.ny; ++y)
+        for (int x = 0; x < p.nx; ++x) {
+            const double r2 = p.x(x) * p.x(x) + p.y(y) * p.y(y);
+            p.labels[p.index(x, y, z)] = r2 <= inner_radius * inner_radius ? 1 :
+                r2 <= outer_radius * outer_radius ? 2 : 0;
+        }
+    p.materials = {{1, "water", 1.0, "H2O", {}, {}},
+                   {2, "pmma", 1.18, "C5H8O2", {}, {}}};
+    p.target_diameter_mm = 2.0 * outer_radius;
+    p.variant = "200 mm water cylinder with 5 mm PMMA shell";
+}
+
 void requireTargetResolution(const Phantom& p, double feature_mm)
 {
     if (p.voxel_mm > feature_mm)
@@ -319,7 +336,7 @@ int main(int argc, char** argv)
     try {
         if (argc != 7) {
             std::cerr << "usage: phantom_generator <type> <output.raw> <nx> <ny> <nz> <voxel_mm>\n"
-                << "types: shepp_logan tungsten_wire tungsten_wire_slanted gold_foil water_cylinder "
+                << "types: shepp_logan tungsten_wire tungsten_wire_slanted gold_foil water_cylinder water_cylinder_200mm "
                    "water_ellipse catphan low_contrast\n";
             return 2;
         }
@@ -334,6 +351,7 @@ int main(int argc, char** argv)
         else if (p.type == "tungsten_wire_slanted") makeWire(p, true);
         else if (p.type == "gold_foil") makeGoldFoil(p);
         else if (p.type == "water_cylinder") fillWaterShell(p, false);
+        else if (p.type == "water_cylinder_200mm") makeWaterCylinder200mm(p);
         else if (p.type == "water_ellipse") fillWaterShell(p, true);
         else if (p.type == "catphan") makeCatphan(p);
         else if (p.type == "low_contrast") makeLowContrast(p);
