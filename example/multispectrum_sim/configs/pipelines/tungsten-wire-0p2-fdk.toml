@@ -7,19 +7,32 @@ mode = "project_and_reconstruct"
 label_volume = "../../inputs/generated/tungsten-wire-0p05.raw"
 spectrum_file = "../../spectra/spectrum-120kv-150.csv"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
-output_file = "../../outputs/quality/tungsten-wire-0p05-projection.raw"
-energy_output_file = "../../outputs/quality/tungsten-wire-0p05-energy.raw"
-path_cache_file = "../../outputs/quality/tungsten-wire-0p05-paths.ykpc"
+output_file = "../../outputs/quality/tungsten-wire-0p2-projection.raw"
+energy_output_file = "../../outputs/quality/tungsten-wire-0p2-energy.raw"
+path_cache_file = "../../outputs/quality/tungsten-wire-0p2-paths.ykpc"
 use_library_fp = true
 use_cuda_spectral = true
 apply_geometry_flux = true
+engine = "pixel_local_random"
+
+[projection.pixel_local_random]
+samples_per_pixel = 50
+photons_per_pixel = 100000
+photon_count_mode = "fixed"
+spatial_seed = 12345
+photon_seed = 67890
+
+[projection.detector_global_random]
+total_samples = 50000000
+photons_per_pixel = 100000
+photon_count_mode = "fixed"
+spatial_seed = 12345
+photon_seed = 67890
 
 [projection.focal_spot]
 enabled = true
 size_u_mm = 1.2
 size_v_mm = 0.9
-samples_u = 4
-samples_v = 3
 
 [geometry]
 kind = "flat_cbct"
@@ -34,9 +47,9 @@ sdd_mm = 1000.0
 volume_x = 101
 volume_y = 101
 volume_z = 401
-voxel_x_mm = 0.01
-voxel_y_mm = 0.01
-voxel_z_mm = 0.01
+voxel_x_mm = 0.002
+voxel_y_mm = 0.002
+voxel_z_mm = 0.002
 reconstruction_volume_x = 512
 reconstruction_volume_y = 512
 reconstruction_volume_z = 128
@@ -59,8 +72,8 @@ electronic_noise_enabled = false
 
 [reconstruction]
 type = "analytic"
-output_volume_file = "../../outputs/quality/tungsten-wire-0p05-fdk-512x512x128-f32.raw"
-slice_prefix = "../../outputs/quality/tungsten-wire-0p05-fdk-512x512x128"
+output_volume_file = "../../outputs/quality/tungsten-wire-0p2-fdk-512x512x128-f32.raw"
+slice_prefix = "../../outputs/quality/tungsten-wire-0p2-fdk-512x512x128"
 
 [reconstruction.analytic]
 pipeline = "fdk"

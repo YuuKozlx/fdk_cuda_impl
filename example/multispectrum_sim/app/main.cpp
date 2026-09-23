@@ -1,4 +1,5 @@
 #include "config/SimConfig.hpp"
+#include "SimLogger.hpp"
 #include "SpectralModel.hpp"
 #include "XcomAttenuationProvider.hpp"
 #include "ProjectionSimulator.hpp"
@@ -6,6 +7,7 @@
 #include <iostream>
 #include <filesystem>
 #include <stdexcept>
+#include <chrono>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -48,6 +50,7 @@ int main(int argc, char** argv)
 #endif
 
     try {
+        const auto total_start = std::chrono::steady_clock::now();
         if (argc == 2 && std::string_view(argv[1]) == "--list-materials") {
             listBuiltinMaterials();
             return 0;
@@ -103,8 +106,12 @@ int main(int argc, char** argv)
             if (!path.empty() && !path.parent_path().empty())
                 std::filesystem::create_directories(path.parent_path());
         }
+        const auto projection_start = std::chrono::steady_clock::now();
         if (!simulator.runToFile(labels, config.projection.output_file, error))
             throw std::runtime_error(error);
+        const auto projection_end = std::chrono::steady_clock::now();
+        const auto projection_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            projection_end - projection_start).count();
         std::cout << std::setprecision(10)
             << "geometry=" << static_cast<int>(config.geometry.kind)
             << " phantom=labels"
@@ -120,6 +127,9 @@ int main(int argc, char** argv)
                 config.reconstruction.output_volume_file,
                 config.reconstruction.slice_prefix, error))
                 throw std::runtime_error(error);
+            const auto reconstruction_end = std::chrono::steady_clock::now();
+            const auto reconstruction_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                reconstruction_end - projection_end).count();
             const auto& reconstruction_name = config.reconstruction.type == "analytic"
                 ? config.reconstruction.analytic.pipeline
                 : config.reconstruction.iterative.algorithm;
@@ -127,6 +137,19 @@ int main(int argc, char** argv)
                 << " volume="
                 << config.reconstruction.output_volume_file.string()
                 << " slices=" << config.reconstruction.slice_prefix.string() << "-{axial,coronal,sagittal}.bmp\n";
+            const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                reconstruction_end - total_start).count();
+            yk::spectral::SimLogger::instance().info(
+                "timing_ms projection=" + std::to_string(projection_ms) +
+                " reconstruction=" + std::to_string(reconstruction_ms) +
+                " total=" + std::to_string(total_ms));
+        } else {
+            const auto total_end = std::chrono::steady_clock::now();
+            const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                total_end - total_start).count();
+            yk::spectral::SimLogger::instance().info(
+                "timing_ms projection=" + std::to_string(projection_ms) +
+                " reconstruction=0 total=" + std::to_string(total_ms));
         }
         return 0;
     }

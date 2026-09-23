@@ -164,6 +164,30 @@ namespace yk::spectral {
             c.geometry.parameters.reconstruction_volume_x = (int)number("reconstruction_volume_x", c.geometry.parameters.volume_x); c.geometry.parameters.reconstruction_volume_y = (int)number("reconstruction_volume_y", c.geometry.parameters.volume_y); c.geometry.parameters.reconstruction_volume_z = (int)number("reconstruction_volume_z", c.geometry.parameters.volume_z); c.geometry.parameters.reconstruction_voxel_x_mm = number("reconstruction_voxel_x_mm", c.geometry.parameters.voxel_x_mm); c.geometry.parameters.reconstruction_voxel_y_mm = number("reconstruction_voxel_y_mm", c.geometry.parameters.voxel_y_mm); c.geometry.parameters.reconstruction_voxel_z_mm = number("reconstruction_voxel_z_mm", c.geometry.parameters.voxel_z_mm);
             c.geometry.parameters.phantom_offset_x_mm = number("phantom_offset_x_mm", 0.0); c.geometry.parameters.phantom_offset_y_mm = number("phantom_offset_y_mm", 0.0); c.geometry.parameters.phantom_offset_z_mm = number("phantom_offset_z_mm", 0.0); c.geometry.parameters.reconstruction_offset_x_mm = number("reconstruction_offset_x_mm", 0.0); c.geometry.parameters.reconstruction_offset_y_mm = number("reconstruction_offset_y_mm", 0.0); c.geometry.parameters.reconstruction_offset_z_mm = number("reconstruction_offset_z_mm", 0.0);
         }
+        if (p) {
+            c.projection.engine = (*p)["engine"].value_or(std::string("deterministic"));
+            if (c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") {
+                auto* s = (*p)[c.projection.engine].as_table();
+                if (!s) throw std::runtime_error("projection.engine 对应的配置块缺失: [projection." + c.projection.engine + "]");
+                c.projection.sampling.mode = c.projection.engine;
+                c.projection.sampling.photon_count_mode =
+                    (*s)["photon_count_mode"].value_or(std::string("poisson"));
+                c.projection.sampling.samples_per_pixel = (*s)["samples_per_pixel"].value_or(1);
+                c.projection.sampling.total_samples = (*s)["total_samples"].value_or<std::uint64_t>(0);
+                c.projection.sampling.photons_per_pixel = (*s)["photons_per_pixel"].value_or(100000.0);
+                c.projection.sampling.seed = (*s)["spatial_seed"].value_or(12345u);
+                c.projection.sampling.photon_seed = (*s)["photon_seed"].value_or(67890u);
+                if (c.projection.sampling.mode == "detector_global_random" && c.projection.sampling.total_samples == 0)
+                    throw std::runtime_error("[projection.detector_global_random] 需要 total_samples");
+            }
+        }
+        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+            c.geometry.kind != GeometryKind::FlatCbct &&
+            c.geometry.kind != GeometryKind::FlatHelical)
+            throw std::runtime_error("随机多能谱前投仅支持平板探测器");
+        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+            c.projection.materials.size() > 32)
+            throw std::runtime_error("随机多能谱前投当前最多支持32种材料");
         if (auto* e = p ? (*p)["detector_effects"].as_table() : nullptr) {
             c.projection.detector_effects.efficiency_enabled = (*e)["efficiency_enabled"].value_or(false);
             c.projection.detector_effects.efficiency = (*e)["efficiency"].value_or(1.0);
@@ -178,12 +202,22 @@ namespace yk::spectral {
             spot.enabled = (*f)["enabled"].value_or(false);
             spot.size_u_mm = (*f)["size_u_mm"].value_or(0.0);
             spot.size_v_mm = (*f)["size_v_mm"].value_or(0.0);
-            spot.samples_u = (*f)["samples_u"].value_or(3);
-            spot.samples_v = (*f)["samples_v"].value_or(3);
-            if (f->contains("rotation_deg")) throw std::runtime_error("矩形焦点第一版不支持 rotation_deg");
-            if (spot.enabled && (spot.size_u_mm <= 0 || spot.size_v_mm <= 0 || spot.samples_u <= 0 || spot.samples_v <= 0 || spot.samples_u > 7 || spot.samples_v > 7))
-                throw std::runtime_error("矩形焦点参数无效，Gauss-Legendre 采样点数必须在 1..7");
+            if (f->contains("rotation_deg")) throw std::runtime_error("矩形焦点不支持 rotation_deg");
+            if (spot.enabled && (spot.size_u_mm <= 0 || spot.size_v_mm <= 0))
+                throw std::runtime_error("矩形焦点尺寸必须为正");
         }
+        if (c.projection.engine == "pixel_local_random" &&
+            (c.projection.sampling.samples_per_pixel <= 0 || c.projection.sampling.samples_per_pixel > 4096))
+            throw std::runtime_error("projection.pixel_local_random.samples_per_pixel 必须在1..4096之间");
+        if (c.projection.engine == "detector_global_random" && c.projection.sampling.total_samples == 0)
+            throw std::runtime_error("projection.detector_global_random.total_samples 必须为正");
+        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+            c.projection.sampling.photons_per_pixel <= 0)
+            throw std::runtime_error("随机前投的 photons_per_pixel 必须为正");
+        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+            c.projection.sampling.photon_count_mode != "poisson" &&
+            c.projection.sampling.photon_count_mode != "fixed")
+            throw std::runtime_error("photon_count_mode 仅支持 poisson/fixed");
         std::array<bool, 256> used_labels{};
         if (auto* a = p ? (*p)["materials"].as_array() : nullptr)for (auto& n : *a) { auto* m = n.as_table(); if (!m)throw std::runtime_error("projection.materials 必须是表数组"); MaterialSpec x; x.label = (std::uint8_t)(*m)["label"].value_or(0); x.name = (*m)["name"].value_or(std::string("material")); x.formula = (*m)["formula"].value_or(std::string{}); x.preset = (*m)["preset"].value_or(std::string{}); x.density_g_cm3 = (*m)["density_g_cm3"].value_or(1.0); if ((x.formula.empty() == x.preset.empty()) || x.density_g_cm3 <= 0)throw std::runtime_error("材料配置必须且只能填写 formula 或 preset，且密度必须为正"); if (used_labels[x.label])throw std::runtime_error("材料 label 不得重复: " + std::to_string(x.label)); used_labels[x.label] = true; if (!x.preset.empty()) { const auto* b = findBuiltinMaterial(x.preset); if (!b)throw std::runtime_error("未知内置材料 preset: " + x.preset); if (!m->contains("density_g_cm3"))x.density_g_cm3 = b->density_g_cm3; }c.projection.materials.push_back(std::move(x)); }
         if (c.runsProjection() && c.projection.materials.empty())

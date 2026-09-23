@@ -1,4 +1,7 @@
 #include "ProjectionSimulator.hpp"
+#if defined(YK_MULTISPECTRUM_CUDA_PRIMARY)
+#include "CudaPrimaryProjector.hpp"
+#endif
 #if defined(YK_MULTISPECTRUM_CUDA_SPECTRAL)
 #include "CudaSpectralIntegrator.hpp"
 #endif
@@ -13,38 +16,6 @@ namespace yk::spectral {
 struct Vec3 { double x,y,z; };
 
 namespace {
-struct GaussLegendreRule { std::vector<double> nodes; std::vector<double> weights; };
-
-GaussLegendreRule gaussLegendreRule(int count)
-{
-    switch (count) {
-    case 1: return {{0.0}, {2.0}};
-    case 2: return {{-0.5773502691896258, 0.5773502691896258}, {1.0, 1.0}};
-    case 3: return {{-0.7745966692414834, 0.0, 0.7745966692414834},
-        {0.5555555555555556, 0.8888888888888888, 0.5555555555555556}};
-    case 4: return {{-0.8611363115940526, -0.3399810435848563,
-        0.3399810435848563, 0.8611363115940526},
-        {0.3478548451374539, 0.6521451548625461,
-         0.6521451548625461, 0.3478548451374539}};
-    case 5: return {{-0.9061798459386640, -0.5384693101056831, 0.0,
-        0.5384693101056831, 0.9061798459386640},
-        {0.2369268850561891, 0.4786286704993665, 0.5688888888888889,
-         0.4786286704993665, 0.2369268850561891}};
-    case 6: return {{-0.9324695142031521, -0.6612093864662645,
-        -0.2386191860831969, 0.2386191860831969,
-        0.6612093864662645, 0.9324695142031521},
-        {0.1713244923791704, 0.3607615730481386, 0.4679139345726910,
-         0.4679139345726910, 0.3607615730481386, 0.1713244923791704}};
-    case 7: return {{-0.9491079123427585, -0.7415311855993945,
-        -0.4058451513773972, 0.0, 0.4058451513773972,
-        0.7415311855993945, 0.9491079123427585},
-        {0.1294849661688697, 0.2797053914892766, 0.3818300505051189,
-         0.4179591836734694, 0.3818300505051189, 0.2797053914892766,
-         0.1294849661688697}};
-    default: throw std::runtime_error("矩形焦点 Gauss-Legendre 采样点数仅支持 1..7");
-    }
-}
-
 void writeProjectionMetadata(const std::filesystem::path& raw_file,
     int columns, int rows, int frames, const char* signal)
 {
@@ -119,7 +90,10 @@ std::vector<float> calculateViewPaths(const SimulationConfig& config,
     const double angle = g.start_angle_rad + 2.0 * pi * view / g.views;
     const double source_z = g.start_z_mm + g.pitch_mm_per_turn * view / g.views;
     const double ca = std::cos(angle), sa = std::sin(angle);
-    const Vec3 source{g.sid_mm * ca, g.sid_mm * sa, source_z};
+    const Vec3 source{
+        g.sid_mm * ca + g.source_offset_x_mm * ca - g.source_offset_y_mm * sa,
+        g.sid_mm * sa + g.source_offset_x_mm * sa + g.source_offset_y_mm * ca,
+        source_z + g.source_offset_z_mm};
     const Vec3 box_min{-0.5 * g.volume_x * g.voxel_x_mm,
                        -0.5 * g.volume_y * g.voxel_y_mm,
                        -0.5 * g.volume_z * g.voxel_z_mm};
@@ -218,80 +192,15 @@ std::vector<float> ProjectionSimulator::run(const std::vector<std::uint8_t>& lab
 bool ProjectionSimulator::runToFile(const std::vector<std::uint8_t>& labels,
                                     const std::filesystem::path& output_file,
                                     std::string& error) const {
-    const auto& spot = config_.projection.focal_spot;
-    if (spot.enabled && spot.samples_u * spot.samples_v > 1) {
-        try {
-            const auto rule_u = gaussLegendreRule(spot.samples_u);
-            const auto rule_v = gaussLegendreRule(spot.samples_v);
-            const int sample_count = spot.samples_u * spot.samples_v;
-            std::vector<std::filesystem::path> projections, energies, caches;
-            for (int v = 0; v < spot.samples_v; ++v) for (int u = 0; u < spot.samples_u; ++u) {
-                const int index = v * spot.samples_u + u;
-                auto sub = config_;
-                sub.projection.focal_spot.enabled = false;
-                sub.geometry.parameters.source_offset_x_mm +=
-                    0.5 * rule_u.nodes[u] * spot.size_u_mm;
-                sub.geometry.parameters.source_offset_z_mm +=
-                    0.5 * rule_v.nodes[v] * spot.size_v_mm;
-                auto suffix = std::string(".focal-") + std::to_string(index);
-                auto projection = output_file; projection += suffix;
-                auto energy = config_.projection.energy_output_file; energy += suffix;
-                auto cache = config_.projection.path_cache_file; cache += suffix;
-                sub.projection.energy_output_file = energy;
-                sub.projection.path_cache_file = cache;
-                ProjectionSimulator simulator(sub, model_);
-                if (!simulator.runToFile(labels, projection, error)) return false;
-                projections.push_back(projection); energies.push_back(energy); caches.push_back(cache);
-            }
-            std::vector<std::ifstream> projection_inputs, energy_inputs;
-            for (int i = 0; i < sample_count; ++i) {
-                projection_inputs.emplace_back(projections[i], std::ios::binary);
-                energy_inputs.emplace_back(energies[i], std::ios::binary);
-                if (!projection_inputs.back() || !energy_inputs.back())
-                    throw std::runtime_error("无法读取子焦点投影");
-            }
-            std::ofstream projection_out(output_file, std::ios::binary);
-            std::ofstream energy_out(config_.projection.energy_output_file, std::ios::binary);
-            const std::size_t pixels = static_cast<std::size_t>(config_.geometry.parameters.detector_u) *
-                config_.geometry.parameters.detector_v;
-            std::vector<float> input(pixels), transmission(pixels), energy_sum(pixels), output(pixels);
-            for (int view = 0; view < config_.geometry.parameters.views; ++view) {
-                std::fill(transmission.begin(), transmission.end(), 0.f);
-                std::fill(energy_sum.begin(), energy_sum.end(), 0.f);
-                for (int sample = 0; sample < sample_count; ++sample) {
-                    projection_inputs[sample].read(reinterpret_cast<char*>(input.data()), pixels * sizeof(float));
-                    const int u = sample % spot.samples_u;
-                    const int v = sample / spot.samples_u;
-                    const float weight = static_cast<float>(rule_u.weights[u] * rule_v.weights[v] / 4.0);
-                    for (std::size_t i = 0; i < pixels; ++i) transmission[i] += weight * std::exp(-input[i]);
-                    energy_inputs[sample].read(reinterpret_cast<char*>(input.data()), pixels * sizeof(float));
-                    for (std::size_t i = 0; i < pixels; ++i) energy_sum[i] += weight * input[i];
-                }
-                for (std::size_t i = 0; i < pixels; ++i) {
-                    output[i] = -std::log(std::max(transmission[i], 1e-30f));
-                }
-                projection_out.write(reinterpret_cast<const char*>(output.data()), pixels * sizeof(float));
-                energy_out.write(reinterpret_cast<const char*>(energy_sum.data()), pixels * sizeof(float));
-            }
-            writeProjectionMetadata(output_file, config_.geometry.parameters.detector_u,
-                config_.geometry.parameters.detector_v, config_.geometry.parameters.views,
-                "negative_log_transmission");
-            writeProjectionMetadata(config_.projection.energy_output_file,
-                config_.geometry.parameters.detector_u, config_.geometry.parameters.detector_v,
-                config_.geometry.parameters.views, "transmitted_energy_keV_per_incident_photon");
-            projection_inputs.clear();
-            energy_inputs.clear();
-            for (int i = 0; i < sample_count; ++i) {
-                std::error_code ignored;
-                std::filesystem::remove(projections[i], ignored);
-                std::filesystem::remove(projections[i].string() + ".json", ignored);
-                std::filesystem::remove(energies[i], ignored);
-                std::filesystem::remove(energies[i].string() + ".json", ignored);
-                std::filesystem::remove(caches[i], ignored);
-            }
-            return true;
-        } catch (const std::exception& e) { error = e.what(); return false; }
+    if (config_.projection.engine == "pixel_local_random" || config_.projection.engine == "detector_global_random")
+#if defined(YK_MULTISPECTRUM_CUDA_PRIMARY)
+        return CudaPrimaryProjector{}.run(config_, labels, model_, output_file, error);
+#else
+    {
+        error = "随机多能谱前投要求使用支持 CUDA 的构建";
+        return false;
     }
+#endif
     if (config_.projection.use_library_fp) {
         if (!generatePathCacheWithLibraryFp(config_, labels, config_.projection.path_cache_file, error)) return false;
     } else if (!generatePathCache(labels, config_.projection.path_cache_file, error)) return false;

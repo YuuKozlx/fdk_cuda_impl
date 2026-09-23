@@ -14,19 +14,20 @@ add_library(nist_xcom_core STATIC
     "${SPECTRAL_XCOM_ROOT}/xcom_c_api.cpp")
 target_include_directories(nist_xcom_core PUBLIC "${SPECTRAL_XCOM_ROOT}")
 target_compile_definitions(nist_xcom_core PUBLIC XCOM_C_API_STATIC)
-add_executable(multispectrum_sim app/main.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp src/PathCache.cpp)
+add_executable(multispectrum_sim app/main.cpp src/SimLogger.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp src/PathCache.cpp)
 target_include_directories(multispectrum_sim PRIVATE
-    include "${SPECTRAL_XCOM_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
+    include "${SPECTRAL_XCOM_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
 target_link_libraries(multispectrum_sim PRIVATE nist_xcom_core)
 
 # 顶层工程中通过公共 DLL 接口调用 YKCBCT FP；独立配置时不要求 CUDA。
 if(TARGET YKCBCT AND MULTISPECTRUM_USE_LIBRARY_FP)
-    target_sources(multispectrum_sim PRIVATE src/LibraryGeometry.cpp src/LibraryMaterialProjector.cpp src/LibraryReconstructor.cpp src/CudaSpectralIntegrator.cu)
+    target_sources(multispectrum_sim PRIVATE src/LibraryGeometry.cpp src/LibraryMaterialProjector.cpp src/LibraryReconstructor.cpp src/CudaSpectralIntegrator.cu src/CudaPrimaryProjector.cu)
     target_include_directories(multispectrum_sim PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
     target_link_libraries(multispectrum_sim PRIVATE YKCBCT)
     target_compile_definitions(multispectrum_sim PRIVATE
-        YK_MULTISPECTRUM_LIBRARY_FP=1 YK_MULTISPECTRUM_CUDA_SPECTRAL=1)
+        YK_MULTISPECTRUM_LIBRARY_FP=1 YK_MULTISPECTRUM_CUDA_SPECTRAL=1 YK_MULTISPECTRUM_CUDA_PRIMARY=1)
     add_custom_command(TARGET multispectrum_sim POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:multispectrum_sim>)

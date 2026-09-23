@@ -62,8 +62,16 @@ struct FocalSpotConfig {
     bool enabled = false;
     double size_u_mm = 0.0;
     double size_v_mm = 0.0;
-    int samples_u = 3;
-    int samples_v = 3;
+};
+
+struct SamplingConfig {
+    std::string mode = "pixel_local_random";
+    std::string photon_count_mode = "poisson";
+    int samples_per_pixel = 1;
+    std::uint64_t total_samples = 0;
+    double photons_per_pixel = 100000.0;
+    std::uint32_t seed = 12345;
+    std::uint32_t photon_seed = 67890;
 };
 
 struct GeometrySpec {
@@ -81,9 +89,11 @@ struct ProjectionConfig {
     bool apply_geometry_flux = true;
     bool use_library_fp = false;
     bool use_cuda_spectral = false;
+    std::string engine = "deterministic";
     std::vector<MaterialSpec> materials;
     DetectorEffectsConfig detector_effects;
     FocalSpotConfig focal_spot;
+    SamplingConfig sampling;
 };
 
 // 仿真结束后的可选重建设置。投影仍按文件流式读取；FDK 使用 chunk_views
