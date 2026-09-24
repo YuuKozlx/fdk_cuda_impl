@@ -145,7 +145,7 @@ int main_geometry_builder_four_modes()
     unified.detector = EDetectorKind::Flat;
     unified.trajectory = ETrajectoryKind::Circular;
     unified.circular.views_per_turn = 8;
-    reconstruction.parker.mode = EParkerMode::Auto;
+    reconstruction.fdk.parker.mode = EParkerMode::Auto;
     if (!resolveParkerEnabled(unified, reconstruction) ||
         reconstruction.pipeline != EPipeline::FDK)
         return 1;

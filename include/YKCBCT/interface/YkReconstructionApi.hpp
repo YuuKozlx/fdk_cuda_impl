@@ -6,7 +6,7 @@
 #include "YKCBCT/global/YkExport.hpp"
 #include "YKCBCT/geometry/YkSystemGeometry.hpp"
 #include "YKCBCT/interface/YkSystemReconstruction.hpp"
-#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "YKCBCT/interface/YkReconstructionTypes.hpp"
 
 namespace YK {
 

@@ -26,6 +26,7 @@ EReleaseDecision releaseDecision(const SSystemSpec& source)
     case EPipeline::ForwardProjection:
         return EReleaseDecision::Released;
     case EPipeline::FDK:
+        return !helical ? EReleaseDecision::Released : EReleaseDecision::UnderTest;
     case EPipeline::XFDK:
         return !cyl && !helical
             ? EReleaseDecision::Released : EReleaseDecision::UnderTest;
@@ -40,9 +41,6 @@ EReleaseDecision releaseDecision(const SSystemSpec& source)
     case EPipeline::WFBP:
         return cyl && helical
             ? EReleaseDecision::Released : EReleaseDecision::UnderTest;
-    case EPipeline::CylAnalyticFDK:
-        return cyl && !helical
-            ? EReleaseDecision::Released : EReleaseDecision::UnderTest;
     case EPipeline::CFDK:
         return EReleaseDecision::UnderTest;
     }
@@ -51,17 +49,8 @@ EReleaseDecision releaseDecision(const SSystemSpec& source)
 
 bool validProjectorSelection(const SSystemSpec& source)
 {
-    const auto pipeline = source.reconstruction.pipeline;
-    if (pipeline == EPipeline::ForwardProjection &&
-        source.reconstruction.forward_projector != ETask::FP_Joseph &&
-        source.reconstruction.forward_projector != ETask::FP_Siddon)
-        return false;
-    if (source.geometry.detector == EDetectorKind::Cylindrical &&
-        (pipeline == EPipeline::SART || pipeline == EPipeline::SIRT || pipeline == EPipeline::OSSART ||
-         pipeline == EPipeline::CGLS || pipeline == EPipeline::PWLS) &&
-        source.reconstruction.back_projector == ETask::BP_Joseph_v2)
-        return false;
-    return true;
+    return source.reconstruction.projection_model == EProjectionModel::Joseph ||
+        source.reconstruction.projection_model == EProjectionModel::Siddon;
 }
 
 bool requiresCanonicalAcquisitionOffsets(EPipeline pipeline)
@@ -71,7 +60,6 @@ bool requiresCanonicalAcquisitionOffsets(EPipeline pipeline)
     switch (pipeline) {
     case EPipeline::XFDK:
     case EPipeline::CFDK:
-    case EPipeline::CylAnalyticFDK:
     case EPipeline::WFBP:
         return true;
     default:
@@ -91,42 +79,33 @@ bool hasNonzeroAcquisitionOffset(const SSystemConfig& geometry,
     constexpr float tolerance = 1e-7f;
     const bool source_offset = std::fabs(source.x) > tolerance ||
         std::fabs(source.y) > tolerance || std::fabs(source.z) > tolerance;
+    const bool cyl_fdk = pipeline == EPipeline::FDK &&
+        geometry.detector == EDetectorKind::Cylindrical;
+    // Cyl-FDK preserves detector V translation in the resampled flat principal point.
     const bool detector_offset = pipeline == EPipeline::WFBP
         ? std::fabs(pose.offset_unv_mm.y) > tolerance
         : std::fabs(pose.offset_unv_mm.x) > tolerance ||
             std::fabs(pose.offset_unv_mm.y) > tolerance ||
-            std::fabs(pose.offset_unv_mm.z) > tolerance;
-    return source_offset || detector_offset;
+            (!cyl_fdk && std::fabs(pose.offset_unv_mm.z) > tolerance);
+    const bool detector_tilt = cyl_fdk &&
+        (!std::isfinite(pose.tilt_u_rad) || !std::isfinite(pose.tilt_v_rad) ||
+         !std::isfinite(pose.tilt_n_rad) ||
+         std::fabs(pose.tilt_u_rad) > tolerance ||
+         std::fabs(pose.tilt_v_rad) > tolerance ||
+         std::fabs(pose.tilt_n_rad) > tolerance);
+    return source_offset || detector_offset || detector_tilt;
 }
 
-void clearUnsupportedAcquisitionOffsets(SSystemConfig& geometry,
-    EPipeline pipeline)
-{
-    if (geometry.trajectory == ETrajectoryKind::Helical)
-        geometry.helical.source_offset_mm = make_float3(0.f, 0.f, 0.f);
-    else
-        geometry.circular.source_offset_mm = make_float3(0.f, 0.f, 0.f);
-
-    auto& pose = geometry.detector == EDetectorKind::Cylindrical
-        ? geometry.cylindrical_detector.pose
-        : geometry.flat_detector.pose;
-    if (pipeline == EPipeline::WFBP) {
-        // FreeCT/wFBP 入口可使用柱面通道和行主点偏移；法向平移仍
-        // 没有对应的参数化公式，不能假装已经被消费。
-        pose.offset_unv_mm.y = 0.f;
-    } else {
-        pose.offset_unv_mm = make_float3(0.f, 0.f, 0.f);
-    }
-}
 
 class ReconstructionSession final : public IReconstructionSession {
 public:
     ~ReconstructionSession() override { release(); }
 
-    bool initialize(const SSystemSpec& system) override
+    bool initialize(const SSystemSpec& requested) override
     {
         release();
         clearError_();
+        const SSystemSpec& system = requested;
         if (!hasBytes(system.struct_size, offsetof(SSystemSpec, device) + sizeof(system.device)))
             return fail_(EApiErrorCode::InvalidConfig, "SSystemSpec 结构体版本过旧或被截断");
         if (system.api_version != 1)
@@ -146,14 +125,13 @@ public:
                 "当前 DLL 构建未启用 YKCBCT_BUILD_HELICAL，缺少 wFBP 后端");
 #endif
         SSystemConfig backend_geometry = system.geometry;
-        if (requiresCanonicalAcquisitionOffsets(system.reconstruction.pipeline) &&
+        if ((requiresCanonicalAcquisitionOffsets(system.reconstruction.pipeline) ||
+             (system.reconstruction.pipeline == EPipeline::FDK &&
+              system.geometry.detector == EDetectorKind::Cylindrical)) &&
             hasNonzeroAcquisitionOffset(backend_geometry,
                 system.reconstruction.pipeline)) {
-            clearUnsupportedAcquisitionOffsets(backend_geometry,
-                system.reconstruction.pipeline);
-            YK_LOGW("[ReconstructionApi] 当前算法要求规范采集几何；"
-                "不支持的源端/探测器 offset 已强制置为 0。"
-                "体积中心 offset 保持不变。");
+            return fail_(EApiErrorCode::UnsupportedCombination,
+                "Algorithm does not support the requested acquisition offsets or detector tilt; geometry was not changed");
         }
         session_ = detail::createExecutionBackend();
         if (!session_ || !session_->initialize(backend_geometry,
@@ -173,7 +151,8 @@ public:
         projection_view_elements_ = static_cast<size_t>(channels) * rows;
         volume_elements_ = static_cast<size_t>(system.geometry.volume.nx) *
             system.geometry.volume.ny * system.geometry.volume.nz;
-        pipeline_ = system.reconstruction.pipeline;
+        streaming_fdk_ = system.reconstruction.pipeline == EPipeline::FDK &&
+            system.geometry.detector == EDetectorKind::Flat;
         received_views_ = 0;
         initialized_ = true;
         return true;
@@ -195,7 +174,7 @@ public:
         const int count = request.view_count > 0 ? request.view_count : view_count_;
         if (offset < 0 || count <= 0 || offset > view_count_ - count)
             return fail_(EApiErrorCode::InvalidConfig, "view_offset/view_count 超出已准备的角度范围");
-        const bool streaming_fdk = pipeline_ == EPipeline::FDK;
+        const bool streaming_fdk = streaming_fdk_;
         if (streaming_fdk) {
             if (offset != received_views_)
                 return fail_(EApiErrorCode::StreamingStateError,
@@ -261,7 +240,7 @@ private:
     int received_views_ = 0;
     size_t projection_view_elements_ = 0;
     size_t volume_elements_ = 0;
-    EPipeline pipeline_ = EPipeline::FDK;
+    bool streaming_fdk_ = false;
     bool initialized_ = false;
     EApiErrorCode error_code_ = EApiErrorCode::None;
     std::string error_message_;

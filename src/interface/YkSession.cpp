@@ -106,6 +106,15 @@ public:
         bool ok = false;
         switch (reconstruction_.pipeline) {
         case EPipeline::FDK:
+            if (cylindrical_) {
+                if (geometry_.cylGeometry().empty()) break;
+                CylFpBp::Analytic::ReconstructionConfig config{};
+                config.source_to_detector_mm = params_.scan.sdd_mm;
+                ok = cyl_fdk_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
+                    params_.scan.Nv, geometry_.cylGeometry(), config,
+                    makeFilterDesc(reconstruction_.fdk), resources_.stream(), device_);
+                break;
+            }
             params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
             // geometry 非空时，它是唯一的几何/角度真源。圆轨迹 angles 只在
             // geometry 为空时用于构造同一份完整 geometry。
@@ -127,15 +136,6 @@ public:
             params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
             ok = cfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
             break;
-        case EPipeline::CylAnalyticFDK: {
-            if (geometry_.cylGeometry().empty()) break;
-            CylFpBp::Analytic::ReconstructionConfig config{};
-            config.source_to_detector_mm = params_.scan.sdd_mm;
-            ok = cyl_fdk_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
-                params_.scan.Nv, geometry_.cylGeometry(), config,
-                makeFilterDesc(reconstruction_.fdk), resources_.stream(), device_);
-            break;
-        }
         case EPipeline::PWLS: {
             if (!hasCompleteAngles_()) break;
             if (cylindrical_) {
@@ -149,7 +149,7 @@ public:
                 c.epsilon = reconstruction_.pwls.epsilon;
                 c.lower_bound = reconstruction_.pwls.lower_bound;
                 c.upper_bound = reconstruction_.pwls.upper_bound;
-                c.data_model = reconstruction_.forward_projector == ETask::FP_Siddon
+                c.data_model = forwardTask_() == ETask::FP_Siddon
                     ? CylFpBp::ECylPwlsDataModel::Siddon
                     : CylFpBp::ECylPwlsDataModel::JosephMatched;
                 ok = cyl_pwls_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
@@ -168,8 +168,8 @@ public:
             c.epsilon = reconstruction_.pwls.epsilon;
             c.lower_bound = reconstruction_.pwls.lower_bound;
             c.upper_bound = reconstruction_.pwls.upper_bound;
-            c.fp_task = reconstruction_.forward_projector;
-            c.bp_task = reconstruction_.back_projector;
+            c.fp_task = forwardTask_();
+            c.bp_task = backTask_();
             ok = pwls_.prepare(params_, geometry_.allGeometry(), c,
                 resources_.stream(), device_);
             break;
@@ -204,8 +204,8 @@ public:
             c.alpha_reduction = reconstruction_.tigre.tv_alpha_reduction;
             c.maximum_update_ratio = reconstruction_.tigre.maximum_update_ratio;
             c.max_l2_error = reconstruction_.tigre.max_l2_error;
-            c.fp_task = reconstruction_.forward_projector;
-            c.bp_task = reconstruction_.back_projector;
+            c.fp_task = forwardTask_();
+            c.bp_task = backTask_();
             ok = tigre_.prepare(params_, geometry_.allGeometry(), c,
                 resources_.stream(), device_);
             break;
@@ -216,14 +216,9 @@ public:
             if (!cylindrical_ || geometry_.cylGeometry().empty()) break;
             Helical::Wfbp::Config c{};
             c.input_detector = Helical::Wfbp::EInputDetector::CylindricalArc;
-            c.focal_spot_mode = static_cast<Helical::Wfbp::EFocalSpotMode>(
-                reconstruction_.wfbp.focal_spot);
             c.redundancy_flat = reconstruction_.wfbp.redundancy_flat;
             c.filter.cutoff_c = reconstruction_.wfbp.filter_cutoff;
             c.filter.apodization_a = reconstruction_.wfbp.filter_apodization;
-            c.anode_angle_rad = reconstruction_.wfbp.anode_angle_rad;
-            c.reverse_row_interleave =
-                reconstruction_.wfbp.reverse_row_interleave;
             ok = wfbp_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
                 params_.scan.Nv, geometry_.cylGeometry(), c, resources_.stream(), device_);
             break;
@@ -234,14 +229,14 @@ public:
 #endif
         case EPipeline::ForwardProjection:
             if (cylindrical_) {
-                const auto model = reconstruction_.forward_projector == ETask::FP_Siddon
+                const auto model = forwardTask_() == ETask::FP_Siddon
                     ? CylFpBp::EForwardProjection::Siddon
                     : CylFpBp::EForwardProjection::Joseph;
                 cyl_forward_ = CylFpBp::makeForwardProjection(model);
                 ok = cyl_forward_->prepare(geometry_.volumeGeometry(),
                     params_.scan.Nu, params_.scan.Nv, geometry_.cylGeometry(), {}, resources_);
             } else {
-                forward_ = makeForwardOperator(reconstruction_.forward_projector);
+                forward_ = makeForwardOperator(forwardTask_());
                 ok = forward_->prepare(geometry_, resources_);
             }
             break;
@@ -252,8 +247,8 @@ public:
             c.lambda = reconstruction_.iterative.relaxation;
             c.use_min = reconstruction_.tigre.non_negative;
             c.min_constraint = 0.f;
-            c.fp_task = reconstruction_.forward_projector;
-            c.bp_task = reconstruction_.back_projector;
+            c.fp_task = forwardTask_();
+            c.bp_task = backTask_();
             ok = sart_.init(params_, c, geometry_.allGeometry(),
                 resources_.stream(), device_);
             break;
@@ -269,8 +264,8 @@ public:
             c.lambda = reconstruction_.iterative.relaxation;
             c.use_min = reconstruction_.tigre.non_negative;
             c.min_constraint = 0.f;
-            c.fp_task = reconstruction_.forward_projector;
-            c.bp_task = reconstruction_.back_projector;
+            c.fp_task = forwardTask_();
+            c.bp_task = backTask_();
             ok = sirt_.init(params_, c, geometry_.allGeometry(),
                 resources_.stream(), device_);
             break;
@@ -287,8 +282,8 @@ public:
             c.lambda = reconstruction_.iterative.relaxation;
             c.use_min = reconstruction_.tigre.non_negative;
             c.min_constraint = 0.f;
-            c.fp_task = reconstruction_.forward_projector;
-            c.bp_task = reconstruction_.back_projector;
+            c.fp_task = forwardTask_();
+            c.bp_task = backTask_();
             ok = ossart_.init(params_, c, geometry_.allGeometry(),
                 resources_.stream(), device_);
             break;
@@ -301,8 +296,8 @@ public:
             }
             CGLS::Config c{};
             c.n_iter = reconstruction_.iterative.iterations;
-            c.fp_task = reconstruction_.forward_projector;
-            c.bp_task = reconstruction_.back_projector;
+            c.fp_task = forwardTask_();
+            c.bp_task = backTask_();
             ok = cgls_.init(params_, c, geometry_.allGeometry(),
                 resources_.stream(), device_);
             break;
@@ -324,10 +319,9 @@ public:
             return false;
         }
         switch (reconstruction_.pipeline) {
-        case EPipeline::FDK: return executeFdk_(r);
+        case EPipeline::FDK: return cylindrical_ ? executeCylFdk_(r) : executeFdk_(r);
         case EPipeline::XFDK: return executeXfdk_(r);
         case EPipeline::CFDK: return executeCfdk_(r);
-        case EPipeline::CylAnalyticFDK: return executeCylFdk_(r);
         case EPipeline::ForwardProjection: return executeFp_(r);
         case EPipeline::SART:
         case EPipeline::SIRT:
@@ -383,6 +377,17 @@ public:
     bool isInitialized() const override { return initialized_; }
 
 private:
+    ETask forwardTask_() const
+    {
+        return reconstruction_.projection_model == EProjectionModel::Siddon
+            ? ETask::FP_Siddon : ETask::FP_Joseph;
+    }
+    ETask backTask_() const
+    {
+        return reconstruction_.projection_model == EProjectionModel::Siddon
+            ? ETask::BP_Siddon_RayDriven : ETask::BP_Joseph_v3;
+    }
+
     bool prepareCylIterative_(CylFpBp::EIterativeMethod method)
     {
         CylFpBp::IterativeConfig c{};
@@ -391,8 +396,8 @@ private:
         c.subset_count = std::max(1, reconstruction_.iterative.subsets);
         c.relaxation = reconstruction_.iterative.relaxation;
         c.nonnegative = reconstruction_.tigre.non_negative;
-        c.forward_model = makeCylForwardModel(reconstruction_.forward_projector);
-        c.backprojector_model = makeCylBackModel(reconstruction_.back_projector);
+        c.forward_model = makeCylForwardModel(forwardTask_());
+        c.backprojector_model = makeCylBackModel(backTask_());
         c.convergence.relative_residual_tolerance =
             reconstruction_.cgls.relative_residual;
         c.convergence.minimum_iterations =
@@ -471,8 +476,28 @@ private:
 
     bool executeCylFdk_(const ExecuteRequest& r)
     {
-        if (!hasFullDeviceReconstructionInput_(r, "CylAnalyticFDK")) return false;
-        if (!cyl_fdk_.reconstruct(r.projection.data, r.volume.data, r.clear_output)) return false;
+        if (r.K != params_.scan.NAng || !r.projection.data || !r.volume.data)
+            return false;
+        const size_t bytes = static_cast<size_t>(r.K) * params_.scan.Nu *
+            params_.scan.Nv * sizeof(float);
+        float* projection = r.projection.location == EMemoryLocation::Device
+            ? r.projection.data : ensureProjectionScratch_(r.K);
+        float* volume = r.volume.location == EMemoryLocation::Device
+            ? r.volume.data : ensureVolumeScratch_();
+        if (!projection || !volume) return false;
+        if (r.projection.location == EMemoryLocation::Host)
+            YK_CUDA_CHECK(cudaMemcpyAsync(projection, r.projection.data, bytes,
+                cudaMemcpyHostToDevice, resources_.stream()));
+        if (r.volume.location == EMemoryLocation::Host && !r.clear_output)
+            YK_CUDA_CHECK(cudaMemcpyAsync(volume, r.volume.data, volumeBytes_(),
+                cudaMemcpyHostToDevice, resources_.stream()));
+        if (!cyl_fdk_.reconstruct(projection, volume, r.clear_output)) {
+            cudaStreamSynchronize(resources_.stream());
+            return false;
+        }
+        if (r.volume.location == EMemoryLocation::Host)
+            YK_CUDA_CHECK(cudaMemcpyAsync(r.volume.data, volume, volumeBytes_(),
+                cudaMemcpyDeviceToHost, resources_.stream()));
         YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
         return true;
     }

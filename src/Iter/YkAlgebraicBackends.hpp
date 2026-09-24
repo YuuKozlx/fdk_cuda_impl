@@ -7,7 +7,7 @@
 #include "global/YkMacro.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkLog.h"
-#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "common/YkOperatorTypes.hpp"
 
 #include <cuda_runtime.h>
 #include <global/YkCBCTParams.h>

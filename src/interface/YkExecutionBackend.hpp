@@ -2,7 +2,7 @@
 
 #include "YKCBCT/geometry/YkSystemGeometry.hpp"
 #include "YKCBCT/interface/YkSystemReconstruction.hpp"
-#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "common/YkOperatorTypes.hpp"
 
 namespace YK::detail {
 

@@ -1,6 +1,20 @@
 # DLL 接口测试只使用公共头文件和导出目标，不访问 src 内部实现。
 add_executable(dlltest test_Task_dll.cpp)
 
+add_executable(dlltest_shepp_logan test_shepp_logan.cpp)
+target_link_libraries(dlltest_shepp_logan PRIVATE YKCBCT::YKCBCT)
+target_compile_options(dlltest_shepp_logan PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W3 /Zc:__cplusplus /utf-8>)
+set_target_properties(dlltest_shepp_logan PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_custom_command(TARGET dlltest_shepp_logan POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:dlltest_shepp_logan>)
+if(BUILD_TESTING)
+    add_test(NAME dll_shepp_logan COMMAND dlltest_shepp_logan
+        "${CMAKE_BINARY_DIR}/test-artifacts/dll-shepp-logan")
+endif()
+
 target_link_libraries(dlltest PRIVATE
     YKCBCT::YKCBCT
 )

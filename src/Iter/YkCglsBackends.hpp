@@ -7,7 +7,7 @@
 #include "common/YkVecGeo.hpp"
 #include "global/YkLog.h"
 #include "util/YkCpuProfiler.hpp"
-#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "common/YkOperatorTypes.hpp"
 #include "Iter/YkIterativeConvergence.hpp"
 
 #include <cuda_runtime.h>

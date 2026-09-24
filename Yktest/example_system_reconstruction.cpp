@@ -9,6 +9,7 @@
 #include <cuda_runtime.h>
 
 #include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
+#include "CylFpBp/analytic/YkCylFdkPipeline.hpp"
 #include "CylFpBp/fp/YkCylForwardOperator.hpp"
 #include "FDK/YkFdkPipeline.hpp"
 #include "Heli/iter/YkHelicalCylIterativeReconstructor.hpp"
@@ -183,7 +184,7 @@ int main_system_reconstruction_four_geometries()
     static_flat.volume = sampleVolume();
     SReconstructionSpec static_flat_reconstruction{};
     static_flat_reconstruction.fdk.filter = EFdkFilter::SheppLogan;
-    static_flat_reconstruction.parker.mode = EParkerMode::Auto;
+    static_flat_reconstruction.fdk.parker.mode = EParkerMode::Auto;
 
     SSystemConfig static_cyl{};
     static_cyl.detector = EDetectorKind::Cylindrical;

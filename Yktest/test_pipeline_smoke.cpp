@@ -1809,28 +1809,28 @@ int main_rigid_geometry_transform_smoke()
         near(roundtrip.x, volume_center.x + 2.f) &&
         near(roundtrip.y, volume_center.y) && near(roundtrip.z, volume_center.z);
 
-    SessionDesc desc{};
-    desc.scan.Nu = 8; desc.scan.Nv = 6; desc.scan.NAng = 1;
-    desc.scan.SOD_mm = 100.f; desc.scan.SDD_mm = 200.f;
+    SReconstructionParams desc{};
+    std::vector<SConeProjGeomVec> views;
+    desc.scan.Nu = 8; desc.scan.Nv = 6; desc.scan.NAng = 1; desc.scan.totalViews = 1;
+    desc.scan.sid_mm = 100.f; desc.scan.sdd_mm = 200.f;
     desc.volume.Nx = 8; desc.volume.Ny = 7; desc.volume.Nz = 6;
-    desc.volume.offsetX_mm = volume_center.x;
-    desc.volume.offsetY_mm = volume_center.y;
-    desc.volume.offsetZ_mm = volume_center.z;
-    desc.geometry.push_back({
+    desc.volume.centerX_mm = volume_center.x;
+    desc.volume.centerY_mm = volume_center.y;
+    desc.volume.centerZ_mm = volume_center.z;
+    views.push_back({
         make_float4(10.f, -100.f, 4.f, 0.f),
         make_float4(-4.f, 100.f, 1.f, 0.f),
         make_float4(1.f, 0.f, 0.f, 0.f),
         make_float4(0.f, 0.f, 1.f, 0.f),
         make_float4(0.25f, 0.f, 0.f, 0.f) });
-    desc.objectFromScanner.push_back(objectFromScanner);
 
     // 该视图同时含 U/V offset 和探测器倾斜：中心射线不等于平面法向。
     // 派生帧经过刚体变换后，点随平移旋转，方向只旋转，平面距离不变。
     SProjectionFrame scanner_frame{};
     SProjectionFrame expected_frame{};
     const SConeProjGeomVec transformed_geometry = transformProjectionGeometry(
-        desc.geometry.front(), objectFromScanner);
-    ok = ok && deriveProjectionFrame(desc.geometry.front(),
+        views.front(), objectFromScanner);
+    ok = ok && deriveProjectionFrame(views.front(),
         desc.scan.Nu, desc.scan.Nv, scanner_frame) &&
         deriveProjectionFrame(transformed_geometry,
             desc.scan.Nu, desc.scan.Nv, expected_frame);
@@ -1879,11 +1879,11 @@ int main_rigid_geometry_transform_smoke()
     }
 
     GeometryContext context;
-    ok = ok && context.initialize(desc);
+    ok = ok && context.initialize(desc, {transformed_geometry});
     if (ok) {
         const SVolGeom volume = context.volumeGeometry();
         const SConeProjGeomVec expected = transformProjectionGeometry(
-            desc.geometry.front(), objectFromScanner);
+            views.front(), objectFromScanner);
         const SConeProjGeomVec& actual = context.allGeometry().front();
         ok = near(volume.center.x, volume_center.x) &&
             near(volume.center.y, volume_center.y) &&
@@ -1893,22 +1893,29 @@ int main_rigid_geometry_transform_smoke()
             near(actual.src.z, expected.src.z) &&
             near(actual.detU.x, expected.detU.x) &&
             near(actual.detU.y, expected.detU.y) &&
-            near(actual.angle.x, desc.geometry.front().angle.x);
+            near(actual.angle.x, views.front().angle.x);
     }
 
     // 未提供显式 geometry 时，先在 Scanner 坐标系生成圆轨迹，再应用同一
     // 公共刚体类型；对照恒等姿态生成的 geometry，避免前端存在第二套变换。
-    SessionDesc identity_desc = desc;
-    identity_desc.geometry.clear();
-    identity_desc.angles = { 0.25f };
-    identity_desc.objectFromScanner = { SRigidTransform::identity() };
+    SSystemConfig identity_system{};
+    identity_system.circular.total_views = 1;
+    identity_system.circular.views_per_turn = 32;
+    identity_system.circular.start_angle_rad = 0.25f;
+    identity_system.circular.sid_mm = 100.f;
+    identity_system.circular.sdd_mm = 200.f;
+    identity_system.flat_detector.channels = 8;
+    identity_system.flat_detector.rows = 6;
+    identity_system.flat_detector.channel_size_mm = 1.f;
+    identity_system.flat_detector.row_size_mm = 1.f;
+    identity_system.volume = {8, 7, 6, 1.f, 1.f, 1.f, volume_center};
     GeometryContext scanner_context;
-    ok = ok && scanner_context.initialize(identity_desc);
-
-    SessionDesc transformed_desc = identity_desc;
-    transformed_desc.objectFromScanner = { objectFromScanner };
+    ok = ok && scanner_context.initialize(identity_system);
+    auto transformed_views = scanner_context.allGeometry();
+    for (auto& view : transformed_views)
+        view = transformProjectionGeometry(view, objectFromScanner);
     GeometryContext transformed_context;
-    ok = ok && transformed_context.initialize(transformed_desc);
+    ok = ok && transformed_context.initialize(scanner_context.base(), transformed_views);
     if (ok) {
         const SConeProjGeomVec expected = transformProjectionGeometry(
             scanner_context.allGeometry().front(), objectFromScanner);
@@ -2257,7 +2264,7 @@ int main_fdk_system_request_smoke()
     system.volume = {8, 8, 8, 1.f, 1.f, 1.f,
         make_float3(2.f, -1.f, 3.f)};
     SReconstructionSpec reconstruction{};
-    reconstruction.parker.mode = EParkerMode::Auto;
+    reconstruction.fdk.parker.mode = EParkerMode::Auto;
     reconstruction.fdk.filter = EFdkFilter::Hann;
 
     cudaStream_t stream = nullptr;

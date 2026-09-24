@@ -6,7 +6,7 @@
 #include <iostream>
 #include <vector>
 #include <cuda_runtime_api.h>
-#include "YKCBCT/interface/IYkSession.hpp"
+#include "YKCBCT/interface/YkReconstructionApi.hpp"
 
 namespace {
 constexpr int kNu = 32, kNv = 24, kNx = 16, kNy = 16, kNz = 12;
@@ -65,8 +65,7 @@ YK::SSystemSpec makeDesc(YK::EPipeline pipeline) {
     d.geometry.volume = {kNx, kNy, kNz, 1.f, 1.f, 1.f,
         make_float3(0.f, 0.f, 0.f)};
     d.reconstruction.pipeline = pipeline;
-    d.reconstruction.forward_projector = YK::ETask::FP_Joseph;
-    d.reconstruction.back_projector = YK::ETask::BP_Joseph_v3;
+    d.reconstruction.projection_model = YK::EProjectionModel::Joseph;
     return d;
 }
 
@@ -101,12 +100,12 @@ bool cudaOk(cudaError_t e, const char* where) {
 }
 
 bool testForwardProjection(const YK::SSystemSpec& desc, const char* name) {
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     if (!session->initialize(desc)) {
         std::fprintf(stderr, "%s initialize: %s\n", name,
             session->lastErrorMessage());
-        YK::SessionFactory::destroy(session);
+        YK::ReconstructionSessionFactory::destroy(session);
         return false;
     }
     const size_t volN = size_t(kNx) * kNy * kNz;
@@ -125,25 +124,25 @@ bool testForwardProjection(const YK::SSystemSpec& desc, const char* name) {
         ok = session->execute(r) && cudaOk(cudaDeviceSynchronize(), name);
     }
     cudaFree(dSino); cudaFree(dVol);
-    session->release(); YK::SessionFactory::destroy(session);
+    session->release(); YK::ReconstructionSessionFactory::destroy(session);
     return ok;
 }
 
 bool testValidationError() {
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     auto desc = makeDesc(YK::EPipeline::ForwardProjection);
     desc.struct_size = sizeof(std::uint32_t);
     const bool rejected = !session->initialize(desc) &&
         session->lastError() == YK::EApiErrorCode::InvalidConfig &&
         session->lastErrorMessage()[0] != '\0';
-    YK::SessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
     return rejected;
 }
 
 bool testExecutionValidation()
 {
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     auto desc = makeDesc(YK::EPipeline::ForwardProjection);
     bool ok = session->initialize(desc);
@@ -161,20 +160,20 @@ bool testExecutionValidation()
     request.view_count = 1;
     ok = ok && !session->execute(request) &&
         session->lastError() == YK::EApiErrorCode::StreamingStateError;
-    YK::SessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
     return ok;
 }
 
 bool testUnderTestPolicy() {
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     auto desc = makeDesc(YK::EPipeline::CFDK);
     bool ok = !session->initialize(desc) &&
         session->lastError() == YK::EApiErrorCode::AlgorithmUnderTest;
-    desc = makeCylDesc(YK::EPipeline::FDK);
+    desc = makeHelical(makeCylDesc(YK::EPipeline::FDK));
     ok = ok && !session->initialize(desc) &&
         session->lastError() == YK::EApiErrorCode::AlgorithmUnderTest;
-    YK::SessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
     return ok;
 }
 
@@ -183,12 +182,12 @@ bool testIterative(YK::SSystemSpec desc, const char* name) {
     desc.reconstruction.iterative.iterations = 1;
     desc.reconstruction.iterative.subsets = 1;
     desc.reconstruction.iterative.relaxation = 0.2f;
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     if (!session->initialize(desc)) {
         std::fprintf(stderr, "%s initialize: %s\n", name,
             session->lastErrorMessage());
-        YK::SessionFactory::destroy(session);
+        YK::ReconstructionSessionFactory::destroy(session);
         return false;
     }
     const size_t volN = size_t(kNx) * kNy * kNz;
@@ -212,7 +211,7 @@ bool testIterative(YK::SSystemSpec desc, const char* name) {
             session->lastErrorMessage());
     }
     cudaFree(dSino); cudaFree(dVol);
-    YK::SessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
     return ok;
 }
 
@@ -224,11 +223,11 @@ bool testSessionResetReuse()
     desc.reconstruction.iterative.iterations = 2;
     desc.reconstruction.iterative.subsets = 1;
     desc.reconstruction.iterative.relaxation = 0.2f;
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session || !session->initialize(desc)) {
         if (session) std::fprintf(stderr, "Session reset initialize: %s\n",
             session->lastErrorMessage());
-        YK::SessionFactory::destroy(session);
+        YK::ReconstructionSessionFactory::destroy(session);
         return false;
     }
 
@@ -277,7 +276,7 @@ bool testSessionResetReuse()
     }
     cudaFree(dProjection);
     cudaFree(dVolume);
-    YK::SessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
     return ok;
 }
 
@@ -300,20 +299,18 @@ YK::SSystemSpec makeWfbpDesc()
     d.geometry.helical.sdd_mm = 1000.f;
     d.geometry.helical.start_z_mm = -1.f;
     d.geometry.helical.pitch_mm_per_turn = 2.f;
-    d.reconstruction.wfbp.input_detector =
-        YK::EWfbpInputDetectorSpec::CylindricalArc;
     return d;
 }
 
 bool testReconstruction(const YK::SSystemSpec& desc, int views,
     const char* name, bool host_projection = false)
 {
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     if (!session->initialize(desc)) {
         std::fprintf(stderr, "%s initialize: %s\n", name,
             session->lastErrorMessage());
-        YK::SessionFactory::destroy(session);
+        YK::ReconstructionSessionFactory::destroy(session);
         return false;
     }
 
@@ -352,18 +349,18 @@ bool testReconstruction(const YK::SSystemSpec& desc, int views,
             finiteAndNonzeroVolume(hVolume.data(), volumeN, name);
     cudaFree(dProjection);
     cudaFree(dVolume);
-    YK::SessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
     return ok;
 }
 
 bool testFdkOfflineVsStreaming()
 {
     const auto desc = makeAnalyticDesc(YK::EPipeline::FDK, kAnalyticAngles);
-    auto* offline = YK::SessionFactory::create();
-    auto* streaming = YK::SessionFactory::create();
+    auto* offline = YK::ReconstructionSessionFactory::create();
+    auto* streaming = YK::ReconstructionSessionFactory::create();
     if (!offline || !streaming) {
-        YK::SessionFactory::destroy(offline);
-        YK::SessionFactory::destroy(streaming);
+        YK::ReconstructionSessionFactory::destroy(offline);
+        YK::ReconstructionSessionFactory::destroy(streaming);
         return false;
     }
     bool ok = offline->initialize(desc) && streaming->initialize(desc);
@@ -430,15 +427,15 @@ bool testFdkOfflineVsStreaming()
     }
     cudaFree(d_offline);
     cudaFree(d_streaming);
-    YK::SessionFactory::destroy(offline);
-    YK::SessionFactory::destroy(streaming);
+    YK::ReconstructionSessionFactory::destroy(offline);
+    YK::ReconstructionSessionFactory::destroy(streaming);
     return ok;
 }
 
 #if !YKCBCT_HAS_HELICAL
 bool testWfbpRejected()
 {
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     const bool rejected = !session->initialize(makeWfbpDesc()) &&
         session->lastError() == YK::EApiErrorCode::UnsupportedCombination;
@@ -446,13 +443,13 @@ bool testWfbpRejected()
         std::fprintf(stderr, "wFBP without helical backend: expected explicit rejection, got %s\n",
             session->lastErrorMessage());
     }
-    YK::SessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
     return rejected;
 }
 #endif
 
 bool testFdkPolicies() {
-    auto* session = YK::SessionFactory::create();
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
     auto desc = makeDesc(YK::EPipeline::FDK);
     // Flat FDK 需要至少一整圈的几何；这里只验证初始化策略和明确错误，
@@ -462,35 +459,83 @@ bool testFdkPolicies() {
     const bool xfdkRejected = !session->initialize(
         makeDesc(YK::EPipeline::CFDK)) &&
         session->lastError() == YK::EApiErrorCode::AlgorithmUnderTest;
-    YK::SessionFactory::destroy(session);
-    return fdkRejected && xfdkRejected;
+    auto oldVersion = desc;
+    oldVersion.api_version = 999;
+    const bool versionRejected = !session->initialize(oldVersion) &&
+        session->lastError() == YK::EApiErrorCode::InvalidConfig;
+    auto cylindrical = makeCylDesc(YK::EPipeline::FDK);
+    cylindrical.geometry.circular.total_views = kAnalyticAngles;
+    cylindrical.geometry.circular.views_per_turn = kAnalyticAngles;
+    cylindrical.geometry.cylindrical_detector.curvature_radius_mm = 1000.f;
+    const bool unifiedReady = session->initialize(cylindrical);
+    float placeholder = 0.f;
+    YK::SExecutionRequest partial{};
+    partial.view_count = 1;
+    partial.projection = {&placeholder, YK::EMemoryLocation::Host, 1};
+    partial.volume = {&placeholder, YK::EMemoryLocation::Host, 1};
+    const bool partialRejected = unifiedReady && !session->execute(partial) &&
+        session->lastError() == YK::EApiErrorCode::StreamingStateError;
+    cylindrical.reconstruction.pipeline = YK::EPipeline::FDK;
+    cylindrical.reconstruction.projection_model = static_cast<YK::EProjectionModel>(-1);
+    const bool modelRejected = !session->initialize(cylindrical) &&
+        session->lastError() == YK::EApiErrorCode::InvalidConfig;
+    YK::ReconstructionSessionFactory::destroy(session);
+    return fdkRejected && xfdkRejected && versionRejected &&
+        partialRejected && modelRejected;
 }
 
 bool testOffsetNormalization()
 {
-    // XFDK 和柱面解析 FDK 当前只消费规范采集几何。公共 Session 应复制
-    // 并归零不支持的采集 offset，而不是拒绝整个算法或静默让后端丢失参数。
-    auto* session = YK::SessionFactory::create();
+    // Unsupported physical offsets must fail without changing geometry.
+    auto* session = YK::ReconstructionSessionFactory::create();
     if (!session) return false;
 
     auto xfdk = makeAnalyticDesc(YK::EPipeline::XFDK, kAnalyticAngles);
     xfdk.geometry.circular.source_offset_mm = make_float3(1.f, 0.f, 0.f);
     xfdk.geometry.flat_detector.pose.offset_unv_mm = make_float3(2.f, 3.f, 4.f);
-    const bool xfdkOk = session->initialize(xfdk);
+    const bool xfdkOk = !session->initialize(xfdk) &&
+        session->lastError() == YK::EApiErrorCode::UnsupportedCombination;
 
-    auto cyl = makeCylDesc(YK::EPipeline::CylAnalyticFDK);
+    auto cyl = makeCylDesc(YK::EPipeline::FDK);
     cyl.geometry.circular.total_views = kAnalyticAngles;
     cyl.geometry.circular.views_per_turn = kAnalyticAngles;
     cyl.geometry.cylindrical_detector.curvature_radius_mm = 1000.f;
     cyl.geometry.circular.source_offset_mm = make_float3(0.f, 0.f, 1.f);
     cyl.geometry.cylindrical_detector.pose.offset_unv_mm = make_float3(2.f, 0.f, 0.f);
-    const bool cylOk = session->initialize(cyl);
+    const bool cylOk = !session->initialize(cyl) &&
+        session->lastError() == YK::EApiErrorCode::UnsupportedCombination;
+
+    cyl.geometry.circular.source_offset_mm = make_float3(0.f, 0.f, 0.f);
+    cyl.geometry.cylindrical_detector.pose.offset_unv_mm = make_float3(0.f, 0.f,
+        0.25f * kNv * cyl.geometry.cylindrical_detector.row_size_mm);
+    const bool cylVPositiveOk = testReconstruction(cyl, kAnalyticAngles,
+        "Cyl FDK positive quarter-height V offset", true);
+    cyl.geometry.cylindrical_detector.pose.offset_unv_mm.z *= -1.f;
+    const bool cylVNegativeOk = testReconstruction(cyl, kAnalyticAngles,
+        "Cyl FDK negative quarter-height V offset", true);
+
+    bool cylTiltOk = true;
+    for (int axis = 0; axis < 3; ++axis) {
+        for (float angle : {-0.01f, 0.01f}) {
+            auto tilted = cyl;
+            auto& pose = tilted.geometry.cylindrical_detector.pose;
+            if (axis == 0) pose.tilt_u_rad = angle;
+            if (axis == 1) pose.tilt_v_rad = angle;
+            if (axis == 2) pose.tilt_n_rad = angle;
+            const bool rejected = !session->initialize(tilted) &&
+                session->lastError() == YK::EApiErrorCode::UnsupportedCombination;
+            if (!rejected)
+                std::fprintf(stderr, "Cyl FDK tilt axis=%d angle=%g was not rejected\n",
+                    axis, angle);
+            cylTiltOk = rejected && cylTiltOk;
+        }
+    }
 
     if (!xfdkOk || !cylOk)
         std::fprintf(stderr, "offset normalization initialize failed: %s\n",
             session->lastErrorMessage());
-    YK::SessionFactory::destroy(session);
-    return xfdkOk && cylOk;
+    YK::ReconstructionSessionFactory::destroy(session);
+    return xfdkOk && cylOk && cylVPositiveOk && cylVNegativeOk && cylTiltOk;
 }
 
 }
@@ -525,12 +570,12 @@ int main() {
         kAnalyticAngles, "Flat circular XFDK");
     const bool cylFdk = testReconstruction(
         [] {
-            auto d = makeCylDesc(YK::EPipeline::CylAnalyticFDK);
+            auto d = makeCylDesc(YK::EPipeline::FDK);
             d.geometry.circular.total_views = kAnalyticAngles;
             d.geometry.circular.views_per_turn = kAnalyticAngles;
             d.geometry.cylindrical_detector.curvature_radius_mm = 1000.f;
             return d;
-        }(), kAnalyticAngles, "Cyl circular analytic FDK");
+        }(), kAnalyticAngles, "Cyl circular unified FDK", true);
     const bool flatTigre = testReconstruction(
         makeAnalyticDesc(YK::EPipeline::TigreGradient, kAnalyticAngles),
         kAnalyticAngles, "Flat circular TIGRE gradient");

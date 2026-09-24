@@ -4,7 +4,7 @@
 
 #include <cuda_runtime.h>
 
-#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "common/YkOperatorTypes.hpp"
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 #include "common/YkVecGeo.hpp"
 #include "global/YkCBCTParams.h"
@@ -101,89 +101,6 @@ public:
         all_angles_.resize(geometry.size());
         for (size_t i = 0; i < geometry.size(); ++i)
             all_angles_[i] = geometry[i].angle.x;
-        return true;
-    }
-
-    bool initialize(const SessionDesc& desc)
-    {
-        releaseGeometry_();
-        if (desc.scan.Nu <= 0 || desc.scan.Nv <= 0 || desc.scan.NAng <= 0 ||
-            desc.volume.Nx <= 0 || desc.volume.Ny <= 0 || desc.volume.Nz <= 0)
-            return false;
-
-        base_ = {};
-        base_.scan.Nu = desc.scan.Nu; base_.scan.Nv = desc.scan.Nv;
-        base_.scan.NAng = desc.scan.NAng;
-        base_.scan.totalViews = desc.scan.NAng;
-        base_.scan.du_mm = desc.scan.du_mm; base_.scan.dv_mm = desc.scan.dv_mm;
-        base_.scan.offsetU_mm = desc.scan.offsetU_mm; base_.scan.offsetV_mm = desc.scan.offsetV_mm;
-        base_.scan.sourceOffsetX_mm = desc.scan.sourceOffsetX_mm;
-        base_.scan.sourceOffsetY_mm = desc.scan.sourceOffsetY_mm;
-        base_.scan.sourceOffsetZ_mm = desc.scan.sourceOffsetZ_mm;
-        base_.scan.tiltN_rad = desc.scan.tiltN_rad;
-        base_.scan.tiltU_rad = desc.scan.tiltU_rad;
-        base_.scan.tiltV_rad = desc.scan.tiltV_rad;
-        base_.scan.sid_mm = desc.scan.SOD_mm; base_.scan.sdd_mm = desc.scan.SDD_mm;
-        base_.scan.range_rad = desc.scan.scanRangeRad;
-        base_.scan.start_angle_rad = desc.scan.startAngleRad;
-        base_.scan.short_scan = desc.scan.shortScan; base_.scan.direction = desc.scan.nDirSign;
-        base_.volume.Nx = desc.volume.Nx; base_.volume.Ny = desc.volume.Ny; base_.volume.Nz = desc.volume.Nz;
-        base_.volume.voxelX_mm = desc.volume.voxX_mm; base_.volume.voxelY_mm = desc.volume.voxY_mm;
-        base_.volume.voxelZ_mm = desc.volume.voxZ_mm;
-        base_.volume.centerX_mm = desc.volume.offsetX_mm;
-        base_.volume.centerY_mm = desc.volume.offsetY_mm; base_.volume.centerZ_mm = desc.volume.offsetZ_mm;
-        all_angles_ = desc.angles;
-        all_geometry_ = desc.geometry;
-        if (!all_geometry_.empty() &&
-            static_cast<int>(all_geometry_.size()) != desc.scan.NAng)
-            return false;
-        if (!desc.objectFromScanner.empty() &&
-            desc.objectFromScanner.size() != 1 &&
-            static_cast<int>(desc.objectFromScanner.size()) != desc.scan.NAng)
-            return false;
-        for (const auto& transform : desc.objectFromScanner)
-            if (!transform.isRigid()) return false;
-
-        // 姿态只能作用于明确的逐视图几何。圆轨迹输入先在 Scanner 坐标系
-        // 生成 vector，再统一烘焙到固定 Object 坐标系。
-        if (!desc.objectFromScanner.empty() && all_geometry_.empty()) {
-            if (static_cast<int>(all_angles_.size()) != desc.scan.NAng)
-                return false;
-            SCircularTrajectorySpec trajectory{};
-            trajectory.angles_rad = all_angles_;
-            trajectory.sid_mm = desc.scan.SOD_mm;
-            trajectory.sdd_mm = desc.scan.SDD_mm;
-            trajectory.source_offset_mm = make_float3(
-                desc.scan.sourceOffsetX_mm, desc.scan.sourceOffsetY_mm,
-                desc.scan.sourceOffsetZ_mm);
-            SFlatDetectorSpec detector{};
-            detector.channels = desc.scan.Nu;
-            detector.rows = desc.scan.Nv;
-            detector.channel_size_mm = desc.scan.du_mm;
-            detector.row_size_mm = desc.scan.dv_mm;
-            detector.pose.offset_unv_mm = make_float3(
-                desc.scan.offsetU_mm, 0.f, desc.scan.offsetV_mm);
-            detector.pose.tilt_u_rad = desc.scan.tiltU_rad;
-            detector.pose.tilt_v_rad = desc.scan.tiltV_rad;
-            detector.pose.tilt_n_rad = desc.scan.tiltN_rad;
-            if (!buildProjectionGeometry(trajectory, detector, all_geometry_))
-                return false;
-        }
-        if (!desc.objectFromScanner.empty()) {
-            for (size_t i = 0; i < all_geometry_.size(); ++i) {
-                const SRigidTransform& objectFromScanner =
-                    desc.objectFromScanner.size() == 1
-                    ? desc.objectFromScanner.front()
-                    : desc.objectFromScanner[i];
-                all_geometry_[i] = transformProjectionGeometry(
-                    all_geometry_[i], objectFromScanner);
-            }
-        }
-        if (!all_geometry_.empty()) {
-            all_angles_.resize(all_geometry_.size());
-            for (size_t i = 0; i < all_geometry_.size(); ++i)
-                all_angles_[i] = all_geometry_[i].angle.x;
-        }
         return true;
     }
 

@@ -7,7 +7,7 @@
 #include <global/YkMacro.hpp>
 #include <random>
 #include "FDK/YkFdkPipeline.hpp"
-#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "common/YkOperatorTypes.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"
 #include "global/YkMem3d.hpp"
