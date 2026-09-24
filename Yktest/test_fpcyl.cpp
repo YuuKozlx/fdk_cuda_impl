@@ -27,6 +27,7 @@
 #include "CylFpBp/iter/YkCylPwlsReconstructor.hpp"
 #include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
 #include "FDK/YkFDKVecGeoDerived.hpp"
+#include "FDK/YkFdkPipeline.hpp"
 #include "FP/YkFPGpuContext.hpp"
 #include "FP/kernels/YkFPLaunch.cuh"
 
@@ -568,12 +569,12 @@ int main_fpcyl_cfdk_reconstruction()
     CylFpBp::Config fp_config{};
     fp_config.samples_per_voxel = 2.f;
     CylFpBp::CylForwardOperator fp;
-    CylFpBp::FdkPipeline cfdk;
+    CylFpBp::FdkPipeline flat_fdk;
     bool ok = fp.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, fp_config) &&
         fp.forward(truth_texture, d_projection.data(), stream) &&
-        cfdk.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry,
+        flat_fdk.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry,
             SFilterKernelDesc::RamLak(), stream) &&
-        cfdk.reconstruct(d_projection.data(), d_recon.data()) &&
+        flat_fdk.reconstruct(d_projection.data(), d_recon.data()) &&
         cudaStreamSynchronize(stream) == cudaSuccess;
 
     std::vector<float> reconstruction(volume_count);
@@ -600,17 +601,34 @@ int main_fpcyl_cfdk_reconstruction()
     const double water_mean = water_count ? water_sum / water_count : 0.0;
     const double background_mean = background_count
         ? background_sum / background_count : 0.0;
-    YK_LOGI("[C-FDK] water expected=2.000000e-02 mean={:.6e} bias={:.6e} "
+    YK_LOGI("[Flat-FDK] water expected=2.000000e-02 mean={:.6e} bias={:.6e} "
         "background={:.6e} MAE={:.6e} abs-NRMSE={:.6f} corr={:.6f}",
         water_mean, water_mean - 0.02, background_mean, metrics.mae,
         metrics.absolute_nrmse, metrics.correlation);
+
+    // 保存水模体中心层，便于区分整体数值偏差和结构性变形。
+    if (!reconstruction.empty()) {
+        const auto artifact_dir = std::filesystem::path("out/test-artifacts");
+        std::filesystem::create_directories(artifact_dir);
+        std::vector<float> error(volume_count);
+        for (size_t i = 0; i < volume_count; ++i)
+            error[i] = reconstruction[i] - truth[i];
+        TestImage::writeGrayMontageBmp(
+            artifact_dir / "fpcyl_flat_fdk_water_center.bmp",
+            {{&truth, h.iVX, h.iVY, h.iVZ, z, 1.f, 0.f, 0.1f, false},
+             {&reconstruction, h.iVX, h.iVY, h.iVZ, z, 1.f, 0.f, 0.1f, false},
+             {&error, h.iVX, h.iVY, h.iVZ, z, 1.f, -0.05f, 0.05f, false}},
+            3, 2, 4);
+        YK_LOGI("[Flat-FDK] water artifacts: {}",
+            (artifact_dir / "fpcyl_flat_fdk_water_center.bmp").string());
+    }
 
     // 初始阈值只排除 NaN、零输出和数量级错误；达到材料定量精度前，测试
     // 日志中的绝对值是继续修正滤波核与归一化的依据。
     ok = ok && std::isfinite(water_mean) && water_mean > 0.005 &&
         water_mean < 0.08 && std::fabs(background_mean) < 0.01;
     fp.release();
-    cfdk.release();
+    flat_fdk.release();
     cudaStreamDestroy(stream);
     return ok ? 0 : 1;
 }
@@ -1332,6 +1350,119 @@ int main_fpcyl_wfbp_comparison()
     return ok && image_ok ? 0 : 1;
 }
 
+int main_fpcyl_wfbp_flat_vs_equiangular()
+{
+    SHeliCTParam h = makeComparisonParams();
+    const SReconstructionParams params = toCbct(h);
+    const auto truth = TestPhantom::makeAstraSheppLogan3D(params,
+        22.f, true, 0.02f);
+    const size_t volume_count = static_cast<size_t>(h.iVX) * h.iVY * h.iVZ;
+    const size_t projection_count = static_cast<size_t>(h.iPU) * h.iPV *
+        h.angle_list.size();
+
+    cudaStream_t stream = nullptr;
+    if (cudaStreamCreate(&stream) != cudaSuccess) return 1;
+    Mem::MemoryController memory;
+    auto d_truth = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+    auto d_flat_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    auto d_equi_projection = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    auto d_flat_recon = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+    auto d_equi_recon = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+    auto d_flat_arc = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    if (!d_truth || !d_flat_projection || !d_equi_projection ||
+        !d_flat_recon || !d_equi_recon || !d_flat_arc) {
+        cudaStreamDestroy(stream);
+        return 1;
+    }
+    bool ok = cudaMemcpyAsync(d_truth.data(), truth.data(),
+        volume_count * sizeof(float), cudaMemcpyHostToDevice, stream) == cudaSuccess;
+
+    const auto flat_geometry = TestGeometry::helicalFlat(h);
+    ForwardOperatorAdapter flat_forward;
+    CylFpBp::CylForwardOperator equiangular_forward;
+    CylFpBp::Config cyl_fp_config{};
+    cyl_fp_config.samples_per_voxel = 2.f;
+    auto volume_texture = makeTexture(d_truth.data(), h.iVX, h.iVY, h.iVZ,
+        cudaFilterModeLinear, stream);
+    Helical::Wfbp::Config flat_config{};
+    flat_config.input_detector = Helical::Wfbp::EInputDetector::FlatPanel;
+    Helical::Wfbp::Pipeline flat_wfbp;
+    ok = ok && flat_forward.init(params, flat_geometry, ETask::FP_Joseph,
+            0, stream) &&
+        flat_wfbp.prepare(TestGeometry::wfbpInput(h), TestGeometry::volume(h),
+            flat_config, stream);
+    const float target_angle_step = ok ? flat_wfbp.geometry().fan_angle_step : 0.f;
+    const auto equiangular_geometry = TestGeometry::helicalCyl(h, h.SDD,
+        target_angle_step);
+    ok = ok && flat_forward.run(d_truth.data(), params, d_flat_projection.data(), stream) &&
+        equiangular_forward.prepare(volumeGeometry(h), h.iPU, h.iPV,
+            equiangular_geometry, cyl_fp_config) &&
+        equiangular_forward.forward(volume_texture, d_equi_projection.data(), stream);
+
+    Helical::Wfbp::Config equiangular_config{};
+    equiangular_config.input_detector = Helical::Wfbp::EInputDetector::EquiangularArc;
+    equiangular_config.arc_channel_angle_step_rad = target_angle_step;
+    equiangular_config.arc_principal_channel = 0.5f * (h.iPU - 1);
+    Helical::Wfbp::Pipeline equiangular_wfbp;
+    ok = ok && equiangular_wfbp.prepare(TestGeometry::wfbpInput(h),
+            TestGeometry::volume(h), equiangular_config, stream);
+    Helical::Wfbp::FlatToEquiangularArcProcessor flat_to_arc;
+    ok = ok && flat_to_arc.prepare(flat_wfbp.geometry(), h.du_mm, flat_config) &&
+        flat_to_arc.apply(d_flat_projection.data(), d_flat_arc.data(), stream);
+    if (ok) {
+        ok = flat_wfbp.reconstruct(d_flat_projection.data(), d_flat_recon.data()) &&
+            equiangular_wfbp.reconstruct(d_equi_projection.data(),
+                d_equi_recon.data()) &&
+            cudaStreamSynchronize(stream) == cudaSuccess;
+    }
+
+    std::vector<float> flat_recon(volume_count), equiangular_recon(volume_count);
+    std::vector<float> flat_arc(projection_count), equiangular_projection(projection_count);
+    if (ok) {
+        ok = cudaMemcpy(flat_recon.data(), d_flat_recon.data(),
+                volume_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
+            cudaMemcpy(equiangular_recon.data(), d_equi_recon.data(),
+                volume_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
+            cudaMemcpy(flat_arc.data(), d_flat_arc.data(),
+                projection_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess &&
+            cudaMemcpy(equiangular_projection.data(), d_equi_projection.data(),
+                projection_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess;
+    }
+
+    if (ok) {
+        const Metrics reconstruction_difference = compare(equiangular_recon,
+            flat_recon);
+        const Metrics projection_difference = compare(equiangular_projection,
+            flat_arc);
+        std::printf("[wFBP FlatPanel vs native EquiangularArc] Shepp-Logan, "
+            "R=SDD=%.1f mm, dgamma=%.7f rad\n"
+            "  arc-input projections: corr %.6f NRMSE %.6f MAE %.6e bias %.6e\n"
+            "  reconstructed volumes: corr %.6f NRMSE %.6f MAE %.6e bias %.6e "
+            "fit-NRMSE %.6f\n",
+            h.SDD, equiangular_config.arc_channel_angle_step_rad,
+            projection_difference.correlation, projection_difference.absolute_nrmse,
+            projection_difference.mae, projection_difference.bias,
+            reconstruction_difference.correlation,
+            reconstruction_difference.absolute_nrmse,
+            reconstruction_difference.mae, reconstruction_difference.bias,
+            reconstruction_difference.fitted_nrmse);
+        ok = std::all_of(flat_recon.begin(), flat_recon.end(),
+                [](float value) { return std::isfinite(value); }) &&
+            std::all_of(equiangular_recon.begin(), equiangular_recon.end(),
+                [](float value) { return std::isfinite(value); });
+    }
+
+    flat_wfbp.release();
+    equiangular_wfbp.release();
+    flat_forward.release();
+    equiangular_forward.release();
+    cudaStreamDestroy(stream);
+    return ok ? 0 : 1;
+}
+
 int main_fpcyl_iterative_comparison()
 {
     SHeliCTParam h{};
@@ -1621,6 +1752,7 @@ int main_fpcyl_astra_ellipse_matrix()
     std::vector<float> physical_projection(projection_count);
     std::vector<float> mapped_projection(projection_count);
     std::vector<float> canonical_reference(projection_count);
+    std::vector<float> flat_reference(projection_count);
     if (map_ok) {
         map_ok = cudaMemcpy(physical_projection.data(), d_projection.data(),
                 projection_count * sizeof(float), cudaMemcpyDeviceToHost) ==
@@ -1682,6 +1814,94 @@ int main_fpcyl_astra_ellipse_matrix()
         reference_stats.maximum > 1e-8f;
     ok = ok && map_ok;
 
+    // 对照：将同一份 rebin 后投影直接送入普通平板 FDK。这里把
+    // canonical R=SDD 柱面的局部基向量展开为平板 detector geometry，
+    // 以隔离 rebin 误差与 CylFdkPipeline 自身误差。
+    auto d_flat_fdk = memory.allocateDevice3D<float>(h.iVX, h.iVY, h.iVZ, 0);
+    auto d_flat_reference = memory.allocateDevice3D<float>(h.iPU, h.iPV,
+        static_cast<int>(h.angle_list.size()), 0);
+    std::vector<SConeProjGeomVec> flat_geometry;
+    flat_geometry.reserve(canonical.canonical_geometry.size());
+    for (const auto& cylindrical : canonical.canonical_geometry) {
+        SCylProjectionFrame frame{};
+        if (!deriveCylProjectionFrame(cylindrical, h.iPU, h.iPV, frame)) {
+            map_ok = false;
+            break;
+        }
+        const float du = frame.radius_mm * frame.channelStepRad;
+        const float dv = frame.rowStepMm;
+        const float3 s = make_float3(cylindrical.source.x,
+            cylindrical.source.y, cylindrical.source.z);
+        // 目标平板法向沿 radialUnit；其中心像素射线为 (SDD,0,0)，
+        // 因此用 target principal 保留 detector offset。
+        const float3 c = make_float3(
+            s.x + frame.radialUnit.x * h.SDD,
+            s.y + frame.radialUnit.y * h.SDD,
+            s.z + frame.radialUnit.z * h.SDD);
+        const float3 u = make_float3(frame.tangentUnit.x * du,
+            frame.tangentUnit.y * du, frame.tangentUnit.z * du);
+        const float3 v = make_float3(frame.axisUnit.x * dv,
+            frame.axisUnit.y * dv, frame.axisUnit.z * dv);
+        SConeProjGeomVec flat{};
+        flat.src = make_float4(s.x, s.y, s.z, cylindrical.source.w);
+        const float target_pu = canonical.projection_map.target_principal_u;
+        const float target_pv = canonical.projection_map.target_principal_v;
+        flat.detS = make_float4(c.x - target_pu * u.x - target_pv * v.x,
+            c.y - target_pu * u.y - target_pv * v.y,
+            c.z - target_pu * u.z - target_pv * v.z,
+            cylindrical.detectorCenter.w);
+        flat.detU = make_float4(u.x, u.y, u.z, cylindrical.detectorU.w);
+        flat.detV = make_float4(v.x, v.y, v.z, cylindrical.detectorV.w);
+        flat.angle = cylindrical.viewParameters;
+        flat_geometry.push_back(flat);
+    }
+    bool flat_forward_ok = false;
+    if (map_ok && flat_geometry.size() == canonical.canonical_geometry.size()) {
+        Fp::FpGpuContext flat_context;
+        flat_context.init(d_truth.data(), vg, flat_geometry, 0,
+            cudaFilterModeLinear, stream);
+        YK_CUDA_CHECK(cudaMemsetAsync(d_flat_reference.data(), 0,
+            projection_count * sizeof(float), stream));
+        fp_joseph_launch(flat_context.volTex.tex, flat_context.geo.h_views_vec(),
+            flat_context.geo.d_views_vox(), d_flat_reference.data(), vg,
+            static_cast<int>(flat_geometry.size()), h.iPU, h.iPV, false,
+            stream, Fp::FpStepSuperSample::x1);
+        flat_forward_ok = cudaStreamSynchronize(stream) == cudaSuccess;
+    }
+    if (flat_forward_ok) {
+        cudaMemcpy(flat_reference.data(), d_flat_reference.data(),
+            projection_count * sizeof(float), cudaMemcpyDeviceToHost);
+        const Metrics flat_metrics = compare(mapped_projection, flat_reference);
+        YK_LOGI("[CylEllipse:map-flat-forward] corr={:.6f} NRMSE={:.6f} "
+            "MAE={:.6e} bias={:.6e}", flat_metrics.correlation,
+            flat_metrics.absolute_nrmse, flat_metrics.mae, flat_metrics.bias);
+    } else {
+        map_ok = false;
+    }
+    bool flat_fdk_ok = map_ok && flat_geometry.size() == canonical.canonical_geometry.size();
+    std::vector<float> flat_fdk_reconstruction(volume_count, 0.f);
+    if (flat_fdk_ok) {
+        SReconstructionParams flat_params = toCbct(h);
+        flat_params.reconstruction.filter = SFilterKernelDesc::RamLak();
+        FdkPipeline flat_fdk;
+        flat_fdk_ok = flat_fdk.prepareWithGeometry(flat_params, flat_geometry,
+            64, stream) &&
+            flat_fdk.enqueueBatch({d_mapped_projection.data(), nullptr,
+                nullptr, static_cast<int>(flat_geometry.size())},
+                d_flat_fdk.data(), true, nullptr);
+        if (flat_fdk_ok) flat_fdk_ok = cudaStreamSynchronize(stream) == cudaSuccess;
+        if (flat_fdk_ok) flat_fdk_ok = cudaMemcpy(flat_fdk_reconstruction.data(),
+            d_flat_fdk.data(), volume_count * sizeof(float),
+            cudaMemcpyDeviceToHost) == cudaSuccess;
+        flat_fdk.release();
+    }
+    const Metrics flat_fdk_metrics = compare(truth, flat_fdk_reconstruction);
+    YK_LOGI("[CylEllipse:flat-fdk-reference] corr={:.6f} NRMSE={:.6f} "
+        "MAE={:.6e} bias={:.6e} {}", flat_fdk_metrics.correlation,
+        flat_fdk_metrics.absolute_nrmse, flat_fdk_metrics.mae,
+        flat_fdk_metrics.bias, flat_fdk_ok ? "PASS" : "FAIL");
+    ok = ok && flat_fdk_ok;
+
     const float projection_window_max = std::max({physical_stats.maximum,
         mapped_stats.maximum, reference_stats.maximum, 1e-6f});
     const std::vector<TestImage::GrayPanel> projection_panels = {
@@ -1738,8 +1958,9 @@ int main_fpcyl_astra_ellipse_matrix()
 
     std::vector<std::vector<float>> images;
     std::vector<TestImage::GrayPanel> panels;
-    images.reserve(std::size(cases) + 2);
+    images.reserve(std::size(cases) + 3);
     images.push_back(truth);
+    images.push_back(flat_fdk_reconstruction);
     for (const auto& test : cases) {
         YK_CUDA_CHECK(cudaMemsetAsync(d_reconstruction.data(), 0,
             volume_count * sizeof(float), stream));
@@ -1829,7 +2050,7 @@ int main_fpcyl_astra_ellipse_matrix()
     // 绝对量级偏差保留在 NRMSE/MAE/bias 中，后续归一化修正不能被拟合
     // 比例或相关系数掩盖。
     analytic_ok = analytic_ok && analytic_finite && analytic_maximum > 1e-8f;
-    YK_LOGI("[CylEllipse:analytic-cyl-fdk] physical-R={:.1f} mapped-R={:.1f} "
+    YK_LOGI("[CylEllipse:cyl-map-flat-fdk] physical-R={:.1f} mapped-R={:.1f} "
         "corr={:.6f} NRMSE={:.6f} MAE={:.6e} bias={:.6e} time={:.3f} ms {}",
         physical_radius, h.SDD, analytic_metrics.correlation,
         analytic_metrics.absolute_nrmse, analytic_metrics.mae,
@@ -1843,7 +2064,7 @@ int main_fpcyl_astra_ellipse_matrix()
     const auto output = std::filesystem::absolute(
         "out/test-artifacts/fpcyl_astra_ellipse_matrix.bmp");
     std::filesystem::create_directories(output.parent_path());
-    // truth + 8 个迭代组合 + 1 个解析结果，共 10 个 panel。
+    // truth + flat FDK 对照 + 8 个迭代组合 + 1 个解析结果。
     ok = TestImage::writeGrayMontageBmp(output, panels, 5, 8, 4) && ok;
     YK_LOGI("[CylEllipse] montage: {}", output.string());
     cudaStreamDestroy(stream);

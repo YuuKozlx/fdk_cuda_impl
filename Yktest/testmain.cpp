@@ -67,6 +67,7 @@ int main_fpcyl_iterative_comparison();
 int main_fpcyl_astra_ellipse_matrix();
 int main_fpcyl_pwls_static_helical();
 int main_fpcyl_wfbp_comparison();
+int main_fpcyl_wfbp_flat_vs_equiangular();
 #endif
 
 namespace {
@@ -188,6 +189,8 @@ namespace {
         TEST_INT("heli/cyl-pwls-static-helical", "heli", false,
             main_fpcyl_pwls_static_helical),
         TEST_INT("fpcyl/wfbp-compare", "fpcyl", false, main_fpcyl_wfbp_comparison),
+        TEST_INT("fpcyl/wfbp-flat-vs-equiangular", "fpcyl", false,
+            main_fpcyl_wfbp_flat_vs_equiangular),
     #endif
     };
 
