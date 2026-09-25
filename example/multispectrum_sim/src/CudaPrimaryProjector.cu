@@ -140,24 +140,34 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         float du = ((float)u0 - .5f*(g.nu-1) + uniform(base+3)-.5f)*g.pu;
         float dv = ((float)v0 - .5f*(g.nv-1) + uniform(base+4)-.5f)*g.pv;
         float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
+        const float3 nominal_naxis = make_float3(-ca, -sa, 0.f);
         float3 source = make_float3((g.sid+fsu)*ca + g.source_x*ca - g.source_y*sa,
             (g.sid+fsu)*sa + g.source_x*sa + g.source_y*ca, z+fsv+g.source_z);
         const float center_u = du + g.offset_u;
         const float center_v = dv + g.offset_v;
-        // For a flat detector, SDD is the source-to-detector distance.
-        // The detector distance from isocenter is SDD - SID, but this point
-        // is constructed from the source, so the full SDD is required.
-        // Cylindrical geometry uses SDD as its curvature radius and is
-        // handled separately below.
-        const float detector_distance = g.sdd;
-        float3 detector_center = add3(add3(add3(source, scale3(naxis, detector_distance + g.offset_n)), scale3(uaxis, center_u)), scale3(vaxis, center_v));
+        // Keep the detector fixed in the scanner frame. Source offsets and
+        // focal-spot samples affect only the source; the panel starts at the
+        // isocenter and is SDD-SID away from it.
+        const float detector_distance = g.sdd - g.sid;
+        const float3 isocenter = make_float3(0.f, 0.f, z);
+        const float3 detector_principal = add3(isocenter,
+            scale3(nominal_naxis, detector_distance));
+        float3 detector_center = add3(add3(add3(detector_principal,
+            scale3(naxis, g.offset_n)),
+            scale3(uaxis, center_u)), scale3(vaxis, center_v));
         float3 det;
         if (g.cylindrical) {
             const float gamma = center_u / g.sdd;
-            // Positive detector U follows the library tangent direction.
-            // The previous plus sign mirrored U on the cylindrical surface.
-            det = make_float3(source.x - g.sdd*cosf(frame_angle - gamma),
-                source.y - g.sdd*sinf(frame_angle - gamma), z + center_v);
+            // Match the DLL cylindrical builder: detector_principal is
+            // SDD-SID from isocenter, offset_n moves the cylindrical surface
+            // along its normal, offset_u selects an arc position, and
+            // offset_v moves along the detector axis.
+            const float3 cylinder_center = add3(detector_principal,
+                scale3(naxis, g.offset_n - g.sdd));
+            const float3 radial = add3(scale3(naxis, cosf(gamma)),
+                scale3(uaxis, sinf(gamma)));
+            det = add3(add3(cylinder_center, scale3(radial, g.sdd)),
+                scale3(vaxis, center_v));
         } else {
             det = detector_center;
         }
@@ -206,6 +216,7 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
         const float fsu = (uniform(base + 3) - .5f) * g.fu;
         const float fsv = (uniform(base + 4) - .5f) * g.fv;
         float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
+        const float3 nominal_naxis = make_float3(-ca, -sa, 0.f);
         const float3 source = make_float3((g.sid+fsu)*ca + g.source_x*ca - g.source_y*sa,
             (g.sid+fsu)*sa + g.source_x*sa + g.source_y*ca, z+fsv+g.source_z);
         const float center_u = detector_u + g.offset_u;
@@ -213,14 +224,24 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
         float3 det;
         if (g.cylindrical) {
             const float gamma = center_u / g.sdd;
-            // Positive detector U follows the library tangent direction.
-            det = make_float3(source.x - g.sdd*cosf(frame_angle - gamma),
-                source.y - g.sdd*sinf(frame_angle - gamma), z + center_v);
+            const float detector_distance = g.sdd - g.sid;
+            const float3 isocenter = make_float3(0.f, 0.f, z);
+            const float3 detector_principal = add3(isocenter,
+                scale3(nominal_naxis, detector_distance));
+            const float3 cylinder_center = add3(detector_principal,
+                scale3(naxis, g.offset_n - g.sdd));
+            const float3 radial = add3(scale3(naxis, cosf(gamma)),
+                scale3(uaxis, sinf(gamma)));
+            det = add3(add3(cylinder_center, scale3(radial, g.sdd)),
+                scale3(vaxis, center_v));
         } else {
-            // This point is constructed from the source; use the full
-            // source-to-detector distance SDD.
-            const float detector_distance = g.sdd;
-            det = add3(add3(add3(source, scale3(naxis, detector_distance + g.offset_n)), scale3(uaxis, center_u)), scale3(vaxis, center_v));
+            const float detector_distance = g.sdd - g.sid;
+            const float3 isocenter = make_float3(0.f, 0.f, z);
+            const float3 detector_principal = add3(isocenter,
+                scale3(nominal_naxis, detector_distance));
+            det = add3(add3(add3(detector_principal,
+                scale3(naxis, g.offset_n)),
+                scale3(uaxis, center_u)), scale3(vaxis, center_v));
         }
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
         const float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z);
