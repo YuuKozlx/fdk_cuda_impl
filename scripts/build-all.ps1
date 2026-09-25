@@ -28,7 +28,7 @@ param(
 
     # ----------------------------- 功能开关 -------------------------------
     [bool]$BuildHelical = $true,
-    [bool]$BuildCvp = $true,
+    [bool]$BuildCvp = $false,
     [bool]$BuildManualTests = $true,
     [bool]$BuildUnitTests = $true,
     [bool]$BuildDllTest = $true,

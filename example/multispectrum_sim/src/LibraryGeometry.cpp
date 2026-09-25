@@ -12,7 +12,7 @@ namespace yk::spectral {
     }
 
     YK::SSystemSpec makeLibrarySystem(const SimulationConfig& config,
-        YK::EPipeline pipeline, YK::ETask forward_projector, YK::EFdkFilter filter,
+        YK::EPipeline pipeline, YK::EProjectionModel projection_model, YK::EFdkFilter filter,
         GeometryUse use)
     {
         const auto& g = config.geometry.parameters;
@@ -116,23 +116,13 @@ namespace yk::spectral {
             static_cast<float>(voxel_x), static_cast<float>(voxel_y),
             static_cast<float>(voxel_z), volume_offset };
         system.reconstruction.pipeline = pipeline;
-        system.reconstruction.forward_projector = forward_projector;
-        system.reconstruction.back_projector = YK::ETask::BP_Joseph_v3;
+        system.reconstruction.projection_model = projection_model;
         const auto& iterative = config.reconstruction.iterative;
-        if (iterative.forward_projector == "siddon")
-            system.reconstruction.forward_projector = YK::ETask::FP_Siddon;
-        if (iterative.back_projector == "joseph")
-            system.reconstruction.back_projector = YK::ETask::BP_Joseph;
-        else if (iterative.back_projector == "siddon")
-            system.reconstruction.back_projector = YK::ETask::BP_Siddon_RayDriven;
-        else if (iterative.back_projector == "siddon_v2")
-            system.reconstruction.back_projector = YK::ETask::BP_Siddon_VoxDriven_v2;
-        else if (iterative.back_projector == "siddon_v3")
-            system.reconstruction.back_projector = YK::ETask::BP_Siddon_VoxDriven_v3;
-        else if (iterative.back_projector == "fdk")
-            system.reconstruction.back_projector = YK::ETask::BP_FDK;
-        else if (iterative.back_projector == "fdk_matched")
-            system.reconstruction.back_projector = YK::ETask::BP_FDK_matched;
+        if (use == GeometryUse::Reconstruction && config.reconstruction.type == "iterative") {
+            const bool siddon = iterative.projection_model == "siddon";
+            system.reconstruction.projection_model = siddon
+                ? YK::EProjectionModel::Siddon : YK::EProjectionModel::Joseph;
+        }
         system.reconstruction.iterative.iterations = iterative.iterations;
         system.reconstruction.iterative.relaxation = static_cast<float>(iterative.relaxation);
         system.reconstruction.iterative.subsets = iterative.subsets;

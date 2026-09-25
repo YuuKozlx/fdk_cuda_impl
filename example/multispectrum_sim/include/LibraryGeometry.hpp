@@ -14,7 +14,7 @@ enum class GeometryUse {
 // 正投和重建必须调用同一个 builder，避免 SID/SDD、offset 或体素中心
 // 在两个路径中各自解释而产生不一致。
 YK::SSystemSpec makeLibrarySystem(const SimulationConfig& config,
-    YK::EPipeline pipeline, YK::ETask forward_projector = YK::ETask::FP_Joseph,
+    YK::EPipeline pipeline, YK::EProjectionModel projection_model = YK::EProjectionModel::Joseph,
     YK::EFdkFilter filter = YK::EFdkFilter::RamLak,
     GeometryUse use = GeometryUse::PhantomProjection);
 

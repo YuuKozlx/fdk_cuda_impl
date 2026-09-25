@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "global/YkGlobals.h"
-#include "YKCBCT/interface/YkTaskTypes.hpp"
+#include "common/YkOperatorTypes.hpp"
 #include <cassert>
 #include <stdexcept>
 

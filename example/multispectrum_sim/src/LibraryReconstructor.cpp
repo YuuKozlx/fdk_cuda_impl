@@ -148,19 +148,20 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         const std::string& pipeline_name = analytic ? config.reconstruction.analytic.pipeline : config.reconstruction.iterative.algorithm;
         const bool fdk = pipeline_name == "fdk";
         const bool wfbp = pipeline_name == "wfbp";
+        const bool cyl_fdk = fdk && config.geometry.kind == GeometryKind::CylCbct;
         const bool iterative = !analytic;
         const auto pipeline = parsePipeline(pipeline_name);
         check(fdk || wfbp || iterative, "不支持的 DLL 重建管线");
-        check(!fdk || config.geometry.kind == GeometryKind::FlatCbct,
-            "DLL FDK 示例只放行 flat_cbct");
+        check(!fdk || config.geometry.kind == GeometryKind::FlatCbct || cyl_fdk,
+            "DLL FDK requires a circular Flat or Cyl acquisition");
+        check(!cyl_fdk || config.geometry.kind == GeometryKind::CylCbct,
+            "DLL cyl_fdk 只放行 cyl_cbct");
         check(!wfbp || config.geometry.kind == GeometryKind::CylHelical,
             "DLL wFBP 当前只放行 cyl_helical");
         auto system = makeLibrarySystem(config, pipeline,
-            YK::ETask::FP_Joseph, parseFilter(config.reconstruction.analytic.filter),
+            YK::EProjectionModel::Joseph, parseFilter(config.reconstruction.analytic.filter),
             GeometryUse::Reconstruction);
         if (wfbp) {
-            system.reconstruction.wfbp.input_detector =
-                YK::EWfbpInputDetectorSpec::CylindricalArc;
             system.reconstruction.wfbp.filter_cutoff = static_cast<float>(config.reconstruction.analytic.wfbp_cutoff);
             system.reconstruction.wfbp.filter_apodization = static_cast<float>(config.reconstruction.analytic.wfbp_apodization);
         }
@@ -182,7 +183,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         check(initialized, std::string("YKCBCT 初始化失败: ") + session->lastErrorMessage());
 
         std::vector<float> volume(volume_elements, 0.f);
-        if (fdk) {
+        if (fdk && !cyl_fdk) {
             std::vector<float> chunk;
             const int chunk_views = std::min(g.views,
                 std::max(1, config.reconstruction.analytic.chunk_views));
@@ -203,7 +204,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 check(session->execute(request), std::string(
                     "YKCBCT FDK 执行失败: ") + session->lastErrorMessage());
             }
-        } else if (wfbp) {
+        } else if (wfbp || cyl_fdk) {
             // 全量 Host 输入交给 DLL；显存由 Session 的统一分配器管理。
             std::vector<float> projection(projection_elements);
             input.read(reinterpret_cast<char*>(projection.data()),
@@ -216,7 +217,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 volume.size()};
             request.view_count = g.views;
             const bool reconstructed = session->execute(request);
-            check(reconstructed, std::string("YKCBCT wFBP 执行失败: ") + session->lastErrorMessage());
+            check(reconstructed, std::string("YKCBCT " + pipeline_name + " 执行失败: ") + session->lastErrorMessage());
         } else {
             // DLL 迭代后端要求 Device 上的完整投影和体缓冲，且一次提交全部视图。
             std::vector<float> projection(projection_elements);
