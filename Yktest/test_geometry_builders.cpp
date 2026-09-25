@@ -30,6 +30,28 @@ int main_geometry_builder_four_modes()
         !buildProjectionGeometry(helical, cyl, helical_cyl)) return 1;
     if (static_flat.size() != angles.size() || helical_flat.size() != angles.size() ||
         static_cyl.size() != angles.size() || helical_cyl.size() != angles.size()) return 1;
+    const auto right_handed_toward_source = [](const float4& source,
+        const float4& detector, const float4& u, const float4& v) {
+        const float3 n = make_float3(u.y * v.z - u.z * v.y,
+            u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x);
+        const float3 to_source = make_float3(source.x - detector.x,
+            source.y - detector.y, source.z - detector.z);
+        return n.x * to_source.x + n.y * to_source.y + n.z * to_source.z > 0.f;
+    };
+    const auto& flat0 = static_flat.front();
+    const float flat_center_u = 0.5f * (flat.channels - 1);
+    const float flat_center_v = 0.5f * (flat.rows - 1);
+    const float4 flat_center = make_float4(
+        flat0.detS.x + flat_center_u * flat0.detU.x + flat_center_v * flat0.detV.x,
+        flat0.detS.y + flat_center_u * flat0.detU.y + flat_center_v * flat0.detV.y,
+        flat0.detS.z + flat_center_u * flat0.detU.z + flat_center_v * flat0.detV.z,
+        0.f);
+    if (!right_handed_toward_source(flat0.src, flat_center,
+            flat0.detU, flat0.detV) ||
+        !right_handed_toward_source(static_cyl.front().source,
+            static_cyl.front().detectorCenter, static_cyl.front().detectorU,
+            static_cyl.front().detectorV))
+        return 1;
     if (std::fabs(static_flat.front().src.z - static_flat.back().src.z) > 1e-5f ||
         std::fabs(static_cyl.front().source.z - static_cyl.back().source.z) > 1e-5f)
         return 1;

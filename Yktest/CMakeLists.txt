@@ -9,7 +9,6 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_filter_validation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_forward_projectors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fp_volume_pose.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_detector_coordinate_convention.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_geometry_builders.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/example_system_reconstruction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cuda/YkTextureTestKernels.cu

@@ -57,10 +57,10 @@ inline void detectorAxes(const SScannerViewFrame& frame,
     v = rotateAxisRadians(v, n, pose.tilt_n_rad);
     u = normalized3(u);
     v = normalized3(v);
-    n = normalized3(cross3(v, u));
-    const float3 source_to_detector = subtract3(frame.detector_principal,
-        frame.source);
-    if (dot3(n, source_to_detector) < 0.f) n = scale3(n, -1.f);
+    n = normalized3(cross3(u, v));
+    const float3 detector_to_source = subtract3(frame.source,
+        frame.detector_principal);
+    if (dot3(n, detector_to_source) < 0.f) n = scale3(n, -1.f);
 }
 
 inline float4 point4(const float3& value)
@@ -128,10 +128,10 @@ inline bool buildCylProjectionGeometry(
         detectorAxes(frames[i], detector.pose, u, v, n);
         const float3 surface_principal = add3(frames[i].detector_principal,
             scale3(n, detector.pose.offset_unv_mm.y));
-        const float3 cylinder_center = subtract3(surface_principal,
+        const float3 cylinder_center = add3(surface_principal,
             scale3(n, detector.curvature_radius_mm));
-        const float3 center_radial = add3(scale3(n, cosine), scale3(u, sine));
-        const float3 center_tangent = add3(scale3(n, -sine), scale3(u, cosine));
+        const float3 center_radial = add3(scale3(n, -cosine), scale3(u, sine));
+        const float3 center_tangent = add3(scale3(n, sine), scale3(u, cosine));
         const float3 center = add3(add3(cylinder_center,
             scale3(center_radial, detector.curvature_radius_mm)),
             scale3(v, detector.pose.offset_unv_mm.z));

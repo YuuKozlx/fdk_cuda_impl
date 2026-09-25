@@ -60,6 +60,8 @@ struct SRegularHelicalScanSpec {
 // 探测器相对标称主点的局部姿态。offset 分量依次沿 U、表面法向 N、V；
 // tilt 全部使用弧度，并依次绕 U、V、N 轴施加。
 struct SDetectorPoseSpec {
+    // Right-handed detector-local coordinates: U x V = N. N points from the
+    // detector toward the source; offsets and rotations follow these axes.
     float3 offset_unv_mm = make_float3(0.f, 0.f, 0.f);
     float tilt_u_rad = 0.f;
     float tilt_v_rad = 0.f;
@@ -118,7 +120,7 @@ struct SScannerViewFrame {
     float3 detector_principal{};
     float3 tangent_u{};
     float3 axis_v{};
-    float3 radial_n{};
+    float3 radial_n{}; // U x V, pointing from detector toward source.
     float angle_rad = 0.f;
 };
 

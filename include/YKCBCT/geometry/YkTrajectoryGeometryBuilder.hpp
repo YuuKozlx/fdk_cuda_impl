@@ -61,7 +61,7 @@ inline bool buildScannerViewFramesImpl(const Trajectory& trajectory,
         frames[i] = {shifted(source_local), shifted(detector_local),
             rotateZRadians(make_float3(1.f, 0.f, 0.f), angle),
             make_float3(0.f, 0.f, 1.f),
-            rotateZRadians(make_float3(0.f, 1.f, 0.f), angle), angle};
+            rotateZRadians(make_float3(0.f, -1.f, 0.f), angle), angle};
     }
     return true;
 }

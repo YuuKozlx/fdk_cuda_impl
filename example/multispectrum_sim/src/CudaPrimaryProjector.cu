@@ -28,7 +28,7 @@ __device__ float3 rotateAxis(float3 value, float3 axis, float angle) {
 }
 __device__ void detectorFrame(DeviceGeometry g, float angle, float3& u, float3& v, float3& n) {
     const float ca=cosf(angle), sa=sinf(angle);
-    u=make_float3(-sa,ca,0.f); v=make_float3(0.f,0.f,1.f); n=make_float3(-ca,-sa,0.f);
+    u=make_float3(-sa,ca,0.f); v=make_float3(0.f,0.f,1.f); n=make_float3(ca,sa,0.f);
     v=rotateAxis(v,u,g.tilt_u); n=rotateAxis(n,u,g.tilt_u);
     u=rotateAxis(u,v,g.tilt_v); n=rotateAxis(n,v,g.tilt_v);
     u=rotateAxis(u,n,g.tilt_n); v=rotateAxis(v,n,g.tilt_n);
@@ -140,7 +140,7 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         float du = ((float)u0 - .5f*(g.nu-1) + uniform(base+3)-.5f)*g.pu;
         float dv = ((float)v0 - .5f*(g.nv-1) + uniform(base+4)-.5f)*g.pv;
         float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
-        const float3 nominal_naxis = make_float3(-ca, -sa, 0.f);
+        const float3 nominal_naxis = make_float3(ca, sa, 0.f);
         float3 source = make_float3((g.sid+fsu)*ca + g.source_x*ca - g.source_y*sa,
             (g.sid+fsu)*sa + g.source_x*sa + g.source_y*ca, z+fsv+g.source_z);
         const float center_u = du + g.offset_u;
@@ -151,7 +151,7 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         const float detector_distance = g.sdd - g.sid;
         const float3 isocenter = make_float3(0.f, 0.f, z);
         const float3 detector_principal = add3(isocenter,
-            scale3(nominal_naxis, detector_distance));
+            scale3(nominal_naxis, -detector_distance));
         float3 detector_center = add3(add3(add3(detector_principal,
             scale3(naxis, g.offset_n)),
             scale3(uaxis, center_u)), scale3(vaxis, center_v));
@@ -163,8 +163,8 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
             // along its normal, offset_u selects an arc position, and
             // offset_v moves along the detector axis.
             const float3 cylinder_center = add3(detector_principal,
-                scale3(naxis, g.offset_n - g.sdd));
-            const float3 radial = add3(scale3(naxis, cosf(gamma)),
+                scale3(naxis, g.offset_n + g.sdd));
+            const float3 radial = add3(scale3(naxis, -cosf(gamma)),
                 scale3(uaxis, sinf(gamma)));
             det = add3(add3(cylinder_center, scale3(radial, g.sdd)),
                 scale3(vaxis, center_v));
@@ -216,7 +216,7 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
         const float fsu = (uniform(base + 3) - .5f) * g.fu;
         const float fsv = (uniform(base + 4) - .5f) * g.fv;
         float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
-        const float3 nominal_naxis = make_float3(-ca, -sa, 0.f);
+        const float3 nominal_naxis = make_float3(ca, sa, 0.f);
         const float3 source = make_float3((g.sid+fsu)*ca + g.source_x*ca - g.source_y*sa,
             (g.sid+fsu)*sa + g.source_x*sa + g.source_y*ca, z+fsv+g.source_z);
         const float center_u = detector_u + g.offset_u;
@@ -227,10 +227,10 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
             const float detector_distance = g.sdd - g.sid;
             const float3 isocenter = make_float3(0.f, 0.f, z);
             const float3 detector_principal = add3(isocenter,
-                scale3(nominal_naxis, detector_distance));
+                scale3(nominal_naxis, -detector_distance));
             const float3 cylinder_center = add3(detector_principal,
-                scale3(naxis, g.offset_n - g.sdd));
-            const float3 radial = add3(scale3(naxis, cosf(gamma)),
+                scale3(naxis, g.offset_n + g.sdd));
+            const float3 radial = add3(scale3(naxis, -cosf(gamma)),
                 scale3(uaxis, sinf(gamma)));
             det = add3(add3(cylinder_center, scale3(radial, g.sdd)),
                 scale3(vaxis, center_v));
@@ -238,7 +238,7 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
             const float detector_distance = g.sdd - g.sid;
             const float3 isocenter = make_float3(0.f, 0.f, z);
             const float3 detector_principal = add3(isocenter,
-                scale3(nominal_naxis, detector_distance));
+                scale3(nominal_naxis, -detector_distance));
             det = add3(add3(add3(detector_principal,
                 scale3(naxis, g.offset_n)),
                 scale3(uaxis, center_u)), scale3(vaxis, center_v));
