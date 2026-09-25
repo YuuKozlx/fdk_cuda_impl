@@ -100,8 +100,11 @@ namespace yk::spectral {
                 rc.iterations = (*i)["iterations"].value_or(10);
                 rc.relaxation = (*i)["relaxation"].value_or(1.0);
                 rc.subsets = (*i)["subsets"].value_or(1);
-                rc.forward_projector = (*i)["forward_projector"].value_or(std::string("joseph"));
-                rc.back_projector = (*i)["back_projector"].value_or(std::string("joseph_v3"));
+                if ((*i).contains("forward_projector") || (*i).contains("back_projector"))
+                    throw std::runtime_error("Use iterative.projection_model; separate FP/BP selectors have been removed");
+                rc.projection_model = (*i)["projection_model"].value_or(std::string("joseph"));
+                if (rc.projection_model != "joseph" && rc.projection_model != "siddon")
+                    throw std::runtime_error("projection_model supports joseph/siddon");
                 rc.tv_iterations = (*i)["tv_iterations"].value_or(20);
                 rc.tv_alpha = (*i)["tv_alpha"].value_or(0.002);
                 rc.tv_alpha_reduction = (*i)["tv_alpha_reduction"].value_or(0.95);
@@ -127,11 +130,6 @@ namespace yk::spectral {
                     !std::isfinite(rc.tv_alpha_reduction) || rc.tv_alpha_reduction <= 0)) ||
                     !std::isfinite(rc.maximum_update_ratio) || rc.maximum_update_ratio <= 0)
                     throw std::runtime_error("iterative 参数必须为正数");
-                if (rc.forward_projector != "joseph" && rc.forward_projector != "siddon")
-                    throw std::runtime_error("iterative.forward_projector 仅支持 joseph/siddon");
-                if (rc.back_projector != "joseph_v3" && rc.back_projector != "joseph" &&
-                    rc.back_projector != "siddon" && rc.back_projector != "siddon_v2" && rc.back_projector != "siddon_v3")
-                    throw std::runtime_error("iterative.back_projector 不支持该值");
             }
             const auto output_tag = c.reconstruction.type == "iterative"
                 ? c.reconstruction.iterative.algorithm : c.reconstruction.analytic.pipeline;
@@ -160,7 +158,10 @@ namespace yk::spectral {
             c.geometry.parameters.source_offset_x_mm = real("source_offset_x_mm", 0.0); c.geometry.parameters.source_offset_y_mm = real("source_offset_y_mm", 0.0); c.geometry.parameters.source_offset_z_mm = real("source_offset_z_mm", 0.0); c.geometry.parameters.start_angle_rad = real("start_angle_rad", 0.0); c.geometry.parameters.pitch_mm_per_turn = real("pitch_mm_per_turn", 0.0); c.geometry.parameters.start_z_mm = real("start_z_mm", 0.0);
             c.geometry.parameters.voxel_x_mm = real("voxel_x_mm", 1.0); c.geometry.parameters.voxel_y_mm = real("voxel_y_mm", 1.0); c.geometry.parameters.voxel_z_mm = real("voxel_z_mm", 1.0); c.geometry.parameters.volume_x = integer("volume_x", 0); c.geometry.parameters.volume_y = integer("volume_y", 0); c.geometry.parameters.volume_z = integer("volume_z", 0);
             c.geometry.parameters.reconstruction_volume_x = integer("reconstruction_volume_x", c.geometry.parameters.volume_x); c.geometry.parameters.reconstruction_volume_y = integer("reconstruction_volume_y", c.geometry.parameters.volume_y); c.geometry.parameters.reconstruction_volume_z = integer("reconstruction_volume_z", c.geometry.parameters.volume_z); c.geometry.parameters.reconstruction_voxel_x_mm = real("reconstruction_voxel_x_mm", c.geometry.parameters.voxel_x_mm); c.geometry.parameters.reconstruction_voxel_y_mm = real("reconstruction_voxel_y_mm", c.geometry.parameters.voxel_y_mm); c.geometry.parameters.reconstruction_voxel_z_mm = real("reconstruction_voxel_z_mm", c.geometry.parameters.voxel_z_mm);
-            c.geometry.parameters.phantom_offset_x_mm = real("phantom_offset_x_mm", 0.0); c.geometry.parameters.phantom_offset_y_mm = real("phantom_offset_y_mm", 0.0); c.geometry.parameters.phantom_offset_z_mm = real("phantom_offset_z_mm", 0.0); c.geometry.parameters.reconstruction_offset_x_mm = real("reconstruction_offset_x_mm", 0.0); c.geometry.parameters.reconstruction_offset_y_mm = real("reconstruction_offset_y_mm", 0.0); c.geometry.parameters.reconstruction_offset_z_mm = real("reconstruction_offset_z_mm", 0.0);
+            c.geometry.parameters.phantom_offset_x_mm = real("phantom_offset_x_mm", 0.0); c.geometry.parameters.phantom_offset_y_mm = real("phantom_offset_y_mm", 0.0); c.geometry.parameters.phantom_offset_z_mm = real("phantom_offset_z_mm", 0.0);
+            c.geometry.parameters.phantom_rotation_x_rad = real("phantom_rotation_x_rad", 0.0); c.geometry.parameters.phantom_rotation_y_rad = real("phantom_rotation_y_rad", 0.0); c.geometry.parameters.phantom_rotation_z_rad = real("phantom_rotation_z_rad", 0.0);
+            if (!std::isfinite(c.geometry.parameters.phantom_rotation_x_rad) || !std::isfinite(c.geometry.parameters.phantom_rotation_y_rad) || !std::isfinite(c.geometry.parameters.phantom_rotation_z_rad)) throw std::runtime_error("geometry.phantom_rotation_*_rad 必须为有限数值");
+            c.geometry.parameters.reconstruction_offset_x_mm = real("reconstruction_offset_x_mm", 0.0); c.geometry.parameters.reconstruction_offset_y_mm = real("reconstruction_offset_y_mm", 0.0); c.geometry.parameters.reconstruction_offset_z_mm = real("reconstruction_offset_z_mm", 0.0);
         }
         if (p) {
             c.projection.engine = (*p)["engine"].value_or(std::string("pixel_local_random"));
@@ -229,9 +230,9 @@ namespace yk::spectral {
         if (c.runsReconstruction() && c.reconstruction.input_projection_file.empty())
             throw std::runtime_error("重建工作流需要 reconstruction.input_projection_file");
         if (c.runsReconstruction()) {
-            if ((c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "fdk" && c.geometry.kind != GeometryKind::FlatCbct) ||
+            if ((c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "fdk" && c.geometry.kind != GeometryKind::FlatCbct && c.geometry.kind != GeometryKind::CylCbct) ||
                 (c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "wfbp" && c.geometry.kind != GeometryKind::CylHelical))
-                throw std::runtime_error("示例重建仅支持 flat_cbct+fdk、cyl_helical+wfbp；迭代重建支持四类几何");
+                throw std::runtime_error("解析重建支持 flat_cbct/cyl_cbct+fdk、cyl_helical+wfbp");
         }
         return c;
     }

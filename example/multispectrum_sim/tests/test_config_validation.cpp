@@ -67,7 +67,7 @@ int main() {
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='tigre_sart_tv'\niterations=5\nrelaxation=0.8\n", true);
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='tigre_sart_tv'\ntv_alpha=0\n", false);
 
-        test("type='iterative'\n[reconstruction.iterative]\nalgorithm='tigre_os_sart_tv'\nsubsets=8\nback_projector='joseph_v3'\n", true);
+        test("type='iterative'\n[reconstruction.iterative]\nalgorithm='tigre_os_sart_tv'\nsubsets=8\nprojection_model='joseph'\n", true);
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\niterations=5\n", true);
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='ossart'\nsubsets=8\n", true);
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\nsubsets=8\n", false);
@@ -75,6 +75,9 @@ int main() {
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\niterations=0\n", false);
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\nrelaxation=0\n", false);
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\nforward_projector='bad'\n", false);
+        test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\nprojection_model='siddon'\n", true);
+        test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\nprojection_model='bad'\n", false);
+        test("type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\nprojection_model='joseph'\nback_projector='joseph_v3'\n", false);
         testV2(
             "[workflow]\nmode='reconstruct'\n"
             "[geometry]\nkind='flat_cbct'\nviews=1\nviews_per_turn=1\n"

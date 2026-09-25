@@ -29,6 +29,9 @@ out/build/phantom-generator/phantom_generator.exe `
 - `water_ellipse`：带 PMMA 壳体的椭圆柱水模
 - `catphan`：含空气、特氟龙、Delrin、亚克力、聚苯乙烯、LDPE 和水插入物
 - `low_contrast`：直径 15、9、8、7、6、5、3 mm、厚 5 mm，密度低于水 0.3%、0.5%、1% 的 21 个插入物
+- `tungsten_bead_line_2mm_5mm`：单排直线 2 mm 钨球，球心间距 5 mm，外部 30 mm × 120 mm PMMA 圆柱支撑
+- `tungsten_bead_line_3mm_10mm`：单排直线 3 mm 钨球，球心间距 10 mm，外部 30 mm × 120 mm PMMA 圆柱支撑
+- `tungsten_bead_double_ring`：PMMA 圆柱内两圈相互对齐的钨珠；额外参数依次为圆直径、圆间距、钨珠直径、支撑直径、支撑长度和可选的每圈珠子数（默认 6）
 
 生成的 `<名称>.raw.toml` 记录 RAW 布局、尺寸、体素尺寸、插入物位置及
 `[[projection.materials]]`。将其中材料表复制到投影配置，并把
@@ -42,6 +45,10 @@ out/build/phantom-generator/phantom_generator.exe `
 
 低对比模体的 `voxel_mm` 必须不大于 0.25 mm，推荐使用 0.1 mm。推荐值下
 最小 3 mm 插入物的直径覆盖 30 个体素，可以显著减轻圆柱边缘的锯齿。
+
+直线钨球模体建议使用 `voxel_mm=0.125` mm，球径分别覆盖 16 和 24 个体素。
+输出 TOML 的 `[bead_line]` 记录球径、球心间距、PMMA 支撑直径和长度；钨球标签为 100、PMMA 标签为 1；两种模体均沿
+圆柱纵向（Z 轴）生成单排球面钨珠，球心位于圆柱轴线上。
 
 ## 验证
 

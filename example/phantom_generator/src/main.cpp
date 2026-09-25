@@ -26,6 +26,7 @@ struct Insert {
     double center_x_mm;
     double center_y_mm;
     double thickness_mm = 0.0;
+    double center_z_mm = 0.0;
 };
 
 struct Phantom {
@@ -39,6 +40,12 @@ struct Phantom {
     double target_diameter_mm = 0.0;
     double target_thickness_mm = 0.0;
     double target_tangent = 0.0;
+    double bead_spacing_mm = 0.0;
+    double support_diameter_mm = 0.0;
+    double support_length_mm = 0.0;
+    double bead_ring_diameter_mm = 0.0;
+    double bead_ring_spacing_mm = 0.0;
+    int beads_per_ring = 0;
 
     std::size_t index(int x, int y, int z) const {
         return (static_cast<std::size_t>(z) * ny + y) * nx + x;
@@ -135,6 +142,126 @@ void makeWire(Phantom& p, bool slanted)
     p.target_tangent = slanted ? tangent : 0.0;
     p.variant = slanted ? "0.05 mm tungsten wire, z = 0.42 * x" :
         "0.05 mm axial tungsten wire";
+}
+
+void makeTungstenBeadLine(Phantom& p, double bead_diameter_mm,
+    double bead_spacing_mm)
+{
+    constexpr double support_radius_mm = 15.0;
+    constexpr double support_length_mm = 120.0;
+    constexpr std::uint8_t kTungstenLabel = 100;
+    const double bead_radius_mm = bead_diameter_mm * 0.5;
+    if (p.voxel_mm > bead_diameter_mm / 8.0)
+        throw std::runtime_error("bead line requires voxel_mm <= diameter/8");
+    if (p.nx * p.voxel_mm * 0.5 < support_radius_mm ||
+        p.ny * p.voxel_mm * 0.5 < support_radius_mm ||
+        p.nz * p.voxel_mm * 0.5 < support_length_mm * 0.5)
+        throw std::runtime_error("bead line requires a 30 mm x 80 mm support field");
+
+    const int bead_count = static_cast<int>(
+        std::floor((support_length_mm - 2.0 * bead_radius_mm) /
+            bead_spacing_mm)) + 1;
+    const double first_z = -0.5 * (bead_count - 1) * bead_spacing_mm;
+    for (int z = 0; z < p.nz; ++z) for (int y = 0; y < p.ny; ++y)
+        for (int x = 0; x < p.nx; ++x) {
+            const double px = p.x(x), py = p.y(y), pz = p.z(z);
+            if (px * px + py * py > support_radius_mm * support_radius_mm) continue;
+            p.labels[p.index(x, y, z)] = 1;
+            const double slot = std::round((pz - first_z) / bead_spacing_mm);
+            const double nearest_z = first_z + std::clamp(slot, 0.0,
+                static_cast<double>(bead_count - 1)) * bead_spacing_mm;
+            const double dz = pz - nearest_z;
+            if (px * px + py * py + dz * dz <= bead_radius_mm * bead_radius_mm)
+                p.labels[p.index(x, y, z)] = kTungstenLabel;
+        }
+    p.materials = {{1, "pmma_support", 1.18, "C5H8O2", {},
+        "external cylindrical PMMA support"},
+        {kTungstenLabel, "tungsten", 19.25, "W", {}, "linear tungsten beads"}};
+    p.target_diameter_mm = bead_diameter_mm;
+    p.bead_spacing_mm = bead_spacing_mm;
+    p.support_diameter_mm = 2.0 * support_radius_mm;
+    p.support_length_mm = support_length_mm;
+    p.variant = "single straight row of tungsten spheres, diameter " +
+        std::to_string(bead_diameter_mm) + " mm, center spacing " +
+        std::to_string(bead_spacing_mm) + " mm, in 30 mm diameter x 120 mm PMMA cylinder";
+    for (int i = 0; i < bead_count; ++i)
+        p.inserts.push_back({kTungstenLabel, bead_diameter_mm, 0.0,
+            0.0, 0.0, 0.0, first_z + i * bead_spacing_mm});
+}
+
+void makeTungstenBeadDoubleRing(Phantom& p, double ring_diameter_mm,
+    double ring_spacing_mm, double bead_diameter_mm,
+    double support_diameter_mm, double support_length_mm, int beads_per_ring)
+{
+    constexpr std::uint8_t kPmmaLabel = 1;
+    constexpr std::uint8_t kTungstenLabel = 100;
+    const double support_radius = support_diameter_mm * 0.5;
+    const double ring_radius = ring_diameter_mm * 0.5;
+    const double bead_radius = bead_diameter_mm * 0.5;
+    if (beads_per_ring < 1)
+        throw std::runtime_error("beads_per_ring must be positive");
+    if (ring_radius + bead_radius > support_radius ||
+        ring_spacing_mm * 0.5 + bead_radius > support_length_mm * 0.5)
+        throw std::runtime_error("double bead rings do not fit inside support cylinder");
+    if (p.nx * p.voxel_mm < support_diameter_mm ||
+        p.ny * p.voxel_mm < support_diameter_mm ||
+        p.nz * p.voxel_mm < support_length_mm)
+        throw std::runtime_error("volume is smaller than double-ring support cylinder");
+    if (p.voxel_mm > bead_diameter_mm / 8.0)
+        throw std::runtime_error("double bead rings require voxel_mm <= bead diameter/8");
+
+    for (int z = 0; z < p.nz; ++z) {
+        if (std::abs(p.z(z)) > support_length_mm * 0.5) continue;
+        for (int y = 0; y < p.ny; ++y) for (int x = 0; x < p.nx; ++x)
+            if (p.x(x) * p.x(x) + p.y(y) * p.y(y) <=
+                support_radius * support_radius)
+                p.labels[p.index(x, y, z)] = kPmmaLabel;
+    }
+
+    for (const double center_z : {-ring_spacing_mm * 0.5,
+            ring_spacing_mm * 0.5}) {
+        for (int bead = 0; bead < beads_per_ring; ++bead) {
+            const double angle = 2.0 * std::acos(-1.0) * bead /
+                beads_per_ring;
+            const double center_x = ring_radius * std::cos(angle);
+            const double center_y = ring_radius * std::sin(angle);
+            const int xmin = std::max(0, static_cast<int>(std::floor(
+                (center_x - bead_radius) / p.voxel_mm + (p.nx - 1) * 0.5)));
+            const int xmax = std::min(p.nx - 1, static_cast<int>(std::ceil(
+                (center_x + bead_radius) / p.voxel_mm + (p.nx - 1) * 0.5)));
+            const int ymin = std::max(0, static_cast<int>(std::floor(
+                (center_y - bead_radius) / p.voxel_mm + (p.ny - 1) * 0.5)));
+            const int ymax = std::min(p.ny - 1, static_cast<int>(std::ceil(
+                (center_y + bead_radius) / p.voxel_mm + (p.ny - 1) * 0.5)));
+            const int zmin = std::max(0, static_cast<int>(std::floor(
+                (center_z - bead_radius) / p.voxel_mm + (p.nz - 1) * 0.5)));
+            const int zmax = std::min(p.nz - 1, static_cast<int>(std::ceil(
+                (center_z + bead_radius) / p.voxel_mm + (p.nz - 1) * 0.5)));
+            for (int z = zmin; z <= zmax; ++z)
+                for (int y = ymin; y <= ymax; ++y)
+                    for (int x = xmin; x <= xmax; ++x) {
+                        const double dx = p.x(x) - center_x;
+                        const double dy = p.y(y) - center_y;
+                        const double dz = p.z(z) - center_z;
+                        if (dx * dx + dy * dy + dz * dz <= bead_radius * bead_radius)
+                            p.labels[p.index(x, y, z)] = kTungstenLabel;
+                    }
+            p.inserts.push_back({kTungstenLabel, bead_diameter_mm, 0.0,
+                center_x, center_y, 0.0, center_z});
+        }
+    }
+    p.materials = {{kPmmaLabel, "pmma_support", 1.18, "C5H8O2", {},
+        "cylindrical PMMA support"},
+        {kTungstenLabel, "tungsten", 19.25, "W", {},
+        "two aligned rings of tungsten spheres"}};
+    p.target_diameter_mm = bead_diameter_mm;
+    p.support_diameter_mm = support_diameter_mm;
+    p.support_length_mm = support_length_mm;
+    p.bead_ring_diameter_mm = ring_diameter_mm;
+    p.bead_ring_spacing_mm = ring_spacing_mm;
+    p.beads_per_ring = beads_per_ring;
+    p.variant = "two aligned " + std::to_string(beads_per_ring) +
+        "-bead tungsten rings in a PMMA cylinder";
 }
 
 void makeGoldFoil(Phantom& p)
@@ -302,6 +429,22 @@ void writeOutputs(const Phantom& p, const std::filesystem::path& output)
             toml << "tangent = " << p.target_tangent << '\n';
         toml << '\n';
     }
+    if (p.bead_spacing_mm > 0.0) {
+        toml << "[bead_line]\n"
+             << "diameter_mm = " << p.target_diameter_mm << '\n'
+             << "center_spacing_mm = " << p.bead_spacing_mm << '\n'
+             << "support_diameter_mm = " << p.support_diameter_mm << '\n'
+             << "support_length_mm = " << p.support_length_mm << "\n\n";
+    }
+    if (p.bead_ring_diameter_mm > 0.0) {
+        toml << "[bead_rings]\n"
+             << "ring_count = 2\nbeads_per_ring = " << p.beads_per_ring << '\n'
+             << "ring_diameter_mm = " << p.bead_ring_diameter_mm << '\n'
+             << "ring_center_spacing_mm = " << p.bead_ring_spacing_mm << '\n'
+             << "bead_diameter_mm = " << p.target_diameter_mm << '\n'
+             << "support_diameter_mm = " << p.support_diameter_mm << '\n'
+             << "support_length_mm = " << p.support_length_mm << "\n\n";
+    }
     for (const auto& insert : p.inserts) {
         toml << "[[phantom.inserts]]\nlabel = " << insert.label
              << "\ndiameter_mm = " << insert.diameter_mm
@@ -310,6 +453,8 @@ void writeOutputs(const Phantom& p, const std::filesystem::path& output)
              << insert.center_y_mm << "]\n";
         if (insert.thickness_mm > 0.0)
             toml << "thickness_mm = " << insert.thickness_mm << '\n';
+        if (insert.center_z_mm != 0.0)
+            toml << "center_z_mm = " << insert.center_z_mm << '\n';
         toml << '\n';
     }
     for (const auto& m : p.materials) {
@@ -334,10 +479,12 @@ int integer(const char* text, const char* name) {
 int main(int argc, char** argv)
 {
     try {
-        if (argc != 7) {
+        if (argc != 7 && argc != 12 && argc != 13) {
             std::cerr << "usage: phantom_generator <type> <output.raw> <nx> <ny> <nz> <voxel_mm>\n"
                 << "types: shepp_logan tungsten_wire tungsten_wire_slanted gold_foil water_cylinder water_cylinder_200mm "
-                   "water_ellipse catphan low_contrast\n";
+                   "water_ellipse catphan low_contrast tungsten_bead_line_2mm_5mm "
+                   "tungsten_bead_line_3mm_10mm tungsten_bead_double_ring\n"
+                << "double-ring extra args: ring_diameter_mm ring_spacing_mm bead_diameter_mm support_diameter_mm support_length_mm [beads_per_ring]\n";
             return 2;
         }
         Phantom p;
@@ -355,6 +502,18 @@ int main(int argc, char** argv)
         else if (p.type == "water_ellipse") fillWaterShell(p, true);
         else if (p.type == "catphan") makeCatphan(p);
         else if (p.type == "low_contrast") makeLowContrast(p);
+        else if (p.type == "tungsten_bead_line_2mm_5mm")
+            makeTungstenBeadLine(p, 2.0, 5.0);
+        else if (p.type == "tungsten_bead_line_3mm_10mm")
+            makeTungstenBeadLine(p, 3.0, 10.0);
+        else if (p.type == "tungsten_bead_double_ring") {
+            if (argc != 12 && argc != 13) throw std::runtime_error(
+                "tungsten_bead_double_ring requires five dimensions and optional bead count");
+            makeTungstenBeadDoubleRing(p, std::stod(argv[7]),
+                std::stod(argv[8]), std::stod(argv[9]), std::stod(argv[10]),
+                std::stod(argv[11]), argc == 13 ? integer(argv[12],
+                    "beads_per_ring") : 6);
+        }
         else throw std::runtime_error("unknown phantom type: " + p.type);
         writeOutputs(p, argv[2]);
         std::cout << "output=" << argv[2] << " size=" << p.nx << 'x' << p.ny

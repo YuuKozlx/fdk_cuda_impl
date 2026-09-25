@@ -58,6 +58,9 @@ struct GeometryConfig {
     double phantom_offset_x_mm = 0.0;
     double phantom_offset_y_mm = 0.0;
     double phantom_offset_z_mm = 0.0;
+    double phantom_rotation_x_rad = 0.0;
+    double phantom_rotation_y_rad = 0.0;
+    double phantom_rotation_z_rad = 0.0;
     double reconstruction_offset_x_mm = 0.0;
     double reconstruction_offset_y_mm = 0.0;
     double reconstruction_offset_z_mm = 0.0;
@@ -112,8 +115,7 @@ struct IterativeReconstructionConfig {
     int iterations = 10;
     double relaxation = 1.0;
     int subsets = 1;
-    std::string forward_projector = "joseph";
-    std::string back_projector = "joseph_v3";
+    std::string projection_model = "joseph";
     int tv_iterations = 20;
     double tv_alpha = 0.002;
     double tv_alpha_reduction = 0.95;

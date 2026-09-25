@@ -1,0 +1,82 @@
+schema_version = 2
+
+[workflow]
+mode = "project"
+
+[projection]
+label_volume = "../../inputs/generated/tungsten-bead-double-ring-100mm-100mm-3mm-12beads.raw"
+spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
+output_file = "../../outputs/quality/tungsten-bead-double-ring-12beads-3mm-sid440-sdd770-projection-1024x1024x360-f32.raw"
+energy_output_file = "../../outputs/quality/tungsten-bead-double-ring-12beads-3mm-sid440-sdd770-energy-1024x1024x360-f32.raw"
+engine = "pixel_local_random"
+apply_geometry_flux = true
+
+[projection.pixel_local_random]
+samples_per_pixel = 50
+photons_per_pixel = 100000
+photon_count_mode = "fixed"
+spatial_seed = 12345
+photon_seed = 67890
+
+[projection.focal_spot]
+enabled = false
+size_u_mm = 0.0
+size_v_mm = 0.0
+
+[geometry]
+kind = "flat_cbct"
+views = 360
+views_per_turn = 360
+rotation_direction = 1
+detector_u = 1024
+detector_v = 1024
+pixel_u_mm = 0.417
+pixel_v_mm = 0.417
+sid_mm = 440.0
+sdd_mm = 770.0
+offset_u_mm = 4.17
+offset_n_mm = 0.0
+offset_v_mm = 8.34
+tilt_u_rad = 0.0
+tilt_v_rad = 0.0
+tilt_n_rad = 0.0174532925199433
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
+volume_x = 1041
+volume_y = 1041
+volume_z = 1041
+voxel_x_mm = 0.1
+voxel_y_mm = 0.1
+voxel_z_mm = 0.1
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+phantom_rotation_x_rad = 0.0523598775598299
+phantom_rotation_y_rad = 0.0
+phantom_rotation_z_rad = 0.0
+reconstruction_volume_x = 1024
+reconstruction_volume_y = 1024
+reconstruction_volume_z = 30
+reconstruction_voxel_x_mm = 0.30
+reconstruction_voxel_y_mm = 0.30
+reconstruction_voxel_z_mm = 1.0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+[[projection.materials]]
+label = 1
+name = "pmma_support"
+formula = "C5H8O2"
+density_g_cm3 = 1.18
+
+[[projection.materials]]
+label = 100
+name = "tungsten"
+formula = "W"
+density_g_cm3 = 19.25

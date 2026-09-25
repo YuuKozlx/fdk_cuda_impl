@@ -35,7 +35,8 @@ else()
 endif()
 if(MSVC)
     target_compile_options(multispectrum_sim PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
 endif()
 
 include(CTest)

@@ -17,7 +17,7 @@ void writeMetadata(const std::filesystem::path& file, int u, int v, int views, c
       << ",\n  \"data_type\": \"float32\",\n  \"byte_order\": \"little_endian\",\n"
       << "  \"layout\": \"frame_row_column\",\n  \"signal\": \"" << signal << "\"\n}\n";
 }
-struct DeviceGeometry { int nu, nv, views, views_per_turn, rotation_direction, samples, nx, ny, nz, nm, ne; float pu, pv, sid, sdd, vx, vy, vz, fu, fv; float offset_u, offset_n, offset_v, source_x, source_y, source_z; float tilt_u, tilt_v, tilt_n; float start, pitch, start_z; int cylindrical, apply_flux; };
+struct DeviceGeometry { int nu, nv, views, views_per_turn, rotation_direction, samples, nx, ny, nz, nm, ne; float pu, pv, sid, sdd, vx, vy, vz, fu, fv; float offset_u, offset_n, offset_v, source_x, source_y, source_z; float tilt_u, tilt_v, tilt_n; float start, pitch, start_z; float phantom_x, phantom_y, phantom_z, phantom_rx, phantom_ry, phantom_rz; int cylindrical, apply_flux; };
 
 __device__ float3 add3(float3 a, float3 b) { return make_float3(a.x+b.x, a.y+b.y, a.z+b.z); }
 __device__ float3 scale3(float3 a, float s) { return make_float3(a.x*s, a.y*s, a.z*s); }
@@ -32,6 +32,18 @@ __device__ void detectorFrame(DeviceGeometry g, float angle, float3& u, float3& 
     v=rotateAxis(v,u,g.tilt_u); n=rotateAxis(n,u,g.tilt_u);
     u=rotateAxis(u,v,g.tilt_v); n=rotateAxis(n,v,g.tilt_v);
     u=rotateAxis(u,n,g.tilt_n); v=rotateAxis(v,n,g.tilt_n);
+}
+__device__ float3 phantomInverse(DeviceGeometry g, float3 value, bool direction) {
+    const float3 x = make_float3(1.f, 0.f, 0.f);
+    const float3 y = make_float3(0.f, 1.f, 0.f);
+    const float3 z = make_float3(0.f, 0.f, 1.f);
+    value = rotateAxis(value, z, -g.phantom_rz);
+    value = rotateAxis(value, y, -g.phantom_ry);
+    value = rotateAxis(value, x, -g.phantom_rx);
+    // Forward pose order is offset first, then XYZ rotation. The inverse ray
+    // transform therefore applies inverse rotation before removing the offset.
+    if (!direction) value = make_float3(value.x-g.phantom_x, value.y-g.phantom_y, value.z-g.phantom_z);
+    return value;
 }
 
 __device__ unsigned hash32(unsigned x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; return x ^ (x >> 16); }
@@ -150,7 +162,7 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
         float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z); d.x/=length; d.y/=length; d.z/=length;
         float paths[32] = {}; if (g.nm > 32) return;
-        accumulatePaths(g, labels, label_to_material, source, d, lo, hi, paths);
+        accumulatePaths(g, labels, label_to_material, phantomInverse(g, source, false), phantomInverse(g, d, true), lo, hi, paths);
         float r2=length*length; float flux=(!g.cylindrical && g.apply_flux) ? g.sdd*g.sdd/fmaxf(r2,1e-6f) : 1.f;
         sum_air_energy += photons_per_pixel / static_cast<float>(g.samples) * flux * incident;
         float noisy_energy = 0.f;
@@ -210,7 +222,7 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
         const float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z);
         d.x/=length; d.y/=length; d.z/=length;
         float paths[32] = {}; if (g.nm > 32) return;
-        accumulatePaths(g, labels, label_to_material, source, d, lo, hi, paths);
+        accumulatePaths(g, labels, label_to_material, phantomInverse(g, source, false), phantomInverse(g, d, true), lo, hi, paths);
         const float r2=length*length;
         const float flux=(!g.cylindrical && g.apply_flux) ? g.sdd*g.sdd/fmaxf(r2,1e-6f) : 1.f;
         atomicAdd(&air_accum[pixel], photons_per_sample * flux * incident);
@@ -231,7 +243,7 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
         if(g.volume_x<=0||g.volume_y<=0||g.volume_z<=0||labels.size()!=(size_t)g.volume_x*g.volume_y*g.volume_z) throw std::runtime_error("CUDA前投标签体尺寸不匹配");
         if(nm > 32) throw std::runtime_error("CUDA primary projector supports at most 32 materials");
         const int cylindrical = (c.geometry.kind == GeometryKind::CylCbct || c.geometry.kind == GeometryKind::CylHelical) ? 1 : 0;
-        DeviceGeometry dg{g.detector_u,g.detector_v,g.views,g.views_per_turn,g.rotation_direction,c.projection.sampling.samples_per_pixel,g.volume_x,g.volume_y,g.volume_z,nm,ne,(float)g.pixel_u_mm,(float)g.pixel_v_mm,(float)g.sid_mm,(float)g.sdd_mm,(float)g.voxel_x_mm,(float)g.voxel_y_mm,(float)g.voxel_z_mm,(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_u_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_v_mm:0),(float)g.offset_u_mm,(float)g.offset_n_mm,(float)g.offset_v_mm,(float)g.source_offset_x_mm,(float)g.source_offset_y_mm,(float)g.source_offset_z_mm,(float)g.tilt_u_rad,(float)g.tilt_v_rad,(float)g.tilt_n_rad,(float)g.start_angle_rad,(float)g.pitch_mm_per_turn,(float)g.start_z_mm,cylindrical,c.projection.apply_geometry_flux ? 1 : 0};
+        DeviceGeometry dg{g.detector_u,g.detector_v,g.views,g.views_per_turn,g.rotation_direction,c.projection.sampling.samples_per_pixel,g.volume_x,g.volume_y,g.volume_z,nm,ne,(float)g.pixel_u_mm,(float)g.pixel_v_mm,(float)g.sid_mm,(float)g.sdd_mm,(float)g.voxel_x_mm,(float)g.voxel_y_mm,(float)g.voxel_z_mm,(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_u_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_v_mm:0),(float)g.offset_u_mm,(float)g.offset_n_mm,(float)g.offset_v_mm,(float)g.source_offset_x_mm,(float)g.source_offset_y_mm,(float)g.source_offset_z_mm,(float)g.tilt_u_rad,(float)g.tilt_v_rad,(float)g.tilt_n_rad,(float)g.start_angle_rad,(float)g.pitch_mm_per_turn,(float)g.start_z_mm,(float)g.phantom_offset_x_mm,(float)g.phantom_offset_y_mm,(float)g.phantom_offset_z_mm,(float)g.phantom_rotation_x_rad,(float)g.phantom_rotation_y_rad,(float)g.phantom_rotation_z_rad,cylindrical,c.projection.apply_geometry_flux ? 1 : 0};
         std::vector<int> map(256,-1); for(int m=0;m<nm;++m)map[c.projection.materials[m].label]=m;
         std::vector<float> mu(nm*ne), sw(ne), en(ne); float incident=0, spectrum_sum=0;
         for(int e=0;e<ne;++e) spectrum_sum+=(float)model.spectrum()[e].relative_photons;
