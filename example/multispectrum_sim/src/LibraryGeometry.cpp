@@ -44,8 +44,8 @@ namespace yk::spectral {
             scan.sdd_mm = static_cast<float>(g.sdd_mm);
             scan.z_mm = static_cast<float>(g.start_z_mm);
             scan.source_offset_mm = make_float3(
-                static_cast<float>(g.source_offset_x_mm),
                 static_cast<float>(g.source_offset_y_mm),
+                static_cast<float>(-g.source_offset_x_mm),
                 static_cast<float>(g.source_offset_z_mm));
         }
         else {
@@ -61,8 +61,8 @@ namespace yk::spectral {
             scan.start_z_mm = static_cast<float>(g.start_z_mm);
             scan.pitch_mm_per_turn = static_cast<float>(g.pitch_mm_per_turn);
             scan.source_offset_mm = make_float3(
-                static_cast<float>(g.source_offset_x_mm),
                 static_cast<float>(g.source_offset_y_mm),
+                static_cast<float>(-g.source_offset_x_mm),
                 static_cast<float>(g.source_offset_z_mm));
         }
 
@@ -76,6 +76,9 @@ namespace yk::spectral {
                 static_cast<float>(g.offset_u_mm),
                 static_cast<float>(g.offset_n_mm),
                 static_cast<float>(g.offset_v_mm));
+            detector.pose.tilt_u_rad = static_cast<float>(g.tilt_u_rad);
+            detector.pose.tilt_v_rad = static_cast<float>(g.tilt_v_rad);
+            detector.pose.tilt_n_rad = static_cast<float>(g.tilt_n_rad);
         }
         else {
             auto& detector = system.geometry.cylindrical_detector;
@@ -88,6 +91,9 @@ namespace yk::spectral {
                 static_cast<float>(g.offset_u_mm),
                 static_cast<float>(g.offset_n_mm),
                 static_cast<float>(g.offset_v_mm));
+            detector.pose.tilt_u_rad = static_cast<float>(g.tilt_u_rad);
+            detector.pose.tilt_v_rad = static_cast<float>(g.tilt_v_rad);
+            detector.pose.tilt_n_rad = static_cast<float>(g.tilt_n_rad);
         }
 
         const auto& volume_offset = use == GeometryUse::Reconstruction

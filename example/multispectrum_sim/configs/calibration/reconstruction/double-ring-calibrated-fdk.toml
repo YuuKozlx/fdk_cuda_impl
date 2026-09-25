@@ -1,0 +1,57 @@
+schema_version = 2
+
+[workflow]
+mode = "reconstruct"
+
+[geometry]
+kind = "flat_cbct"
+views = 360
+views_per_turn = 360
+rotation_direction = 1
+detector_u = 1024
+detector_v = 1024
+pixel_u_mm = 0.417
+pixel_v_mm = 0.417
+sid_mm = 440.168
+sdd_mm = 770.095
+offset_u_mm = 9.572235
+offset_n_mm = 0.0
+offset_v_mm = 3.775101
+tilt_u_rad = 0.0177507369477853
+tilt_v_rad = 0.0120253185454143
+tilt_n_rad = 0.0527438509745313
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
+volume_x = 540
+volume_y = 540
+volume_z = 900
+voxel_x_mm = 0.2
+voxel_y_mm = 0.2
+voxel_z_mm = 0.2
+phantom_offset_x_mm = 10.0
+phantom_offset_y_mm = 15.0
+phantom_offset_z_mm = 20.0
+reconstruction_volume_x = 512
+reconstruction_volume_y = 512
+reconstruction_volume_z = 600
+reconstruction_voxel_x_mm = 0.3
+reconstruction_voxel_y_mm = 0.3
+reconstruction_voxel_z_mm = 0.3
+reconstruction_offset_x_mm = 10.0
+reconstruction_offset_y_mm = 15.0
+reconstruction_offset_z_mm = 20.0
+
+[reconstruction]
+input_projection_file = "../../../outputs/quality/double-ring-upper100-lower80-phase15-marker5-above30-px10-py15-pz20-tu1-tv2-tn3-prx2-projection-1024x1024x360-f32.raw"
+type = "analytic"
+output_volume_file = "../../../outputs/calibration/double-ring-calibrated-fdk-512x512x600-f32.raw"
+slice_prefix = "../../../outputs/calibration/double-ring-calibrated-fdk-512x512x600"
+
+[reconstruction.analytic]
+pipeline = "fdk"
+filter = "ramlak"
+chunk_views = 32

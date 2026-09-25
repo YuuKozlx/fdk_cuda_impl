@@ -32,6 +32,8 @@ out/build/phantom-generator/phantom_generator.exe `
 - `tungsten_bead_line_2mm_5mm`：单排直线 2 mm 钨球，球心间距 5 mm，外部 30 mm × 120 mm PMMA 圆柱支撑
 - `tungsten_bead_line_3mm_10mm`：单排直线 3 mm 钨球，球心间距 10 mm，外部 30 mm × 120 mm PMMA 圆柱支撑
 - `tungsten_bead_double_ring`：PMMA 圆柱内两圈相互对齐的钨珠；额外参数依次为圆直径、圆间距、钨珠直径、支撑直径、支撑长度和可选的每圈珠子数（默认 6）
+- `tungsten_bead_double_ring_marker`：上下环可使用不同直径，下环可设置相位差，并可在上环第 0 颗小球的轴向上方放置一个独立大球；额外参数依次为上环直径、下环直径、圆间距、小球直径、下环相位差、大球直径、大球高于上环的距离、支撑直径、支撑长度和每圈珠子数。
+- `tungsten_bead_spiral_marker`：钨珠按固定半径、轴向层距和相位步长形成螺旋；在最下方正常球的正下方放置一个大标记球。额外参数依次为螺旋半径、层距、相位步长、小球直径、大球直径、大球低于最下球的距离和小球数量。
 
 生成的 `<名称>.raw.toml` 记录 RAW 布局、尺寸、体素尺寸、插入物位置及
 `[[projection.materials]]`。将其中材料表复制到投影配置，并把
