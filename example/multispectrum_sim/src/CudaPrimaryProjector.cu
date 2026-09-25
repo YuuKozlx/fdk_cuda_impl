@@ -144,10 +144,12 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
             (g.sid+fsu)*sa + g.source_x*sa + g.source_y*ca, z+fsv+g.source_z);
         const float center_u = du + g.offset_u;
         const float center_v = dv + g.offset_v;
-        // Flat-detector SDD is measured from isocenter; the source-to-panel
-        // distance is therefore SDD - SID. Cylindrical geometry uses SDD as
-        // its curvature radius and is handled separately below.
-        const float detector_distance = g.sdd - g.sid;
+        // For a flat detector, SDD is the source-to-detector distance.
+        // The detector distance from isocenter is SDD - SID, but this point
+        // is constructed from the source, so the full SDD is required.
+        // Cylindrical geometry uses SDD as its curvature radius and is
+        // handled separately below.
+        const float detector_distance = g.sdd;
         float3 detector_center = add3(add3(add3(source, scale3(naxis, detector_distance + g.offset_n)), scale3(uaxis, center_u)), scale3(vaxis, center_v));
         float3 det;
         if (g.cylindrical) {
@@ -215,7 +217,9 @@ __global__ void globalRandomKernel(DeviceGeometry g, const unsigned char* labels
             det = make_float3(source.x - g.sdd*cosf(frame_angle - gamma),
                 source.y - g.sdd*sinf(frame_angle - gamma), z + center_v);
         } else {
-            const float detector_distance = g.sdd - g.sid;
+            // This point is constructed from the source; use the full
+            // source-to-detector distance SDD.
+            const float detector_distance = g.sdd;
             det = add3(add3(add3(source, scale3(naxis, detector_distance + g.offset_n)), scale3(uaxis, center_u)), scale3(vaxis, center_v));
         }
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
