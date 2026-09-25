@@ -118,6 +118,8 @@ public:
     const std::vector<SCylConeProjGeomVec>& cylGeometry() const { return cyl_geometry_; }
     bool isCylindrical() const { return system_.detector == EDetectorKind::Cylindrical; }
     bool hasExternalGeometry() const { return !all_geometry_.empty(); }
+    const SForwardProjectionPose& forwardProjectionPose() const
+    { return system_.forward_projection_pose; }
     SVolGeom volumeGeometry() const
     {
         SVolGeom g = SVolGeom::make_centered(base_.volume.Nx, base_.volume.Ny, base_.volume.Nz,

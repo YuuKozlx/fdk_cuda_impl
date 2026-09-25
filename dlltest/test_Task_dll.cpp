@@ -140,6 +140,29 @@ bool testValidationError() {
     return rejected;
 }
 
+bool testVolumePoseValidationAndIsolation()
+{
+    auto* session = YK::ReconstructionSessionFactory::create();
+    if (!session) return false;
+
+    auto invalid = makeDesc(YK::EPipeline::ForwardProjection);
+    invalid.geometry.forward_projection_pose.enabled = true;
+    invalid.geometry.forward_projection_pose.rotation_x_rad = NAN;
+    const bool invalid_rejected = !session->initialize(invalid) &&
+        session->lastError() == YK::EApiErrorCode::InvalidGeometry;
+
+    auto iterative = makeDesc(YK::EPipeline::SIRT);
+    iterative.geometry.forward_projection_pose.enabled = true;
+    iterative.geometry.forward_projection_pose.rotation_x_rad = 0.7f;
+    iterative.reconstruction.iterative.iterations = 1;
+    iterative.reconstruction.iterative.subsets = 1;
+    iterative.reconstruction.iterative.relaxation = 0.2f;
+    const bool iterative_ignored = session->initialize(iterative);
+
+    YK::ReconstructionSessionFactory::destroy(session);
+    return invalid_rejected && iterative_ignored;
+}
+
 bool testExecutionValidation()
 {
     auto* session = YK::ReconstructionSessionFactory::create();
@@ -550,6 +573,7 @@ int main() {
     const bool cylHelicalFp = testForwardProjection(makeHelical(
         makeCylDesc(YK::EPipeline::ForwardProjection)), "Cyl helical FP");
     const bool validationOk = testValidationError();
+    const bool volumePoseValidationOk = testVolumePoseValidationAndIsolation();
     const bool executionValidationOk = testExecutionValidation();
     const bool policyOk = testUnderTestPolicy();
     const bool fdkPolicyOk = testFdkPolicies();
@@ -596,6 +620,7 @@ int main() {
         << " CylHeliIter=" << status(cylHelicalIter)
         << " SessionReset=" << status(sessionResetReuse)
         << " validation=" << status(validationOk)
+        << " volumePose=" << status(volumePoseValidationOk)
         << " executionValidation=" << status(executionValidationOk)
         << " policy=" << status(policyOk)
         << " fdkPolicy=" << status(fdkPolicyOk)
@@ -608,7 +633,7 @@ int main() {
         << " WFBP=" << status(wfbp) << '\n';
     return flatCircularFp && flatHelicalFp && cylCircularFp && cylHelicalFp &&
         flatHelicalIter && cylCircularIter && cylHelicalIter && sessionResetReuse && validationOk &&
-        executionValidationOk &&
+        executionValidationOk && volumePoseValidationOk &&
         policyOk && fdkPolicyOk && offsetNormalizationOk && flatFdk && fdkStreaming && flatXfdk && cylFdk &&
         flatTigre && wfbp ? 0 : 1;
 }

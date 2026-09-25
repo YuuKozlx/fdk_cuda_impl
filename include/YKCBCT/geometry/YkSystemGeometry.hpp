@@ -5,6 +5,7 @@
 
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 #include "YKCBCT/geometry/YkVolumeGeometry.hpp"
+#include "YKCBCT/geometry/YkRigidTransform.hpp"
 
 namespace YK {
 
@@ -22,6 +23,7 @@ struct SSystemConfig {
     SFlatDetectorSpec flat_detector{};
     SCylDetectorSpec cylindrical_detector{};
     SVolumeGridSpec volume{};
+    SForwardProjectionPose forward_projection_pose{};
 };
 
 namespace SystemGeometryDetail {

@@ -141,6 +141,14 @@ public:
         if (!detail::resolveViews(geometry_.allGeometry(), batch, views)) return false;
 
         const SVolGeom vol = geometry_.volumeGeometry();
+        const auto& pose = geometry_.forwardProjectionPose();
+        if (pose.enabled) {
+            const auto local_from_world = SRigidTransform::aroundEulerPoint(
+                vol.center, pose.rotation_x_rad, pose.rotation_y_rad,
+                pose.rotation_z_rad).inverse();
+            for (auto& view : views)
+                view = transformProjectionGeometry(view, local_from_world);
+        }
         gpu_ = std::make_unique<Fp::FpGpuContext>();
         gpu_->init(d_volume, vol, views, resources.device(),
             kind_ == ETask::FP_Siddon ? cudaFilterModePoint :

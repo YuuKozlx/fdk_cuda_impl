@@ -96,6 +96,13 @@ bool hasNonzeroAcquisitionOffset(const SSystemConfig& geometry,
     return source_offset || detector_offset || detector_tilt;
 }
 
+bool validForwardProjectionPose(const SForwardProjectionPose& pose)
+{
+    return std::isfinite(pose.rotation_x_rad) &&
+        std::isfinite(pose.rotation_y_rad) &&
+        std::isfinite(pose.rotation_z_rad);
+}
+
 
 class ReconstructionSession final : public IReconstructionSession {
 public:
@@ -108,7 +115,7 @@ public:
         const SSystemSpec& system = requested;
         if (!hasBytes(system.struct_size, offsetof(SSystemSpec, device) + sizeof(system.device)))
             return fail_(EApiErrorCode::InvalidConfig, "SSystemSpec 结构体版本过旧或被截断");
-        if (system.api_version != 1)
+        if (system.api_version != 2)
             return fail_(EApiErrorCode::InvalidConfig, "不支持的 SSystemSpec api_version");
         const auto decision = releaseDecision(system);
         if (decision == EReleaseDecision::Invalid)
@@ -125,6 +132,11 @@ public:
                 "当前 DLL 构建未启用 YKCBCT_BUILD_HELICAL，缺少 wFBP 后端");
 #endif
         SSystemConfig backend_geometry = system.geometry;
+        if (!validForwardProjectionPose(backend_geometry.forward_projection_pose))
+            return fail_(EApiErrorCode::InvalidGeometry,
+                "Forward-projection volume rotation must contain finite radians");
+        if (system.reconstruction.pipeline != EPipeline::ForwardProjection)
+            backend_geometry.forward_projection_pose = {};
         if ((requiresCanonicalAcquisitionOffsets(system.reconstruction.pipeline) ||
              (system.reconstruction.pipeline == EPipeline::FDK &&
               system.geometry.detector == EDetectorKind::Cylindrical)) &&

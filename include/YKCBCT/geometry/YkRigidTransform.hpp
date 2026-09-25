@@ -86,6 +86,18 @@ struct SRigidTransform {
             pivot, translation);
     }
 
+    // For column vectors, applies fixed world-axis X, then Y, then Z rotations.
+    // The combined matrix is Rz * Ry * Rx.
+    static SRigidTransform aroundEulerPoint(float3 pivot, float rx, float ry,
+        float rz)
+    {
+        const auto x = fromAxisAngle(make_float3(1.f, 0.f, 0.f), rx);
+        const auto y = fromAxisAngle(make_float3(0.f, 1.f, 0.f), ry);
+        const auto z = fromAxisAngle(make_float3(0.f, 0.f, 1.f), rz);
+        const auto rotation = z.compose(y).compose(x);
+        return aroundPoint(rotation.row0, rotation.row1, rotation.row2, pivot);
+    }
+
     float3 transformVector(float3 value) const
     {
         return make_float3(

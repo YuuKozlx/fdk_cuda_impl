@@ -245,4 +245,27 @@ inline SConeProjGeomVec transformProjectionGeometry(
     return result;
 }
 
+inline SCylConeProjGeomVec transformProjectionGeometry(
+    const SCylConeProjGeomVec& geometry,
+    const SRigidTransform& targetFromSource)
+{
+    const auto point = [&](const float4& value) {
+        const float3 transformed = targetFromSource.transformPoint(
+            make_float3(value.x, value.y, value.z));
+        return make_float4(transformed.x, transformed.y, transformed.z, value.w);
+    };
+    const auto vector = [&](const float4& value) {
+        const float3 transformed = targetFromSource.transformVector(
+            make_float3(value.x, value.y, value.z));
+        return make_float4(transformed.x, transformed.y, transformed.z, value.w);
+    };
+
+    SCylConeProjGeomVec result = geometry;
+    result.source = point(geometry.source);
+    result.detectorCenter = point(geometry.detectorCenter);
+    result.detectorU = vector(geometry.detectorU);
+    result.detectorV = vector(geometry.detectorV);
+    return result;
+}
+
 } // namespace YK

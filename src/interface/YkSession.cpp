@@ -233,8 +233,18 @@ public:
                     ? CylFpBp::EForwardProjection::Siddon
                     : CylFpBp::EForwardProjection::Joseph;
                 cyl_forward_ = CylFpBp::makeForwardProjection(model);
+                auto fp_geometry = geometry_.cylGeometry();
+                const auto& pose = geometry_.forwardProjectionPose();
+                if (pose.enabled) {
+                    const auto volume = geometry_.volumeGeometry();
+                    const auto local_from_world = SRigidTransform::aroundEulerPoint(
+                        volume.center, pose.rotation_x_rad, pose.rotation_y_rad,
+                        pose.rotation_z_rad).inverse();
+                    for (auto& view : fp_geometry)
+                        view = transformProjectionGeometry(view, local_from_world);
+                }
                 ok = cyl_forward_->prepare(geometry_.volumeGeometry(),
-                    params_.scan.Nu, params_.scan.Nv, geometry_.cylGeometry(), {}, resources_);
+                    params_.scan.Nu, params_.scan.Nv, fp_geometry, {}, resources_);
             } else {
                 forward_ = makeForwardOperator(forwardTask_());
                 ok = forward_->prepare(geometry_, resources_);

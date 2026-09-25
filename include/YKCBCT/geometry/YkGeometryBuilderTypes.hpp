@@ -103,6 +103,14 @@ struct SVolumeGridSpec {
     float3 center_mm = make_float3(0.f, 0.f, 0.f);
 };
 
+// Pose used only by the standalone forward-projection pipeline.
+struct SForwardProjectionPose {
+    bool enabled = false;
+    float rotation_x_rad = 0.f;
+    float rotation_y_rad = 0.f;
+    float rotation_z_rad = 0.f;
+};
+
 // 轨迹层输出的探测器无关坐标架。detector_principal 是无 offset/tilt 时
 // 中心射线与标称探测器表面的交点。
 struct SScannerViewFrame {

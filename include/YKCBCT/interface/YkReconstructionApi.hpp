@@ -14,7 +14,7 @@ namespace YK {
 // 由 builder 在初始化阶段生成或校准，不要求调用方拼接底层 kernel 参数。
 struct SSystemSpec {
     uint32_t struct_size = sizeof(SSystemSpec);
-    uint32_t api_version = 1;
+    uint32_t api_version = 2;
     SSystemConfig geometry{};
     SReconstructionSpec reconstruction{};
     int device = 0;
