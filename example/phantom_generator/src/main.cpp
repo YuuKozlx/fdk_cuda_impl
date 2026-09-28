@@ -49,6 +49,8 @@ struct Phantom {
     double lower_ring_phase_deg = 0.0;
     double marker_bead_diameter_mm = 0.0;
     double marker_bead_offset_mm = 0.0;
+    double marker_cylinder_height_mm = 0.0;
+    bool cylindrical_ring_markers = false;
     bool spiral_beads = false;
     int beads_per_ring = 0;
 
@@ -196,17 +198,24 @@ void makeTungstenBeadLine(Phantom& p, double bead_diameter_mm,
 
 void makeTungstenBeadDoubleRing(Phantom& p, double ring_diameter_mm,
     double ring_spacing_mm, double bead_diameter_mm,
-    double support_diameter_mm, double support_length_mm, int beads_per_ring)
+    double support_diameter_mm, double support_length_mm, int beads_per_ring,
+    bool cylindrical_markers = false, bool replace_markers = false)
 {
     constexpr std::uint8_t kPmmaLabel = 1;
     constexpr std::uint8_t kTungstenLabel = 100;
     const double support_radius = support_diameter_mm * 0.5;
     const double ring_radius = ring_diameter_mm * 0.5;
     const double bead_radius = bead_diameter_mm * 0.5;
+    const double marker_diameter = replace_markers ? bead_diameter_mm : 5.0;
+    const double marker_height = replace_markers ? 2.0 * bead_diameter_mm : 5.0;
+    const double marker_gap = 10.0;
     if (beads_per_ring < 1)
         throw std::runtime_error("beads_per_ring must be positive");
     if (ring_radius + bead_radius > support_radius ||
-        ring_spacing_mm * 0.5 + bead_radius > support_length_mm * 0.5)
+        ring_spacing_mm * 0.5 + (cylindrical_markers
+            ? (replace_markers ? marker_height * 0.5 :
+                marker_gap + marker_height * 0.5) : bead_radius) >
+            support_length_mm * 0.5)
         throw std::runtime_error("double bead rings do not fit inside support cylinder");
     if (p.nx * p.voxel_mm < support_diameter_mm ||
         p.ny * p.voxel_mm < support_diameter_mm ||
@@ -238,21 +247,30 @@ void makeTungstenBeadDoubleRing(Phantom& p, double ring_diameter_mm,
                 (center_y - bead_radius) / p.voxel_mm + (p.ny - 1) * 0.5)));
             const int ymax = std::min(p.ny - 1, static_cast<int>(std::ceil(
                 (center_y + bead_radius) / p.voxel_mm + (p.ny - 1) * 0.5)));
+            const bool is_cylinder = cylindrical_markers && replace_markers && bead == 0;
+            const double half_height = is_cylinder
+                ? marker_height * 0.5 : bead_radius;
             const int zmin = std::max(0, static_cast<int>(std::floor(
-                (center_z - bead_radius) / p.voxel_mm + (p.nz - 1) * 0.5)));
+                (center_z - half_height) / p.voxel_mm + (p.nz - 1) * 0.5)));
             const int zmax = std::min(p.nz - 1, static_cast<int>(std::ceil(
-                (center_z + bead_radius) / p.voxel_mm + (p.nz - 1) * 0.5)));
+                (center_z + half_height) / p.voxel_mm + (p.nz - 1) * 0.5)));
             for (int z = zmin; z <= zmax; ++z)
                 for (int y = ymin; y <= ymax; ++y)
                     for (int x = xmin; x <= xmax; ++x) {
                         const double dx = p.x(x) - center_x;
                         const double dy = p.y(y) - center_y;
                         const double dz = p.z(z) - center_z;
-                        if (dx * dx + dy * dy + dz * dz <= bead_radius * bead_radius)
+                        const bool inside = is_cylinder
+                            ? dx * dx + dy * dy <= bead_radius * bead_radius &&
+                                std::abs(dz) <= half_height
+                            : dx * dx + dy * dy + dz * dz <=
+                                bead_radius * bead_radius;
+                        if (inside)
                             p.labels[p.index(x, y, z)] = kTungstenLabel;
                     }
             p.inserts.push_back({kTungstenLabel, bead_diameter_mm, 0.0,
-                center_x, center_y, 0.0, center_z});
+                center_x, center_y, is_cylinder ? marker_height : 0.0,
+                center_z});
         }
     }
     p.materials = {{kPmmaLabel, "pmma_support", 1.18, "C5H8O2", {},
@@ -265,8 +283,41 @@ void makeTungstenBeadDoubleRing(Phantom& p, double ring_diameter_mm,
     p.bead_ring_diameter_mm = ring_diameter_mm;
     p.bead_ring_spacing_mm = ring_spacing_mm;
     p.beads_per_ring = beads_per_ring;
+    if (cylindrical_markers && !replace_markers) {
+        const double marker_radius = marker_diameter * 0.5;
+        for (const double center_z : {-ring_spacing_mm * 0.5 - marker_gap,
+                ring_spacing_mm * 0.5 + marker_gap}) {
+            const int zmin = std::max(0, static_cast<int>(std::floor(
+                (center_z - marker_height * 0.5) / p.voxel_mm +
+                (p.nz - 1) * 0.5)));
+            const int zmax = std::min(p.nz - 1, static_cast<int>(std::ceil(
+                (center_z + marker_height * 0.5) / p.voxel_mm +
+                (p.nz - 1) * 0.5)));
+            const int xmin = std::max(0, static_cast<int>(std::floor(
+                (ring_radius - marker_radius) / p.voxel_mm +
+                (p.nx - 1) * 0.5)));
+            const int xmax = std::min(p.nx - 1, static_cast<int>(std::ceil(
+                (ring_radius + marker_radius) / p.voxel_mm +
+                (p.nx - 1) * 0.5)));
+            for (int z = zmin; z <= zmax; ++z)
+                for (int y = 0; y < p.ny; ++y)
+                    for (int x = xmin; x <= xmax; ++x) {
+                        const double dx = p.x(x) - ring_radius;
+                        const double dz = p.z(z) - center_z;
+                        if (dx * dx + p.y(y) * p.y(y) <= marker_radius * marker_radius &&
+                            std::abs(dz) <= marker_height * 0.5)
+                            p.labels[p.index(x, y, z)] = kTungstenLabel;
+                    }
+            p.inserts.push_back({kTungstenLabel, marker_diameter, 0.0,
+                ring_radius, 0.0, marker_height, center_z});
+        }
+        p.marker_bead_offset_mm = marker_gap;
+    }
+    p.cylindrical_ring_markers = cylindrical_markers;
+    p.marker_cylinder_height_mm = cylindrical_markers ? marker_height : 0.0;
     p.variant = "two aligned " + std::to_string(beads_per_ring) +
-        "-bead tungsten rings in a PMMA cylinder";
+        "-bead tungsten rings in a PMMA cylinder" +
+        (cylindrical_markers ? ", with one axial cylinder per ring" : "");
 }
 
 void paintSphere(Phantom& p, double center_x, double center_y,
@@ -643,6 +694,14 @@ void writeOutputs(const Phantom& p, const std::filesystem::path& output)
             if (p.marker_bead_diameter_mm > 0.0)
                 toml << "marker_bead_diameter_mm = " << p.marker_bead_diameter_mm << '\n'
                      << "marker_above_upper_ring_mm = " << p.marker_bead_offset_mm << '\n';
+            if (p.cylindrical_ring_markers)
+                toml << "marker_shape = \"cylinder\"\n"
+                     << "marker_phase_deg = 0\n"
+                     << "marker_cylinder_diameter_mm = "
+                     << (p.marker_cylinder_height_mm > p.target_diameter_mm
+                         ? 5.0 : p.target_diameter_mm) << '\n'
+                     << "marker_cylinder_height_mm = " << p.marker_cylinder_height_mm << '\n'
+                     << "marker_center_offset_mm = " << p.marker_bead_offset_mm << '\n';
             toml << '\n';
         }
     }
@@ -685,6 +744,8 @@ int main(int argc, char** argv)
                 << "types: shepp_logan tungsten_wire tungsten_wire_slanted gold_foil water_cylinder water_cylinder_200mm "
                    "water_ellipse catphan low_contrast tungsten_bead_line_2mm_5mm "
                    "tungsten_bead_line_3mm_10mm tungsten_bead_double_ring "
+                   "tungsten_bead_double_ring_cylinder_marker "
+                   "tungsten_bead_double_ring_cylinder_replace "
                    "tungsten_bead_double_ring_marker tungsten_bead_spiral_marker\n"
                 << "double-ring extra args: ring_diameter_mm ring_spacing_mm bead_diameter_mm support_diameter_mm support_length_mm [beads_per_ring]\n"
                 << "marked double-ring extra args: upper_diameter_mm lower_diameter_mm ring_spacing_mm bead_diameter_mm lower_phase_deg marker_diameter_mm marker_above_mm support_diameter_mm support_length_mm beads_per_ring\n"
@@ -710,13 +771,17 @@ int main(int argc, char** argv)
             makeTungstenBeadLine(p, 2.0, 5.0);
         else if (p.type == "tungsten_bead_line_3mm_10mm")
             makeTungstenBeadLine(p, 3.0, 10.0);
-        else if (p.type == "tungsten_bead_double_ring") {
+        else if (p.type == "tungsten_bead_double_ring" ||
+            p.type == "tungsten_bead_double_ring_cylinder_marker" ||
+            p.type == "tungsten_bead_double_ring_cylinder_replace") {
             if (argc != 12 && argc != 13) throw std::runtime_error(
                 "tungsten_bead_double_ring requires five dimensions and optional bead count");
             makeTungstenBeadDoubleRing(p, std::stod(argv[7]),
                 std::stod(argv[8]), std::stod(argv[9]), std::stod(argv[10]),
                 std::stod(argv[11]), argc == 13 ? integer(argv[12],
-                    "beads_per_ring") : 6);
+                    "beads_per_ring") : 6,
+                p.type != "tungsten_bead_double_ring",
+                p.type == "tungsten_bead_double_ring_cylinder_replace");
         }
         else if (p.type == "tungsten_bead_double_ring_marker") {
             if (argc != 17) throw std::runtime_error(
