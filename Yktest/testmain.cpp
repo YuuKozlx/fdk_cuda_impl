@@ -41,6 +41,10 @@ int main_filter_discrete_ramlak_dc_zero();
 int main_fp_siddon_uniform_center_length();
 int main_fp_siddon_single_voxel_peak();
 int main_fp_volume_pose_api();
+int main_dlt_fpbp_adjoint();
+int main_dlt_algebraic_methods();
+int main_dlt_phantom_reconstruction();
+int main_yang_sart_full_resolution_comparison();
 int main_operator_matrix_smoke(); int main_planar_geometry_operator_smoke();
 int main_algebraic_ex_smoke();
 int main_iterative_convergence_smoke();
@@ -156,6 +160,13 @@ namespace {
         TEST_INT("fp/siddon-uniform-center", "fp", false, main_fp_siddon_uniform_center_length),
         TEST_INT("fp/siddon-single-voxel", "fp", false, main_fp_siddon_single_voxel_peak),
         TEST_INT("fp/volume-pose-api", "fp", false, main_fp_volume_pose_api),
+        TEST_INT("dlt/adjoint", "dlt", false, main_dlt_fpbp_adjoint),
+        TEST_INT("dlt/algebraic-methods", "dlt", false,
+            main_dlt_algebraic_methods),
+        TEST_INT("dlt/phantom-reconstruction", "dlt", true,
+            main_dlt_phantom_reconstruction),
+        TEST_INT("dlt/yang-full-resolution-sart-comparison", "dlt", true,
+            main_yang_sart_full_resolution_comparison),
         TEST_INT("geometry/planar-fp-bp", "geometry", false, main_planar_geometry_operator_smoke),
 
         // Synthetic reconstruction smoke tests.

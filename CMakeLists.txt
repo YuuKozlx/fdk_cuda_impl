@@ -161,6 +161,7 @@ add_subdirectory(src/Filter)
 add_subdirectory(src/FDK)
 add_subdirectory(src/BP)
 add_subdirectory(src/FP)
+add_subdirectory(src/DLTFpBp)
 add_subdirectory(src/CylFpBp)
 add_subdirectory(src/Iter)
 
