@@ -42,6 +42,16 @@ struct FdkGeometryDiagnostics {
     float max_detector_skew = 0.f;
     float max_abs_principal_u_pix = 0.f;
     float max_abs_principal_v_pix = 0.f;
+    float min_principal_u_pix = 0.f;
+    float max_principal_u_pix = 0.f;
+    float min_principal_v_pix = 0.f;
+    float max_principal_v_pix = 0.f;
+    float min_relative_tilt_u_rad = 0.f;
+    float max_relative_tilt_u_rad = 0.f;
+    float min_relative_tilt_v_rad = 0.f;
+    float max_relative_tilt_v_rad = 0.f;
+    float min_relative_tilt_n_rad = 0.f;
+    float max_relative_tilt_n_rad = 0.f;
     float max_normal_misalignment = 0.f;
     bool approximate = false;
 };
@@ -688,12 +698,55 @@ private:
             derived.front().source_to_radial_detector_mm;
         diagnostics.min_source_to_plane_mm = diagnostics.max_source_to_plane_mm =
             derived.front().source_to_detector_plane_mm;
+        diagnostics.min_principal_u_pix = diagnostics.max_principal_u_pix =
+            derived.front().offsetU_pix;
+        diagnostics.min_principal_v_pix = diagnostics.max_principal_v_pix =
+            derived.front().offsetV_pix;
         const float du0 = derived.front().du_mm;
         const float dv0 = derived.front().dv_mm;
         if (du0 <= 0.f || dv0 <= 0.f) {
             YK_LOGE("[FdkPipeline] geometry 含有无效探测器像素轴。");
             return false;
         }
+        const auto normalize = [&](const float4& value) {
+            const float inv_length = 1.f / length(value);
+            return make_float4(value.x * inv_length, value.y * inv_length,
+                value.z * inv_length, 0.f);
+        };
+        const auto cross = [](const float4& a, const float4& b) {
+            return make_float4(a.y * b.z - a.z * b.y,
+                a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x, 0.f);
+        };
+        const auto relativeDetectorTilt = [&](const SConeProjGeomVec& view,
+            const SFDKGeoParamPerView& actual) {
+            // The ideal detector follows the offset source: N points from the
+            // detector toward the source, V follows the rotation axis, and
+            // U x V = N. Decompose the measured detector basis using the same
+            // intrinsic U/V/N rotation order as the geometry builder.
+            const float4 ideal_n = make_float4(-actual.radial_ray.x,
+                -actual.radial_ray.y, -actual.radial_ray.z, 0.f);
+            const float4 axis = make_float4(0.f, 0.f, 1.f, 0.f);
+            const float4 ideal_u = normalize(cross(axis, ideal_n));
+            const float4 ideal_v = normalize(cross(ideal_n, ideal_u));
+            const float4 measured_u = normalize(view.detU);
+            const float4 measured_v = normalize(view.detV);
+            float4 measured_n = normalize(cross(measured_u, measured_v));
+            if (dot(measured_n, ideal_n) < 0.f) {
+                measured_n.x = -measured_n.x;
+                measured_n.y = -measured_n.y;
+                measured_n.z = -measured_n.z;
+            }
+
+            const float r02 = std::clamp(dot(ideal_u, measured_n), -1.f, 1.f);
+            const float tilt_v = std::asin(r02);
+            const float tilt_u = std::atan2(-dot(ideal_v, measured_n),
+                dot(ideal_n, measured_n));
+            const float tilt_n = std::atan2(-dot(ideal_u, measured_v),
+                dot(ideal_u, measured_u));
+            return make_float3(tilt_u, tilt_v, tilt_n);
+        };
+        bool first_tilt = true;
         for (size_t i = 0; i < geometry.size(); ++i) {
             const auto& view = geometry[i];
             const auto& actual = derived[i];
@@ -730,6 +783,38 @@ private:
                 diagnostics.max_abs_principal_u_pix, std::abs(actual.offsetU_pix));
             diagnostics.max_abs_principal_v_pix = std::max(
                 diagnostics.max_abs_principal_v_pix, std::abs(actual.offsetV_pix));
+            diagnostics.min_principal_u_pix = std::min(
+                diagnostics.min_principal_u_pix, actual.offsetU_pix);
+            diagnostics.max_principal_u_pix = std::max(
+                diagnostics.max_principal_u_pix, actual.offsetU_pix);
+            diagnostics.min_principal_v_pix = std::min(
+                diagnostics.min_principal_v_pix, actual.offsetV_pix);
+            diagnostics.max_principal_v_pix = std::max(
+                diagnostics.max_principal_v_pix, actual.offsetV_pix);
+            const float3 tilt = relativeDetectorTilt(view, actual);
+            if (first_tilt) {
+                diagnostics.min_relative_tilt_u_rad =
+                    diagnostics.max_relative_tilt_u_rad = tilt.x;
+                diagnostics.min_relative_tilt_v_rad =
+                    diagnostics.max_relative_tilt_v_rad = tilt.y;
+                diagnostics.min_relative_tilt_n_rad =
+                    diagnostics.max_relative_tilt_n_rad = tilt.z;
+                first_tilt = false;
+            }
+            else {
+                diagnostics.min_relative_tilt_u_rad = std::min(
+                    diagnostics.min_relative_tilt_u_rad, tilt.x);
+                diagnostics.max_relative_tilt_u_rad = std::max(
+                    diagnostics.max_relative_tilt_u_rad, tilt.x);
+                diagnostics.min_relative_tilt_v_rad = std::min(
+                    diagnostics.min_relative_tilt_v_rad, tilt.y);
+                diagnostics.max_relative_tilt_v_rad = std::max(
+                    diagnostics.max_relative_tilt_v_rad, tilt.y);
+                diagnostics.min_relative_tilt_n_rad = std::min(
+                    diagnostics.min_relative_tilt_n_rad, tilt.z);
+                diagnostics.max_relative_tilt_n_rad = std::max(
+                    diagnostics.max_relative_tilt_n_rad, tilt.z);
+            }
             const float normalAlignment = std::abs(
                 actual.radial_ray.x * actual.det_n.x +
                 actual.radial_ray.y * actual.det_n.y +
@@ -762,6 +847,23 @@ private:
             diagnostics.max_abs_principal_u_pix > kRelativeTolerance ||
             diagnostics.max_abs_principal_v_pix > kRelativeTolerance ||
             diagnostics.max_normal_misalignment > kRelativeTolerance;
+        constexpr float kRadToDeg = 57.29577951308232f;
+        YK_LOGI("[FdkPipeline] 相对几何：principalU=[{:.4f}, {:.4f}] pix "
+            "([{:.4f}, {:.4f}] mm)，principalV=[{:.4f}, {:.4f}] pix "
+            "([{:.4f}, {:.4f}] mm)，tiltU=[{:.4f}, {:.4f}] deg，"
+            "tiltV=[{:.4f}, {:.4f}] deg，tiltN=[{:.4f}, {:.4f}] deg。",
+            diagnostics.min_principal_u_pix, diagnostics.max_principal_u_pix,
+            diagnostics.min_principal_u_pix * du0,
+            diagnostics.max_principal_u_pix * du0,
+            diagnostics.min_principal_v_pix, diagnostics.max_principal_v_pix,
+            diagnostics.min_principal_v_pix * dv0,
+            diagnostics.max_principal_v_pix * dv0,
+            diagnostics.min_relative_tilt_u_rad * kRadToDeg,
+            diagnostics.max_relative_tilt_u_rad * kRadToDeg,
+            diagnostics.min_relative_tilt_v_rad * kRadToDeg,
+            diagnostics.max_relative_tilt_v_rad * kRadToDeg,
+            diagnostics.min_relative_tilt_n_rad * kRadToDeg,
+            diagnostics.max_relative_tilt_n_rad * kRadToDeg);
         if (diagnostics.approximate) {
             YK_LOGW("[FdkPipeline] 使用校准 geometry 的近似 FDK：SOD=[{:.4f}, {:.4f}] mm，"
                 "SDD=[{:.4f}, {:.4f}] mm，plane=[{:.4f}, {:.4f}] mm，"
