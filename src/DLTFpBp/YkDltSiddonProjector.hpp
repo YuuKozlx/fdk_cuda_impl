@@ -33,9 +33,14 @@ public:
         rows_ = rows;
         views_ = static_cast<int>(geometry.size());
         volume_geometry_ = volume_geometry;
+        std::vector<SDltVoxelBackGeometry> voxel_geometry;
+        if (!buildVoxelBackGeometry(geometry, voxel_geometry)) return false;
         Mem::PodDataController memory;
         device_geometry_ = memory.allocateAndUpload(geometry, device_id_);
-        prepared_ = static_cast<bool>(device_geometry_);
+        device_voxel_geometry_ = memory.allocateAndUpload(voxel_geometry, device_id_);
+        prepared_ = static_cast<bool>(device_geometry_) &&
+            static_cast<bool>(device_voxel_geometry_);
+        if (!prepared_) release();
         return prepared_;
     }
 
@@ -67,9 +72,25 @@ public:
         return true;
     }
 
+    // Fast voxel-driven approximation. This is deliberately not the adjoint
+    // of forward(): each voxel samples the detector at its projected position
+    // and receives the local voxel chord-length weight.
+    bool backprojectVoxelDriven(const float* device_projection,
+        float* device_volume, bool clear_volume, bool bilinear,
+        cudaStream_t stream) const
+    {
+        if (!prepared_ || !device_projection || !device_volume) return false;
+        YK_CUDA_CHECK(cudaSetDevice(device_id_));
+        dltVoxelBackLaunch(device_projection, device_volume,
+            device_voxel_geometry_.data(), volume_geometry_, channels_, rows_,
+            views_, bilinear, !clear_volume, stream);
+        return true;
+    }
+
     void release()
     {
         device_geometry_.reset();
+        device_voxel_geometry_.reset();
         volume_geometry_ = {};
         channels_ = rows_ = views_ = 0;
         prepared_ = false;
@@ -81,6 +102,7 @@ public:
 
 private:
     Mem::DeviceLinearBuffer<SDltRayGeometry> device_geometry_{};
+    Mem::DeviceLinearBuffer<SDltVoxelBackGeometry> device_voxel_geometry_{};
     SVolGeom volume_geometry_{};
     int channels_ = 0;
     int rows_ = 0;

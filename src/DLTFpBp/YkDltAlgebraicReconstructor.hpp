@@ -33,6 +33,18 @@ enum class EDltAlgebraicWeightModel {
     TigreApprox
 };
 
+enum class EDltBackprojectionModel {
+    // Exact matched Siddon backprojection; this is the adjoint of forward().
+    MatchedSiddon,
+    // Fast voxel-driven detector sampling; intentionally non-adjoint.
+    VoxelDriven
+};
+
+enum class EDltVoxelInterpolation {
+    Nearest,
+    Bilinear
+};
+
 struct SDltAlgebraicConfig {
     EDltAlgebraicMethod method = EDltAlgebraicMethod::Ossart;
     EDltAlgebraicWeightModel weight_model =
@@ -41,6 +53,10 @@ struct SDltAlgebraicConfig {
     float relaxation = 1.f;
     float epsilon = 1.e-6f;
     bool nonnegative = true;
+    EDltBackprojectionModel backprojection_model =
+        EDltBackprojectionModel::MatchedSiddon;
+    EDltVoxelInterpolation voxel_interpolation =
+        EDltVoxelInterpolation::Bilinear;
 };
 
 class DltAlgebraicReconstructor {
@@ -135,6 +151,8 @@ public:
     bool prepared() const { return prepared_; }
     EDltAlgebraicMethod method() const { return config_.method; }
     EDltAlgebraicWeightModel weightModel() const { return config_.weight_model; }
+    EDltBackprojectionModel backprojectionModel() const
+    { return config_.backprojection_model; }
     int subsetSize() const { return subset_size_; }
     int subsetCount() const { return subset_count_; }
     unsigned int completedSubsetUpdates() const { return update_index_; }
@@ -258,6 +276,18 @@ private:
         return true;
     }
 
+    bool backproject_(const DltSiddonProjector& projector,
+        const float* projection, float* volume, bool clear) const
+    {
+        if (config_.backprojection_model ==
+            EDltBackprojectionModel::VoxelDriven) {
+            return projector.backprojectVoxelDriven(projection, volume, clear,
+                config_.voxel_interpolation == EDltVoxelInterpolation::Bilinear,
+                stream_);
+        }
+        return projector.backproject(projection, volume, clear, stream_);
+    }
+
     bool iterateSubset_(const float* measured, float* volume)
     {
         const int subset = static_cast<int>(update_index_ % subset_count_);
@@ -273,8 +303,8 @@ private:
             if (!projectors_[subset]->forward(d_ones_volume_.data(),
                     d_row_weight_.data(), false, stream_)) return false;
             dltFillOnesLaunch(d_residual_.data(), projection_elements, stream_);
-            if (!projectors_[subset]->backproject(d_residual_.data(),
-                    d_column_weight_.data(), true, stream_)) return false;
+            if (!backproject_(*projectors_[subset], d_residual_.data(),
+                    d_column_weight_.data(), true)) return false;
         }
         else {
             // Keep the exact ray row norm here. The approximation is in the
@@ -282,8 +312,8 @@ private:
             if (!projectors_[subset]->forward(d_ones_volume_.data(),
                     d_row_weight_.data(), false, stream_)) return false;
             dltFillOnesLaunch(d_residual_.data(), projection_elements, stream_);
-            if (!projectors_[subset]->backproject(d_residual_.data(),
-                    d_column_weight_.data(), true, stream_)) return false;
+            if (!backproject_(*projectors_[subset], d_residual_.data(),
+                    d_column_weight_.data(), true)) return false;
             dltMeanZLaunch(d_column_weight_.data(),
                 d_column_weight_2d_.data(), volume_geometry_.Nx,
                 volume_geometry_.Ny, volume_geometry_.Nz, stream_);
@@ -305,8 +335,8 @@ private:
             d_residual_.data(), projection_elements, stream_);
         dltDivideLaunch(d_residual_.data(), d_row_weight_.data(),
             config_.epsilon, projection_elements, stream_);
-        if (!projectors_[subset]->backproject(d_residual_.data(),
-                d_backprojection_.data(), true, stream_)) return false;
+        if (!backproject_(*projectors_[subset], d_residual_.data(),
+                d_backprojection_.data(), true)) return false;
 
         if (config_.weight_model == EDltAlgebraicWeightModel::ExactSubset) {
             dltUpdateLaunch(volume, d_backprojection_.data(),

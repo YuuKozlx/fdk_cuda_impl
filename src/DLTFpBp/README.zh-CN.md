@@ -1,4 +1,4 @@
-# DLTFpBp：由逐帧 DLT 矩阵直接驱动的匹配 FP/BP
+# DLTFpBp：由逐帧 DLT 矩阵直接驱动的 FP/BP
 
 这个目录是一套独立的 DLT 射线正投影、反投影和代数重建实现。DLT 矩阵、
 `SDltRayGeometry` 和现有的 `SConeProjGeomVec` 都可以作为迭代入口的输入；
@@ -19,7 +19,7 @@ DLTFpBp/
     ├── YkDltAlgebraicKernels.cu      残差、归一化和体积更新 kernel
     ├── YkDltAlgebraicLaunch.cuh      代数更新 kernel 启动接口
     ├── YkDltSiddonTraversal.cuh      FP/BP 共用的 Siddon 体素遍历
-    ├── YkDltSiddonKernels.cu         独立的 FP kernel 和 BP kernel
+    ├── YkDltSiddonKernels.cu         匹配 Siddon 与体素驱动 BP kernel
     └── YkDltSiddonLaunch.cuh         kernel 启动接口
 ```
 
@@ -104,9 +104,12 @@ FP: projection[r] += length(r,k) * volume[k]
 BP: volume[k]     += length(r,k) * projection[r]
 ```
 
-其中 `length(r,k)` 是射线穿过体素 `k` 的毫米长度。BP 使用 `atomicAdd`，以处理不同
-射线同时写入同一体素。这样构造的 BP 是 FP 离散矩阵的转置，而不是 FDK 加权反投影，
-也不是独立近似出来的 voxel-driven BP。
+其中 `length(r,k)` 是射线穿过体素 `k` 的毫米长度。匹配 BP 使用 `atomicAdd`，以处理
+不同射线同时写入同一体素。这样构造的 BP 是 FP 离散矩阵的转置，而不是 FDK 加权反投影。
+
+另外提供一个独立的体素驱动近似 BP：每个体素通过 DLT 的逆基求出连续投影坐标，读取
+该位置的最近邻或双线性投影值，再乘以该连续射线穿过体素 AABB 的弦长。它不遍历所有
+射线，也不做原子加法，通常更快，但它不是 `A^T`，不能使用伴随误差作为正确性判据。
 
 严格伴随关系为：
 
@@ -142,6 +145,9 @@ bool prepared = geometry_ok && projector.prepare(
 
 projector.forward(device_volume, device_projection, false, stream);
 projector.backproject(device_projection, device_volume, true, stream);
+// 速度优先的非伴随版本；最后一个参数 true 表示双线性采样。
+projector.backprojectVoxelDriven(device_projection, device_volume,
+    true, true, stream);
 ```
 
 `forward(..., accumulate=false)` 覆盖投影输出；设为 `true` 时累加到已有投影。
@@ -177,6 +183,12 @@ reconstructor.prepare(existing_vec_geometry, volume_geometry, Nu, Nv, config);
 `ExactSubset` 在每个子集上用 DLT Siddon 算子计算 `A_s*1` 和 `A_s^T*1`。
 `TigreApprox` 保留精确行归一化，将列权重沿 z 平均成 2D 图像；两种归一化都
 不依赖物理 `SID/SDD/offset` 参数。
+
+`SDltAlgebraicConfig::backprojection_model` 默认是
+`EDltBackprojectionModel::MatchedSiddon`。设置为 `VoxelDriven` 后，代数重建的
+列权重和残差回投都使用体素驱动近似 BP；`voxel_interpolation` 可选择
+`Nearest` 或 `Bilinear`。该模式是速度优先的非伴随算法，建议与较小松弛因子和实际
+重建结果一起评估，不能再声称严格满足 `<Ax,y>=<x,A^Ty>`。
 
 ## 7. 能做什么，不能做什么
 

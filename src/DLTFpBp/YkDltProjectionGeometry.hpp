@@ -39,6 +39,21 @@ struct SDltRayGeometry {
 static_assert(sizeof(SDltRayGeometry) == 4 * sizeof(float4),
     "SDltRayGeometry must remain a packed four-float4 type");
 
+// Host-prepared geometry for voxel-driven DLT backprojection. For a voxel
+// point X, the inverse basis maps d = X - source to
+// [a,b,c]^T = inverse_basis * d, with detector coordinates u=b/a and v=c/a.
+// The inverse is prepared once on the host instead of recomputed for every
+// voxel/view pair in the CUDA kernel.
+struct SDltVoxelBackGeometry {
+    float4 source{};
+    float4 ray00{};
+    float4 rayU{};
+    float4 rayV{};
+    float4 inverseRow0{};
+    float4 inverseRow1{};
+    float4 inverseRow2{};
+};
+
 inline SDltProjectionMatrix flipImageV(const SDltProjectionMatrix& input,
     int detector_rows)
 {
@@ -168,6 +183,42 @@ inline bool buildRayGeometry(const std::vector<SDltProjectionMatrix>& projection
             output.clear();
             return false;
         }
+    }
+    return true;
+}
+
+inline bool buildVoxelBackGeometry(
+    const std::vector<SDltRayGeometry>& geometry,
+    std::vector<SDltVoxelBackGeometry>& output)
+{
+    if (geometry.empty()) return false;
+    output.resize(geometry.size());
+    for (size_t i = 0; i < geometry.size(); ++i) {
+        const auto& input = geometry[i];
+        const double basis[9] = {
+            input.ray00.x, input.rayU.x, input.rayV.x,
+            input.ray00.y, input.rayU.y, input.rayV.y,
+            input.ray00.z, input.rayU.z, input.rayV.z
+        };
+        double inverse[9]{};
+        if (!detail::invert3x3(basis, inverse)) {
+            output.clear();
+            return false;
+        }
+        auto& item = output[i];
+        item.source = input.source;
+        item.ray00 = input.ray00;
+        item.rayU = input.rayU;
+        item.rayV = input.rayV;
+        item.inverseRow0 = make_float4(
+            static_cast<float>(inverse[0]), static_cast<float>(inverse[1]),
+            static_cast<float>(inverse[2]), 0.f);
+        item.inverseRow1 = make_float4(
+            static_cast<float>(inverse[3]), static_cast<float>(inverse[4]),
+            static_cast<float>(inverse[5]), 0.f);
+        item.inverseRow2 = make_float4(
+            static_cast<float>(inverse[6]), static_cast<float>(inverse[7]),
+            static_cast<float>(inverse[8]), 0.f);
     }
     return true;
 }

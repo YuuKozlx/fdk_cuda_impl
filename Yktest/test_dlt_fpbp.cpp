@@ -185,12 +185,14 @@ int main_dlt_fpbp_adjoint()
     for (float& value : y) value = distribution(generator);
     std::vector<float> ax(projection_count, 0.f);
     std::vector<float> at_y(volume_count, 0.f);
+    std::vector<float> voxel_back(volume_count, 0.f);
 
     cudaStream_t stream = nullptr;
     if (ok) ok = cudaStreamCreate(&stream) == cudaSuccess;
     YK::Mem::MemoryController memory;
     auto d_x = memory.allocateDevice3D<float>(volume.Nx, volume.Ny, volume.Nz, 0);
     auto d_at_y = memory.allocateDevice3D<float>(volume.Nx, volume.Ny, volume.Nz, 0);
+    auto d_voxel_back = memory.allocateDevice3D<float>(volume.Nx, volume.Ny, volume.Nz, 0);
     auto d_y = memory.allocateDevice3D<float>(channels, rows, views, 0);
     auto d_ax = memory.allocateDevice3D<float>(channels, rows, views, 0);
     if (ok) {
@@ -212,6 +214,20 @@ int main_dlt_fpbp_adjoint()
                 cudaMemcpyDeviceToHost) == cudaSuccess;
     }
 
+    bool voxel_back_ok = ok && projector.backprojectVoxelDriven(
+        d_y.data(), d_voxel_back.data(), true, true, stream) &&
+        cudaStreamSynchronize(stream) == cudaSuccess &&
+        cudaMemcpy(voxel_back.data(), d_voxel_back.data(),
+            volume_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess;
+    double voxel_back_norm = 0.0;
+    if (voxel_back_ok) {
+        for (float value : voxel_back) {
+            if (!std::isfinite(value)) voxel_back_ok = false;
+            voxel_back_norm += static_cast<double>(value) * value;
+        }
+        voxel_back_ok = voxel_back_ok && voxel_back_norm > 0.0;
+    }
+
     const double lhs = ok ? dotProduct(ax, y) : NAN;
     const double rhs = ok ? dotProduct(x, at_y) : NAN;
     const double relative_error = std::fabs(lhs - rhs) /
@@ -223,6 +239,9 @@ int main_dlt_fpbp_adjoint()
         "relative=%.3e agreement=%.9f%% scale_error=%.3e %s\n",
         lhs, rhs, relative_error, agreement_percent, scale_invariance_error,
         relative_error < 1e-5 ? "PASS" : "FAIL");
+    std::printf("[DLTFpBp voxel-driven BP] bilinear_norm=%.6e %s\n",
+        std::sqrt(voxel_back_norm), voxel_back_ok ? "PASS" : "FAIL");
+    ok = ok && voxel_back_ok;
     if (stream) cudaStreamDestroy(stream);
     return ok ? 0 : 1;
 }
@@ -359,6 +378,29 @@ int main_dlt_algebraic_methods()
         vec_relative < 1e-5;
     std::printf("[DLT algebraic inputs] matrix/ray=%.3e vec/ray=%.3e %s\n",
         matrix_relative, vec_relative, input_equivalence ? "PASS" : "FAIL");
-    ok = input_equivalence;
+    YK::DltFpBp::SDltAlgebraicConfig voxel_config = input_config;
+    voxel_config.backprojection_model =
+        YK::DltFpBp::EDltBackprojectionModel::VoxelDriven;
+    voxel_config.voxel_interpolation =
+        YK::DltFpBp::EDltVoxelInterpolation::Bilinear;
+    YK::DltFpBp::DltAlgebraicReconstructor voxel_reconstructor;
+    bool voxel_algebraic_ok = voxel_reconstructor.prepare(
+        geometry, volume, channels, rows, voxel_config) &&
+        cudaMemset(d_volume.data(), 0, volume_count * sizeof(float)) == cudaSuccess &&
+        voxel_reconstructor.iterate(d_measured.data(), d_volume.data(), 1) &&
+        cudaDeviceSynchronize() == cudaSuccess &&
+        cudaMemcpy(from_vec.data(), d_volume.data(),
+            volume_count * sizeof(float), cudaMemcpyDeviceToHost) == cudaSuccess;
+    double voxel_algebraic_norm = 0.0;
+    if (voxel_algebraic_ok) {
+        for (float value : from_vec) {
+            if (!std::isfinite(value)) voxel_algebraic_ok = false;
+            voxel_algebraic_norm += static_cast<double>(value) * value;
+        }
+        voxel_algebraic_ok = voxel_algebraic_ok && voxel_algebraic_norm > 0.0;
+    }
+    std::printf("[DLT algebraic voxel-driven] norm=%.6e %s\n",
+        std::sqrt(voxel_algebraic_norm), voxel_algebraic_ok ? "PASS" : "FAIL");
+    ok = input_equivalence && voxel_algebraic_ok;
     return ok ? 0 : 1;
 }
