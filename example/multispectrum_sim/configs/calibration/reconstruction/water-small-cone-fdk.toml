@@ -5,10 +5,10 @@ mode = "project_and_reconstruct"
 
 [projection]
 label_volume = ""
-spectrum_file = "../../spectra/spectrum-120kv-150.csv"
-xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
-output_file = "../../outputs/calibration/water-fdk-projection.raw"
-energy_output_file = "../../outputs/calibration/water-fdk-projection-energy.raw"
+spectrum_file = "../../../spectra/spectrum-120kv-150.csv"
+xcom_data_directory = "../../../../../thirdparty/nist_xcom/data"
+output_file = "../../../outputs/calibration/water-fdk-projection.raw"
+energy_output_file = "../../../outputs/calibration/water-fdk-projection-energy.raw"
 engine = "pixel_local_random"
 apply_geometry_flux = true
 
@@ -80,8 +80,8 @@ electronic_noise_sigma = 0.0
 
 [reconstruction]
 type = "analytic"
-output_volume_file = "../../outputs/calibration/water-fdk-volume.raw"
-slice_prefix = "../../outputs/calibration/water-fdk"
+output_volume_file = "../../../outputs/calibration/water-fdk-volume.raw"
+slice_prefix = "../../../outputs/calibration/water-fdk"
 
 [reconstruction.analytic]
 pipeline = "fdk"

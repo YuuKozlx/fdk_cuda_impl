@@ -79,9 +79,13 @@ int main(int argc, char** argv)
             return 0;
         }
         if (!config.runsProjection()) {
-            for (const auto& path : { config.reconstruction.output_volume_file,
-                     config.reconstruction.slice_prefix })
-                if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+            if (!config.reconstruction.output_volume_file.parent_path().empty())
+                std::filesystem::create_directories(
+                    config.reconstruction.output_volume_file.parent_path());
+            if (config.reconstruction.save_slices &&
+                !config.reconstruction.slice_prefix.parent_path().empty())
+                std::filesystem::create_directories(
+                    config.reconstruction.slice_prefix.parent_path());
             std::string error;
             if (!yk::spectral::reconstructWithLibraryFdk(config,
                 config.reconstruction.input_projection_file,
@@ -101,11 +105,14 @@ int main(int argc, char** argv)
         std::string error;
         for (const auto& path : { config.projection.output_file,
                  config.projection.energy_output_file,
-                 config.reconstruction.output_volume_file,
-                 config.reconstruction.slice_prefix }) {
+                 config.reconstruction.output_volume_file }) {
             if (!path.empty() && !path.parent_path().empty())
                 std::filesystem::create_directories(path.parent_path());
         }
+        if (config.runsReconstruction() && config.reconstruction.save_slices &&
+            !config.reconstruction.slice_prefix.parent_path().empty())
+            std::filesystem::create_directories(
+                config.reconstruction.slice_prefix.parent_path());
         const auto projection_start = std::chrono::steady_clock::now();
         if (!simulator.runToFile(labels, config.projection.output_file, error))
             throw std::runtime_error(error);
@@ -132,8 +139,11 @@ int main(int argc, char** argv)
                 : config.reconstruction.iterative.algorithm;
             std::cout << "reconstruction=" << reconstruction_name
                 << " volume="
-                << config.reconstruction.output_volume_file.string()
-                << " slices=" << config.reconstruction.slice_prefix.string() << "-{axial,coronal,sagittal}.bmp\n";
+                << config.reconstruction.output_volume_file.string();
+            if (config.reconstruction.save_slices)
+                std::cout << " slices=" << config.reconstruction.slice_prefix.string()
+                    << "-{axial,coronal,sagittal}.bmp";
+            std::cout << '\n';
             const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 reconstruction_end - total_start).count();
             yk::spectral::SimLogger::instance().info(

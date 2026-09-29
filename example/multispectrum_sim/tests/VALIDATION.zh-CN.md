@@ -57,10 +57,10 @@ volume.roi.json 和 `water-roi-comparison.png`。对比图上栏为绝对值，�
 ```powershell
 $exe = 'out/top-multispectrum-dll-vs/example/multispectrum_sim/Release/multispectrum_sim.exe'
 $base = 'example/multispectrum_sim'
-& $exe "$base/configs/pipelines/water-small-cone-fdk-calibration.toml"
-& $exe "$base/configs/pipelines/water-small-cone-heli-cyl-wfbp-calibration.toml"
-python "$base/scripts/report_material_roi.py" "$base/configs/pipelines/water-small-cone-fdk-calibration.toml" --fixed-radius-mm 20
-python "$base/scripts/report_material_roi.py" "$base/configs/pipelines/water-small-cone-heli-cyl-wfbp-calibration.toml" --fixed-radius-mm 20
+& $exe "$base/configs/calibration/reconstruction/water-small-cone-fdk.toml"
+& $exe "$base/configs/calibration/reconstruction/water-small-cone-heli-cyl-wfbp.toml"
+python "$base/scripts/report_material_roi.py" "$base/configs/calibration/reconstruction/water-small-cone-fdk.toml" --fixed-radius-mm 20
+python "$base/scripts/report_material_roi.py" "$base/configs/calibration/reconstruction/water-small-cone-heli-cyl-wfbp.toml" --fixed-radius-mm 20
 python "$base/scripts/plot_water_roi.py" "$base/outputs/calibration/water-fdk-volume.roi.json" "$base/outputs/calibration/water-wfbp-volume.roi.json" --output "$base/outputs/calibration/water-roi-comparison.png"
 ctest --test-dir out/top-multispectrum-dll-vs/example/multispectrum_sim -C Release --output-on-failure
 python -m unittest discover -s "$base/scripts" -p test_report_material_roi.py

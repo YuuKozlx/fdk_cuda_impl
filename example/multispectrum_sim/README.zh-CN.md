@@ -9,6 +9,7 @@
 enabled = true
 output_volume_file = "../outputs/reconstructions/iterative.raw"
 slice_prefix = "../outputs/images/iterative"
+save_slices = false        # 默认不导出轴向、冠状和矢状 BMP
 
 [reconstruction.iterative]
 algorithm = "tigre_os_sart_tv"
@@ -29,6 +30,9 @@ TIGRE 梯度族使用 `tigre_` 前缀：普通迭代为 `tigre_sart`、`tigre_si
 迭代重建目前支持四类宏观几何；实际组合仍由 DLL 的公开能力校验，若某个构建未放行会在初始化时报错，不会静默退回 FDK。
 
 ## 能量积分探测器输出
+
+纯正投不生成投影预览图片。重建的轴向、冠状和矢状 BMP 默认关闭，只有显式
+设置 `reconstruction.save_slices = true` 才会生成。
 
 CSV 第二列按光子数谱解释。CUDA 多能谱积分对每个能量 bin 计算“光子数 * energy_keV * exp(-路径衰减)”，并同时写出两种 float32 投影：
 
@@ -63,13 +67,13 @@ BrainWeb TOML 使用相对于配置文件的路径，输出统一写入 `example
 ```powershell
 cmake -S . -B out/brainweb -G "Visual Studio 17 2022" -A x64 -DBUILD_MULTISPECTRUM_SIM=ON -DYKCBCT_BUILD_HELICAL=ON
 cmake --build out/brainweb --config Release --target multispectrum_sim
-out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/brainweb-center33-small-cone-fdk.toml
-out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/brainweb-center33-small-cone-heli-cyl-wfbp.toml
+out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-fdk.toml
+out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-heli-cyl-wfbp.toml
 ```
 
 示例文件按职责分开保存：
 
-- `configs/projection/`：纯投影配置；`configs/reconstruction/`：纯重建配置；`configs/pipelines/`：投影后立即重建的组合配置；
+- `configs/projection/`：纯投影配置；`configs/reconstruction/analytic/` 和 `configs/reconstruction/iterative/`：读取已有投影的重建配置；`configs/pipelines/analytic/` 和 `configs/pipelines/iterative/`：投影后立即重建的组合配置；`configs/quality/`：图像质量模体配置；`configs/calibration/geometry/`：双环、螺旋等几何标定模体；`configs/calibration/reconstruction/`：水模重建数值校验；
 - `spectra/`：原始能谱和转换后的 CSV；
 - `inputs/`：外部标签体；
 - `outputs/projections/`：最终 `-log(I/I0)` 投影；
@@ -84,7 +88,7 @@ out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/mul
 
 `pixel_local_random` 在每个探测器像素内随机采样，`detector_global_random` 在整个探测器面上随机采样。两种路线均直接在 CUDA 前投 kernel 中计算并生成能量积分信号和对数投影；`photon_count_mode` 可选择 `fixed` 或 `poisson`。
 
-`water-cylinder-120kv-fullfov.toml` 使用从原始 `.spc` 转换得到的 150 点 120 kV 谱。
+`configs/pipelines/analytic/water-cylinder-120kv-fullfov.toml` 使用从原始 `.spc` 转换得到的 150 点 120 kV 谱。
 150 不是程序限制，CSV 中任意正数个有效 `(energy_keV, relative_photons)` 数据行均可读取。
 
 XCOM 核心及 `data/MDATX3.*` 来自 `nist-xcom-portable`，保留 GPL-3.0-or-later 和第三方声明。
@@ -106,9 +110,9 @@ out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot
 
 ## 典型水模测试
 
-仓库只保留 `configs/pipelines/water-cylinder-120kv-fullfov.toml` 这一份完整示例。它使用
+仓库只保留 `configs/pipelines/analytic/water-cylinder-120kv-fullfov.toml` 这一份完整示例。它使用
 `512 x 512 x 256` 标签体、`1024 x 1024` 平板探测器、360 个视图和 120 kV 能谱，
-随后通过 DLL 的 Flat Circular FDK 重建 `512 x 512 x 256` 体积。投影、
+随后可使用 `configs/reconstruction/analytic/brainweb-center33-fdk.toml` 这类独立配置调用 DLL 解析重建。投影、
 重建体和 BMP 均写入 `outputs/`，该目录不纳入版本控制。
 
 ### 几何偏移参数
@@ -146,8 +150,8 @@ WDDM 空闲物理显存不足时仅告警，因为驱动可能通过分页满足
 
 ```powershell
 python -m pip install numpy
-python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/pipelines/brainweb-center33-small-cone-fdk.toml --contrast-labels 2 3
-python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/pipelines/brainweb-center33-small-cone-heli-cyl-wfbp.toml --contrast-labels 2 3
+python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-fdk.toml --contrast-labels 2 3
+python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-heli-cyl-wfbp.toml --contrast-labels 2 3
 ```
 
 默认标签 ROI 腐蚀一个体素（26 邻域），排除首尾四层；输出 RAW 同目录的 `.roi.json`，
@@ -177,7 +181,7 @@ wFBP 保留其支持的 U/V 主点 offset，仅清除源端和 N 分量。调用
 
 ```powershell
 out/top-multispectrum-dll-vs/example/multispectrum_sim/Release/multispectrum_sim.exe `
-  example/multispectrum_sim/configs/pipelines/water-cylinder-120kv-fullfov.toml
+  example/multispectrum_sim/configs/pipelines/analytic/water-cylinder-120kv-fullfov.toml
 ```
 
 ## 内置人体材料

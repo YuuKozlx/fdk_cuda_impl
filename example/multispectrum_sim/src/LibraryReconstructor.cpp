@@ -254,8 +254,9 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         output.write(reinterpret_cast<const char*>(volume.data()),
             static_cast<std::streamsize>(volume.size() * sizeof(float)));
         check(static_cast<bool>(output), "写入重建体失败");
-        writeSlices(slice_prefix, volume, g.reconstruction_volume_x,
-            g.reconstruction_volume_y, g.reconstruction_volume_z);
+        if (config.reconstruction.save_slices)
+            writeSlices(slice_prefix, volume, g.reconstruction_volume_x,
+                g.reconstruction_volume_y, g.reconstruction_volume_z);
         YK::ReconstructionSessionFactory::destroy(session);
         session = nullptr;
         diagnostic = pipeline_name +

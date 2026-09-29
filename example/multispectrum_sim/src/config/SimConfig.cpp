@@ -56,6 +56,9 @@ namespace yk::spectral {
                 if (r->contains(key) && !(*r)[key].is_string())
                     throw std::runtime_error(std::string("reconstruction.") + key + " 必须为字符串");
             c.reconstruction.type = (*r)["type"].value_or(std::string("analytic"));
+            if (r->contains("save_slices") && !(*r)["save_slices"].is_boolean())
+                throw std::runtime_error("reconstruction.save_slices 必须为布尔值");
+            c.reconstruction.save_slices = (*r)["save_slices"].value_or(false);
             if (auto value = (*r)["input_projection_file"].value<std::string>())
                 c.reconstruction.input_projection_file = resolve(base, *value);
             auto* a = (*r)["analytic"].as_table();

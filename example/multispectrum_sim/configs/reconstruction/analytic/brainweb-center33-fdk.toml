@@ -43,10 +43,10 @@ reconstruction_offset_y_mm = 0.0
 reconstruction_offset_z_mm = 0.0
 
 [reconstruction]
-input_projection_file = "../../outputs/projections/brainweb-center33-fdk.raw"
+input_projection_file = "../../../outputs/projections/brainweb-center33-fdk.raw"
 type = "analytic"
-output_volume_file = "../../outputs/reconstructions/brainweb-center33-fdk-only.raw"
-slice_prefix = "../../outputs/images/brainweb-center33-fdk-only"
+output_volume_file = "../../../outputs/reconstructions/brainweb-center33-fdk-only.raw"
+slice_prefix = "../../../outputs/images/brainweb-center33-fdk-only"
 
 [reconstruction.analytic]
 pipeline = "fdk"

@@ -1,0 +1,64 @@
+schema_version = 2
+
+[workflow]
+mode = "reconstruct"
+
+[geometry]
+kind = "flat_cbct"
+views = 360
+views_per_turn = 360
+rotation_direction = 1
+detector_u = 1024
+detector_v = 1024
+pixel_u_mm = 0.417
+pixel_v_mm = 0.417
+sid_mm = 440.0
+sdd_mm = 770.0
+offset_u_mm = 2.085
+offset_n_mm = 0.0
+offset_v_mm = 4.17
+tilt_u_rad = 0.0174532925199433
+tilt_v_rad = 0.0349065850398866
+tilt_n_rad = 0.0523598775598299
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
+volume_x = 540
+volume_y = 540
+volume_z = 900
+voxel_x_mm = 0.2
+voxel_y_mm = 0.2
+voxel_z_mm = 0.2
+phantom_offset_x_mm = 10.0
+phantom_offset_y_mm = 15.0
+phantom_offset_z_mm = 20.0
+reconstruction_volume_x = 768
+reconstruction_volume_y = 768
+reconstruction_volume_z = 600
+reconstruction_voxel_x_mm = 0.3
+reconstruction_voxel_y_mm = 0.3
+reconstruction_voxel_z_mm = 0.3
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+[reconstruction]
+input_projection_file = "../../../outputs/calibration/double-ring-100mm-spacing100-bead3-cylinder6-6beads-spp10-projection-1024x1024x360-f32.raw"
+type = "iterative"
+output_volume_file = "../../../outputs/calibration/double-ring-cylinder-marker-truth-sart-768x768x600-0p3mm-f32.raw"
+slice_prefix = "../../../outputs/calibration/double-ring-cylinder-marker-truth-sart-768x768x600-0p3mm"
+
+[reconstruction.iterative]
+algorithm = "sart"
+iterations = 20
+relaxation = 0.8
+subsets = 1
+projection_model = "joseph"
+tv_iterations = 0
+tv_alpha = 0.0
+tv_alpha_reduction = 1.0
+maximum_update_ratio = 0.95
+non_negative = true

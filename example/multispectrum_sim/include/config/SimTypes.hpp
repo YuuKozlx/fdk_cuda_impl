@@ -130,5 +130,6 @@ struct ReconstructionConfig {
     IterativeReconstructionConfig iterative;
     std::filesystem::path output_volume_file;
     std::filesystem::path slice_prefix;
+    bool save_slices = false;
 };
 }
