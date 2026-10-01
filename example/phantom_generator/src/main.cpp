@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -8,70 +7,15 @@
 #include <string>
 #include <vector>
 
+#include "phantom_generator/PhantomModel.hpp"
+#include "phantom_generator/GeneratorDispatch.hpp"
+#include "phantom_generator/PhantomOutput.hpp"
+
 namespace {
 
-struct Material {
-    int label;
-    std::string name;
-    double density;
-    std::string formula;
-    std::string preset;
-    std::string description;
-};
-
-struct Insert {
-    int label;
-    double diameter_mm;
-    double contrast_fraction;
-    double center_x_mm;
-    double center_y_mm;
-    double thickness_mm = 0.0;
-    double center_z_mm = 0.0;
-};
-
-struct Phantom {
-    int nx = 256, ny = 256, nz = 128;
-    double voxel_mm = 1.0;
-    std::string type;
-    std::string variant;
-    std::vector<std::uint8_t> labels;
-    std::vector<Material> materials;
-    std::vector<Insert> inserts;
-    double target_diameter_mm = 0.0;
-    double target_thickness_mm = 0.0;
-    double target_tangent = 0.0;
-    double bead_spacing_mm = 0.0;
-    double support_diameter_mm = 0.0;
-    double support_length_mm = 0.0;
-    double bead_ring_diameter_mm = 0.0;
-    double lower_bead_ring_diameter_mm = 0.0;
-    double bead_ring_spacing_mm = 0.0;
-    double lower_ring_phase_deg = 0.0;
-    double marker_bead_diameter_mm = 0.0;
-    double marker_bead_offset_mm = 0.0;
-    double marker_cylinder_height_mm = 0.0;
-    bool cylindrical_ring_markers = false;
-    bool spiral_beads = false;
-    int beads_per_ring = 0;
-
-    std::size_t index(int x, int y, int z) const {
-        return (static_cast<std::size_t>(z) * ny + y) * nx + x;
-    }
-    double x(int i) const { return (i - (nx - 1) * 0.5) * voxel_mm; }
-    double y(int i) const { return (i - (ny - 1) * 0.5) * voxel_mm; }
-    double z(int i) const { return (i - (nz - 1) * 0.5) * voxel_mm; }
-};
-
-std::string tomlString(std::string value)
-{
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (const char ch : value) {
-        if (ch == '\\' || ch == '"') escaped.push_back('\\');
-        escaped.push_back(ch);
-    }
-    return escaped;
-}
+using phantom_generator::Insert;
+using phantom_generator::Material;
+using phantom_generator::Phantom;
 
 bool ellipse(double x, double y, double cx, double cy,
     double rx, double ry, double angle_deg = 0.0)
@@ -623,115 +567,92 @@ void makeSheppLogan(Phantom& p)
     p.variant = "material-label 3D Shepp-Logan";
 }
 
-void writeOutputs(const Phantom& p, const std::filesystem::path& output)
-{
-    for (const auto& material : p.materials) {
-        if (material.label <= 0 || material.label > 255)
-            throw std::runtime_error("material label must be in [1, 255]");
-        if (std::find(p.labels.begin(), p.labels.end(),
-                static_cast<std::uint8_t>(material.label)) == p.labels.end())
-            throw std::runtime_error("material label is absent from volume: " +
-                std::to_string(material.label));
-    }
-    if (!output.parent_path().empty()) std::filesystem::create_directories(output.parent_path());
-    std::ofstream raw(output, std::ios::binary);
-    raw.write(reinterpret_cast<const char*>(p.labels.data()),
-        static_cast<std::streamsize>(p.labels.size()));
-    if (!raw) throw std::runtime_error("failed to write label RAW");
-    auto metadata = output; metadata += ".toml";
-    std::ofstream toml(metadata);
-    toml << "[phantom]\n"
-         << "type = \"" << p.type << "\"\n"
-         << "variant = \"" << p.variant << "\"\n"
-         << "label_volume = \"" << tomlString(output.filename().generic_string()) << "\"\n"
-         << "columns = " << p.nx << "\nrows = " << p.ny
-         << "\nslices = " << p.nz << "\nvoxel_x_mm = " << p.voxel_mm
-         << "\nvoxel_y_mm = " << p.voxel_mm
-         << "\nvoxel_z_mm = " << p.voxel_mm
-         << "\ndata_type = \"uint8\"\nlayout = \"slice_row_column\"\n\n";
-    if (p.target_diameter_mm > 0.0 || p.target_thickness_mm > 0.0) {
-        toml << "[quality_target]\n";
-        if (p.target_diameter_mm > 0.0)
-            toml << "diameter_mm = " << p.target_diameter_mm << '\n';
-        if (p.target_thickness_mm > 0.0)
-            toml << "thickness_mm = " << p.target_thickness_mm << '\n';
-        if (p.target_tangent > 0.0)
-            toml << "tangent = " << p.target_tangent << '\n';
-        toml << '\n';
-    }
-    if (p.bead_spacing_mm > 0.0) {
-        toml << "[bead_line]\n"
-             << "diameter_mm = " << p.target_diameter_mm << '\n'
-             << "center_spacing_mm = " << p.bead_spacing_mm << '\n'
-             << "support_diameter_mm = " << p.support_diameter_mm << '\n'
-             << "support_length_mm = " << p.support_length_mm << "\n\n";
-    }
-    if (p.bead_ring_diameter_mm > 0.0) {
-        if (p.spiral_beads) {
-            toml << "[bead_spiral]\n"
-                 << "bead_count = " << p.beads_per_ring << '\n'
-                 << "spiral_radius_mm = " << p.bead_ring_diameter_mm * 0.5 << '\n'
-                 << "layer_spacing_mm = " << p.bead_ring_spacing_mm << '\n'
-                 << "phase_step_deg = " << p.lower_ring_phase_deg << '\n'
-                 << "bead_diameter_mm = " << p.target_diameter_mm << '\n'
-                 << "marker_bead_diameter_mm = " << p.marker_bead_diameter_mm << '\n'
-                 << "marker_below_lowest_bead_mm = " << p.marker_bead_offset_mm << '\n'
-                 << "support_diameter_mm = " << p.support_diameter_mm << '\n'
-                 << "support_length_mm = " << p.support_length_mm << "\n\n";
-        } else {
-            toml << "[bead_rings]\n"
-                 << "ring_count = 2\nbeads_per_ring = " << p.beads_per_ring << '\n'
-                 << "upper_ring_diameter_mm = " << p.bead_ring_diameter_mm << '\n';
-            if (p.lower_bead_ring_diameter_mm > 0.0)
-            toml << "lower_ring_diameter_mm = " << p.lower_bead_ring_diameter_mm << '\n'
-                 << "lower_ring_phase_deg = " << p.lower_ring_phase_deg << '\n';
-            else
-                toml << "ring_diameter_mm = " << p.bead_ring_diameter_mm << '\n';
-            toml << "ring_center_spacing_mm = " << p.bead_ring_spacing_mm << '\n'
-                 << "bead_diameter_mm = " << p.target_diameter_mm << '\n'
-                 << "support_diameter_mm = " << p.support_diameter_mm << '\n'
-                 << "support_length_mm = " << p.support_length_mm << '\n';
-            if (p.marker_bead_diameter_mm > 0.0)
-                toml << "marker_bead_diameter_mm = " << p.marker_bead_diameter_mm << '\n'
-                     << "marker_above_upper_ring_mm = " << p.marker_bead_offset_mm << '\n';
-            if (p.cylindrical_ring_markers)
-                toml << "marker_shape = \"cylinder\"\n"
-                     << "marker_phase_deg = 0\n"
-                     << "marker_cylinder_diameter_mm = "
-                     << (p.marker_cylinder_height_mm > p.target_diameter_mm
-                         ? 5.0 : p.target_diameter_mm) << '\n'
-                     << "marker_cylinder_height_mm = " << p.marker_cylinder_height_mm << '\n'
-                     << "marker_center_offset_mm = " << p.marker_bead_offset_mm << '\n';
-            toml << '\n';
-        }
-    }
-    for (const auto& insert : p.inserts) {
-        toml << "[[phantom.inserts]]\nlabel = " << insert.label
-             << "\ndiameter_mm = " << insert.diameter_mm
-             << "\ncontrast_fraction = " << insert.contrast_fraction
-             << "\ncenter_mm = [" << insert.center_x_mm << ", "
-             << insert.center_y_mm << "]\n";
-        if (insert.thickness_mm > 0.0)
-            toml << "thickness_mm = " << insert.thickness_mm << '\n';
-        if (insert.center_z_mm != 0.0)
-            toml << "center_z_mm = " << insert.center_z_mm << '\n';
-        toml << '\n';
-    }
-    for (const auto& m : p.materials) {
-        toml << "[[projection.materials]]\nlabel = " << m.label
-             << "\nname = \"" << m.name << "\"\ndensity_g_cm3 = " << m.density << '\n';
-        if (!m.preset.empty()) toml << "preset = \"" << m.preset << "\"\n";
-        else toml << "formula = \"" << m.formula << "\"\n";
-        if (!m.description.empty()) toml << "# " << m.description << '\n';
-        toml << '\n';
-    }
-    if (!toml) throw std::runtime_error("failed to write phantom TOML");
-}
-
 int integer(const char* text, const char* name) {
     const int value = std::stoi(text);
     if (value <= 0) throw std::runtime_error(std::string(name) + " must be positive");
     return value;
+}
+
+phantom_generator::GeneratorRegistry makeRegistry()
+{
+    using Arguments = std::vector<std::string>;
+    phantom_generator::GeneratorRegistry r;
+    r.add("shepp_logan", [](Phantom& p, const Arguments&) { makeSheppLogan(p); });
+    r.add("tungsten_wire", [](Phantom& p, const Arguments&) { makeWire(p, false); });
+    r.add("tungsten_wire_slanted", [](Phantom& p, const Arguments&) { makeWire(p, true); });
+    r.add("gold_foil", [](Phantom& p, const Arguments&) { makeGoldFoil(p); });
+    r.add("water_cylinder", [](Phantom& p, const Arguments&) { fillWaterShell(p, false); });
+    r.add("water_cylinder_200mm", [](Phantom& p, const Arguments&) { makeWaterCylinder200mm(p); });
+    r.add("water_ellipse", [](Phantom& p, const Arguments&) { fillWaterShell(p, true); });
+    r.add("catphan", [](Phantom& p, const Arguments&) { makeCatphan(p); });
+    r.add("low_contrast", [](Phantom& p, const Arguments&) { makeLowContrast(p); });
+    r.add("tungsten_bead_line", [](Phantom& p, const Arguments& a) {
+        if (a.size() != 2)
+            throw std::runtime_error("tungsten_bead_line requires bead diameter and center spacing");
+        makeTungstenBeadLine(p, std::stod(a[0]), std::stod(a[1]));
+    });
+    const auto ring = [](bool marker, bool replace) { return [=](Phantom& p, const Arguments& a) {
+        if (a.size() != 5 && a.size() != 6) throw std::runtime_error("double-ring requires five dimensions and optional bead count");
+        makeTungstenBeadDoubleRing(p, std::stod(a[0]), std::stod(a[1]), std::stod(a[2]), std::stod(a[3]), std::stod(a[4]), a.size() == 6 ? integer(a[5].c_str(), "beads_per_ring") : 6, marker, replace);
+    }; };
+    r.add("tungsten_bead_double_ring", ring(false, false));
+    r.add("tungsten_bead_double_ring_cylinder_marker", ring(true, false));
+    r.add("tungsten_bead_double_ring_cylinder_replace", ring(true, true));
+    r.add("tungsten_bead_double_ring_marker", [](Phantom& p, const Arguments& a) {
+        if (a.size() != 10) throw std::runtime_error("marked double-ring requires ten parameters");
+        makeTungstenBeadDoubleRingMarker(p, std::stod(a[0]), std::stod(a[1]), std::stod(a[2]), std::stod(a[3]), std::stod(a[4]), std::stod(a[5]), std::stod(a[6]), std::stod(a[7]), std::stod(a[8]), integer(a[9].c_str(), "beads_per_ring"));
+    });
+    r.add("tungsten_bead_spiral_marker", [](Phantom& p, const Arguments& a) {
+        if (a.size() != 7) throw std::runtime_error("spiral requires seven parameters");
+        makeTungstenBeadSpiralMarker(p, 2.0 * std::stod(a[0]), std::stod(a[1]), std::stod(a[2]), std::stod(a[3]), std::stod(a[4]), std::stod(a[5]), integer(a[6].c_str(), "bead_count"));
+    });
+    return r;
+}
+
+void printHelp(const std::string& type = {})
+{
+    if (type.empty()) {
+        std::cout
+            << "usage:\n"
+            << "  phantom_generator --help [type]\n"
+            << "  phantom_generator <type> <output.raw> <nx> <ny> <nz> <voxel_mm> [type arguments]\n\n"
+            << "types:\n"
+            << "  shepp_logan\n  tungsten_wire\n  tungsten_wire_slanted\n  gold_foil\n"
+            << "  water_cylinder\n  water_cylinder_200mm\n  water_ellipse\n"
+            << "  catphan\n  low_contrast\n  tungsten_bead_line\n"
+            << "  tungsten_bead_double_ring\n"
+            << "  tungsten_bead_double_ring_cylinder_marker\n"
+            << "  tungsten_bead_double_ring_cylinder_replace\n"
+            << "  tungsten_bead_double_ring_marker\n"
+            << "  tungsten_bead_spiral_marker\n\n"
+            << "Use --help <type> for type-specific arguments. All lengths are in mm.\n";
+        return;
+    }
+
+    if (!makeRegistry().contains(type))
+        throw std::invalid_argument("unknown phantom type: " + type);
+    std::cout << "type: " << type << "\ncommon arguments:\n"
+              << "  output.raw nx ny nz voxel_mm\n";
+    if (type == "tungsten_bead_line")
+        std::cout << "type arguments:\n  bead_diameter_mm center_spacing_mm\n"
+                  << "example:\n  phantom_generator tungsten_bead_line beads.raw 256 256 960 0.125 3 10\n";
+    else if (type == "tungsten_bead_double_ring" ||
+             type == "tungsten_bead_double_ring_cylinder_marker" ||
+             type == "tungsten_bead_double_ring_cylinder_replace")
+        std::cout << "type arguments:\n"
+                  << "  ring_diameter_mm ring_spacing_mm bead_diameter_mm\n"
+                  << "  support_diameter_mm support_length_mm [beads_per_ring]\n";
+    else if (type == "tungsten_bead_double_ring_marker")
+        std::cout << "type arguments:\n"
+                  << "  upper_diameter_mm lower_diameter_mm ring_spacing_mm bead_diameter_mm\n"
+                  << "  lower_phase_deg marker_diameter_mm marker_above_mm\n"
+                  << "  support_diameter_mm support_length_mm beads_per_ring\n";
+    else if (type == "tungsten_bead_spiral_marker")
+        std::cout << "type arguments:\n"
+                  << "  spiral_radius_mm layer_spacing_mm phase_step_deg bead_diameter_mm\n"
+                  << "  marker_diameter_mm marker_below_mm bead_count\n";
+    else
+        std::cout << "type arguments: none\n";
 }
 
 }
@@ -739,17 +660,12 @@ int integer(const char* text, const char* name) {
 int main(int argc, char** argv)
 {
     try {
-        if (argc != 7 && argc != 12 && argc != 13 && argc != 14 && argc != 17) {
-            std::cerr << "usage: phantom_generator <type> <output.raw> <nx> <ny> <nz> <voxel_mm>\n"
-                << "types: shepp_logan tungsten_wire tungsten_wire_slanted gold_foil water_cylinder water_cylinder_200mm "
-                   "water_ellipse catphan low_contrast tungsten_bead_line_2mm_5mm "
-                   "tungsten_bead_line_3mm_10mm tungsten_bead_double_ring "
-                   "tungsten_bead_double_ring_cylinder_marker "
-                   "tungsten_bead_double_ring_cylinder_replace "
-                   "tungsten_bead_double_ring_marker tungsten_bead_spiral_marker\n"
-                << "double-ring extra args: ring_diameter_mm ring_spacing_mm bead_diameter_mm support_diameter_mm support_length_mm [beads_per_ring]\n"
-                << "marked double-ring extra args: upper_diameter_mm lower_diameter_mm ring_spacing_mm bead_diameter_mm lower_phase_deg marker_diameter_mm marker_above_mm support_diameter_mm support_length_mm beads_per_ring\n"
-                << "spiral extra args: spiral_radius_mm layer_spacing_mm phase_step_deg bead_diameter_mm marker_diameter_mm marker_below_mm bead_count\n";
+        if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
+            printHelp(argc >= 3 ? argv[2] : "");
+            return 0;
+        }
+        if (argc < 7) {
+            printHelp();
             return 2;
         }
         Phantom p;
@@ -758,50 +674,10 @@ int main(int argc, char** argv)
         p.nz = integer(argv[5], "nz"); p.voxel_mm = std::stod(argv[6]);
         if (!(p.voxel_mm > 0)) throw std::runtime_error("voxel_mm must be positive");
         p.labels.assign(static_cast<std::size_t>(p.nx) * p.ny * p.nz, 0);
-        if (p.type == "shepp_logan") makeSheppLogan(p);
-        else if (p.type == "tungsten_wire") makeWire(p, false);
-        else if (p.type == "tungsten_wire_slanted") makeWire(p, true);
-        else if (p.type == "gold_foil") makeGoldFoil(p);
-        else if (p.type == "water_cylinder") fillWaterShell(p, false);
-        else if (p.type == "water_cylinder_200mm") makeWaterCylinder200mm(p);
-        else if (p.type == "water_ellipse") fillWaterShell(p, true);
-        else if (p.type == "catphan") makeCatphan(p);
-        else if (p.type == "low_contrast") makeLowContrast(p);
-        else if (p.type == "tungsten_bead_line_2mm_5mm")
-            makeTungstenBeadLine(p, 2.0, 5.0);
-        else if (p.type == "tungsten_bead_line_3mm_10mm")
-            makeTungstenBeadLine(p, 3.0, 10.0);
-        else if (p.type == "tungsten_bead_double_ring" ||
-            p.type == "tungsten_bead_double_ring_cylinder_marker" ||
-            p.type == "tungsten_bead_double_ring_cylinder_replace") {
-            if (argc != 12 && argc != 13) throw std::runtime_error(
-                "tungsten_bead_double_ring requires five dimensions and optional bead count");
-            makeTungstenBeadDoubleRing(p, std::stod(argv[7]),
-                std::stod(argv[8]), std::stod(argv[9]), std::stod(argv[10]),
-                std::stod(argv[11]), argc == 13 ? integer(argv[12],
-                    "beads_per_ring") : 6,
-                p.type != "tungsten_bead_double_ring",
-                p.type == "tungsten_bead_double_ring_cylinder_replace");
-        }
-        else if (p.type == "tungsten_bead_double_ring_marker") {
-            if (argc != 17) throw std::runtime_error(
-                "tungsten_bead_double_ring_marker requires ten parameters");
-            makeTungstenBeadDoubleRingMarker(p, std::stod(argv[7]),
-                std::stod(argv[8]), std::stod(argv[9]), std::stod(argv[10]),
-                std::stod(argv[11]), std::stod(argv[12]), std::stod(argv[13]),
-                std::stod(argv[14]), std::stod(argv[15]),
-                integer(argv[16], "beads_per_ring"));
-        }
-        else if (p.type == "tungsten_bead_spiral_marker") {
-            if (argc != 14) throw std::runtime_error(
-                "tungsten_bead_spiral_marker requires seven parameters");
-            makeTungstenBeadSpiralMarker(p, 2.0 * std::stod(argv[7]),
-                std::stod(argv[8]), std::stod(argv[9]), std::stod(argv[10]),
-                std::stod(argv[11]), std::stod(argv[12]),
-                integer(argv[13], "bead_count"));
-        }
-        else throw std::runtime_error("unknown phantom type: " + p.type);
-        writeOutputs(p, argv[2]);
+        std::vector<std::string> arguments;
+        for (int i = 7; i < argc; ++i) arguments.emplace_back(argv[i]);
+        makeRegistry().generate(p.type, p, arguments);
+        phantom_generator::PhantomOutputWriter::write(p, argv[2]);
         std::cout << "output=" << argv[2] << " size=" << p.nx << 'x' << p.ny
                   << 'x' << p.nz << " materials=" << p.materials.size() << '\n';
         return 0;

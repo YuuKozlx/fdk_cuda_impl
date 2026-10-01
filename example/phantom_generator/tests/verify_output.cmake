@@ -12,15 +12,19 @@ if(TYPE STREQUAL "low_contrast")
     set(nz 21)
     set(voxel_mm 0.25)
 endif()
-if(TYPE MATCHES "tungsten_bead_line")
+if(TYPE STREQUAL "tungsten_bead_line")
     set(nx 256)
     set(ny 256)
     set(nz 960)
     set(voxel_mm 0.125)
 endif()
 set(raw "${OUTPUT_DIR}/${TYPE}.raw")
+set(extra_args)
+if(TYPE STREQUAL "tungsten_bead_line")
+    list(APPEND extra_args 2.0 5.0)
+endif()
 execute_process(
-    COMMAND "${GENERATOR}" "${TYPE}" "${raw}" "${nx}" "${ny}" "${nz}" "${voxel_mm}"
+    COMMAND "${GENERATOR}" "${TYPE}" "${raw}" "${nx}" "${ny}" "${nz}" "${voxel_mm}" ${extra_args}
     RESULT_VARIABLE result
     OUTPUT_VARIABLE stdout
     ERROR_VARIABLE stderr)
