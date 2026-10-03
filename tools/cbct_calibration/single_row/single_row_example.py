@@ -5,7 +5,7 @@
 """
 from pathlib import Path
 
-from single_row_workflow import SingleRowConfig, calibrate_single_row
+from .single_row_workflow import SingleRowConfig, calibrate_single_row
 
 CONFIG = SingleRowConfig(
     # little-endian float32 RAW 文件

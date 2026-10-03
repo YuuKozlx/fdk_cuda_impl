@@ -1,6 +1,6 @@
 # 非对称双环钢珠几何标定：逐步说明
 
-对应代码：`identifiable_phantom_workflow.py`；直接运行示例：`identifiable_phantom_example.py`。
+对应代码：`workflow.py`；IDE 调用示例：`api_example.py`。
 
 ## 1. 模体定义
 

@@ -12,17 +12,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
-import sys
 
 import numpy as np
 
 # 允许从本目录直接点击运行示例，同时复用上一级公共算法模块。
-COMMON_DIRECTORY = Path(__file__).resolve().parent.parent
-if str(COMMON_DIRECTORY) not in sys.path:
-    sys.path.insert(0, str(COMMON_DIRECTORY))
-
-from calibrate import calibrate
-from detect import detect_and_track
+from .calibrate import calibrate
+from .detect import detect_and_track
 
 
 @dataclass(frozen=True)
