@@ -21,7 +21,7 @@ from ..math.dlt import normalized_dlt
 from .pic import (YangConfig, calibrate_stack_geometries, calibrate_view,
                   extended_calibrate_stack, extended_result_to_dict,
                   geometry_to_dict, pose_to_dict)
-from .joint_fit import fit_fixed_source, phantom_points
+from .joint_fit import fit_fixed_source, phantom_points, phantom_points_paper
 from .tracker import (detect_components, external_marker_index_candidates,
                       track_standard_stack)
 
@@ -44,6 +44,9 @@ class YangWorkflowConfig:
     input_detector_convention: DetectorConvention = FDK_TEST_CONVENTION
     phantom_frame_transform: PhantomFrameTransform = YANG_PHANTOM_TO_FDK_FRAME
     point_correspondence: PointCorrespondence = YANG_TRACKER_RING_ORDER
+    marker_count: int = 1
+    marker_phase_deg: tuple[float, ...] = (0.0,)
+    marker_offset_mm: tuple[float, ...] = (30.0,)
 
 
 def _canonical_geometry_dict(
@@ -191,13 +194,27 @@ def calibrate_raw(config: YangWorkflowConfig) -> dict:
                       pixel_size_mm=config.pixel_size_mm,
                       gantry_solver="paper_linear")
     components = detect_components(np.asarray(raw[0]), config.threshold)
-    initial, marker0, marker_diagnostics = external_marker_index_candidates(components)
+    # Marker points participate only in the initial 3-D/2-D map. PIC keeps the
+    # paper's 2*N ring-point input unchanged.
+    marker_paper = []
+    for phase_deg, offset_mm in zip(config.marker_phase_deg,
+                                    config.marker_offset_mm):
+        a = np.deg2rad(float(phase_deg))
+        marker_paper.append([
+            yang.ring_radius_mm * np.cos(a),
+            yang.ring_half_spacing_mm + float(offset_mm),
+            yang.ring_radius_mm * np.sin(a),
+        ])
+    marker_paper = np.asarray(marker_paper, dtype=float)
+    initial, marker_options, marker_diagnostics = external_marker_index_candidates(
+        components, config.marker_count, phantom_points_paper(yang), marker_paper)
     if not initial:
         raise RuntimeError("no valid Yang initial index candidate")
-    # Ring swap and winding are not known from image coordinates.  Score every
-    # candidate with the paper PIC reprojection error before tracking the stack.
+    # Ring swap and winding are not known from image coordinates. Score every
+    # remaining candidate with the paper PIC and complete-point DLT residual.
     candidates = []
-    for index, candidate in enumerate(initial):
+    from itertools import permutations
+    for index, (candidate, marker_image) in enumerate(zip(initial, marker_options)):
         candidate_yang = convert_detector_points(
             candidate, config.image_shape, config.input_detector_convention,
             YANG_PAPER_CONVENTION)
@@ -205,12 +222,27 @@ def calibrate_raw(config: YangWorkflowConfig) -> dict:
             pose = calibrate_view(candidate_yang, yang)
         except (ValueError, FloatingPointError):
             continue
-        candidates.append((pose.reprojection_rmse_px, index, candidate))
+        map_score = float(pose.reprojection_rmse_px)
+        if len(marker_paper):
+            marker_image = np.asarray(marker_image, dtype=float)
+            best_marker_score = np.inf
+            for perm in permutations(range(len(marker_image))):
+                full_world = np.vstack([phantom_points_paper(yang), marker_paper])
+                full_image = np.vstack([candidate_yang, marker_image[list(perm)]])
+                p, _ = normalized_dlt(full_world, full_image)
+                projected = (p @ np.column_stack([full_world,
+                                                   np.ones(len(full_world))]).T).T
+                projected = projected[:, :2] / projected[:, 2:3]
+                best_marker_score = min(best_marker_score,
+                                        float(np.sqrt(np.mean((projected - full_image) ** 2))))
+            map_score = best_marker_score
+        candidates.append((map_score, index, candidate, marker_image))
     if not candidates:
         raise RuntimeError("all Yang initial index candidates failed PIC")
-    _, selected, initial_points = min(candidates, key=lambda item: item[0])
+    _, selected, initial_points, markers0 = min(candidates, key=lambda item: item[0])
     image_points, diagnostics = track_standard_stack(
-        raw, config.threshold, initial_points, initial_marker=marker0)
+        raw, config.threshold, initial_points,
+        initial_markers=(None if np.asarray(markers0).size == 0 else markers0))
     points = np.asarray(image_points, dtype=float)
     report = calibrate_indexed_points(points, config)
     report["input"] = {"raw_path": str(config.raw_path), "views": config.views,
@@ -219,7 +251,7 @@ def calibrate_raw(config: YangWorkflowConfig) -> dict:
     report["tracking"] = diagnostics
     report["index_initialization"] = {
         "selected_candidate": int(selected),
-        "candidate_rmse_px": {str(i): float(score) for score, i, _ in candidates},
+        "candidate_rmse_px": {str(i): float(score) for score, i, _, _ in candidates},
         "external_marker": marker_diagnostics,
     }
     save_array(config.output_directory / "points_indexed.npy", points)

@@ -25,12 +25,14 @@ class ChoWorkflowConfig:
     ring_half_spacing_mm: float = 50.0
     beads_per_ring: int = 12
     threshold: float = 5.0
+    marker_points_mm: tuple[tuple[float, float, float], ...] = ((50.0, 0.0, 80.0),)
 
     def algorithm_config(self) -> ChoConfig:
         return ChoConfig(ring_radius_mm=self.ring_radius_mm,
                          ring_half_spacing_mm=self.ring_half_spacing_mm,
                          beads_per_ring=self.beads_per_ring,
                          pixel_size_mm=self.pixel_size_mm,
+                         marker_points_mm=self.marker_points_mm,
                          robust_scale_px=0.15, max_nfev=500)
 
 

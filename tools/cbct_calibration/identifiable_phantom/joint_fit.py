@@ -42,10 +42,12 @@ def project(state, local_points, angles, pixel, image_center):
                      image_center[1] + np.sum(relative * v[:, None, :], axis=2) / pixel[1]], axis=2)
 
 
-def fit(points, pixel_size_mm=(0.417, 0.417), image_shape=(1024, 1024), max_nfev=1200):
+def fit(points, pixel_size_mm=(0.417, 0.417), image_shape=(1024, 1024),
+        max_nfev=1200, local_points=None):
     """Estimate the seven machine values after DLT source-circle initialization."""
     points = np.asarray(points, dtype=float)
-    local = marked_points(); pixel = np.asarray(pixel_size_mm, dtype=float)
+    local = marked_points() if local_points is None else np.asarray(local_points, dtype=float)
+    pixel = np.asarray(pixel_size_mm, dtype=float)
     cfg = DltConfig(pixel_size_mm=tuple(pixel_size_mm))
     poses = [calibrate_view(frame, cfg, local) for frame in points]
     sources = np.asarray([pose.source_phantom_mm for pose in poses])

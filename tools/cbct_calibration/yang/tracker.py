@@ -74,16 +74,97 @@ def initial_index_candidates(components: list[Component]) -> list[np.ndarray]:
     return candidates
 
 
-def external_marker_index_candidates(components: list[Component]):
+def external_marker_index_candidates(components: list[Component], marker_count: int = 1,
+                                     ring_points_3d: np.ndarray | None = None,
+                                     marker_points_3d: np.ndarray | None = None):
     """Return Yang ring candidates after removing an external marker.
 
     The marker, upper ring zero and lower ring zero lie on one phantom
     generatrix.  Their image points are therefore collinear; this projective
     invariant is used instead of projected area to locate the marker.
     """
-    if len(components) != 13:
-        raise ValueError(f"initial view needs 13 targets, found {len(components)}")
+    expected = 12 + int(marker_count)
+    if marker_count not in (0, 1, 2):
+        raise ValueError("marker_count must be 0, 1 or 2")
+    if len(components) != expected:
+        raise ValueError(f"initial view needs {expected} targets, found {len(components)}")
     centres = np.asarray([item.centroid for item in components])
+    if marker_count == 0:
+        remaining = centres
+        order = np.argsort(remaining[:, 1])
+        rings = []
+        for ring in (remaining[order[:6]], remaining[order[6:]]):
+            center = ring.mean(axis=0)
+            angle = np.arctan2(ring[:, 1] - center[1], ring[:, 0] - center[0])
+            rings.append(ring[np.argsort(angle)])
+        candidates = []
+        for swap in (False, True):
+            first, second = rings if not swap else rings[::-1]
+            for reverse_first in (False, True):
+                for reverse_second in (False, True):
+                    a = first[[0, 5, 4, 3, 2, 1]] if reverse_first else first
+                    b = second[[0, 5, 4, 3, 2, 1]] if reverse_second else second
+                    for shift_first in range(6):
+                        for shift_second in range(6):
+                            candidates.append(np.vstack([
+                                np.roll(a, shift_first, axis=0),
+                                np.roll(b, shift_second, axis=0)]))
+        return candidates, [np.empty((0, 2)) for _ in candidates], {"marker_count": 0}
+    if marker_count == 2:
+        if ring_points_3d is None or marker_points_3d is None:
+            raise ValueError("two-marker initialization needs the known 3-D target points")
+        from itertools import combinations, permutations
+        from ..math.dlt import normalized_dlt, project_points
+        ring_world = np.asarray(ring_points_3d, dtype=float)
+        marker_world = np.asarray(marker_points_3d, dtype=float)
+        if ring_world.shape != (12, 3) or marker_world.shape != (2, 3):
+            raise ValueError("two-marker Yang model must contain 12 ring and 2 marker points")
+
+        # Area ranks candidates only; the full 14-point DLT residual assigns
+        # marker identity, ring phase, winding and upper/lower correspondence.
+        marker_sets = list(combinations(range(len(components)), 2))
+        marker_sets.sort(key=lambda ids: -sum(components[i].area for i in ids))
+        marker_sets = marker_sets[:16]
+        scored = []
+        reverse = np.array([0, 5, 4, 3, 2, 1])
+        for marker_ids in marker_sets:
+            ring_ids = [i for i in range(len(components)) if i not in marker_ids]
+            remaining = centres[ring_ids]
+            order = np.argsort(remaining[:, 1])
+            base_rings = []
+            for ring in (remaining[order[:6]], remaining[order[6:]]):
+                center = ring.mean(axis=0)
+                angle = np.arctan2(ring[:, 1] - center[1], ring[:, 0] - center[0])
+                base_rings.append(ring[np.argsort(angle)])
+            for swap in (False, True):
+                first, second = (base_rings if not swap else base_rings[::-1])
+                for reverse_first in (False, True):
+                    for reverse_second in (False, True):
+                        a = first[reverse] if reverse_first else first
+                        b = second[reverse] if reverse_second else second
+                        for shift_first in range(6):
+                            for shift_second in range(6):
+                                rings = np.vstack([np.roll(a, shift_first, axis=0),
+                                                   np.roll(b, shift_second, axis=0)])
+                                for marker_order in permutations(range(2)):
+                                    markers = centres[list(marker_ids)][list(marker_order)]
+                                    world = np.vstack([ring_world, marker_world])
+                                    image = np.vstack([rings, markers])
+                                    projection, _ = normalized_dlt(world, image)
+                                    rmse = float(np.sqrt(np.mean(
+                                        (project_points(world, projection) - image) ** 2)))
+                                    scored.append((rmse, rings, markers, marker_ids))
+        scored.sort(key=lambda item: item[0])
+        # Keep only distinct low-residual maps for the physical/PIC scorer.
+        selected = scored[:16]
+        return ([item[1] for item in selected],
+                [item[2] for item in selected], {
+                    "marker_count": 2,
+                    "candidate_count_before_dlt": len(scored),
+                    "candidate_dlt_rmse_px": [float(item[0]) for item in selected],
+                    "marker_component_candidates": [list(map(int, item[3]))
+                                                      for item in selected],
+                })
     best = None
     for marker_id, marker in enumerate(centres):
         remaining = np.delete(centres, marker_id, axis=0)
@@ -120,7 +201,8 @@ def external_marker_index_candidates(components: list[Component]):
     candidates = [np.vstack([lower[reverse] if rl else lower,
                               upper[reverse] if ru else upper])
                   for rl in (False, True) for ru in (False, True)]
-    return candidates, centres[marker_id], {
+    marker = centres[marker_id][None, :]
+    return candidates, [marker.copy() for _ in candidates], {
         "marker_component": int(marker_id),
         "marker_center_px": centres[marker_id].tolist(),
         "marker_area_px": int(components[marker_id].area),
@@ -134,8 +216,17 @@ def _assign_components(components: list[Component], predicted: np.ndarray
                        ) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
     """Assign 12 target identities and mark targets hidden in a merged blob."""
     count = len(components)
-    if count not in (11, 12):
-        raise ValueError(f"expected 11 or 12 target components, found {count}")
+    if count >= 12:
+        centres = np.asarray([item.centroid for item in components])
+        cost = np.sum((predicted[:, None, :] - centres[None, :, :]) ** 2, axis=2)
+        rows, columns = linear_sum_assignment(cost)
+        if len(rows) != 12:
+            raise ValueError("could not assign twelve ring targets")
+        output = np.full((12, 2), np.nan, dtype=float)
+        output[rows] = centres[columns]
+        return output, np.ones(12, dtype=bool), ()
+    if count != 11:
+        raise ValueError(f"expected at least 11 target components, found {count}")
     centres = np.asarray([item.centroid for item in components])
     if count == 12:
         cost = np.sum((predicted[:, None, :] - centres[None, :, :]) ** 2, axis=2)
@@ -176,6 +267,28 @@ def _assign_components(components: list[Component], predicted: np.ndarray
     return output, valid, merged_ids
 
 
+def _assign_pixels(image: np.ndarray, predicted: np.ndarray, threshold: float,
+                   gate_radius_px: float = 24.0):
+    """Split touching targets using predicted tracks as pixel-level seeds."""
+    yy, xx = np.nonzero(np.asarray(image) > threshold)
+    pixels = np.column_stack([xx, yy]).astype(float)
+    values = np.maximum(np.asarray(image)[yy, xx].astype(float) - threshold, 1.0e-6)
+    delta = pixels[:, None, :] - predicted[None, :, :]
+    squared = np.sum(delta * delta, axis=2)
+    owner = np.argmin(squared, axis=1)
+    accepted = np.min(squared, axis=1) <= gate_radius_px ** 2
+    output = np.asarray(predicted, dtype=float).copy()
+    valid = np.zeros(12, dtype=bool)
+    for target in range(12):
+        selected = accepted & (owner == target)
+        if np.count_nonzero(selected) < 3:
+            continue
+        weight = values[selected]
+        output[target] = np.sum(pixels[selected] * weight[:, None], axis=0) / np.sum(weight)
+        valid[target] = True
+    return output, valid
+
+
 def _fill_periodic_gaps(points: np.ndarray, observed: np.ndarray) -> np.ndarray:
     """Fill only occluded samples using periodic cubic target trajectories."""
     result = points.copy()
@@ -197,20 +310,23 @@ def _fill_periodic_gaps(points: np.ndarray, observed: np.ndarray) -> np.ndarray:
     return result
 
 
-def track_standard_stack(raw: np.ndarray, threshold: float,
+def _track_ordered_stack(raw: np.ndarray, threshold: float,
                          initial_points: np.ndarray,
-                         initial_marker: np.ndarray | None = None
+                         initial_marker: np.ndarray | None = None,
+                         initial_markers: np.ndarray | None = None
                          ) -> tuple[np.ndarray, list[dict]]:
     """Track twelve indexed targets and interpolate complete-overlap intervals."""
     views = int(raw.shape[0])
     points = np.empty((views, 12, 2), dtype=float)
     observed = np.ones((views, 12), dtype=bool)
     points[0] = np.asarray(initial_points, dtype=float)
-    marker_track = [] if initial_marker is None else [np.asarray(initial_marker, dtype=float)]
+    if initial_markers is None and initial_marker is not None:
+        initial_markers = np.asarray(initial_marker, dtype=float).reshape(1, 2)
+    marker_track = [] if initial_markers is None else [np.asarray(initial_markers, dtype=float)]
     diagnostics = [{
-        "frame": 0, "component_count": 12 + int(initial_marker is not None),
-        "marker_center_px": None if initial_marker is None else marker_track[0].tolist(),
-        "marker_detected": initial_marker is not None, "merged_target_ids": [],
+        "frame": 0, "component_count": 12 + (0 if initial_markers is None else len(initial_markers)),
+        "marker_center_px": None if initial_markers is None else marker_track[0].tolist(),
+        "marker_detected": initial_markers is not None, "merged_target_ids": [],
         "interpolated": False,
     }]
     for frame in range(1, views):
@@ -220,22 +336,38 @@ def track_standard_stack(raw: np.ndarray, threshold: float,
             predicted = points[frame - 1]
         components = detect_components(np.asarray(raw[frame]), threshold)
         marker = None
-        if initial_marker is not None:
+        if initial_markers is not None:
             marker_prediction = marker_track[-1]
             if len(marker_track) >= 2:
                 marker_prediction = marker_track[-1] + (marker_track[-1] - marker_track[-2])
-            distances = np.asarray([np.linalg.norm(item.centroid - marker_prediction)
-                                    for item in components])
-            marker_id = int(np.argmin(distances))
-            if distances[marker_id] > 45.0:
-                raise ValueError(f"frame {frame}: marker track was lost")
-            marker = components.pop(marker_id).centroid
+            marker = marker_prediction.copy()
+            selected = []
+            if len(components) > 12:
+                cost = np.sum((marker_prediction[:, None, :] -
+                               np.asarray([item.centroid for item in components])[None, :, :]) ** 2, axis=2)
+                rows, marker_ids = linear_sum_assignment(cost)
+                visible_count = min(len(marker_prediction), len(components) - 12)
+                pairs = sorted((float(np.sqrt(cost[r, c])), int(r), int(c))
+                               for r, c in zip(rows, marker_ids))
+                selected = [(r, c) for distance, r, c in pairs[:visible_count]
+                            if distance <= 45.0]
+                for r, c in selected:
+                    marker[r] = components[c].centroid
+                components = [item for i, item in enumerate(components)
+                              if i not in {c for _, c in selected}]
             marker_track.append(marker)
+            if not selected:
+                marker = None
         assigned, valid, merged_ids = _assign_components(components, predicted)
         error = np.linalg.norm(assigned[valid] - predicted[valid], axis=1)
         if len(error) and float(error.max()) > 25.0:
-            raise ValueError(
-                f"frame {frame}: target assignment jumped {float(error.max()):.3f} px")
+            assigned, valid = _assign_pixels(np.asarray(raw[frame]), predicted, threshold)
+            merged_ids = tuple(int(x) for x in np.flatnonzero(~valid))
+            error = np.linalg.norm(assigned[valid] - predicted[valid], axis=1)
+            if not np.all(valid) or (len(error) and float(error.max()) > 25.0):
+                raise ValueError(
+                    f"frame {frame}: target assignment jumped "
+                    f"{float(error.max()) if len(error) else float('nan'):.3f} px")
         points[frame] = assigned
         observed[frame] = valid
         diagnostics.append({
@@ -248,3 +380,48 @@ def track_standard_stack(raw: np.ndarray, threshold: float,
             "prediction_max_error_px": float(error.max()) if len(error) else 0.0,
         })
     return _fill_periodic_gaps(points, observed), diagnostics
+
+
+class _FrameOrder:
+    """Read-only frame remapping without copying a multi-gigabyte RAW stack."""
+    def __init__(self, raw, indices):
+        self.raw = raw
+        self.indices = np.asarray(indices, dtype=int)
+        self.shape = (len(self.indices), *raw.shape[1:])
+
+    def __getitem__(self, item):
+        return self.raw[int(self.indices[item])]
+
+
+def track_standard_stack(raw: np.ndarray, threshold: float,
+                         initial_points: np.ndarray,
+                         initial_marker: np.ndarray | None = None,
+                         initial_markers: np.ndarray | None = None
+                         ) -> tuple[np.ndarray, list[dict]]:
+    """Track from frame zero in both directions and merge two half-turns."""
+    views = int(raw.shape[0])
+    split = views // 2
+    forward_ids = np.arange(0, split + 1)
+    backward_ids = np.r_[0, np.arange(views - 1, split, -1)]
+    forward, forward_diag = _track_ordered_stack(
+        _FrameOrder(raw, forward_ids), threshold, initial_points,
+        initial_marker, initial_markers)
+    backward, backward_diag = _track_ordered_stack(
+        _FrameOrder(raw, backward_ids), threshold, initial_points,
+        initial_marker, initial_markers)
+    points = np.empty((views, 12, 2), dtype=float)
+    points[forward_ids] = forward
+    points[backward_ids] = backward
+    diagnostics = []
+    for item in forward_diag:
+        converted = dict(item)
+        converted["frame"] = int(forward_ids[int(item["frame"])])
+        converted["tracking_direction"] = 1
+        diagnostics.append(converted)
+    for item in backward_diag[1:]:
+        converted = dict(item)
+        converted["frame"] = int(backward_ids[int(item["frame"])])
+        converted["tracking_direction"] = -1
+        diagnostics.append(converted)
+    diagnostics.sort(key=lambda item: item["frame"])
+    return points, diagnostics

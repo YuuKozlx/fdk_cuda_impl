@@ -12,7 +12,7 @@ from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
 from ..math.dlt import normalized_dlt, project_points
-from .dlt import ChoConfig, phantom_points
+from .dlt import ChoConfig, full_phantom_points, marker_points, phantom_points
 
 
 def _components(image: np.ndarray, threshold: float) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
@@ -41,7 +41,7 @@ def detect_frame(image: np.ndarray, threshold: float = 5.0,
     expected = int(expected_beads)
     if expected < 12 or expected % 2:
         raise ValueError("expected_beads must be an even number >= 12")
-    if predicted is not None and len(components) in (expected - 1, expected):
+    if predicted is not None and len(components) >= expected - 1:
         predicted = np.asarray(predicted, dtype=float)
         if predicted.shape != (expected, 2):
             raise ValueError(f"predicted centers must have shape ({expected},2)")
@@ -63,11 +63,13 @@ def detect_frame(image: np.ndarray, threshold: float = 5.0,
             virtual_to_component[-1] = duplicate
         else:
             cost = np.sum((predicted[:, None, :] - component_centers[None, :, :]) ** 2, axis=2)
-            _, assignment = linear_sum_assignment(cost)
+            rows, columns = linear_sum_assignment(cost)
+            assignment = np.empty(expected, dtype=int)
+            assignment[rows] = columns
             duplicate = -1
-            virtual_to_component = np.arange(expected)
+            virtual_to_component = np.arange(len(components))
         output = np.empty((expected, 2), dtype=float)
-        for component in range(len(components)):
+        for component in np.unique(virtual_to_component[assignment]):
             bead_ids = np.flatnonzero(virtual_to_component[assignment] == component)
             xs, ys, weights, centroid = components[component]
             if len(bead_ids) == 1:
@@ -88,7 +90,7 @@ def detect_frame(image: np.ndarray, threshold: float = 5.0,
         return output
     if predicted is not None:
         raise ValueError(
-            f"expected {expected - 1} or {expected} ring components after "
+            f"expected at least {expected - 1} target components after "
             f"marker removal, found {len(components)}")
     centers = []
     for xs, ys, weights, centroid in components:
@@ -128,29 +130,57 @@ def initialize_marker_indices(components, config: ChoConfig) -> tuple[np.ndarray
     component is tentatively removed and the ordinary Cho correspondence
     search scores the remaining two-ring set by DLT reprojection error.
     """
-    expected = 2 * int(config.beads_per_ring) + 1
+    marker_model = marker_points(config)
+    marker_count = len(marker_model)
+    expected = 2 * int(config.beads_per_ring) + marker_count
     if len(components) != expected:
         raise ValueError(
-            f"expected {expected} targets ({expected - 1} ring beads + marker), "
+            f"expected {expected} targets ({expected - marker_count} ring beads + "
+            f"{marker_count} markers), "
             f"found {len(components)}")
     centres = np.asarray([item[3] for item in components])
+    if marker_count == 0:
+        indexed = initialize_indices(centres, config)
+        return indexed, np.empty((0, 2), dtype=float), 0.0
     best = None
-    for marker in range(len(components)):
+    from itertools import combinations, permutations
+    marker_candidates = list(combinations(range(len(components)), marker_count))
+    # A physical marker is normally larger than a ring bead, but its projected
+    # area is not used as an identity.  Area only limits the expensive DLT
+    # candidate set; the final full-point residual decides the map.
+    marker_candidates.sort(
+        key=lambda ids: -sum(components[i][0].size for i in ids))
+    # Area only limits the expensive candidate set; the full ring+marker DLT
+    # score below decides identity, phase and chirality.  Keep a generous set
+    # so a marker need not be the single largest projection.
+    areas = np.asarray([item[0].size for item in components], dtype=float)
+    clear_area_marker = (marker_count > 0 and
+                         np.min(np.sort(areas)[-marker_count:]) >
+                         1.25 * np.median(areas))
+    limit = (len(marker_candidates) if marker_count == 1 else
+             (4 if clear_area_marker else 16))
+    marker_candidates = marker_candidates[:limit]
+    for marker_ids in marker_candidates:
+        marker_ids = tuple(marker_ids)
+        ring_ids = [i for i in range(len(components)) if i not in marker_ids]
         try:
-            indexed = initialize_indices(np.delete(centres, marker, axis=0), config)
+            indexed, ordered_markers, full_score = _initialize_indices_with_markers(
+                centres[ring_ids], centres[list(marker_ids)], config)
         except ValueError:
             continue
-        world = phantom_points(config)
-        p, _ = normalized_dlt(world, indexed)
-        score = float(np.sqrt(np.mean((project_points(world, p) - indexed) ** 2)))
-        if best is None or score < best[0]:
-            best = (score, marker, indexed)
+        if best is None or full_score < best[0]:
+            best = (full_score, marker_ids, indexed, ordered_markers, None)
     if best is None:
         raise ValueError("could not identify the external marker")
-    score, marker, indexed = best
-    indexed, line_score = _canonicalize_with_marker(
-        indexed, centres[marker], config.beads_per_ring)
-    return indexed, centres[marker], float(max(score, line_score))
+    score, marker_ids, indexed, marker_centres, _ = best
+    # For the legacy single-marker case, rotate the ring zero to the marker
+    # generatrix.  With two markers the full DLT map already fixes the phase
+    # and handedness, so no one-marker collinearity shortcut is used.
+    if marker_count == 1:
+        indexed, line_score = _canonicalize_with_marker(
+            indexed, marker_centres[0], config.beads_per_ring)
+        score = max(score, line_score)
+    return indexed, marker_centres, float(score)
 
 
 def ring_order(points: np.ndarray, beads_per_ring: int) -> tuple[np.ndarray, np.ndarray]:
@@ -199,11 +229,16 @@ def _canonicalize_with_marker(indexed: np.ndarray, marker: np.ndarray,
     return np.vstack([first, second]), float(score)
 
 
-def initialize_indices(points: np.ndarray, config: ChoConfig) -> np.ndarray:
+def _initialize_indices_with_markers(points: np.ndarray,
+                                     marker_image: np.ndarray,
+                                     config: ChoConfig):
     n = int(config.beads_per_ring)
     r0, r1 = ring_order(points, n)
     world = phantom_points(config)
+    marker_world = marker_points(config)
+    marker_image = np.asarray(marker_image, dtype=float).reshape((-1, 2))
     best = None
+    from itertools import permutations
     for swap_rings in (False, True):
         rings = (r1, r0) if swap_rings else (r0, r1)
         for rev0 in (False, True):
@@ -215,11 +250,29 @@ def initialize_indices(points: np.ndarray, config: ChoConfig) -> np.ndarray:
                         p, _ = normalized_dlt(world, image)
                         predicted = project_points(world, p)
                         score = float(np.sqrt(np.mean((predicted - image) ** 2)))
-                        if best is None or score < best[0]:
-                            best = (score, image)
+                        if len(marker_world):
+                            for perm in permutations(range(len(marker_image))):
+                                ordered_markers = marker_image[list(perm)]
+                                full_world = np.vstack([world, marker_world])
+                                full_image = np.vstack([image, ordered_markers])
+                                full_p, _ = normalized_dlt(full_world, full_image)
+                                full_score = float(np.sqrt(np.mean(
+                                    (project_points(full_world, full_p) - full_image) ** 2)))
+                                if best is None or full_score < best[0]:
+                                    best = (full_score, image, ordered_markers)
+                        elif best is None or score < best[0]:
+                            best = (score, image, np.empty((0, 2)))
     if best is None or best[0] > 5.0:
         raise ValueError(f"could not establish bead indices; best RMSE={best[0] if best else None}")
-    return best[1]
+    return best[1], best[2], float(best[0])
+
+
+def initialize_indices(points: np.ndarray, config: ChoConfig) -> np.ndarray:
+    # Ring-only compatibility API used by the paper PIC tests.
+    marker_free = ChoConfig(**{
+        **config.__dict__, "marker_points_mm": ()})
+    return _initialize_indices_with_markers(
+        points, np.empty((0, 2)), marker_free)[0]
 
 
 def frame_component_stats(image: np.ndarray, threshold: float) -> dict:
@@ -257,6 +310,7 @@ def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
                     "marker_selection_rmse_px": marker_score,
                     "rejected": False}]
     marker_centres = [marker0]
+    marker_model = marker_points(config)
     for i in range(1, views):
         if len(stack) >= 2:
             gap = max(frame_ids[-1] - frame_ids[-2], 1)
@@ -266,19 +320,29 @@ def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
         image = np.asarray(raw[i])
         components = _components(image, threshold)
         marker_prediction = marker_centres[-1]
-        if len(marker_centres) >= 2:
+        if len(marker_centres) >= 2 and len(marker_model):
             marker_prediction = marker_centres[-1] + (marker_centres[-1] - marker_centres[-2])
         # Remove the external marker only when its predicted track is visible.
         # If it is out of frame, the remaining N/N-1 components are still a
         # valid ring-only observation and the normal Cho splitter handles them.
-        marker_component = None
-        if components:
-            distances = np.asarray([np.linalg.norm(item[3] - marker_prediction)
-                                    for item in components])
-            candidate = int(np.argmin(distances))
-            if distances[candidate] <= 45.0:
-                marker_component = components[candidate]
-                components = [item for j, item in enumerate(components) if j != candidate]
+        marker_component = []
+        # If the component count already equals the ring count, all markers are
+        # out of frame (or merged) and none may be removed.  Otherwise remove
+        # only the number of visible marker components implied by the count.
+        if components and len(marker_model) and len(components) > expected:
+            marker_prediction = np.asarray(marker_prediction, dtype=float)
+            if marker_prediction.ndim == 1:
+                marker_prediction = marker_prediction[None, :]
+            centres = np.asarray([item[3] for item in components])
+            cost = np.sum((marker_prediction[:, None, :] - centres[None, :, :]) ** 2, axis=2)
+            rows, columns = linear_sum_assignment(cost)
+            visible_marker_count = min(len(marker_prediction), len(components) - expected)
+            ranked = sorted(((float(np.sqrt(cost[r, c])), int(c))
+                             for r, c in zip(rows, columns)
+                             if np.sqrt(cost[r, c]) <= 45.0))
+            selected = {c for _, c in ranked[:visible_marker_count]}
+            marker_component = [components[c] for c in sorted(selected)]
+            components = [item for j, item in enumerate(components) if j not in selected]
         stats = frame_component_stats(image, threshold)
         try:
             assigned = detect_frame(image, threshold, predicted=predicted,
@@ -297,12 +361,12 @@ def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
                             "prediction_max_error_px": float(err.max()),
                             "prediction_rmse_px": float(np.sqrt(np.mean(err ** 2))),
                             "assigned_count": expected, "rejected": False})
-        if marker_component is not None:
-            marker_centres.append(marker_component[3])
+        if marker_component:
+            marker_centres.append(np.asarray([item[3] for item in marker_component]))
         else:
             marker_centres.append(marker_prediction)
-        diagnostics[-1]["marker_center_px"] = marker_centres[-1].tolist()
-        diagnostics[-1]["marker_detected"] = marker_component is not None
+        diagnostics[-1]["marker_center_px"] = np.asarray(marker_centres[-1]).tolist()
+        diagnostics[-1]["marker_detected"] = bool(marker_component)
         stack.append(assigned)
         frame_ids.append(i)
     return np.asarray(stack), frame_ids, diagnostics, rejected

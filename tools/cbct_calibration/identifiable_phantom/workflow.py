@@ -23,14 +23,15 @@ from .tracker import FormalTrackerConfig, track_stack
 
 
 def calibrate_indexed(points_px, pixel_size_mm=(0.417, 0.417),
-                      image_shape=(1024, 1024), max_nfev=1200) -> dict:
+                      image_shape=(1024, 1024), max_nfev=1200,
+                      marker_points_mm=None) -> dict:
     """DLT cameras -> source circle -> fixed-source joint calibration."""
     points = np.asarray(points_px, dtype=float)
-    local = marked_points()
+    local = marked_points(marker_points_mm)
     dlt_config = DltConfig(pixel_size_mm=tuple(pixel_size_mm))
     cameras = [calibrate_view(frame, dlt_config, local) for frame in points]
     circle = fit_source_circle(np.asarray([c.source_phantom_mm for c in cameras]))
-    joint = fit(points, pixel_size_mm, image_shape, max_nfev)
+    joint = fit(points, pixel_size_mm, image_shape, max_nfev, local)
     return {
         "workflow": "indexed_points -> per_view_dlt -> source_circle -> fixed_source_joint_fit",
         "dlt_cameras": [{"projection_matrix": c.projection_matrix.tolist(),
@@ -61,6 +62,7 @@ class IdentifiablePhantomConfig:
     min_pixels: int = 4
     marker_area_ratio: float = 1.45
     max_dlt_rmse_px: float = 1.0
+    marker_points_mm: tuple[tuple[float, float, float], ...] = ((50.0, 0.0, 80.0),)
 
 
 def preprocess_identifiable_phantom(config: IdentifiablePhantomConfig):
@@ -77,6 +79,7 @@ def preprocess_identifiable_phantom(config: IdentifiablePhantomConfig):
         min_pixels=config.min_pixels,
         marker_area_ratio=config.marker_area_ratio,
         max_dlt_rmse_px=config.max_dlt_rmse_px,
+        marker_points_mm=config.marker_points_mm,
     )
     return track_stack(tracker)
 
@@ -99,11 +102,14 @@ def calibrate_identifiable_phantom(config: IdentifiablePhantomConfig) -> dict:
             "the dense joint fit requires a complete stack")
     identity = np.arange(tracking.points_px.shape[1], dtype=int)
     correspondence_candidates = []
-    for name, indices in (("as_tracked", identity),
-                          ("mirror_relabelled", mirror_correspondence())):
+    maps = [("as_tracked", identity)]
+    if len(config.marker_points_mm) == 1:
+        maps.append(("mirror_relabelled", mirror_correspondence()))
+    for name, indices in maps:
         candidate_points = tracking.points_px[:, indices]
         candidate_report = calibrate_indexed(
-            candidate_points, config.pixel_size_mm, (config.rows, config.cols))
+            candidate_points, config.pixel_size_mm, (config.rows, config.cols),
+            marker_points_mm=config.marker_points_mm)
         correspondence_candidates.append((
             candidate_report["joint_fit"]["diagnostics"]["rmse_px"], name, indices,
             candidate_points, candidate_report))

@@ -34,6 +34,9 @@ class ChoConfig:
     robust_loss: str = "soft_l1"
     robust_scale_px: float = 0.1
     max_nfev: int = 2000
+    # External markers are used for correspondence only.  PIC continues to
+    # consume the 2*N ring points; markers may optionally be added to DLT.
+    marker_points_mm: tuple[tuple[float, float, float], ...] = ((50.0, 0.0, 80.0),)
 
 
 @dataclass
@@ -81,6 +84,16 @@ def phantom_points(config: ChoConfig) -> np.ndarray:
          config.ring_radius_mm * np.sin(a), side * config.ring_half_spacing_mm]
         for side in (-1.0, 1.0) for a in angle
     ])
+
+
+def marker_points(config: ChoConfig) -> np.ndarray:
+    return np.asarray(config.marker_points_mm, dtype=float).reshape((-1, 3))
+
+
+def full_phantom_points(config: ChoConfig) -> np.ndarray:
+    ring = phantom_points(config)
+    markers = marker_points(config)
+    return np.vstack([ring, markers]) if len(markers) else ring.copy()
 
 
 def _pack(k: np.ndarray, r: np.ndarray, t: np.ndarray,

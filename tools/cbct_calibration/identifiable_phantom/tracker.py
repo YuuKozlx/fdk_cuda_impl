@@ -8,6 +8,7 @@ to resolve the initial 2-D/3-D labels.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations, permutations
 from pathlib import Path
 import json
 import warnings
@@ -34,6 +35,7 @@ class FormalTrackerConfig:
     min_pixels: int = 4
     marker_area_ratio: float = 1.45
     max_dlt_rmse_px: float = 1.0
+    marker_points_mm: tuple[tuple[float, float, float], ...] = ((50.0, 0.0, 80.0),)
 
 
 @dataclass
@@ -94,50 +96,59 @@ def _ring_order(centres: np.ndarray) -> np.ndarray:
     return centres[np.argsort(angle)]
 
 
-def _initial_index_candidates(components: list[Component]) -> list[np.ndarray]:
+def _initial_index_candidates(components: list[Component], marker_points_mm=None) -> list[np.ndarray]:
     """Enumerate label ambiguities using only anchor-frame image geometry."""
-    if len(components) != 25:
+    markers_3d = ((50.0, 0.0, 80.0),) if marker_points_mm is None else marker_points_mm
+    marker_count = len(markers_3d)
+    expected = 24 + marker_count
+    if marker_count not in (0, 1, 2):
+        raise ValueError("identifiable tracker supports zero, one or two external markers")
+    if len(components) != expected:
         raise ValueError(
-            f"anchor frame must have 25 separated components, found {len(components)}")
+            f"anchor frame must have {expected} separated components, found {len(components)}")
 
-    marker_id = int(np.argmax([item.area for item in components]))
-    marker = components[marker_id].centroid
-    ordinary = [item.centroid for i, item in enumerate(components)
-                if i != marker_id]
-    ordinary = np.asarray(ordinary, dtype=float)
-    # At a usable anchor frame the two projected rings form two separated
-    # bands.  The DLT search below still enumerates ring exchange and winding.
-    vertical_order = np.argsort(ordinary[:, 1])
-    ring_a = _ring_order(ordinary[vertical_order[:12]])
-    ring_b = _ring_order(ordinary[vertical_order[12:]])
+    marker_sets = list(combinations(range(len(components)), marker_count))
+    marker_sets.sort(key=lambda ids: -sum(components[i].area for i in ids))
+    marker_sets = marker_sets[:(1 if marker_count == 1 else 16)]
     candidates = []
-    for swap in (False, True):
-        base_a, base_b = (ring_a, ring_b) if not swap else (ring_b, ring_a)
-        for reverse_a in (False, True):
-            for reverse_b in (False, True):
-                a = base_a[::-1] if reverse_a else base_a
-                b = base_b[::-1] if reverse_b else base_b
-                # The marker lies axially above upper-ring target zero.  Its
-                # nearest member in the ring assigned as "upper" fixes that
-                # ring's cyclic phase without scanner geometry.
-                nearest_marker = int(np.argmin(np.linalg.norm(a - marker, axis=1)))
-                aa = np.roll(a, -nearest_marker, axis=0)
-                for shift_b in range(12):
-                    bb = np.roll(b, shift_b, axis=0)
-                    ordered = np.empty((25, 2), dtype=float)
-                    ordered[:24:2] = aa
-                    ordered[1:24:2] = bb
-                    ordered[24] = marker
-                    candidates.append(ordered)
+    for marker_ids in marker_sets:
+        markers = np.asarray([components[i].centroid for i in marker_ids])
+        ordinary = np.asarray([item.centroid for i, item in enumerate(components)
+                               if i not in marker_ids], dtype=float)
+        vertical_order = np.argsort(ordinary[:, 1])
+        ring_a = _ring_order(ordinary[vertical_order[:12]])
+        ring_b = _ring_order(ordinary[vertical_order[12:]])
+        for swap in (False, True):
+            base_a, base_b = (ring_a, ring_b) if not swap else (ring_b, ring_a)
+            for reverse_a in (False, True):
+                for reverse_b in (False, True):
+                    a = base_a[::-1] if reverse_a else base_a
+                    b = base_b[::-1] if reverse_b else base_b
+                    phase_shifts = (range(12) if marker_count == 0 else
+                                    [int(np.argmin(np.linalg.norm(
+                                        a - markers[phase_marker], axis=1)))
+                                     for phase_marker in range(marker_count)])
+                    for phase_shift in phase_shifts:
+                        aa = np.roll(a, -phase_shift, axis=0)
+                        for shift_b in range(12):
+                            bb = np.roll(b, shift_b, axis=0)
+                            for marker_order in permutations(range(marker_count)):
+                                ordered = np.empty((expected, 2), dtype=float)
+                                ordered[:24:2] = aa
+                                ordered[1:24:2] = bb
+                                if marker_count:
+                                    ordered[24:] = markers[list(marker_order)]
+                                candidates.append(ordered)
     return candidates
 
 
 def initialize_indices(image: np.ndarray, threshold: float = 5.0,
                        pixel_size_mm: tuple[float, float] = (0.417, 0.417),
-                       max_rmse_px: float = 5.0) -> tuple[np.ndarray, dict]:
+                       max_rmse_px: float = 5.0,
+                       marker_points_mm=None) -> tuple[np.ndarray, dict]:
     """Choose anchor labels using a physically constrained flat-panel camera."""
     components = detect_components(image, threshold)
-    world = marked_points()
+    world = marked_points(marker_points_mm)
     best = None
     candidate_count = 0
     camera_config = DltConfig(
@@ -146,7 +157,20 @@ def initialize_indices(image: np.ndarray, threshold: float = 5.0,
         robust_scale_px=0.15,
         max_nfev=300,
     )
-    for candidate in _initial_index_candidates(components):
+    # DLT is a cheap global prefilter.  Physical camera refinement is reserved
+    # for the best projective maps, keeping two-marker exhaustive search fast.
+    candidates = _initial_index_candidates(components, marker_points_mm)
+    projective = []
+    for candidate in candidates:
+        try:
+            projection, _ = normalized_dlt(world, candidate)
+            rmse = float(np.sqrt(np.mean(
+                (project_points(world, projection) - candidate) ** 2)))
+            projective.append((rmse, candidate))
+        except (ValueError, FloatingPointError, np.linalg.LinAlgError):
+            continue
+    projective.sort(key=lambda item: item[0])
+    for _, candidate in projective[:32]:
         candidate_count += 1
         try:
             with warnings.catch_warnings():
@@ -163,9 +187,11 @@ def initialize_indices(image: np.ndarray, threshold: float = 5.0,
             f"{best[0] if best else None}")
     return best[1], {
         "component_count": len(components),
-        "candidate_count": candidate_count,
+        "candidate_count": len(candidates),
+        "physical_camera_candidate_count": candidate_count,
         "selected_physical_camera_rmse_px": best[0],
-        "marker_component": "largest separated component",
+        "marker_count": int(len(world) - 24),
+        "marker_component": "area-ranked candidates selected by full physical-camera residual",
         "upper_ring_phase": "upper target zero is nearest the axial marker",
         "camera_constraints": "zero skew, known pixel pitch, one physical SDD",
         "chirality": (
@@ -175,26 +201,33 @@ def initialize_indices(image: np.ndarray, threshold: float = 5.0,
 
 
 def choose_anchor(raw: np.ndarray, threshold: float,
-                  marker_area_ratio: float) -> tuple[int, list[dict]]:
-    """Select a frame with all 25 targets separated, preferring clear targets."""
+                  marker_area_ratio: float, marker_count: int = 1) -> tuple[int, list[dict]]:
+    """Select a frame with all ring and marker targets separated."""
+    expected = 24 + int(marker_count)
     scores = []
     for frame in range(int(raw.shape[0])):
         components = detect_components(np.asarray(raw[frame]), threshold)
-        if len(components) != 25:
+        if len(components) != expected:
             scores.append({"frame": frame, "component_count": len(components),
                            "anchor_eligible": False})
             continue
         areas = np.asarray([item.area for item in components], dtype=float)
-        marker = float(np.max(areas))
-        ordinary = np.delete(areas, int(np.argmax(areas)))
-        ratio = marker / max(float(np.median(ordinary)), 1.0)
+        marker_ids = np.argsort(-areas)[:int(marker_count)]
+        ordinary = np.delete(areas, marker_ids)
+        if marker_count:
+            marker = float(np.max(areas[marker_ids]))
+            ratio = marker / max(float(np.median(ordinary)), 1.0)
+            eligible_marker = ratio >= marker_area_ratio
+        else:
+            ratio = 1.0
+            eligible_marker = True
         score = float(np.median(ordinary)) + 25.0 * min(ratio, 4.0)
-        scores.append({"frame": frame, "component_count": 25,
+        scores.append({"frame": frame, "component_count": expected,
                        "marker_area_ratio": ratio, "anchor_score": score,
-                       "anchor_eligible": ratio >= marker_area_ratio})
+                       "anchor_eligible": eligible_marker})
     eligible = [item for item in scores if item["anchor_eligible"]]
     if not eligible:
-        raise ValueError("no frame contains 25 separated target components")
+        raise ValueError(f"no frame contains {expected} separated target components")
     anchor = max(eligible, key=lambda item: item["anchor_score"])
     return int(anchor["frame"]), scores
 
@@ -304,22 +337,26 @@ def _save_diagnostics(path: Path, raw: np.ndarray, points: np.ndarray,
             (axes[0, 1], difficult_frame,
              f"Frame {difficult_frame}: merged targets retained")):
         axis.imshow(np.asarray(raw[frame]), cmap="gray", vmin=0, vmax=21)
-        axis.scatter(points[frame, :-1, 0], points[frame, :-1, 1], s=45,
+        marker_count = max(0, points.shape[1] - 24)
+        axis.scatter(points[frame, :24, 0], points[frame, :24, 1], s=45,
                      facecolors="none", edgecolors="cyan", linewidths=1.0)
-        axis.scatter(points[frame, -1, 0], points[frame, -1, 1], s=80,
-                     facecolors="none", edgecolors="red", linewidths=1.5,
-                     label="marker ID 24")
+        if marker_count:
+            axis.scatter(points[frame, 24:, 0], points[frame, 24:, 1], s=80,
+                         facecolors="none", edgecolors="red", linewidths=1.5,
+                         label="external markers")
         if frame == anchor_frame:
             for target, (u, v) in enumerate(points[frame]):
                 axis.text(u + 4, v, str(target), color="yellow", fontsize=7)
         axis.set(xlim=(250, 820), ylim=(1024, 250), title=title)
         axis.legend(loc="upper right", fontsize=8)
 
-    for target in range(points.shape[1] - 1):
+    for target in range(24):
         axes[1, 0].plot(points[:, target, 0], points[:, target, 1],
                         lw=0.7, alpha=0.7)
-    axes[1, 0].plot(points[:, -1, 0], points[:, -1, 1], color="red",
-                    lw=1.5, label="marker ID 24")
+    for target in range(24, points.shape[1]):
+        axes[1, 0].plot(points[:, target, 0], points[:, target, 1],
+                        color="red", lw=1.5,
+                        label="external marker" if target == 24 else None)
     axes[1, 0].invert_yaxis()
     axes[1, 0].set(title="Tracked detector trajectories",
                    xlabel="u / px", ylabel="image row / px")
@@ -342,10 +379,12 @@ def _save_diagnostics(path: Path, raw: np.ndarray, points: np.ndarray,
 def track_stack(config: FormalTrackerConfig) -> TrackingResult:
     """Run anchor discovery, label initialization, and bidirectional tracking."""
     raw = _load_raw(config)
+    marker_count = len(config.marker_points_mm)
     anchor_frame, anchor_scan = choose_anchor(
-        raw, config.threshold, config.marker_area_ratio)
+        raw, config.threshold, config.marker_area_ratio, marker_count)
     anchor_points, anchor_info = initialize_indices(
-        np.asarray(raw[anchor_frame]), config.threshold, config.pixel_size_mm)
+        np.asarray(raw[anchor_frame]), config.threshold, config.pixel_size_mm,
+        marker_points_mm=config.marker_points_mm)
     forward, forward_valid, forward_diag = _track_direction(
         raw, anchor_frame, anchor_points, +1, config)
     backward, backward_valid, backward_diag = _track_direction(
@@ -355,7 +394,7 @@ def track_stack(config: FormalTrackerConfig) -> TrackingResult:
     # Anchor is valid in both passes. Prefer forward values where both exist.
     points[anchor_frame] = anchor_points
     observed[anchor_frame] = True
-    world = marked_points()
+    world = marked_points(config.marker_points_mm)
     dlt_rmse = []
     dlt_max_error = []
     for frame in range(config.views):
