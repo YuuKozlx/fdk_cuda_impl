@@ -11,7 +11,9 @@ int main()
     water.formula = "H2O";
     water.density_g_cm3 = 1.0;
 
-    yk::spectral::XcomAttenuationProvider provider(XCOM_TEST_DATA_DIRECTORY);
+    // Empty data directory verifies that the runtime uses the embedded XCOM
+    // tables and does not require thirdparty/nist_xcom/data.
+    yk::spectral::XcomAttenuationProvider provider({});
     std::vector<double> values;
     std::string error;
     if (!provider.query(water, {20.0, 60.0, 100.0}, values, error)) {
@@ -26,6 +28,7 @@ int main()
             return 3;
         }
     }
+
     yk::spectral::MaterialSpec preset_water;
     preset_water.label = 2;
     preset_water.name = "preset-water";

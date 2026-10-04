@@ -34,6 +34,7 @@ else()
     target_sources(multispectrum_sim PRIVATE src/LibraryReconstructorStub.cpp)
 endif()
 if(MSVC)
+    target_compile_options(nist_xcom_core PRIVATE /utf-8)
     target_compile_options(multispectrum_sim PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
@@ -57,6 +58,7 @@ if(BUILD_TESTING)
     target_include_directories(multispectrum_config_test PRIVATE include
         "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
     target_link_libraries(multispectrum_config_test PRIVATE nist_xcom_core)
+    target_compile_definitions(multispectrum_config_test PRIVATE XCOM_C_API_STATIC)
     if(MSVC)
         target_compile_options(multispectrum_config_test PRIVATE /utf-8)
     endif()
@@ -67,8 +69,7 @@ if(BUILD_TESTING)
     target_include_directories(multispectrum_xcom_test PRIVATE
         include "${SPECTRAL_XCOM_ROOT}")
     target_link_libraries(multispectrum_xcom_test PRIVATE nist_xcom_core)
-    target_compile_definitions(multispectrum_xcom_test PRIVATE
-        XCOM_TEST_DATA_DIRECTORY="${SPECTRAL_XCOM_ROOT}/data")
+    target_compile_definitions(multispectrum_xcom_test PRIVATE XCOM_C_API_STATIC)
     if(MSVC)
         target_compile_options(multispectrum_xcom_test PRIVATE /utf-8)
     endif()

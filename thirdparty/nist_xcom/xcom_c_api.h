@@ -30,6 +30,8 @@ typedef struct XcomResult
     double* total_without_coherent;
 } XcomResult;
 
+/* Pass NULL or an empty data_directory to use the compiled-in MDATX3 tables.
+ * A non-empty directory explicitly selects compatible external tables. */
 XCOM_API int xcom_calculate_formula(
     const char* data_directory,
     const char* formula,

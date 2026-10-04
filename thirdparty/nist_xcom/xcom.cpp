@@ -1,4 +1,6 @@
 #include "xcom.h"
+#include "xcom_embedded_data.h"
+#include <fstream>
 #include <map>
 #include <stack>
 #include <vector>
@@ -11,7 +13,7 @@
 
 namespace
 {
-thread_local string g_xcomDataDirectory = "./data";
+thread_local string g_xcomDataDirectory;
 thread_local XcomErrorHandler g_xcomErrorHandler = nullptr;
 
 [[noreturn]] void RaiseXcomError(const string& message)
@@ -26,10 +28,6 @@ thread_local XcomErrorHandler g_xcomErrorHandler = nullptr;
 
 void SetXcomDataDirectory(const string& directory)
 {
-    if (directory.empty())
-    {
-        RaiseXcomError("XCOM data directory must not be empty");
-    }
     g_xcomDataDirectory = directory;
 }
 
@@ -58,86 +56,76 @@ void SetXcomErrorHandler(XcomErrorHandler handler)
 {
     g_xcomErrorHandler = handler;
 }
-// read MDATX3 file 
+// Parse one MDATX3 table from either an external file or the compiled-in data.
+int ParseMDATX3(std::istream& input, const string& source, MDATX3 *p)
+{
+    if (p == nullptr)
+        RaiseXcomError("XCOM data destination must not be null");
+    *p = MDATX3{};
+    if (!(input >> p->IZ >> p->ATWT >> p->MAXEDG >> p->MAXE) ||
+        p->MAXEDG < 0 || p->MAXEDG > 14 || p->MAXE < 0 || p->MAXE > MEB)
+        RaiseXcomError("Invalid XCOM data: " + source);
+
+    if (p->MAXEDG > 0)
+    {
+        for (int i = 0; i < p->MAXEDG; ++i)
+            input >> p->IDG[p->MAXEDG - i - 1];
+        for (int i = 0; i < p->MAXEDG; ++i)
+            input >> p->ADG[i];
+        for (int i = 0; i < p->MAXEDG; ++i)
+            input >> p->EDGEN[p->MAXEDG - i - 1];
+    }
+    for (int i = 0; i < p->MAXE; ++i) input >> p->E[i];
+    for (int i = 0; i < p->MAXE; ++i) input >> p->SCATCO[i];
+    for (int i = 0; i < p->MAXE; ++i) input >> p->SCATIN[i];
+    for (int i = 0; i < p->MAXE; ++i) input >> p->PHOT[i];
+    for (int i = 0; i < p->MAXE; ++i) input >> p->PAIRAT[i];
+    for (int i = 0; i < p->MAXE; ++i) input >> p->PAIREL[i];
+
+    if (p->MAXEDG > 0)
+    {
+        input >> p->LAX;
+        if (p->LAX < 0 || p->LAX > 14)
+            RaiseXcomError("Invalid XCOM edge table: " + source);
+        for (int i = 0; i < p->LAX; ++i) input >> p->KMX[i];
+        for (int edge = 0; edge < p->LAX; ++edge)
+        {
+            if (p->KMX[edge] < 0 || p->KMX[edge] > 35)
+                RaiseXcomError("Invalid XCOM edge interpolation table: " + source);
+            for (int i = 0; i < p->KMX[edge]; ++i) input >> p->ENG[edge][i];
+        }
+        for (int edge = 0; edge < p->LAX; ++edge)
+            for (int i = 0; i < p->KMX[edge]; ++i) input >> p->PHC[edge][i];
+    }
+    if (!input)
+        RaiseXcomError("Invalid or truncated XCOM data: " + source);
+    return 0;
+}
+
 int ReadMDATX3(const char *file,MDATX3 *p)
 {
-    FILE *fin;
-    fin = fopen(file,"r");
-    if(!fin)
+    std::ifstream input(file);
+    if (!input)
+        RaiseXcomError("Unable to read XCOM data file: " + string(file));
+    return ParseMDATX3(input, file, p);
+}
+
+int LoadMDATX3(int atomicNumber, MDATX3 *p)
+{
+    // The embedded tables are the canonical runtime source.  Keep the file
+    // path as a compatibility fallback for elements outside the generated
+    // embedded range and for applications carrying custom XCOM tables.
+    if (const char* embedded = nist_xcom_embedded::find(atomicNumber))
     {
-        string filename(file);
-        RaiseXcomError("Unable to read XCOM data file: " + filename);
+        std::istringstream input(embedded);
+        return ParseMDATX3(input, "embedded MDATX3." + std::to_string(atomicNumber), p);
     }
-    fscanf(fin,"%d%f",&(p->IZ),&(p->ATWT));
-    //ATWT =ATWTS[[K]];
-    fscanf(fin,"%d%d",&(p->MAXEDG),&(p->MAXE));
-    if(p->MAXEDG >0 )
+    if (!g_xcomDataDirectory.empty())
     {
-        for(int i=0;i<p->MAXEDG;i++)
-            fscanf(fin,"%d",p->IDG + p->MAXEDG-i-1);
-        for(int i=0;i<p->MAXEDG;i++)
-        {
-            char strBuf[20];
-            fscanf(fin,"%s",strBuf);
-            (p->ADG)[i] = strBuf;
-        }
-        for(int i=0;i<p->MAXEDG;i++)
-            fscanf(fin,"%f",p->EDGEN + p->MAXEDG-i-1);
+        const string file = GetXcomDataFilePath(atomicNumber);
+        return ReadMDATX3(file.c_str(), p);
     }
-    for(int M=0;M<p->MAXE;M++)
-    {
-        fscanf(fin,"%f",p->E+M);
-    }
-    for(int M=0;M<p->MAXE;M++)
-    {
-        fscanf(fin,"%f",p->SCATCO+M);
-    }
-    for(int M=0;M<p->MAXE;M++)
-    {
-        fscanf(fin,"%f",p->SCATIN+M);
-    }
-    for(int M=0;M<p->MAXE;M++)
-    {
-        fscanf(fin,"%f",p->PHOT+M);
-    }
-    for(int M=0;M<p->MAXE;M++)
-    {
-        fscanf(fin,"%f",p->PAIRAT+M);
-    }
-    for(int M=0;M<p->MAXE;M++)
-    {
-        fscanf(fin,"%f",p->PAIREL+M);
-    }
-    if(p->MAXEDG> 0)
-    {
-        fscanf(fin,"%d",&(p->LAX));
-        for(int L=0;L<p->LAX;L++)
-        {
-            fscanf(fin,"%d",p->KMX+L);
-        }
-        for(int L=0;L<p->LAX;L++)
-        {
-            int IMAX = (p->KMX)[L];
-            for(int I=0;I<IMAX;I++)
-            {
-                float fd;
-                fscanf(fin,"%f",&fd);
-                (p->ENG)[L][I] =fd;
-            }
-        }
-        for(int L=0;L<p->LAX;L++)
-        {
-            int IMAX = (p->KMX)[L];
-            for(int I=0;I<IMAX;I++)
-            {
-                float fd;
-                fscanf(fin,"%f",&fd);
-                (p->PHC)[L][I] =fd;
-            }
-        }
-    }
-    fclose(fin);
-    return 0;
+    RaiseXcomError("Embedded XCOM data supports atomic numbers 1 through 100");
 }
 
 /////////////////////////////////////////////////
@@ -200,10 +188,9 @@ int InitEnergyList(int KMAX,int *NZ,int NEGO,int JENG,/*int *JZ,int *JM,*/float 
         }
         for(int i=0;i<KMAX;i++) // add nuclear shell energy
         {
-            string file = GetXcomDataFilePath(NZ[i]);
             int LZ[14],LM[14];
             MDATX3 data;
-            if (ReadMDATX3(file.c_str(), &data)!=0)
+            if (LoadMDATX3(NZ[i], &data)!=0)
             {
 
             }
@@ -324,9 +311,8 @@ void Calculation(int KMAX, int* NZ, float* WEIGHT, int NF, int NEGO, int NENG, f
     for (int K = 0; K < KMAX; K++)
     {
         MDATX3 data;
-        string file = GetXcomDataFilePath(NZ[K]);
         //	printf("%d %s\n",K,file);
-        ReadMDATX3(file.c_str(), &data);
+        LoadMDATX3(NZ[K], &data);
 
         float ATWT = data.ATWT;
         int MAXK = 0;

@@ -52,9 +52,9 @@ int Calculate(
     ResetResult(result);
     try
     {
-        if (result == nullptr || dataDirectory == nullptr || dataDirectory[0] == '\0')
+        if (result == nullptr)
         {
-            throw std::invalid_argument("A result and non-empty XCOM data directory are required");
+            throw std::invalid_argument("A result is required");
         }
         if (atomicNumbers.empty() || atomicNumbers.size() != massFractions.size())
         {
@@ -105,7 +105,7 @@ int Calculate(
         std::vector<float> edgeDifference(energyCount);
 
         SetXcomErrorHandler(nullptr);
-        SetXcomDataDirectory(dataDirectory);
+        SetXcomDataDirectory(dataDirectory != nullptr ? dataDirectory : "");
         Calculation(
             static_cast<int>(z.size()), z.data(), weights.data(), 3, 3,
             static_cast<int>(energyCount), energyEv.data(), edgeFlags.data(), energyIndices.data(),
