@@ -1,0 +1,8 @@
+{
+  "name": "cbct-calibration-cpp",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "eigen3"
+  ]
+}
+
