@@ -93,6 +93,11 @@ void PhantomOutputWriter::writeDescription(const Phantom& p,
             if (p.marker_bead_diameter_mm > 0.0)
                 toml << "marker_bead_diameter_mm = " << p.marker_bead_diameter_mm
                      << "\nmarker_above_upper_ring_mm = " << p.marker_bead_offset_mm << '\n';
+            if (p.secondary_marker_phase_deg != 0.0)
+                toml << "secondary_marker_bead_count = 1\nsecondary_marker_phase_deg = "
+                     << p.secondary_marker_phase_deg
+                     << "\nsecondary_marker_above_upper_ring_mm = "
+                     << p.secondary_marker_offset_mm << '\n';
             if (p.cylindrical_ring_markers)
                 toml << "marker_shape = \"cylinder\"\nmarker_phase_deg = 0\n"
                      << "marker_cylinder_diameter_mm = "

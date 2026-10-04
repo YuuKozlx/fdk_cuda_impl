@@ -282,7 +282,17 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
                 !ck(cudaMalloc(&dair_accum,pixels*sizeof(float)),"cudaMalloc global air") ||
                 !ck(cudaMalloc(&dcount,pixels*sizeof(unsigned int)),"cudaMalloc global count")) throw std::runtime_error(err);
         }
-        std::vector<float> ho(pixels),he(pixels); std::ofstream fo(out_file,std::ios::binary), fe(c.projection.energy_output_file,std::ios::binary); if(!fo||!fe)throw std::runtime_error("无法创建CUDA前投输出");
+        const bool write_energy = !c.projection.energy_output_file.empty();
+        if (const auto parent = out_file.parent_path(); !parent.empty())
+            std::filesystem::create_directories(parent);
+        if (write_energy) {
+            const auto parent = c.projection.energy_output_file.parent_path();
+            if (!parent.empty()) std::filesystem::create_directories(parent);
+        }
+        std::vector<float> ho(pixels),he(pixels); std::ofstream fo(out_file,std::ios::binary);
+        std::ofstream fe;
+        if (write_energy) fe.open(c.projection.energy_output_file, std::ios::binary);
+        if(!fo || (write_energy && !fe)) throw std::runtime_error("无法创建CUDA前投输出");
         for(int v=0;v<g.views;++v){
             const int use_poisson = c.projection.sampling.photon_count_mode == "poisson" ? 1 : 0;
             if (c.projection.sampling.mode == "detector_global_random") {
@@ -302,14 +312,17 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
                     he[p]=energy;
                     ho[p]=-std::log(std::max(energy/std::max(air_energy,1e-30f),1e-30f));
                 }
-                fe.write((char*)he.data(),pixels*sizeof(float)); fo.write((char*)ho.data(),pixels*sizeof(float));
+                if (write_energy) fe.write((char*)he.data(),pixels*sizeof(float));
+                fo.write((char*)ho.data(),pixels*sizeof(float));
             } else {
-                primaryKernel<<<(pixels+255)/256,256>>>(dg,dl,dm,dmu,ds,de,incident,(float)c.projection.sampling.photons_per_pixel,use_poisson,v,c.projection.sampling.seed,c.projection.sampling.photon_seed,do1,do2);if(!ck(cudaGetLastError(),"primary kernel")||!ck(cudaDeviceSynchronize(),"primary synchronize"))throw std::runtime_error(err);cudaMemcpy(ho.data(),do1,pixels*sizeof(float),cudaMemcpyDeviceToHost);cudaMemcpy(he.data(),do2,pixels*sizeof(float),cudaMemcpyDeviceToHost);fo.write((char*)ho.data(),pixels*sizeof(float));fe.write((char*)he.data(),pixels*sizeof(float));
+                primaryKernel<<<(pixels+255)/256,256>>>(dg,dl,dm,dmu,ds,de,incident,(float)c.projection.sampling.photons_per_pixel,use_poisson,v,c.projection.sampling.seed,c.projection.sampling.photon_seed,do1,do2);if(!ck(cudaGetLastError(),"primary kernel")||!ck(cudaDeviceSynchronize(),"primary synchronize"))throw std::runtime_error(err);cudaMemcpy(ho.data(),do1,pixels*sizeof(float),cudaMemcpyDeviceToHost);cudaMemcpy(he.data(),do2,pixels*sizeof(float),cudaMemcpyDeviceToHost);fo.write((char*)ho.data(),pixels*sizeof(float));if (write_energy) fe.write((char*)he.data(),pixels*sizeof(float));
             }
         }
         cudaFree(dl);cudaFree(dm);cudaFree(dmu);cudaFree(ds);cudaFree(de);cudaFree(do1);cudaFree(do2);cudaFree(denergy_accum);cudaFree(dair_accum);cudaFree(dcount); fo.close();fe.close();
-        writeMetadata(out_file,g.detector_u,g.detector_v,g.views,"negative_log_transmission");
-        writeMetadata(c.projection.energy_output_file,g.detector_u,g.detector_v,g.views,"transmitted_energy_keV_per_incident_photon");
+        if (c.projection.save_metadata)
+            writeMetadata(out_file,g.detector_u,g.detector_v,g.views,"negative_log_transmission");
+        if (write_energy)
+            writeMetadata(c.projection.energy_output_file,g.detector_u,g.detector_v,g.views,"transmitted_energy_keV_per_incident_photon");
         return true;
     } catch(const std::exception& e){err=e.what();return false;}
 }

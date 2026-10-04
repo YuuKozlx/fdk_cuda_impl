@@ -11,7 +11,11 @@ namespace yk::spectral {
     namespace {
         GeometryKind geometry(std::string_view v) { if (v == "flat_cbct")return GeometryKind::FlatCbct; if (v == "flat_helical")return GeometryKind::FlatHelical; if (v == "cyl_cbct")return GeometryKind::CylCbct; if (v == "cyl_helical")return GeometryKind::CylHelical; throw std::runtime_error("未知 geometry: " + std::string(v)); }
         WorkflowMode workflow(std::string_view v) { if (v == "project")return WorkflowMode::Project; if (v == "reconstruct")return WorkflowMode::Reconstruct; if (v == "project_and_reconstruct")return WorkflowMode::ProjectAndReconstruct; throw std::runtime_error("未知 workflow.mode: " + std::string(v)); }
-        std::filesystem::path resolve(const std::filesystem::path& b, std::string_view v) { std::filesystem::path p(v); return p.is_absolute() ? p : b / p; }
+        std::filesystem::path resolve(const std::filesystem::path& b, std::string_view v) {
+            if (v.empty()) return {};
+            std::filesystem::path p(v);
+            return p.is_absolute() ? p : b / p;
+        }
     }
 }
 namespace yk::spectral {
@@ -42,10 +46,8 @@ namespace yk::spectral {
             c.projection.output_file = resolve(base, (*p)["output_file"].value_or(std::string("projection.raw")));
             c.projection.energy_output_file = resolve(base, (*p)["energy_output_file"].value_or(std::string{}));
             c.projection.apply_geometry_flux = (*p)["apply_geometry_flux"].value_or(true);
+            c.projection.save_metadata = (*p)["save_metadata"].value_or(true);
         }
-        if (c.projection.energy_output_file.empty())
-            c.projection.energy_output_file = c.projection.output_file.parent_path() /
-                (c.projection.output_file.stem().string() + "-energy.raw");
         auto* reconstruction_table = t["reconstruction"].as_table();
         if (c.runsReconstruction() && !reconstruction_table)
             throw std::runtime_error("重建工作流需要 [reconstruction]");

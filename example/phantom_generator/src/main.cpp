@@ -296,7 +296,9 @@ void makeTungstenBeadDoubleRingMarker(Phantom& p,
     double ring_spacing_mm, double bead_diameter_mm,
     double lower_phase_deg, double marker_diameter_mm,
     double marker_offset_mm, double support_diameter_mm,
-    double support_length_mm, int beads_per_ring)
+    double support_length_mm, int beads_per_ring,
+    double secondary_marker_phase_deg = 0.0,
+    double secondary_marker_offset_mm = 0.0)
 {
     constexpr std::uint8_t kPmmaLabel = 1;
     constexpr std::uint8_t kTungstenLabel = 100;
@@ -355,6 +357,16 @@ void makeTungstenBeadDoubleRingMarker(Phantom& p,
         kTungstenLabel);
     p.inserts.push_back({kTungstenLabel, marker_diameter_mm, 0.0,
         upper_radius, 0.0, 0.0, marker_z});
+    if (secondary_marker_phase_deg != 0.0) {
+        const double marker_angle = secondary_marker_phase_deg * pi / 180.0;
+        const double marker_x = upper_radius * std::cos(marker_angle);
+        const double marker_y = upper_radius * std::sin(marker_angle);
+        const double secondary_marker_z = upper_z + secondary_marker_offset_mm;
+        paintSphere(p, marker_x, marker_y, secondary_marker_z, marker_diameter_mm,
+            kTungstenLabel);
+        p.inserts.push_back({kTungstenLabel, marker_diameter_mm, 0.0,
+            marker_x, marker_y, 0.0, secondary_marker_z});
+    }
     p.materials = {{kPmmaLabel, "pmma_support", 1.18, "C5H8O2", {},
         "cylindrical PMMA support"},
         {kTungstenLabel, "tungsten", 19.25, "W", {},
@@ -368,6 +380,8 @@ void makeTungstenBeadDoubleRingMarker(Phantom& p,
     p.lower_ring_phase_deg = lower_phase_deg;
     p.marker_bead_diameter_mm = marker_diameter_mm;
     p.marker_bead_offset_mm = marker_offset_mm;
+    p.secondary_marker_phase_deg = secondary_marker_phase_deg;
+    p.secondary_marker_offset_mm = secondary_marker_offset_mm;
     p.beads_per_ring = beads_per_ring;
     p.variant = "asymmetric tungsten bead rings with axial marker sphere";
 }
@@ -599,8 +613,8 @@ phantom_generator::GeneratorRegistry makeRegistry()
     r.add("tungsten_bead_double_ring_cylinder_marker", ring(true, false));
     r.add("tungsten_bead_double_ring_cylinder_replace", ring(true, true));
     r.add("tungsten_bead_double_ring_marker", [](Phantom& p, const Arguments& a) {
-        if (a.size() != 10) throw std::runtime_error("marked double-ring requires ten parameters");
-        makeTungstenBeadDoubleRingMarker(p, std::stod(a[0]), std::stod(a[1]), std::stod(a[2]), std::stod(a[3]), std::stod(a[4]), std::stod(a[5]), std::stod(a[6]), std::stod(a[7]), std::stod(a[8]), integer(a[9].c_str(), "beads_per_ring"));
+        if (a.size() != 10 && a.size() != 12) throw std::runtime_error("marked double-ring requires ten parameters and optional secondary marker phase/height");
+        makeTungstenBeadDoubleRingMarker(p, std::stod(a[0]), std::stod(a[1]), std::stod(a[2]), std::stod(a[3]), std::stod(a[4]), std::stod(a[5]), std::stod(a[6]), std::stod(a[7]), std::stod(a[8]), integer(a[9].c_str(), "beads_per_ring"), a.size() == 12 ? std::stod(a[10]) : 0.0, a.size() == 12 ? std::stod(a[11]) : 0.0);
     });
     r.add("tungsten_bead_spiral_marker", [](Phantom& p, const Arguments& a) {
         if (a.size() != 7) throw std::runtime_error("spiral requires seven parameters");
@@ -646,7 +660,8 @@ void printHelp(const std::string& type = {})
         std::cout << "type arguments:\n"
                   << "  upper_diameter_mm lower_diameter_mm ring_spacing_mm bead_diameter_mm\n"
                   << "  lower_phase_deg marker_diameter_mm marker_above_mm\n"
-                  << "  support_diameter_mm support_length_mm beads_per_ring\n";
+                  << "  support_diameter_mm support_length_mm beads_per_ring\n"
+                  << "  [secondary_marker_phase_deg secondary_marker_above_mm]\n";
     else if (type == "tungsten_bead_spiral_marker")
         std::cout << "type arguments:\n"
                   << "  spiral_radius_mm layer_spacing_mm phase_step_deg bead_diameter_mm\n"

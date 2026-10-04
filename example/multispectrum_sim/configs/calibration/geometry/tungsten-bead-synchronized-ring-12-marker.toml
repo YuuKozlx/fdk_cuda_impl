@@ -4,10 +4,10 @@ schema_version = 2
 mode = "project_and_reconstruct"
 
 [projection]
-label_volume = "../../../inputs/generated/tungsten-bead-synchronized-ring-100mm-3mm-marker5-12beads-0p2mm.raw"
+label_volume = "../../../inputs/generated/tungsten-bead-synchronized-ring-100mm-3mm-dual-marker5-12beads-0p2mm.raw"
 spectrum_file = "../../../spectra/mono-80kev.csv"
 xcom_data_directory = "../../../../../thirdparty/nist_xcom/data"
-output_file = "../../../outputs/calibration/synchronized-ring-12-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-projection.raw"
+output_file = "../../../outputs/calibration/synchronized-ring-12-dual-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-projection.raw"
 engine = "pixel_local_random"
 apply_geometry_flux = true
 save_metadata = false
@@ -71,9 +71,9 @@ reconstruction_offset_z_mm = 0.0
 
 [reconstruction]
 type = "analytic"
-input_projection_file = "../../../outputs/calibration/synchronized-ring-12-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-projection.raw"
-output_volume_file = "../../../outputs/calibration/synchronized-ring-12-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-recon-768x768x600.raw"
-slice_prefix = "../../../outputs/calibration/synchronized-ring-12-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3"
+input_projection_file = "../../../outputs/calibration/synchronized-ring-12-dual-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-projection.raw"
+output_volume_file = "../../../outputs/calibration/synchronized-ring-12-dual-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-recon-768x768x600.raw"
+slice_prefix = "../../../outputs/calibration/synchronized-ring-12-dual-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3"
 save_slices = false
 
 [reconstruction.analytic]

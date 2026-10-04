@@ -46,6 +46,8 @@ struct Phantom {
     double lower_ring_phase_deg = 0.0;
     double marker_bead_diameter_mm = 0.0;
     double marker_bead_offset_mm = 0.0;
+    double secondary_marker_phase_deg = 0.0;
+    double secondary_marker_offset_mm = 0.0;
     double marker_cylinder_height_mm = 0.0;
     bool cylindrical_ring_markers = false;
     bool spiral_beads = false;

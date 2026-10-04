@@ -249,6 +249,8 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             cudaFree(d_projection);
             cudaFree(d_volume);
         }
+        if (const auto parent = volume_file.parent_path(); !parent.empty())
+            std::filesystem::create_directories(parent);
         std::ofstream output(volume_file, std::ios::binary);
         check(static_cast<bool>(output), "无法创建重建体输出: " + volume_file.string());
         output.write(reinterpret_cast<const char*>(volume.data()),

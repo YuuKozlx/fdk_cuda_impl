@@ -92,6 +92,7 @@ struct ProjectionConfig {
     std::filesystem::path xcom_data_directory;
     std::filesystem::path output_file;
     std::filesystem::path energy_output_file;
+    bool save_metadata = true;
     bool apply_geometry_flux = true;
     std::string engine = "pixel_local_random";
     std::vector<MaterialSpec> materials;

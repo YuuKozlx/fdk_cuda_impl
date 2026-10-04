@@ -8,7 +8,7 @@ label_volume = "../../../inputs/generated/tungsten-bead-spiral-diameter100-spaci
 spectrum_file = "../../../spectra/mono-80kev.csv"
 xcom_data_directory = "../../../../../thirdparty/nist_xcom/data"
 output_file = "../../../outputs/quality/spiral-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-projection.raw"
-energy_output_file = "../../../outputs/quality/spiral-marker-1024x1024x360-ou5-ov10-tu1-tv2-tn3-soy10-soz5-px10-py15-pz20-prx1-pry2-prz3-energy.raw"
+save_metadata = false
 engine = "pixel_local_random"
 apply_geometry_flux = true
 
