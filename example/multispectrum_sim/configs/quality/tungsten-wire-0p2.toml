@@ -5,19 +5,15 @@ mode = "project_and_reconstruct"
 
 [projection]
 label_volume = "../../inputs/generated/tungsten-wire-0p05.raw"
-spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/quality/tungsten-wire-0p2-projection.raw"
 energy_output_file = "../../outputs/quality/tungsten-wire-0p2-energy.raw"
-engine = "pixel_local_random"
 apply_geometry_flux = true
 
-[projection.pixel_local_random]
+[projection.sampling]
 samples_per_pixel = 50
-photons_per_pixel = 100000
-photon_count_mode = "fixed"
 spatial_seed = 12345
-photon_seed = 67890
 
 [projection.focal_spot]
 enabled = true
@@ -69,15 +65,6 @@ name = "tungsten"
 formula = "W"
 density_g_cm3 = 19.25
 
-[projection.detector_effects]
-efficiency_enabled = false
-efficiency = 1.0
-scatter_enabled = false
-optical_crosstalk_enabled = false
-afterglow_enabled = false
-electronic_noise_enabled = false
-electronic_noise_sigma = 0.0
-
 [reconstruction]
 type = "analytic"
 output_volume_file = "../../outputs/quality/tungsten-wire-0p2-fdk-512x512x128-f32.raw"
@@ -87,3 +74,4 @@ slice_prefix = "../../outputs/quality/tungsten-wire-0p2-fdk-512x512x128"
 pipeline = "fdk"
 filter = "ramlak"
 chunk_views = 8
+

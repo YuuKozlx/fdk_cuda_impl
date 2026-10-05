@@ -203,3 +203,4 @@
     {"element.zr", "element", "Zr", "zr", 6.506000, "40:1.000000"},
     {"compound.zro", "compound", "ZrO", "zro", 3.864, "8:0.5000,40:0.5000"},
     {"compound.zro2", "compound", "ZrO2", "zro2", 5.89, "8:0.65000,40:0.35000"},
+    {"compound.carbon_fiber_epoxy", "compound", "Carbon fiber epoxy", "carbon_fiber,carbon_fibre,cfrp", 1.550000, "1:0.013921,6:0.765541,8:0.220538"},

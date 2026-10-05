@@ -10,11 +10,48 @@ struct WorkflowConfig { WorkflowMode mode = WorkflowMode::Project; };
 // 材料可以用 formula 表示单一化合物，也可以用 preset 引用内置的
 // 元素质量分数表。preset 适合人体组织等不能用单一化学式准确表达的材料。
 struct MaterialSpec { std::uint8_t label=0; std::string name; std::string formula; std::string preset; double density_g_cm3=1.0; };
-struct SpectrumPoint { double energy_keV=0.0; double relative_photons=0.0; };
-struct DetectorEffectsConfig {
-    bool efficiency_enabled=false; double efficiency=1.0; bool scatter_enabled=false;
-    bool optical_crosstalk_enabled=false; bool afterglow_enabled=false;
-    bool electronic_noise_enabled=false; double electronic_noise_sigma=0.0;
+struct SpectrumPoint { double energy_keV=0.0; double fluence_per_keV_cm2_mAs_at_1m=0.0; double bin_width_keV=0.0; };
+struct DetectorLayerConfig {
+    bool enabled = true;
+    std::string name;
+    std::string preset;
+    double density_g_cm3 = 1.0;
+    double thickness_mm = 0.0;
+    std::filesystem::path thickness_map_file;
+};
+struct DetectorResponseConfig {
+    bool enabled = false;
+    bool oblique_path_correction = true;
+    DetectorLayerConfig protective_layer;
+    DetectorLayerConfig impurity_layer;
+    DetectorLayerConfig scintillator_layer;
+};
+struct CrosstalkConfig {
+    bool enabled = false;
+    std::vector<double> kernel_u{1.0};
+    std::vector<double> kernel_v{1.0};
+};
+struct DetectorPostprocessConfig {
+    CrosstalkConfig optical_crosstalk;
+    struct AfterglowConfig {
+        bool enabled = false;
+        double p = 0.0;
+        std::string initialization = "zero";
+        double frame_time_ms = 1.0;
+        double exposure_time_ms = 1.0;
+        std::vector<double> weights;
+        std::vector<double> time_constants_ms;
+    } afterglow;
+    CrosstalkConfig electronic_crosstalk;
+    struct DasConfig {
+        bool enabled = false;
+        double gain_electrons_per_keV = 1.0;
+        double offset_electrons = 0.0;
+        double electronic_noise_std_electrons = 0.0;
+        double saturation_electrons = 0.0;
+        double adc_lsb_electrons = 0.0;
+        std::uint32_t noise_seed = 24680;
+    } das;
 };
 
 struct GeometryConfig {
@@ -72,13 +109,8 @@ struct FocalSpotConfig {
 };
 
 struct SamplingConfig {
-    std::string mode = "pixel_local_random";
-    std::string photon_count_mode = "poisson";
     int samples_per_pixel = 1;
-    std::uint64_t total_samples = 0;
-    double photons_per_pixel = 100000.0;
     std::uint32_t seed = 12345;
-    std::uint32_t photon_seed = 67890;
 };
 
 struct GeometrySpec {
@@ -92,11 +124,15 @@ struct ProjectionConfig {
     std::filesystem::path xcom_data_directory;
     std::filesystem::path output_file;
     std::filesystem::path energy_output_file;
+    std::filesystem::path air_output_file;
     bool save_metadata = true;
     bool apply_geometry_flux = true;
-    std::string engine = "pixel_local_random";
+    double mAs_per_view = 1.0;
+    bool quantum_noise_enabled = true;
+    std::uint32_t quantum_noise_seed = 67890;
     std::vector<MaterialSpec> materials;
-    DetectorEffectsConfig detector_effects;
+    DetectorResponseConfig detector_response;
+    DetectorPostprocessConfig detector_postprocess;
     FocalSpotConfig focal_spot;
     SamplingConfig sampling;
 };

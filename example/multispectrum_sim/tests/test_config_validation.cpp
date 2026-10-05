@@ -41,14 +41,15 @@ int main() {
                 "spectrum-normalization-test.csv";
             {
                 std::ofstream spectrum(spectrum_path);
-                spectrum << "20,2\n40,3\n";
+                spectrum << "Energy[keV]  N[keV cm^2 mAs]^-1 @ 1 meter\n20 2\n40 3\n";
             }
             const auto spectrum = yk::spectral::loadSpectrum(spectrum_path);
             std::filesystem::remove(spectrum_path);
             if (spectrum.size() != 2 ||
-                std::abs(spectrum[0].relative_photons - 0.4) > 1e-12 ||
-                std::abs(spectrum[1].relative_photons - 0.6) > 1e-12)
-                throw std::runtime_error("spectrum photon weights were not normalized");
+                std::abs(spectrum[0].fluence_per_keV_cm2_mAs_at_1m - 2.0) > 1e-12 ||
+                std::abs(spectrum[1].fluence_per_keV_cm2_mAs_at_1m - 3.0) > 1e-12 ||
+                std::abs(spectrum[0].bin_width_keV - 20.0) > 1e-12)
+                throw std::runtime_error("absolute spectrum was not parsed correctly");
         }
         test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nfilter='ramlak'\n", true);
         test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nfilter='hann'\n", false);
@@ -98,7 +99,7 @@ int main() {
             "[geometry]\nkind='flat_cbct'\nviews=1\nviews_per_turn=1\n"
             "detector_u=1\ndetector_v=1\nvolume_x=1\nvolume_y=1\nvolume_z=1\n"
             "[projection]\noutput_file='projection.raw'\nengine='pixel_local_random'\n"
-            "[projection.pixel_local_random]\nsamples_per_pixel=1\nphotons_per_pixel=1\nphoton_count_mode='fixed'\n"
+            "[projection.sampling]\nsamples_per_pixel=1\n"
             "[[projection.materials]]\nlabel=1\nname='water'\nformula='H2O'\n"
             "[reconstruction]\ntype='analytic'\n"
             "[reconstruction.analytic]\npipeline='fdk'\n", true);
@@ -110,3 +111,4 @@ int main() {
         return 1;
     }
 }
+

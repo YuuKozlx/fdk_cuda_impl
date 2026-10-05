@@ -5,19 +5,16 @@ mode = "project"
 
 [projection]
 label_volume = "../../inputs/water-cylinder-128x128x64-u8.raw"
-spectrum_file = "../../spectra/spectrum-120kv-150.csv"
+spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/projections/water-cylinder-small.raw"
 energy_output_file = "../../outputs/projections/water-cylinder-small-energy.raw"
-engine = "pixel_local_random"
+air_output_file = "../../outputs/projections/water-cylinder-small-air.raw"
 apply_geometry_flux = true
 
-[projection.pixel_local_random]
+[projection.sampling]
 samples_per_pixel = 50
-photons_per_pixel = 100000
-photon_count_mode = "fixed"
 spatial_seed = 12345
-photon_seed = 67890
 
 [projection.focal_spot]
 enabled = false
@@ -69,11 +66,47 @@ name = "water"
 formula = "H2O"
 density_g_cm3 = 1.0
 
-[projection.detector_effects]
-efficiency_enabled = false
-efficiency = 1.0
-scatter_enabled = false
-optical_crosstalk_enabled = false
-afterglow_enabled = false
-electronic_noise_enabled = false
-electronic_noise_sigma = 0.0
+[projection.detector_response]
+enabled = true
+oblique_path_correction = true
+
+[projection.detector_response.protective_layer]
+name = "carbon_fiber_cover"
+preset = "compound.carbon_fiber_epoxy"
+thickness_mm = 0.5
+
+[projection.detector_response.impurity_layer]
+enabled = false
+
+[projection.detector_response.scintillator_layer]
+name = "cesium_iodide"
+preset = "compound.csi"
+thickness_mm = 0.6
+
+[projection.detector_postprocess.optical_crosstalk]
+enabled = false
+kernel_u = [0.03, 0.94, 0.03]
+kernel_v = [0.02, 0.96, 0.02]
+
+[projection.detector_postprocess.afterglow]
+enabled = false
+p = 0.05
+frame_time_ms = 3.0
+exposure_time_ms = 2.0
+weights = [0.7, 0.3]
+time_constants_ms = [1.0, 100.0]
+
+[projection.detector_postprocess.electronic_crosstalk]
+enabled = false
+kernel_u = [0.005, 0.99, 0.005]
+kernel_v = [0.002, 0.996, 0.002]
+
+[projection.detector_postprocess.das]
+enabled = false
+gain_electrons_per_keV = 15.0
+offset_electrons = 0.0
+electronic_noise_std_electrons = 0.0
+saturation_electrons = 0.0
+adc_lsb_electrons = 0.0
+noise_seed = 24680
+

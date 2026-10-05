@@ -20,7 +20,9 @@ namespace yk::spectral {
 }
 namespace yk::spectral {
     SimulationConfig loadConfig(const std::filesystem::path& path) {
-        auto t = toml::parse_file(path.string()); auto base = path.parent_path(); SimulationConfig c;
+        auto t = toml::parse_file(path.string());
+        const auto config_directory = path.parent_path();
+        SimulationConfig c;
         c.schema_version = t["schema_version"].value_or(0);
         if (c.schema_version != 2)
             throw std::runtime_error("配置必须声明 schema_version=2");
@@ -37,15 +39,23 @@ namespace yk::spectral {
         if (!g) throw std::runtime_error("缺少 [geometry] 配置表");
         c.geometry.kind = geometry((*g)["kind"].value_or<std::string>("flat_cbct"));
         if (p) {
+            if (p->contains("detector_effects"))
+                throw std::runtime_error("projection.detector_effects has been removed; use projection.detector_response");
             for (const char* removed : { "path_cache_file", "use_library_fp", "use_cuda_spectral" })
                 if (p->contains(removed))
                     throw std::runtime_error(std::string("projection.") + removed + " 已删除");
-            c.projection.label_volume = resolve(base, (*p)["label_volume"].value_or(std::string{}));
-            c.projection.spectrum_file = resolve(base, (*p)["spectrum_file"].value_or(std::string{}));
-            c.projection.xcom_data_directory = resolve(base, (*p)["xcom_data_directory"].value_or(std::string{}));
-            c.projection.output_file = resolve(base, (*p)["output_file"].value_or(std::string("projection.raw")));
-            c.projection.energy_output_file = resolve(base, (*p)["energy_output_file"].value_or(std::string{}));
+            c.projection.label_volume = resolve(config_directory, (*p)["label_volume"].value_or(std::string{}));
+            c.projection.spectrum_file = resolve(config_directory, (*p)["spectrum_file"].value_or(std::string{}));
+            c.projection.xcom_data_directory = resolve(config_directory, (*p)["xcom_data_directory"].value_or(std::string{}));
+            c.projection.output_file = resolve(config_directory, (*p)["output_file"].value_or(std::string("projection.raw")));
+            c.projection.energy_output_file = resolve(config_directory, (*p)["energy_output_file"].value_or(std::string{}));
+            c.projection.air_output_file = resolve(config_directory, (*p)["air_output_file"].value_or(std::string{}));
             c.projection.apply_geometry_flux = (*p)["apply_geometry_flux"].value_or(true);
+            c.projection.mAs_per_view = (*p)["mAs_per_view"].value_or(1.0);
+            c.projection.quantum_noise_enabled = (*p)["quantum_noise_enabled"].value_or(true);
+            c.projection.quantum_noise_seed = (*p)["quantum_noise_seed"].value_or(67890u);
+            if (!std::isfinite(c.projection.mAs_per_view) || c.projection.mAs_per_view <= 0.0)
+                throw std::runtime_error("projection.mAs_per_view must be positive");
             c.projection.save_metadata = (*p)["save_metadata"].value_or(true);
         }
         auto* reconstruction_table = t["reconstruction"].as_table();
@@ -62,7 +72,7 @@ namespace yk::spectral {
                 throw std::runtime_error("reconstruction.save_slices 必须为布尔值");
             c.reconstruction.save_slices = (*r)["save_slices"].value_or(false);
             if (auto value = (*r)["input_projection_file"].value<std::string>())
-                c.reconstruction.input_projection_file = resolve(base, *value);
+                c.reconstruction.input_projection_file = resolve(config_directory, *value);
             auto* a = (*r)["analytic"].as_table();
             auto* i = (*r)["iterative"].as_table();
             if (c.reconstruction.type != "analytic" && c.reconstruction.type != "iterative")
@@ -145,11 +155,11 @@ namespace yk::spectral {
             const auto default_prefix = source_file.parent_path() /
                 (source_file.stem().string() + "-" + output_tag);
             if (auto value = (*r)["output_volume_file"].value<std::string>())
-                c.reconstruction.output_volume_file = resolve(base, *value);
+                c.reconstruction.output_volume_file = resolve(config_directory, *value);
             else
                 c.reconstruction.output_volume_file = default_volume;
             if (auto value = (*r)["slice_prefix"].value<std::string>())
-                c.reconstruction.slice_prefix = resolve(base, *value);
+                c.reconstruction.slice_prefix = resolve(config_directory, *value);
             else
                 c.reconstruction.slice_prefix = default_prefix;
         }
@@ -169,41 +179,145 @@ namespace yk::spectral {
             c.geometry.parameters.reconstruction_offset_x_mm = real("reconstruction_offset_x_mm", 0.0); c.geometry.parameters.reconstruction_offset_y_mm = real("reconstruction_offset_y_mm", 0.0); c.geometry.parameters.reconstruction_offset_z_mm = real("reconstruction_offset_z_mm", 0.0);
         }
         if (p) {
-            c.projection.engine = (*p)["engine"].value_or(std::string("pixel_local_random"));
-            if (c.projection.engine != "pixel_local_random" &&
-                c.projection.engine != "detector_global_random")
-                throw std::runtime_error(
-                    "projection.engine 仅支持 pixel_local_random/detector_global_random");
-            if (c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") {
-                auto* s = (*p)[c.projection.engine].as_table();
-                if (!s) throw std::runtime_error("projection.engine 对应的配置块缺失: [projection." + c.projection.engine + "]");
-                c.projection.sampling.mode = c.projection.engine;
-                c.projection.sampling.photon_count_mode =
-                    (*s)["photon_count_mode"].value_or(std::string("poisson"));
+            {
+                auto* s = (*p)["sampling"].as_table();
+                if (!s) throw std::runtime_error("缺少 [projection.sampling]");
+                for (const char* removed : { "photons_per_pixel", "photon_count_mode", "photon_seed" })
+                    if (s->contains(removed))
+                        throw std::runtime_error(std::string("projection sampling option has been removed: ") + removed);
                 c.projection.sampling.samples_per_pixel = (*s)["samples_per_pixel"].value_or(1);
-                c.projection.sampling.total_samples = (*s)["total_samples"].value_or<std::uint64_t>(0);
-                c.projection.sampling.photons_per_pixel = (*s)["photons_per_pixel"].value_or(100000.0);
                 c.projection.sampling.seed = (*s)["spatial_seed"].value_or(12345u);
-                c.projection.sampling.photon_seed = (*s)["photon_seed"].value_or(67890u);
-                if (c.projection.sampling.mode == "detector_global_random" && c.projection.sampling.total_samples == 0)
-                    throw std::runtime_error("[projection.detector_global_random] 需要 total_samples");
             }
         }
-        if (c.runsProjection() && (c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+        if (c.runsProjection() &&
             c.geometry.kind != GeometryKind::FlatCbct && c.geometry.kind != GeometryKind::FlatHelical &&
             c.geometry.kind != GeometryKind::CylCbct && c.geometry.kind != GeometryKind::CylHelical)
             throw std::runtime_error("随机多能谱前投不支持该几何类型");
-        if (c.runsProjection() && (c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
+        if (c.runsProjection() &&
             c.projection.materials.size() > 32)
             throw std::runtime_error("随机多能谱前投当前最多支持32种材料");
-        if (auto* e = p ? (*p)["detector_effects"].as_table() : nullptr) {
-            c.projection.detector_effects.efficiency_enabled = (*e)["efficiency_enabled"].value_or(false);
-            c.projection.detector_effects.efficiency = (*e)["efficiency"].value_or(1.0);
-            c.projection.detector_effects.scatter_enabled = (*e)["scatter_enabled"].value_or(false);
-            c.projection.detector_effects.optical_crosstalk_enabled = (*e)["optical_crosstalk_enabled"].value_or(false);
-            c.projection.detector_effects.afterglow_enabled = (*e)["afterglow_enabled"].value_or(false);
-            c.projection.detector_effects.electronic_noise_enabled = (*e)["electronic_noise_enabled"].value_or(false);
-            c.projection.detector_effects.electronic_noise_sigma = (*e)["electronic_noise_sigma"].value_or(0.0);
+        if (auto* d = p ? (*p)["detector_response"].as_table() : nullptr) {
+            auto& response = c.projection.detector_response;
+            response.enabled = (*d)["enabled"].value_or(false);
+            response.oblique_path_correction = (*d)["oblique_path_correction"].value_or(true);
+            if (d->contains("sensor") || d->contains("cover_layers"))
+                throw std::runtime_error("detector response uses protective_layer, impurity_layer, and scintillator_layer");
+            auto parse_layer = [&](const char* key, DetectorLayerConfig& value,
+                                   bool required, bool default_enabled) {
+                auto* layer = (*d)[key].as_table();
+                if (!layer) {
+                    value.enabled = false;
+                    if (response.enabled && required)
+                        throw std::runtime_error(std::string("missing projection.detector_response.") + key);
+                    return;
+                }
+                value.enabled = (*layer)["enabled"].value_or(default_enabled);
+                value.name = (*layer)["name"].value_or(std::string(key));
+                value.preset = (*layer)["preset"].value_or(std::string{});
+                value.thickness_mm = (*layer)["thickness_mm"].value_or(0.0);
+                if (auto map = (*layer)["thickness_map_file"].value<std::string>())
+                    value.thickness_map_file = *map;
+                if (layer->contains("formula") || layer->contains("density_g_cm3"))
+                    throw std::runtime_error("detector response layers use preset; formula and density_g_cm3 are not supported");
+                if (!value.enabled) return;
+                const auto* material = findBuiltinMaterial(value.preset);
+                if (!material)
+                    throw std::runtime_error(std::string("unknown detector layer preset in ") + key + ": " + value.preset);
+                value.density_g_cm3 = material->density_g_cm3;
+                if (value.thickness_mm <= 0 && value.thickness_map_file.empty())
+                    throw std::runtime_error(std::string(key) + " requires positive thickness_mm or thickness_map_file");
+            };
+            parse_layer("protective_layer", response.protective_layer, true, true);
+            parse_layer("impurity_layer", response.impurity_layer, false, false);
+            parse_layer("scintillator_layer", response.scintillator_layer, true, true);
+            for (auto* layer : {&response.protective_layer, &response.impurity_layer,
+                                &response.scintillator_layer})
+                if (!layer->thickness_map_file.empty())
+                    layer->thickness_map_file = resolve(config_directory,
+                        layer->thickness_map_file.string());
+        }
+        if (auto* post = p ? (*p)["detector_postprocess"].as_table() : nullptr) {
+            auto parse_kernel = [](const toml::table& table, const char* key) {
+                std::vector<double> values;
+                auto* array = table[key].as_array();
+                if (!array) return std::vector<double>{1.0};
+                for (const auto& item : *array) {
+                    auto value = item.value<double>();
+                    if (!value || !std::isfinite(*value) || *value < 0)
+                        throw std::runtime_error(std::string(key) + " must contain finite non-negative numbers");
+                    values.push_back(*value);
+                }
+                if (values.empty() || values.size() % 2 == 0 || values.size() > 31)
+                    throw std::runtime_error(std::string(key) + " must have an odd length between 1 and 31");
+                double sum = 0.0;
+                for (double value : values) sum += value;
+                if (std::abs(sum - 1.0) > 1e-6)
+                    throw std::runtime_error(std::string(key) + " weights must sum to 1");
+                return values;
+            };
+            auto parse_crosstalk = [&](const char* key, CrosstalkConfig& value) {
+                auto* table = (*post)[key].as_table();
+                if (!table) return;
+                value.enabled = (*table)["enabled"].value_or(false);
+                value.kernel_u = parse_kernel(*table, "kernel_u");
+                value.kernel_v = parse_kernel(*table, "kernel_v");
+            };
+            parse_crosstalk("optical_crosstalk",
+                c.projection.detector_postprocess.optical_crosstalk);
+            if (auto* table = (*post)["afterglow"].as_table()) {
+                auto& value = c.projection.detector_postprocess.afterglow;
+                value.enabled = (*table)["enabled"].value_or(false);
+                value.p = (*table)["p"].value_or(0.0);
+                value.initialization = (*table)["initialization"].value_or(std::string("zero"));
+                if (table->contains("equilibrium_initialization"))
+                    throw std::runtime_error("afterglow always starts from zero state; equilibrium_initialization is not supported");
+                value.frame_time_ms = (*table)["frame_time_ms"].value_or(1.0);
+                value.exposure_time_ms = (*table)["exposure_time_ms"].value_or(1.0);
+                auto read_array = [&](const char* key, std::vector<double>& target) {
+                    if (auto* array = (*table)[key].as_array())
+                        for (const auto& item : *array) {
+                            auto number = item.value<double>();
+                            if (!number || !std::isfinite(*number))
+                                throw std::runtime_error(std::string("afterglow.") + key + " must contain finite numbers");
+                            target.push_back(*number);
+                        }
+                };
+                read_array("weights", value.weights);
+                read_array("time_constants_ms", value.time_constants_ms);
+                if (value.initialization != "zero" && value.initialization != "steady_state")
+                    throw std::runtime_error("afterglow.initialization must be zero or steady_state");
+                if (value.enabled) {
+                    if (value.p < 0 || value.p >= 1 || value.frame_time_ms <= 0 ||
+                        value.exposure_time_ms <= 0 || value.exposure_time_ms > value.frame_time_ms || value.weights.empty() ||
+                        value.weights.size() != value.time_constants_ms.size())
+                        throw std::runtime_error("afterglow requires 0 < exposure_time_ms <= frame_time_ms and equally sized weights/time_constants_ms");
+                    double sum = 0.0;
+                    for (size_t i=0; i<value.weights.size(); ++i) {
+                        if (value.weights[i] < 0 || value.time_constants_ms[i] <= 0)
+                            throw std::runtime_error("afterglow weights must be non-negative and time constants positive");
+                        sum += value.weights[i];
+                    }
+                    if (std::abs(sum - 1.0) > 1e-6)
+                        throw std::runtime_error("afterglow weights must sum to 1");
+                }
+            }
+            parse_crosstalk("electronic_crosstalk",
+                c.projection.detector_postprocess.electronic_crosstalk);
+            if (auto* table = (*post)["das"].as_table()) {
+                auto& value = c.projection.detector_postprocess.das;
+                value.enabled = (*table)["enabled"].value_or(false);
+                value.gain_electrons_per_keV = (*table)["gain_electrons_per_keV"].value_or(1.0);
+                value.offset_electrons = (*table)["offset_electrons"].value_or(0.0);
+                value.electronic_noise_std_electrons = (*table)["electronic_noise_std_electrons"].value_or(0.0);
+                value.saturation_electrons = (*table)["saturation_electrons"].value_or(0.0);
+                value.adc_lsb_electrons = (*table)["adc_lsb_electrons"].value_or(0.0);
+                value.noise_seed = (*table)["noise_seed"].value_or(24680u);
+                if (value.enabled && (!std::isfinite(value.gain_electrons_per_keV) || value.gain_electrons_per_keV <= 0 ||
+                    !std::isfinite(value.offset_electrons) || !std::isfinite(value.electronic_noise_std_electrons) || value.electronic_noise_std_electrons < 0 ||
+                    !std::isfinite(value.saturation_electrons) || value.saturation_electrons < 0 ||
+                    !std::isfinite(value.adc_lsb_electrons) || value.adc_lsb_electrons < 0))
+                    throw std::runtime_error("invalid detector DAS parameters");
+            }
         }
         if (auto* f = p ? (*p)["focal_spot"].as_table() : nullptr) {
             auto& spot = c.projection.focal_spot;
@@ -214,18 +328,8 @@ namespace yk::spectral {
             if (spot.enabled && (spot.size_u_mm <= 0 || spot.size_v_mm <= 0))
                 throw std::runtime_error("矩形焦点尺寸必须为正");
         }
-        if (c.projection.engine == "pixel_local_random" &&
-            (c.projection.sampling.samples_per_pixel <= 0 || c.projection.sampling.samples_per_pixel > 4096))
-            throw std::runtime_error("projection.pixel_local_random.samples_per_pixel 必须在1..4096之间");
-        if (c.projection.engine == "detector_global_random" && c.projection.sampling.total_samples == 0)
-            throw std::runtime_error("projection.detector_global_random.total_samples 必须为正");
-        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
-            c.projection.sampling.photons_per_pixel <= 0)
-            throw std::runtime_error("随机前投的 photons_per_pixel 必须为正");
-        if ((c.projection.engine == "pixel_local_random" || c.projection.engine == "detector_global_random") &&
-            c.projection.sampling.photon_count_mode != "poisson" &&
-            c.projection.sampling.photon_count_mode != "fixed")
-            throw std::runtime_error("photon_count_mode 仅支持 poisson/fixed");
+        if (c.projection.sampling.samples_per_pixel <= 0 || c.projection.sampling.samples_per_pixel > 4096)
+            throw std::runtime_error("projection.sampling.samples_per_pixel must be in 1..4096");
         std::array<bool, 256> used_labels{};
         if (auto* a = p ? (*p)["materials"].as_array() : nullptr)for (auto& n : *a) { auto* m = n.as_table(); if (!m)throw std::runtime_error("projection.materials 必须是表数组"); MaterialSpec x; x.label = (std::uint8_t)(*m)["label"].value_or(0); x.name = (*m)["name"].value_or(std::string("material")); x.formula = (*m)["formula"].value_or(std::string{}); x.preset = (*m)["preset"].value_or(std::string{}); x.density_g_cm3 = (*m)["density_g_cm3"].value_or(1.0); if ((x.formula.empty() == x.preset.empty()) || x.density_g_cm3 <= 0)throw std::runtime_error("材料配置必须且只能填写 formula 或 preset，且密度必须为正"); if (used_labels[x.label])throw std::runtime_error("材料 label 不得重复: " + std::to_string(x.label)); used_labels[x.label] = true; if (!x.preset.empty()) { const auto* b = findBuiltinMaterial(x.preset); if (!b)throw std::runtime_error("未知内置材料 preset: " + x.preset); if (!m->contains("density_g_cm3"))x.density_g_cm3 = b->density_g_cm3; }c.projection.materials.push_back(std::move(x)); }
         if (c.runsProjection() && c.projection.materials.empty())
@@ -246,22 +350,32 @@ namespace yk::spectral {
         if (!f) throw std::runtime_error("无法读取能谱文件: " + p.string());
         std::vector<SpectrumPoint> result;
         std::string line;
-        double total_photons = 0.0;
+        bool in_spectrum = false;
         while (std::getline(f, line)) {
-            if (line.empty() || line[0] == '#') continue;
+            if (line.find("Energy[keV]") != std::string::npos && line.find("N[") != std::string::npos) {
+                in_spectrum = true;
+                continue;
+            }
+            if (!in_spectrum || line.empty() || line[0] == '#') continue;
             std::replace(line.begin(), line.end(), ',', ' ');
             std::istringstream stream(line);
             SpectrumPoint point;
-            if (stream >> point.energy_keV >> point.relative_photons &&
-                point.energy_keV > 0 && point.relative_photons >= 0) {
-                total_photons += point.relative_photons;
+            if (stream >> point.energy_keV >> point.fluence_per_keV_cm2_mAs_at_1m &&
+                point.energy_keV > 0 && point.fluence_per_keV_cm2_mAs_at_1m >= 0) {
                 result.push_back(point);
             }
         }
-        if (result.empty() || !std::isfinite(total_photons) || total_photons <= 0.0)
+        if (result.empty())
             throw std::runtime_error("能谱没有正的有效光子权重");
-        for (auto& point : result)
-            point.relative_photons /= total_photons;
+        for (size_t i=1; i<result.size(); ++i)
+            if (!(result[i].energy_keV > result[i-1].energy_keV))
+                throw std::runtime_error("spectrum energies must be strictly increasing");
+        for (size_t i=0; i<result.size(); ++i) {
+            if (result.size() == 1) result[i].bin_width_keV = 1.0;
+            else if (i == 0) result[i].bin_width_keV = result[1].energy_keV-result[0].energy_keV;
+            else if (i+1 == result.size()) result[i].bin_width_keV = result[i].energy_keV-result[i-1].energy_keV;
+            else result[i].bin_width_keV = 0.5*(result[i+1].energy_keV-result[i-1].energy_keV);
+        }
         return result;
     }
     std::vector<std::uint8_t> loadLabelVolume(const std::filesystem::path& p) { std::ifstream f(p, std::ios::binary); if (!f)throw std::runtime_error("无法读取标签模体: " + p.string()); return { std::istreambuf_iterator<char>(f),{} }; }

@@ -6,7 +6,7 @@ struct SpectralResult { double incident_intensity=0.0; double transmitted_intens
 class SpectralTransmissionModel {
 public:
     SpectralTransmissionModel(const std::vector<MaterialSpec>&, const std::vector<SpectrumPoint>&,
-                              const IMassAttenuationProvider&, const DetectorEffectsConfig&);
+                              const IMassAttenuationProvider&, const DetectorResponseConfig&);
     SpectralResult simulate(const std::unordered_map<std::uint8_t,double>& material_path_cm) const;
     SpectralResult simulate(const std::vector<double>& material_path_cm) const;
     const std::vector<MaterialSpec>& materials() const { return materials_; }
@@ -14,9 +14,10 @@ public:
     const std::vector<double>& massAttenuation(std::uint8_t label) const {
         return mass_attenuation_.at(label);
     }
+    std::vector<double> detectorMassAttenuation(const DetectorLayerConfig& layer) const;
 private:
     std::vector<MaterialSpec> materials_; std::vector<SpectrumPoint> spectrum_;
-    const IMassAttenuationProvider& attenuation_; DetectorEffectsConfig effects_;
+    const IMassAttenuationProvider& attenuation_; DetectorResponseConfig detector_response_;
     std::unordered_map<std::uint8_t,std::vector<double>> mass_attenuation_;
 };
 }

@@ -50,7 +50,7 @@ CSV 第二列按光子数谱解释。CUDA 多能谱积分对每个能量 bin 计
 
 探测器效率、散射、光学串扰、余晖、电子噪声均已保留配置字段。当前仅效率常数参与积分，其余字段明确为关闭占位，后续通过可组合效果接口实现。
 
-构建：`cmake -S example/multispectrum_sim -B out/multispectrum_sim`，然后 `cmake --build out/multispectrum_sim --config Release`。相对路径以 TOML 所在目录为基准。能谱 CSV 每个有效数据行由 `energy_keV,relative_photons` 构成，读取器接受任意正数个采样点，不固定为 150。
+构建：`cmake -S example/multispectrum_sim -B out/multispectrum_sim`，然后 `cmake --build out/multispectrum_sim --config Release`。相对路径以 TOML 所在目录为基准。能谱 谱文件为 SpekCalc 格式：表头后的每个有效数据行由 `energy_keV fluence` 构成，单位固定为 `photons/(keV cm² mAs) @ 1m`，读取器自动计算 bin 宽。
 
 ## BrainWeb 测试数据
 
@@ -86,10 +86,9 @@ out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/mul
 
 ## CUDA 多能谱积分
 
-`pixel_local_random` 在每个探测器像素内随机采样，`detector_global_random` 在整个探测器面上随机采样。两种路线均直接在 CUDA 前投 kernel 中计算并生成能量积分信号和对数投影；`photon_count_mode` 可选择 `fixed` 或 `poisson`。
+CUDA 前投在每个探测器像素内随机采样，并直接计算初级射线能量积分信号；量子噪声在逐能量探测器吸收阶段生成。
 
-`configs/pipelines/analytic/water-cylinder-120kv-fullfov.toml` 使用从原始 `.spc` 转换得到的 150 点 120 kV 谱。
-150 不是程序限制，CSV 中任意正数个有效 `(energy_keV, relative_photons)` 数据行均可读取。
+现有配置统一使用 SpekCalc 绝对光子数谱。能量 bin 数量不固定，读取器根据严格递增的能量采样自动计算 bin 宽。
 
 XCOM 核心及 `data/MDATX3.*` 来自 `nist-xcom-portable`，保留 GPL-3.0-or-later 和第三方声明。
 

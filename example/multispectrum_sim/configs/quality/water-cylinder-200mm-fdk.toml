@@ -5,19 +5,24 @@ mode = "project_and_reconstruct"
 
 [projection]
 label_volume = "../../inputs/generated/water-cylinder-200mm-pmma5mm.raw"
-spectrum_file = "../../spectra/spectrum_120kVp_2mmAl.csv"
+spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
 xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
-output_file = "../../outputs/projections/water-cylinder-200mm-pmma5mm-fdk-nofocal-1536x256x540-f32.raw"
-energy_output_file = "../../outputs/projections/water-cylinder-200mm-pmma5mm-fdk-nofocal-energy-1536x256x540-f32.raw"
-engine = "pixel_local_random"
+output_file = "../../outputs/projections/water-cylinder-200mm-pmma5mm-px50-fdk-nofocal-1024x256x360-f32.raw"
+energy_output_file = "../../outputs/projections/water-cylinder-200mm-pmma5mm-px50-fdk-nofocal-energy-1024x256x360-f32.raw"
 apply_geometry_flux = true
 
-[projection.pixel_local_random]
+[projection.detector_postprocess.afterglow]
+enabled = true
+p = 0.05
+initialization = "steady_state"
+frame_time_ms = 3.0
+exposure_time_ms = 2.0
+weights = [0.7, 0.3]
+time_constants_ms = [1.0, 100.0]
+
+[projection.sampling]
 samples_per_pixel = 50
-photons_per_pixel = 100000
-photon_count_mode = "fixed"
 spatial_seed = 12345
-photon_seed = 67890
 
 [projection.focal_spot]
 enabled = false
@@ -26,12 +31,12 @@ size_v_mm = 0.0
 
 [geometry]
 kind = "flat_cbct"
-views = 540
-views_per_turn = 540
+views = 360
+views_per_turn = 360
 rotation_direction = 1
-detector_u = 1536
+detector_u = 1024
 detector_v = 256
-pixel_u_mm = 0.53
+pixel_u_mm = 0.795
 pixel_v_mm = 0.53
 sid_mm = 709.0
 sdd_mm = 1143.0
@@ -50,7 +55,7 @@ volume_z = 256
 voxel_x_mm = 0.5
 voxel_y_mm = 0.5
 voxel_z_mm = 0.5
-phantom_offset_x_mm = 0.0
+phantom_offset_x_mm = 50.0
 phantom_offset_y_mm = 0.0
 phantom_offset_z_mm = 0.0
 reconstruction_volume_x = 1024
@@ -75,21 +80,13 @@ name = "pmma"
 formula = "C5H8O2"
 density_g_cm3 = 1.18
 
-[projection.detector_effects]
-efficiency_enabled = false
-efficiency = 1.0
-scatter_enabled = false
-optical_crosstalk_enabled = false
-afterglow_enabled = false
-electronic_noise_enabled = false
-electronic_noise_sigma = 0.0
-
 [reconstruction]
 type = "analytic"
-output_volume_file = "../../outputs/reconstructions/water-cylinder-200mm-pmma5mm-fdk-nofocal-1024x1024x30-f32.raw"
-slice_prefix = "../../outputs/images/water-cylinder-200mm-pmma5mm-fdk-nofocal-1024x1024x30"
+output_volume_file = "../../outputs/reconstructions/water-cylinder-200mm-pmma5mm-px50-fdk-nofocal-1024x1024x30-f32.raw"
+slice_prefix = "../../outputs/images/water-cylinder-200mm-pmma5mm-px50-fdk-nofocal-1024x1024x30"
 
 [reconstruction.analytic]
 pipeline = "fdk"
 filter = "ramlak"
 chunk_views = 8
+

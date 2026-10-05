@@ -5,19 +5,15 @@ mode = "project_and_reconstruct"
 
 [projection]
 label_volume = "../../../inputs/brainweb/brainweb-normal-1mm-center33-181x217x33-u8.raw"
-spectrum_file = "../../../spectra/spectrum-120kv-150.csv"
+spectrum_file = "../../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
 xcom_data_directory = "../../../../../thirdparty/nist_xcom/data"
 output_file = "../../../outputs/projections/brainweb-center33-fdk.raw"
 energy_output_file = "../../../outputs/projections/brainweb-center33-fdk-energy.raw"
-engine = "pixel_local_random"
 apply_geometry_flux = true
 
-[projection.pixel_local_random]
+[projection.sampling]
 samples_per_pixel = 50
-photons_per_pixel = 100000
-photon_count_mode = "fixed"
 spatial_seed = 12345
-photon_seed = 67890
 
 [projection.focal_spot]
 enabled = false
@@ -123,15 +119,6 @@ name = "connective"
 preset = "tissue.icru_muscle_adult"
 density_g_cm3 = 1.12
 
-[projection.detector_effects]
-efficiency_enabled = false
-efficiency = 1.0
-scatter_enabled = false
-optical_crosstalk_enabled = false
-afterglow_enabled = false
-electronic_noise_enabled = false
-electronic_noise_sigma = 0.0
-
 [reconstruction]
 type = "analytic"
 output_volume_file = "../../../outputs/reconstructions/brainweb-center33-fdk.raw"
@@ -141,3 +128,4 @@ slice_prefix = "../../../outputs/images/brainweb-center33-fdk"
 pipeline = "fdk"
 filter = "ramlak"
 chunk_views = 8
+
