@@ -1,12 +1,14 @@
 # Yang 2017 PIC 独立实现
 
-`yang_pic.py` 是一套独立的逐视角实现，输入每帧 12 个钢珠的亚像素中心，顺序必须是：
+`pic.py` 是一套独立的逐视角实现。论文 PIC 默认输入每帧两个圆环的有序钢珠中心，当前配置支持
+每环 6 球或每环 12 球；RAW 的检测和编号由 `tracker.py` 与 `workflow.py` 负责。输入顺序必须是：
 
 ```text
 [E1, E2, E3, E4, E5, E6, F1, F2, F3, F4, F5, F6]
 ```
 
-其中 E、F 是两个平行圆环，每环 6 颗珠，圆环半径 `r` 和两环中心距 `2l` 已知。E1/F1 需要有可识别标记，才能得到最后的 gantry angle `t`。
+其中 E、F 是两个平行圆环，圆环半径 `r` 和两环中心距 `2l` 已知。E1/F1 需要有可识别标记，才能得到最后的 gantry angle `t`。
+标记点只用于建立三维点到二维点的 map，不作为论文 PIC 的环点输入。
 
 ## 算法阶段
 
@@ -21,7 +23,7 @@
 
 ```python
 import numpy as np
-from yang_pic import YangConfig, calibrate_view
+from tools.cbct_calibration.yang.pic import YangConfig, calibrate_view
 
 config = YangConfig(
     ring_radius_mm=30.0,
@@ -41,10 +43,10 @@ print(pose.phantom_center_i_mm)          # W 在虚拟探测器坐标系中的�
 poses = calibrate_stack(points_stack_px, config)
 ```
 
-`points_stack_px` 的形状是 `[views, 12, 2]`。每个视角独立解算，符合 PIC 的 pose-independent 设计。固定源/固定探测器系统可以进一步调用 `extended_calibrate_stack` 做论文第 7 节联合约束。
+`points_stack_px` 的形状是 `[views, 2*beads_per_ring, 2]`。每个视角独立解算，符合 PIC 的 pose-independent 设计。固定源/固定探测器系统可以进一步调用 `extended_calibrate_stack` 做论文第 7 节联合约束。
 
 ```python
-from yang_pic import extended_calibrate_stack
+from tools.cbct_calibration.yang.pic import extended_calibrate_stack
 
 extended = extended_calibrate_stack(
     points_stack_px, config,
@@ -57,10 +59,10 @@ extended 目标函数由每帧钢珠重投影误差和源点在真实探测器�
 
 ## 转换为重建几何
 
-`geometry_from_pose(pose)` 将 PIC 结果转换为一帧可用于重建的几何：
+`pic.py::geometry_from_pose(pose)` 将 PIC 结果转换为论文虚拟探测器坐标中的一帧几何：
 
 ```python
-from yang_pic import YangConfig, calibrate_stack_geometries
+from tools.cbct_calibration.yang.pic import YangConfig, calibrate_stack_geometries
 
 config = YangConfig(30.0, 25.0, (0.254, 0.317))
 poses, geometries = calibrate_stack_geometries(points_stack_px, config)
@@ -75,18 +77,21 @@ P0 = geometries[0].projection_matrix
 - `projection_matrix`：将模体固定坐标 `(xp, yp, zp, 1)` 映射到该帧像素坐标的 `3 x 4` 矩阵；
 - `pixel_size_mm`：u/v 方向像素尺寸。
 
-命令行输出的 JSON 也会包含 `reconstruction_geometries`。`gantry_angle_rad` 是构造模体固定坐标到当前虚拟探测器坐标变换所必需的，因此使用 `--no-gantry` 时仍可做 PIC 参数计算，但不能生成这个投影矩阵。
+`workflow.py::calibrate_indexed_points()` 随后把逐帧 DLT 和探测器坐标适配到 fdk-test 的统一右手坐标系，
+输出 `reconstruction_geometries`。`gantry_angle_rad` 只对由 PIC pose 构造模体固定坐标投影矩阵的路线有用；
+直接由已建立 map 的 DLT 生成重建矩阵时不需要它。
 
 ## 命令行
 
 ```powershell
-python tools/cbct_calibration/yang_pic.py points.npy `
+python -m tools.cbct_calibration.yang.pic points.npy `
   --radius-mm 30 --half-spacing-mm 25 `
   --pixel-u-mm 0.254 --pixel-v-mm 0.254 `
   --output out/yang_pic.json
 ```
 
-当前文件不包含图像检测和钢珠跨帧跟踪，也不把单排钢珠 RAW 自动转换为双圆环 12 球输入。必须先得到可靠的 12 球索引坐标；如果使用的是当前两份单排钢珠数据，它们不满足 Yang phantom 的先验结构，不能直接套用这套 PIC 解算器。
+`pic.py` 的低层调用不包含图像检测和跨帧跟踪；完整 RAW 流程使用 `workflow.py::calibrate_raw()`。
+单排钢珠不满足 Yang 双环先验，不能直接套用这套 PIC 解算器。
 
 ## 参数含义和实现边界
 
@@ -107,8 +112,9 @@ python tools/cbct_calibration/yang_pic.py points.npy `
 测试命令：
 
 ```powershell
-python -m unittest discover -s tools/cbct_calibration -p test_yang_pic.py -v
+python -m unittest discover -s tools -p "test_*.py" -v
 ```
 
-独立射线/平面交点生成的点数据覆盖零 roll、近零 roll、非零三个角度、非方形像素，
-同时检查源位置、phantom 中心、SDD、主点和像素重投影误差。这是几何求解器验证，尚非真实 FP 图像全链路验证。
+单元测试覆盖零 roll、近零 roll、非零姿态、非方形像素、坐标转换、源位置、phantom 中心、
+SDD、主点和像素重投影误差。真实 RAW 的全链路结果以 `workflow.py::calibrate_raw()` 生成的
+`calibration.json` 和追踪诊断为准，不在本指南中缓存固定数值。

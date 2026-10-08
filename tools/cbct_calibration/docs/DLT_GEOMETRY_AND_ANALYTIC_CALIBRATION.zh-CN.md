@@ -834,7 +834,7 @@ P_a=\frac{P_1\sqrt{a_1/b_1}+P_2\sqrt{a_2/b_2}}
 \eta=\frac{|P_1P_a|A(X_I,L_1)+|P_aP_2|A(X_I,L_2)}{|P_1P_2|}.}
 \]
 
-当前 `cho_analytic.py` 保存 (P_a,L_1,L_2)、线角、权重和解析 eta，并用完整投影矩阵分解得到的 eta 作独立交叉检查。以前的“两个椭圆长轴角平均”近似已经移除。
+当前 `cho/pic.py::calibrate_frame_cho()` 保存 (P_a,L_1,L_2)、线角、权重和解析 eta，并用完整投影矩阵分解得到的 eta 作独立交叉检查。以前的“两个椭圆长轴角平均”近似已经移除。
 
 ---
 
@@ -1026,10 +1026,14 @@ RAW
 |---|---|
 | DLT 到射线和 cone-vector | `tools/cbct_calibration/geometry/dlt_to_conevec.py`、`src/DLTFpBp/YkDltProjectionGeometry.hpp` |
 | 逐帧 DLT 射线 Siddon | `tools/cbct_calibration/geometry/dlt_siddon.py` |
-| 7 参数联合求解 | 对应业务目录中的 `joint_fit.py` |
-| Yang PIC | `tools/cbct_calibration/yang_pic.py` |
+| detector/论文坐标转换 | `tools/cbct_calibration/coordinates/detector.py`、`coordinates/phantom.py` |
+| 单排钢珠全链路 | `tools/cbct_calibration/single_row/single_row_workflow.py` |
+| 可编号双环全链路 | `tools/cbct_calibration/identifiable_phantom/workflow.py` |
+| 7 参数联合求解 | `identifiable_phantom/joint_fit.py`、`cho/joint_fit.py`、`yang/joint_fit.py` |
+| Cho PIC 与完整流程 | `tools/cbct_calibration/cho/pic.py`、`cho/workflow.py` |
+| Yang PIC | `tools/cbct_calibration/yang/pic.py`、`yang/workflow.py` |
 | Yang 参数推导 | `tools/cbct_calibration/yang/PIC_DERIVATION.zh-CN.md` |
-| Cho 逐帧 DLT/共享参数 | `tools/cbct_calibration/cho/dlt.py` |
+| 独立 C++ 标定核心 | `tools/cbct_calibration_cpp/` |
 
 最重要的边界是：
 

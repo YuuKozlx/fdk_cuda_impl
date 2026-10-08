@@ -12,7 +12,10 @@ u = sum(w_p*column_p)/sum(w_p)
 v = image_height-1-sum(w_p*row_p)/sum(w_p)
 ```
 
-因此 `v` 向上，和后面的几何公式一致。物理长度为 `u_mm=u_px*du`、`v_mm=v_px*dv`。
+因此单排解析公式内部使用 `v` 向上。RAW 和 fdk-test 公共坐标使用行号向下增加，转换发生在
+`detect.py::detect_frame(v_origin="up")` 的输入边界。导出到重建器时必须再按公共 detector
+约定转换完整的 U/V/N 三轴，不能只修改 `offset_v` 的符号。物理长度为
+`u_mm=u_px*du`、`v_mm=v_px*dv`。
 
 ## 2. 跨帧建立钢珠 ID
 

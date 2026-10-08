@@ -6,11 +6,8 @@
 
 打开 `api_example.py`，只修改顶部配置中的 RAW 路径和输出目录，然后在 IDE 中直接调用 workflow。
 
-当前示例使用：
-
-```text
-double-ring-px10-py15-pz20-tu1-tv2-tn3-prx2-projection-1024x1024x360-f32.raw
-```
+`ChoWorkflowConfig` 由调用方提供 `raw_path` 和 `output_directory`；文档不绑定某一批
+本地 RAW 文件名，避免把历史实验产物误当成算法输入。
 
 流程是：
 
@@ -29,7 +26,7 @@ RAW
 
 ### Cho 原文的面内旋转 eta
 
-`cho_analytic.py` 已按 Cho 2005 式 (14)-(16) 实现 eta，不再使用“两个椭圆长轴角平均”的近似。
+`pic.py::calibrate_frame_cho()` 已按 Cho 2005 式 (14)-(16) 实现 eta，不再使用“两个椭圆长轴角平均”的近似。
 
 对两个拟合椭圆
 
@@ -107,7 +104,8 @@ q_{ij}\sim P_iX_j.
 - 每帧主点；
 - 每帧重投影误差。
 
-这些量直接定义了该帧射线，可用于逐帧投影/反投影。`cho_report.json` 中的 `cho_per_view` 保存了投影矩阵、来源点和逐帧误差。
+这些量直接定义了该帧射线，可用于逐帧投影/反投影。`calibration.json` 中的 `pic`、
+`dlt_projection_matrices` 和 `source_circle_geometry` 保存了这些逐帧结果。
 
 ### 多帧共享量
 
@@ -130,42 +128,21 @@ q_{ij}\sim P_iX_j.
 - 源轨迹径向、轴向、切向残差；
 - 源点轨迹是否接近理想圆。
 
-## 对当前 RAW 的结果
+## 如何验收一次 RAW 运行
 
-结果文件：
-
-```text
-out/cbct_calibration/cho/double_ring_px10_py15_pz20/cho_report.json
-```
-
-### 点检测和 DLT 质量
-
-- 输入帧数：360；
-- 有效帧数：360；
-- 首帧编号 DLT RMSE：约 `0.035 px`；
-- 逐帧重投影 RMSE 平均：约 `0.051 px`；
-- 逐帧重投影 RMSE 最大：约 `0.180 px`。
-
-### 共享内参结果
+运行 `workflow.py::calibrate_raw()` 后，结果目录至少应包含：
 
 ```text
-SDD                 ≈ 770.605 mm
-主点 u0             ≈ 467.733 px
-主点 v0             ≈ 535.710 px
-相对图像中心 offset ≈ (-43.767, 24.210) px
-联合重投影 RMSE     ≈ 0.063 px
+points_indexed.npy
+calibration.json
 ```
 
-这里的 `u0/v0` 是 DLT 相机分解中的投影主点，不应直接等同于仿真器机械配置中的 `offset_u/offset_v`。探测器倾斜时，中心射线穿刺点和探测器机械中心并不重合。
+从 `calibration.json` 检查有效帧数、每帧 DLT RMSE、共享 SDD/主点、源轨迹残差、
+`fixed_source_joint_fit.optimizer_success` 和联合 RMSE。不同 RAW、阈值和粘连情况会改变
+数值，因此本指南不固化某一批数据的旧结果。
 
-### 源轨迹结果
-
-```text
-SID（源轨迹半径）   ≈ 440.627 mm
-源轨迹径向 RMS      ≈ 0.153 mm
-源轨迹轴向 RMS      ≈ 0.025 mm
-源轨迹切向 RMS      ≈ 0.076 mm
-```
+`u0/v0` 是 DLT 相机分解中的投影主点，不应直接等同于仿真器机械配置中的 `offset_u/offset_v`。
+探测器倾斜时，中心射线穿刺点和探测器机械中心并不重合。
 
 ## 为什么不能直接把结果写成机械 tilt
 
@@ -188,40 +165,23 @@ phantom_rotation_x = 2 deg
 
 ## 输出文件
 
-- `points_indexed.npy`：`(360, 24, 2)` 的编号二维质心；
-- `cho_report.json`：完整结果；
-- `cho_seven_param.json`：可选的固定源规范联合模型结果，只有 `success=true` 且 RMSE 合理时才可使用。
+- `points_indexed.npy`：`(views, 2*beads_per_ring, 2)` 的编号二维质心；
+- `calibration.json`：`workflow.py` 保存的完整结果；
+- `pic`、`dlt_projection_matrices`、`source_circle_geometry` 和 `fixed_source_joint_fit`：报告中的主要字段。
 
 当前建议重建时优先使用每帧完整 `P_i`，或者使用共享 SDD/主点和每帧外参；不要把 `u0/v0` 直接当成机械 offset 填入重建配置。
 
 ## 实际 RAW 数据验证
 
-`cho_actual_data_validation.py` 用于检验论文式 (14)-(16)，可直接在 IDE
-中运行。它读取 RAW 预处理层输出的亚像素编号点，逐帧计算：
+Cho 的逐帧验证由 `pic.py::calibrate_stack_pic()` 完成；完整 RAW 入口是
+`workflow.py::calibrate_raw()`。它读取 tracker 输出的亚像素编号点，逐帧计算：
 
 - Cho 椭圆解析 `eta`；
 - 完整 DLT 分解得到的 `eta`；
 - 两者按直线方向的 180 度周期计算的差值；
 - DLT 重投影 RMSE 和异环对径线交点 RMS。
 
-当前已经验证两组 360 帧投影数据：
-
-| RAW 模体 | 有效帧 | Cho `eta` 周期均值 | DLT `eta` 周期均值 | Cho-DLT 均值 | DLT RMSE 均值 |
-|---|---:|---:|---:|---:|---:|
-| 12+12 双环 | 360/360 | 3.0051 deg | 3.0349 deg | -0.0298 deg | 0.0514 px |
-| Yang 6+6 圆柱标记双环 | 360/360 | 2.9917 deg | 3.0358 deg | -0.0441 deg | 0.0409 px |
-
-第二组从现存的 1.5 GB RAW 重新执行了目标检测、编号和粘连轨迹补全，
-其中 31 帧为完全粘连帧。验证图和逐帧数值分别位于：
-
-```text
-out/cbct_calibration/yang_standard_raw/cho_eta_actual_data_validation/
-    cho_eta_actual_data.png
-    cho_eta_actual_data_report.json
-```
-
-固定机械 `tilt_n=3 deg` 时，逐帧 Cho `eta` 仍在约 1--5 度之间周期变化。
-这不是探测器在扫描中发生了机械转动：Cho `eta_i` 是真实探测器相对于该帧
-虚拟探测器坐标系的欧拉分解量；非零 `tilt_u/tilt_v` 与机架相位耦合后，
-`eta_i` 一般不是常数。其周期均值接近 3 度，但机械 `tilt_n` 应由多帧机器
-坐标系联合模型估计，不能用任意单帧 `eta_i` 直接替代。
+验证报告应由当前输入和当前输出目录生成，不在本指南中固化某一批 RAW 的数值。
+逐帧 `eta_i` 是虚拟探测器坐标系下的姿态量；它随机架相位变化并不表示探测器机械
+姿态在扫描中真的改变。机械 `tilt_n` 必须由统一坐标系下的多帧模型估计，不能用
+任意单帧 `eta_i` 直接替代。

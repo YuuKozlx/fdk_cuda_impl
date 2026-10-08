@@ -1,6 +1,8 @@
 # Yang 2017 PIC 几何校正参数计算说明
 
-本文记录 Yang et al. 2017 中 PIC（pose-independent calibration）方法的参数计算思路，并对应到 `yang_pic.py` 的实现。方法针对一个包含两个平行圆环的 12 钢珠模体：
+本文记录 Yang et al. 2017 中 PIC（pose-independent calibration）方法的参数计算思路，并对应到
+`yang/pic.py` 的实现。方法针对两个平行圆环；代码支持每环 6 球或每环 12 球，环半径、环间距和编号
+由 `YangConfig` 提供。
 
 ```text
 E1 E2 E3 E4 E5 E6    第一圆环
@@ -32,7 +34,7 @@ eta        yaw
 t          模体/gantry 转角
 ```
 
-注意：(O) 不是主点。主点是源点沿探测器法向投影到平板上的点；在 `yang_pic.py` 中分别输出为 `o_px` 和 `principal_point_px`。
+注意：(O) 不是主点。主点是源点沿探测器法向投影到平板上的点；在 `pic.py` 中分别输出为 `o_px` 和 `principal_point_px`。
 
 输入像素坐标先转换为毫米：
 
@@ -437,19 +439,19 @@ Yang 方法可以处理逐帧姿态变化，但需要专用双圆环模体；单
 实现文件：
 
 ```text
-tools/cbct_calibration/yang_pic.py
+tools/cbct_calibration/yang/pic.py
 ```
 
 测试文件：
 
 ```text
-tools/cbct_calibration/test_yang_pic.py
+tools/cbct_calibration/yang/test_pic.py
 ```
 
 运行：
 
 ```powershell
-python -m unittest discover -s tools/cbct_calibration -p test_yang_pic.py -v
+python -m unittest discover -s tools -p "test_*.py" -v
 ```
 
 当前测试包含：

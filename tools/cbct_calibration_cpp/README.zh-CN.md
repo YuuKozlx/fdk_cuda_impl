@@ -37,7 +37,15 @@ CalibrationResult result = calibrateIndexedPoints(points2d, points3d,
 
 ## 构建和回归
 
-项目使用自己的 `CMakeLists.txt` 和 vcpkg 配置，构建目录位于 `out/cbct-calibration-cpp-build`。合成回归覆盖：
+项目使用自己的 `CMakeLists.txt` 和 vcpkg 配置，不加入仓库主工程。建议单独配置和构建：
+
+```powershell
+cmake -S tools/cbct_calibration_cpp -B out/cbct-calibration-cpp-build
+cmake --build out/cbct-calibration-cpp-build --config Release
+ctest --test-dir out/cbct-calibration-cpp-build -C Release --output-on-failure
+```
+
+合成回归覆盖：
 
 - 24 个双环点的 DLT；
 - 模体旋转和平移；
@@ -46,4 +54,6 @@ CalibrationResult result = calibrateIndexedPoints(points2d, points3d,
 - 固定源偏移的联合拟合；
 - Cho/Yang/单排点集工厂。
 
-真实 RAW 入口仍是显式测试程序，不能把某一批 RAW 的高残差隐藏为“通过”；真实数据必须另外检查追踪、粘连分割和 map 是否正确。
+当前 C++ 核心接收的是已经有序的二维/三维点；它不替代 Python 业务层的 RAW 检测、粘连分割、
+镜像候选和论文 PIC 步骤。真实 RAW 入口仍是显式测试程序，不能把某一批 RAW 的高残差隐藏为“通过”；
+真实数据必须另外检查追踪、粘连分割和 map 是否正确。

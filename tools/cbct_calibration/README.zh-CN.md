@@ -1,6 +1,9 @@
-# CBCT 几何校正
+# CBCT 几何校正代码与文档
 
-本目录保留四条可独立阅读、可与论文逐步对照的业务链路：
+本目录是当前实现的唯一 Python 标定入口。文档只描述现行代码和稳定的数学约定；
+旧实验的固定数值、缓存结果和已经删除的脚本不再作为说明的一部分。
+
+## 业务链路
 
 ```text
 single_row/             单排等间距钢珠
@@ -9,13 +12,26 @@ cho/                    Cho 2005 PIC/DLT
 yang/                   Yang 2017 PIC/DLT
 ```
 
-每条链路均按以下顺序阅读：
+每条链路都按下面的边界组织：
 
 ```text
 tracker -> 编号二维点 -> 理论三维点 -> 几何求解 -> 验证 -> 导出
 ```
 
-`workflow.py` 是业务入口，`api_example.py` 是 IDE 调用样例。追踪算法与模体结构强耦合，始终留在业务目录，不提供表面统一的通用 tracker。
+每个业务目录中的 `workflow.py` 是可调用入口，`api_example.py` 是最小调用示例。
+追踪器与模体结构强耦合，保留在对应业务目录，不把不同模体强行抽成同一个 tracker。
+
+## 方法选择和输出边界
+
+| 方法 | 必要先验 | 直接输出 | 重建用途 | 不能单独确定 |
+|---|---|---|---|---|
+| 单排钢珠 | 等间距、圆轨道、简化平板姿态 | SOD、SDD、主点、面内角、钢珠位置 | 简化圆轨道 FDK | 完整三轴 tilt、源/探测器偏移的唯一分解 |
+| 可编号双环 | 已知三维点和可靠编号 | 每帧 DLT、源圆、固定源规范下的 7 参数 | DLT 迭代重建或等效 FDK | 无机器基准时的唯一机械 offset |
+| Cho PIC/DLT | 同步双环、对置点关系、标记辅助编号 | 每帧 eta、穿刺点、DLT、源点、主点和 detector 三轴 | 逐帧射线；联合后可生成等效 FDK | 模体姿态与机械姿态的无约束分离 |
+| Yang PIC/DLT | 双环、已知环参数和编号，默认 6/12 球每环 | O、eta、roll、pitch、S、W、SDD、主点、相位和 DLT | 逐帧射线；固定规范联合后可生成等效 FDK | 无机器基准时的真实逐帧机械 offset |
+
+这里的“固定源规范”指 `source_offset=(0,0,0)`、`offset_n=0`。它解决参数规范自由度，
+不表示真实机器的源绝对没有安装偏移。
 
 ## 工具层
 
@@ -103,13 +119,21 @@ FDK 需要共享圆轨道模型。此时以逐帧 DLT 和源圆作为初值，�
 
 公共工具的判断标准是：删除模体定义和论文参数含义后，该函数仍具有完整、唯一的数学意义。
 
-## 保留文档
+## 文档阅读顺序
 
-- `docs/DLT_GEOMETRY_AND_ANALYTIC_CALIBRATION.zh-CN.md`：DLT、坐标系、cone-vector、联合拟合与重建的完整推导；
-- `docs/CALIBRATION_FORMULAS.zh-CN.md`：单排钢珠公式；
-- `single_row/SINGLE_ROW_GUIDE.zh-CN.md`：单排全链路；
-- `identifiable_phantom/IDENTIFIABLE_PHANTOM_GUIDE.zh-CN.md`：可编号模体全链路；
-- `cho/CHO_GUIDE.zh-CN.md`：Cho 论文步骤；
-- `yang/README.zh-CN.md` 与 `yang/PIC_DERIVATION.zh-CN.md`：Yang 流程与逐式推导。
+- `docs/DLT_GEOMETRY_AND_ANALYTIC_CALIBRATION.zh-CN.md`：总流程、坐标系、DLT、射线转换、联合拟合和重建边界；
+- `docs/CALIBRATION_FORMULAS.zh-CN.md`：单排钢珠的逐式公式；
+- `single_row/SINGLE_ROW_GUIDE.zh-CN.md`：单排钢珠从 RAW 到结果；
+- `identifiable_phantom/IDENTIFIABLE_PHANTOM_GUIDE.zh-CN.md`：可编号双环和标记点的完整链路；
+- `cho/CHO_GUIDE.zh-CN.md`：Cho 的 PIC、DLT、源轨迹和固定源规范联合拟合；
+- `yang/README.zh-CN.md`、`yang/PIC_DERIVATION.zh-CN.md`：Yang 的 PIC、坐标适配和联合拟合；
+- `../cbct_calibration_cpp/README.zh-CN.md`：独立 C++ 核心的接口和测试边界。
 
-实现调整后统一运行 `python -m unittest discover -s tools -p "test_*.py"`，并以重投影误差和真实 RAW 全链路结果作为行为闭合检查。
+测试入口：
+
+```powershell
+python -m unittest discover -s tools -p "test_*.py"
+```
+
+行为闭合检查必须同时看 DLT 重投影 RMSE、源轨迹残差、联合拟合 RMSE 和输出的逐帧
+几何；不能只看某个中位数，也不能用仿真真值初始化生产流程。
