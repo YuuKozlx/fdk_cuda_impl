@@ -13,18 +13,20 @@ add_library(nist_xcom_core STATIC
     "${SPECTRAL_XCOM_ROOT}/xcom_c_api.cpp")
 target_include_directories(nist_xcom_core PUBLIC "${SPECTRAL_XCOM_ROOT}")
 target_compile_definitions(nist_xcom_core PUBLIC XCOM_C_API_STATIC)
-add_executable(multispectrum_sim app/main.cpp src/SimLogger.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp)
+add_executable(multispectrum_sim app/main.cpp src/SimLogger.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/FasksRuntimeModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp)
 target_include_directories(multispectrum_sim PRIVATE
     include "${SPECTRAL_XCOM_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
 target_link_libraries(multispectrum_sim PRIVATE nist_xcom_core)
 
 # 在线多能谱前投由示例自身的 CUDA kernel 完成；YKCBCT DLL 只提供重建后端。
 if(TARGET YKCBCT)
-    target_sources(multispectrum_sim PRIVATE src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/CudaPrimaryProjector.cu)
+    target_sources(multispectrum_sim PRIVATE src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/CudaPrimaryProjector.cu src/CudaFasksScatter.cu)
     target_include_directories(multispectrum_sim PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
     target_link_libraries(multispectrum_sim PRIVATE YKCBCT)
+    target_link_libraries(multispectrum_sim PRIVATE CUDA::cufft)
     target_compile_definitions(multispectrum_sim PRIVATE
         YK_MULTISPECTRUM_CUDA_PRIMARY=1)
     add_custom_command(TARGET multispectrum_sim POST_BUILD
@@ -42,6 +44,15 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    if(TARGET YKCBCT)
+        add_executable(multispectrum_scatter_test tests/test_scatter.cpp
+            src/FasksRuntimeModel.cpp src/CudaFasksScatter.cu)
+        target_include_directories(multispectrum_scatter_test PRIVATE include
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include")
+        target_link_libraries(multispectrum_scatter_test PRIVATE CUDA::cudart)
+        target_link_libraries(multispectrum_scatter_test PRIVATE CUDA::cufft)
+        add_test(NAME multispectrum_scatter COMMAND multispectrum_scatter_test)
+    endif()
     if(TARGET YKCBCT AND YKCBCT_BUILD_HELICAL)
         add_executable(multispectrum_wfbp_buffers_test tests/test_wfbp_buffers.cpp src/LibraryGeometry.cpp)
         target_include_directories(multispectrum_wfbp_buffers_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")

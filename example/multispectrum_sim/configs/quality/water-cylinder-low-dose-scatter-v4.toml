@@ -1,0 +1,135 @@
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
+[projection]
+label_volume = "../../inputs/generated/water-cylinder-200mm-pmma5mm.raw"
+spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
+xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
+output_file = "../../outputs/tests/water-cylinder-low-dose-v4-1024x256x360.raw"
+energy_output_file = ""
+air_output_file = ""
+apply_geometry_flux = true
+mAs_per_view = 0.01
+quantum_noise_enabled = true
+quantum_noise_seed = 20261009
+
+[projection.scatter]
+enabled = true
+model_file = "G:/Code/ggems/examples/10_ASKS_EndToEnd/runs/new-cbct-fasks-infinite-center-clean/runtime/fasks_runtime_model.json"
+
+[projection.sampling]
+samples_per_pixel = 5
+spatial_seed = 20261009
+
+[projection.focal_spot]
+enabled = false
+size_u_mm = 0.0
+size_v_mm = 0.0
+
+[projection.detector_response]
+enabled = true
+oblique_path_correction = true
+
+[projection.detector_response.protective_layer]
+name = "carbon_fiber_cover"
+preset = "compound.carbon_fiber_epoxy"
+thickness_mm = 0.5
+
+[projection.detector_response.scintillator_layer]
+name = "cesium_iodide"
+preset = "compound.csi"
+thickness_mm = 0.6
+
+[projection.detector_postprocess.optical_crosstalk]
+enabled = false
+kernel_u = [0.03, 0.94, 0.03]
+kernel_v = [0.02, 0.96, 0.02]
+
+[projection.detector_postprocess.electronic_crosstalk]
+enabled = false
+kernel_u = [0.005, 0.99, 0.005]
+kernel_v = [0.002, 0.996, 0.002]
+
+[projection.detector_postprocess.afterglow]
+enabled = false
+initialization = "zero"
+p = 0.05
+frame_time_ms = 3.0
+exposure_time_ms = 2.0
+weights = [0.7, 0.3]
+time_constants_ms = [1.0, 100.0]
+
+[projection.detector_postprocess.das]
+enabled = false
+gain_electrons_per_keV = 15.0
+offset_electrons = 0.0
+electronic_noise_std_electrons = 0.0
+saturation_electrons = 0.0
+adc_lsb_electrons = 0.0
+noise_seed = 20261009
+
+[geometry]
+kind = "flat_cbct"
+views = 360
+views_per_turn = 360
+rotation_direction = 1
+detector_u = 1024
+detector_v = 256
+pixel_u_mm = 0.795
+pixel_v_mm = 0.53
+sid_mm = 709.0
+sdd_mm = 1143.0
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
+volume_x = 401
+volume_y = 401
+volume_z = 256
+voxel_x_mm = 0.5
+voxel_y_mm = 0.5
+voxel_z_mm = 0.5
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+phantom_rotation_x_rad = 0.0
+phantom_rotation_y_rad = 0.0
+phantom_rotation_z_rad = 0.0
+reconstruction_volume_x = 1024
+reconstruction_volume_y = 1024
+reconstruction_volume_z = 30
+reconstruction_voxel_x_mm = 0.33
+reconstruction_voxel_y_mm = 0.33
+reconstruction_voxel_z_mm = 1.0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+[[projection.materials]]
+label = 1
+name = "water"
+formula = "H2O"
+density_g_cm3 = 1.0
+
+[[projection.materials]]
+label = 2
+name = "pmma"
+formula = "C5H8O2"
+density_g_cm3 = 1.18
+
+[reconstruction]
+type = "analytic"
+output_volume_file = "../../outputs/tests/water-cylinder-low-dose-v4-recon-1024x1024x30.raw"
+slice_prefix = "../../outputs/images/water-cylinder-low-dose-v4-1024x1024x30"
+
+[reconstruction.analytic]
+pipeline = "fdk"
+filter = "ramlak"
+chunk_views = 8
