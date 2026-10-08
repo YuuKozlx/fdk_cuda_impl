@@ -6,9 +6,9 @@
 
 #include <cuda_runtime.h>
 
-#include "Iter/YkAlgebraicReconstructor.hpp"
-#include "Iter/YkCglsReconstructor.hpp"
-#include "Iter/YkTigreGradientReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkCglsReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkTigreGradientReconstructor.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkMem3d.hpp"

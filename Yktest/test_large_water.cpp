@@ -8,10 +8,10 @@
 
 #include <cuda_runtime.h>
 
-#include "FDK/YkFdkPipeline.hpp"
-#include "Iter/YkAlgebraicReconstructor.hpp"
-#include "Iter/YkCglsReconstructor.hpp"
-#include "Iter/YkPwlsReconstructor.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkCglsReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkPwlsReconstructor.hpp"
 #include "YkTestImage.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "common/YkVecGeo.hpp"

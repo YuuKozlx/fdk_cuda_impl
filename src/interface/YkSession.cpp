@@ -5,18 +5,18 @@
 
 #include <cuda_runtime.h>
 
-#include "FDK/YkFdkPipeline.hpp"
-#include "FDK/XFDK/YkXfdkPipeline.hpp"
-#include "FDK/CFDK/YkCurveFilteredFdkPipeline.hpp"
-#include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
-#include "CylFpBp/fp/YkCylForwardProjection.hpp"
-#include "CylFpBp/iter/YkCylAlgebraicReconstructor.hpp"
-#include "CylFpBp/iter/YkCylPwlsReconstructor.hpp"
-#include "Iter/YkAlgebraicLegacyAdapters.hpp"
-#include "Iter/YkAlgebraicSartSirtAdapters.hpp"
-#include "Iter/YkCglsLegacyAdapters.hpp"
-#include "Iter/YkPwlsReconstructor.hpp"
-#include "Iter/YkTigreGradientReconstructorEx.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/XFDK/YkXfdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/CFDK/YkCurveFilteredFdkPipeline.hpp"
+#include "CylFpBp/Analytic/YkCylAnalyticReconstruction.hpp"
+#include "CylFpBp/FP/YkCylForwardProjection.hpp"
+#include "CylFpBp/Iter/YkCylAlgebraicReconstructor.hpp"
+#include "CylFpBp/Iter/YkCylPwlsReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicLegacyAdapters.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicSartSirtAdapters.hpp"
+#include "Reconstruction/Iterative/Flat/YkCglsLegacyAdapters.hpp"
+#include "Reconstruction/Iterative/Flat/YkPwlsReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkTigreGradientReconstructorEx.hpp"
 #include "common/YkExecutionContext.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkCBCTParams.h"
@@ -26,7 +26,7 @@
 #include "global/YkMem3d.hpp"
 
 #if YKCBCT_HAS_HELICAL
-#include "Heli/analytic/wfbp/YkWfbpPipeline.hpp"
+#include "Reconstruction/Analytic/Helical/WFBP/YkWfbpPipeline.hpp"
 #endif
 
 namespace YK {

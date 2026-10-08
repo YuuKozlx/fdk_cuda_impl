@@ -27,7 +27,7 @@ geometry 输入方式，算法和调参能力完全相同。
 ## 2. 基本用法
 
 ```cpp
-#include "Iter/YkTigreGradientReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkTigreGradientReconstructor.hpp"
 
 YK::Iter::TigreGradientReconstructor::Config config{};
 config.algorithm = YK::Iter::ETigreGradientAlgorithm::OsAsdPocs;

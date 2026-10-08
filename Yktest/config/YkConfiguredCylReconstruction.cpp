@@ -11,11 +11,11 @@
 #include <cuda_runtime.h>
 #include <toml++/toml.hpp>
 
-#include "CylFpBp/analytic/YkCylFdkPipeline.hpp"
-#include "CylFpBp/fp/YkCylForwardProjection.hpp"
+#include "CylFpBp/Analytic/YkCylFdkPipeline.hpp"
+#include "CylFpBp/FP/YkCylForwardProjection.hpp"
 #include "YkTestGeometry.hpp"
-#include "Heli/iter/YkHelicalCylIterativeReconstructor.hpp"
-#include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
+#include "Reconstruction/Iterative/Helical/YkHelicalCylIterativeReconstructor.hpp"
+#include "CylFpBp/Analytic/YkCylAnalyticReconstruction.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkExecutionContext.hpp"

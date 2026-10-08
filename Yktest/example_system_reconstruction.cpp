@@ -8,12 +8,12 @@
 
 #include <cuda_runtime.h>
 
-#include "CylFpBp/analytic/YkCylAnalyticReconstruction.hpp"
-#include "CylFpBp/analytic/YkCylFdkPipeline.hpp"
-#include "CylFpBp/fp/YkCylForwardOperator.hpp"
-#include "FDK/YkFdkPipeline.hpp"
-#include "Heli/iter/YkHelicalCylIterativeReconstructor.hpp"
-#include "Heli/iter/YkHelicalFlatIterativeReconstructor.hpp"
+#include "CylFpBp/Analytic/YkCylAnalyticReconstruction.hpp"
+#include "CylFpBp/Analytic/YkCylFdkPipeline.hpp"
+#include "CylFpBp/FP/YkCylForwardOperator.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
+#include "Reconstruction/Iterative/Helical/YkHelicalCylIterativeReconstructor.hpp"
+#include "Reconstruction/Iterative/Helical/YkHelicalFlatIterativeReconstructor.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "YKCBCT/interface/YkSystemReconstruction.hpp"

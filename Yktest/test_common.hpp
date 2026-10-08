@@ -6,7 +6,7 @@
 
 #include <global/YkMacro.hpp>
 #include <random>
-#include "FDK/YkFdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
 #include "common/YkOperatorTypes.hpp"
 #include "global/YkGlobals.h"
 #include "global/YkLog.h"

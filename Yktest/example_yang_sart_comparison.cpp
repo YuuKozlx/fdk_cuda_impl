@@ -11,7 +11,7 @@
 
 #include "DLTFpBp/YkDltAlgebraicReconstructor.hpp"
 #include "DLTFpBp/YkDltProjectionGeometry.hpp"
-#include "Iter/YkAlgebraicReconstructorEx.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicReconstructorEx.hpp"
 #include "YkTestImage.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkMem3d.hpp"

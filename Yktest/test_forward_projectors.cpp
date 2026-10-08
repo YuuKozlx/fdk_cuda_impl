@@ -5,7 +5,7 @@
 
 #include <cuda_runtime.h>
 
-#include "FP/kernels/YkFPSiddonLaunch.cuh"
+#include "FlatFpBp/FP/kernels/YkFPSiddonLaunch.cuh"
 #include "global/YkGlobals.h"
 
 namespace {

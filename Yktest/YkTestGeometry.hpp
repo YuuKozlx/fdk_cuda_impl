@@ -2,8 +2,8 @@
 
 #include <vector>
 
-#include "Heli/YkHeliCTParams.h"
-#include "Heli/analytic/wfbp/YkWfbpTypes.hpp"
+#include "Reconstruction/Helical/Common/YkHeliCTParams.h"
+#include "Reconstruction/Analytic/Helical/WFBP/YkWfbpTypes.hpp"
 #include "YKCBCT/geometry/YkSystemGeometry.hpp"
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 

@@ -4,13 +4,13 @@
 #include <memory>
 #include <vector>
 
-#include "BP/YkBPGpuContext_Siddon.hpp"
-#include "BP/kernels/YkBpFdkLaunch.cuh"
-#include "BP/kernels/YkBpJosephLaunch.cuh"
-#include "BP/kernels/YkBPSiddonLaunch.cuh"
-#include "FP/YkFPGpuContext.hpp"
-#include "FP/kernels/YkFPLaunch.cuh"
-#include "FDK/YkFDKVecGeoDerived.hpp"
+#include "FlatFpBp/BP/YkBPGpuContext_Siddon.hpp"
+#include "FlatFpBp/BP/kernels/YkBpFdkLaunch.cuh"
+#include "FlatFpBp/BP/kernels/YkBpJosephLaunch.cuh"
+#include "FlatFpBp/BP/kernels/YkBPSiddonLaunch.cuh"
+#include "FlatFpBp/FP/YkFPGpuContext.hpp"
+#include "FlatFpBp/FP/kernels/YkFPLaunch.cuh"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFDKVecGeoDerived.hpp"
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
 #include "common/YkExecutionContext.hpp"
 #include "global/YkCudaTextureController.hpp"

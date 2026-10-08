@@ -15,13 +15,13 @@
 #include <cuda_runtime.h>
 #include <toml++/toml.hpp>
 
-#include "FDK/YkFdkPipeline.hpp"
-#include "FDK/CFDK/YkCurveFilteredFdkPipeline.hpp"
-#include "FDK/XFDK/YkXfdkPipeline.hpp"
-#include "Iter/YkAlgebraicReconstructorEx.hpp"
-#include "Iter/YkCglsReconstructorEx.hpp"
-#include "Iter/YkPwlsReconstructor.hpp"
-#include "Iter/YkTigreGradientReconstructorEx.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/CFDK/YkCurveFilteredFdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/XFDK/YkXfdkPipeline.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicReconstructorEx.hpp"
+#include "Reconstruction/Iterative/Flat/YkCglsReconstructorEx.hpp"
+#include "Reconstruction/Iterative/Flat/YkPwlsReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkTigreGradientReconstructorEx.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"

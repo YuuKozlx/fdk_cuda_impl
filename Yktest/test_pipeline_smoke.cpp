@@ -10,10 +10,10 @@
 
 #include <global/YkGlobals.h>
 #include <utility>
-#include "FDK/CFDK/YkCurveFilteredFdkPipeline.hpp"
-#include "FDK/YkFdkPipeline.hpp"
-#include "FDK/XFDK/YkXfdkPipeline.hpp"
-#include "FDK/kernels/YkFDKBpPrecompute.cuh"
+#include "Reconstruction/Analytic/Circular/Flat/CFDK/YkCurveFilteredFdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/XFDK/YkXfdkPipeline.hpp"
+#include "Reconstruction/Analytic/Circular/Flat/FDK/kernels/YkFDKBpPrecompute.cuh"
 #include "YkTestPhantoms.hpp"
 #include "YkTestImage.hpp"
 #include "common/YkProjectionOperators.hpp"

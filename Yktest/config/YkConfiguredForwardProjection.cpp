@@ -22,9 +22,9 @@
 #include "global/YkCudaTextureController.hpp"
 #include "global/YkMem3d.hpp"
 #include "global/YkLog.h"
-#include "CylFpBp/bp/YkCylBackProjection.hpp"
+#include "CylFpBp/BP/YkCylBackProjection.hpp"
 #include "YkTestGeometry.hpp"
-#include "CylFpBp/fp/YkCylForwardProjection.hpp"
+#include "CylFpBp/FP/YkCylForwardProjection.hpp"
 
 
 namespace YK::TestConfig {

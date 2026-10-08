@@ -18,10 +18,10 @@
 
 #if YKCBCT_TEST_HAS_HELICAL
 #include "YkTestGeometry.hpp"
-#include "CylFpBp/fp/YkCylForwardProjection.hpp"
+#include "CylFpBp/FP/YkCylForwardProjection.hpp"
 
-#include "Heli/analytic/wfbp/YkWfbpPipeline.hpp"
-#include "Heli/iter/YkHelicalFlatIterativeReconstructor.hpp"
+#include "Reconstruction/Analytic/Helical/WFBP/YkWfbpPipeline.hpp"
+#include "Reconstruction/Iterative/Helical/YkHelicalFlatIterativeReconstructor.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"

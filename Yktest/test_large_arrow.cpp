@@ -8,7 +8,7 @@
 
 #include <cuda_runtime.h>
 
-#include "Iter/YkTigreGradientReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkTigreGradientReconstructor.hpp"
 #include "YkTestImage.hpp"
 #include "YkTestPhantoms.hpp"
 #include "common/YkProjectionOperators.hpp"

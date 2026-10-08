@@ -26,7 +26,7 @@ TIGRE 风格 ASD-POCS、PCSD、AwTV 和 Bregman 算法的完整状态机与参�
 ### 1.1 OS-SART 基本用法
 
 ```cpp
-#include "Iter/YkAlgebraicReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicReconstructor.hpp"
 
 YK::Iter::AlgebraicReconstructor::Config config{};
 config.method = YK::Iter::EAlgebraicMethod::Ossart;
@@ -53,7 +53,7 @@ if (!reconstructor.reconstruct(d_projection, d_volume)) {
 ### 1.2 显式 geometry 用法
 
 ```cpp
-#include "Iter/YkAlgebraicReconstructorEx.hpp"
+#include "Reconstruction/Iterative/Flat/YkAlgebraicReconstructorEx.hpp"
 
 YK::Iter::AlgebraicReconstructorEx reconstructor;
 reconstructor.prepare(params, geometry, config, stream, device_id);
@@ -210,7 +210,7 @@ out/build/x64-refactor-check/Yktest/Release/ykcbct_manual_tests.exe `
 CGLS 同样把策略和几何入口分开：
 
 ```cpp
-#include "Iter/YkCglsReconstructor.hpp"
+#include "Reconstruction/Iterative/Flat/YkCglsReconstructor.hpp"
 
 YK::Iter::CglsReconstructor::Config config{};
 config.strategy = YK::Iter::ECglsStrategy::RobustRestart;
