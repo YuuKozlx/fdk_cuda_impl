@@ -104,13 +104,31 @@ struct GeometryConfig {
 };
 struct FocalSpotConfig {
     bool enabled = false;
-    double size_u_mm = 0.0;
-    double size_v_mm = 0.0;
+    double normal_size_u_mm = 0.0;
+    double normal_size_v_mm = 0.0;
+    double defocus_size_u_mm = 0.0;
+    double defocus_size_v_mm = 0.0;
+    // Defocus exposure fraction; normal exposure fraction is 1 - epsilon.
+    double epsilon = 0.0;
+};
+
+struct GeometryFluxConfig {
+    bool enabled = true;
+};
+
+struct QuantumNoiseConfig {
+    bool enabled = true;
+    std::uint32_t seed = 67890;
 };
 
 struct SamplingConfig {
     int samples_per_pixel = 1;
     std::uint32_t seed = 12345;
+};
+
+struct ScatterConfig {
+    bool enabled = false;
+    std::filesystem::path model_file;
 };
 
 struct GeometrySpec {
@@ -126,15 +144,15 @@ struct ProjectionConfig {
     std::filesystem::path energy_output_file;
     std::filesystem::path air_output_file;
     bool save_metadata = true;
-    bool apply_geometry_flux = true;
     double mAs_per_view = 1.0;
-    bool quantum_noise_enabled = true;
-    std::uint32_t quantum_noise_seed = 67890;
+    GeometryFluxConfig geometry_flux;
+    QuantumNoiseConfig quantum_noise;
     std::vector<MaterialSpec> materials;
     DetectorResponseConfig detector_response;
     DetectorPostprocessConfig detector_postprocess;
     FocalSpotConfig focal_spot;
     SamplingConfig sampling;
+    ScatterConfig scatter;
 };
 
 // 仿真结束后的可选重建设置。投影仍按文件流式读取；FDK 使用 chunk_views

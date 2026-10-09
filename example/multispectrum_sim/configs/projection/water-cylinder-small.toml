@@ -10,7 +10,19 @@ xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/projections/water-cylinder-small.raw"
 energy_output_file = "../../outputs/projections/water-cylinder-small-energy.raw"
 air_output_file = "../../outputs/projections/water-cylinder-small-air.raw"
-apply_geometry_flux = true
+mAs_per_view = 1.0
+
+[projection.geometry_flux]
+enabled = true
+
+[projection.quantum_noise]
+enabled = true
+seed = 67890
+
+# Enable only with a kernel calibrated for this spectrum and geometry.
+[projection.scatter]
+enabled = false
+model_file = ""
 
 [projection.sampling]
 samples_per_pixel = 50
@@ -18,8 +30,11 @@ spatial_seed = 12345
 
 [projection.focal_spot]
 enabled = false
-size_u_mm = 0.0
-size_v_mm = 0.0
+normal_size_u_mm = 0.0
+normal_size_v_mm = 0.0
+defocus_size_u_mm = 0.0
+defocus_size_v_mm = 0.0
+epsilon = 0.0
 
 [geometry]
 kind = "flat_cbct"
@@ -109,4 +124,3 @@ electronic_noise_std_electrons = 0.0
 saturation_electrons = 0.0
 adc_lsb_electrons = 0.0
 noise_seed = 24680
-

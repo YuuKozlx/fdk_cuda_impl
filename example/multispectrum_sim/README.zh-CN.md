@@ -39,7 +39,14 @@ CSV 第二列按光子数谱解释。CUDA 多能谱积分对每个能量 bin 计
 - simulation.output_file：以同一像素空场能量归一化后的 -log(E/E0) 衰减域投影，供 FDK 和迭代重建使用；几何通量因子在空场归一化中抵消。
 - projection.energy_output_file：未做空场归一化的相对能量积分信号。平板探测器按实际源点和像素位置应用 cos(theta)/r^2，并考虑 source_offset_x/y/z_mm 与 offset_u/n/v_mm。系数相对探测器主点归一化，因此结果是相对能量信号，不是绝对剂量。
 
-`projection.apply_geometry_flux = true` 控制上述平板几何通量修正。能量积分输出由独立 CUDA 前投直接产生，不需要额外开关。
+投影配置将几何通量、量子噪声、探测器响应和焦点散焦分开控制：
+
+- `[projection.geometry_flux].enabled`：启用按每条射线源到探测器距离平方反比的通量修正；像素面积已用于谱通量换算。
+- `[projection.quantum_noise].enabled`：对能量 bin 的光子计数施加泊松采样；`seed` 只控制可复现性。
+- `[projection.detector_response].enabled`：启用保护层、杂质层和闪烁体层的探测器吸收效率响应，不包含光学/电子串扰。
+- `[projection.focal_spot]`：`normal_size_u/v_mm` 和 `defocus_size_u/v_mm` 分别定义正常焦点与散焦焦点尺寸；`epsilon` 是分配给散焦分量的曝光比例，正常焦点占 `1 - epsilon`。例如 `epsilon = 0.01` 表示 1% 曝光使用散焦尺寸，不会缩小焦点尺寸。
+
+能量积分输出由独立 CUDA 前投直接产生。
 当前已实现标签/材料到 XCOM 质量衰减系数，再到多能量透射积分和逐视图 CBCT 投影输出的闭环。投影按照 `view、v、u` 顺序写入 float32 二进制文件；`runToFile()` 按视图流式写盘，避免完整投影长期驻留内存。路径长度单位是 cm，质量衰减系数单位是 cm²/g；每个材料的线性系数为 `density * mu_over_rho`。
 
 在线前投直接完成焦点与探测器位置采样、射线与体素盒求交、材料路径累计和能谱积分，并逐视图写出能量域与对数投影，不保存中间路径表。

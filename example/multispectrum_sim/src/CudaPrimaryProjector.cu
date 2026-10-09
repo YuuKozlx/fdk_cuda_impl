@@ -1,12 +1,19 @@
 #include "CudaPrimaryProjector.hpp"
+#include "CudaFasksScatter.hpp"
+#include "FasksRuntimeModel.hpp"
+#include "SimLogger.hpp"
 
 #include <cuda_runtime.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <memory>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 
 namespace yk::spectral {
@@ -19,7 +26,7 @@ void writeMetadata(const std::filesystem::path& file, int u, int v, int views, c
       << ",\n  \"data_type\": \"float32\",\n  \"byte_order\": \"little_endian\",\n"
       << "  \"layout\": \"frame_row_column\",\n  \"signal\": \"" << signal << "\"\n}\n";
 }
-struct DeviceGeometry { int nu, nv, views, views_per_turn, rotation_direction, samples, nx, ny, nz, nm, ne; float pu, pv, sid, sdd, vx, vy, vz, fu, fv; float offset_u, offset_n, offset_v, source_x, source_y, source_z; float tilt_u, tilt_v, tilt_n; float start, pitch, start_z; float phantom_x, phantom_y, phantom_z, phantom_rx, phantom_ry, phantom_rz; int cylindrical, apply_flux, detector_response, use_constant_tables, use_label_texture; const float* detector_efficiency; cudaTextureObject_t label_texture; };
+struct DeviceGeometry { int nu, nv, views, views_per_turn, rotation_direction, samples, nx, ny, nz, nm, ne; float pu, pv, sid, sdd, vx, vy, vz, normal_fu, normal_fv, defocus_fu, defocus_fv, focal_epsilon; float offset_u, offset_n, offset_v, source_x, source_y, source_z; float tilt_u, tilt_v, tilt_n; float start, pitch, start_z; float phantom_x, phantom_y, phantom_z, phantom_rx, phantom_ry, phantom_rz; int cylindrical, geometry_flux, detector_response, use_constant_tables, use_label_texture; const float* detector_efficiency; cudaTextureObject_t label_texture; };
 __constant__ float c_mu[15000];
 __constant__ float c_spectrum[256];
 __constant__ float c_energies[256];
@@ -94,6 +101,15 @@ __device__ float poissonSample(float lambda, unsigned seed) {
     do { product *= fmaxf(uniform(seed + n * 2 + 3), 1e-7f); ++n; } while (product > limit && n < 256);
     return static_cast<float>(n - 1);
 }
+
+__global__ void applyQuantumNoiseAfterScatter(float* energy, int pixels,
+    float mean_energy_keV, unsigned seed, int view) {
+    const int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pixel >= pixels || !(energy[pixel] > 0.f) || !(mean_energy_keV > 0.f)) return;
+    const float expected_photons = energy[pixel] / mean_energy_keV;
+    const unsigned noise_seed = seed ^ static_cast<unsigned>(view * pixels + pixel) * 0x9e3779b9U;
+    energy[pixel] = poissonSample(expected_photons, noise_seed) * mean_energy_keV;
+}
 __device__ bool boxHit(float3 s, float3 d, float3 lo, float3 hi, float& a, float& b) {
     a = 0.f; b = 1e30f;
     for (int k = 0; k < 3; ++k) {
@@ -112,11 +128,11 @@ __device__ bool boxHit(float3 s, float3 d, float3 lo, float3 hi, float& a, float
 // parameter relative to the entry avoids subtracting sub-millimeter voxel
 // boundaries from the ~500 mm source coordinates.
 template <int MaterialCount>
-__device__ void accumulatePaths(DeviceGeometry g, const unsigned char* labels,
+__device__ bool accumulatePaths(DeviceGeometry g, const unsigned char* labels,
     const int* label_to_material, float3 source, float3 d, float3 lo, float3 hi,
     float* paths) {
     float entry, exit;
-    if (!boxHit(source, d, lo, hi, entry, exit)) return;
+    if (!boxHit(source, d, lo, hi, entry, exit)) return false;
     const float3 entry_point = make_float3(source.x + d.x * entry,
         source.y + d.y * entry, source.z + d.z * entry);
     const float3 q = make_float3(entry_point.x - lo.x,
@@ -133,6 +149,7 @@ __device__ void accumulatePaths(DeviceGeometry g, const unsigned char* labels,
     const float dy = d.y != 0 ? g.vy / fabsf(d.y) : inf;
     const float dz = d.z != 0 ? g.vz / fabsf(d.z) : inf;
     float s = 0.f;
+    bool hit_material = false;
     const float length = exit - entry;
     while (s < length && ix >= 0 && ix < g.nx && iy >= 0 && iy < g.ny && iz >= 0 && iz < g.nz) {
         const float next = fminf(tx, fminf(ty, tz));
@@ -142,13 +159,16 @@ __device__ void accumulatePaths(DeviceGeometry g, const unsigned char* labels,
                 ix + 0.5f, iy + 0.5f, iz + 0.5f))
             : static_cast<int>(__ldg(labels + (iz * g.ny + iy) * g.nx + ix));
         const int m = __ldg(label_to_material + label);
-        if (m >= 0 && m < MaterialCount && segment > 0.f)
+        if (m >= 0 && m < MaterialCount && segment > 0.f) {
             paths[m] += segment * 0.1f;
+            hit_material = true;
+        }
         s = next;
         if (tx <= next) { tx += dx; ix += sx; }
         if (ty <= next) { ty += dy; iy += sy; }
         if (tz <= next) { tz += dz; iz += sz; }
     }
+    return hit_material;
 }
 
 template <int MaterialCount>
@@ -156,13 +176,15 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     const int* label_to_material, const float* mu, const float* spectrum,
     const float* energies, float incident, int quantum_noise,
     int view, unsigned seed, unsigned quantum_seed,
-    float* energy_out, float* air_out) {
+    float* expected_energy_out, float* sampled_energy_out, float* air_out,
+    unsigned char* object_mask_out) {
     const int pixel = blockIdx.x * blockDim.x + threadIdx.x;
     const int pixels = g.nu * g.nv; if (pixel >= pixels) return;
     const int u0 = pixel % g.nu, v0 = pixel / g.nu;
     if (g.ne > 256) return;
     float expected_counts[256] = {};
     float expected_air_energy = 0.f;
+    bool object_hit = false;
     const float pi = 3.14159265358979323846f;
     const float angle = g.start + static_cast<float>(g.rotation_direction) * 2.f*pi*view / g.views_per_turn;
     // The library frame at angle zero has source at -Y, U at +X, and N at
@@ -172,10 +194,18 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     const float z = g.start_z + g.pitch * (angle - g.start) / (2.f*pi);
     float3 lo = make_float3(-0.5f*g.nx*g.vx, -0.5f*g.ny*g.vy, -0.5f*g.nz*g.vz);
     float3 hi = make_float3(-lo.x, -lo.y, -lo.z);
-    for (int sample=0; sample<g.samples; ++sample) {
+    // Integrate each component separately so a small defocus dose cannot be
+    // lost through random component selection with few spatial samples.
+    for (int component=0; component<2; ++component) {
+        const bool defocused = component == 1;
+        const float exposure_fraction = defocused ? g.focal_epsilon : 1.f-g.focal_epsilon;
+        if (exposure_fraction <= 0.f) continue;
+        for (int sample=0; sample<g.samples; ++sample) {
         unsigned base = seed ^ (unsigned)(view*pixels + pixel)*0x9e3779b9U ^ (unsigned)sample*0x85ebca6bU;
-        float fsu = (uniform(base+1)-.5f)*g.fu;
-        float fsv = (uniform(base+2)-.5f)*g.fv;
+        const float fu = defocused ? g.defocus_fu : g.normal_fu;
+        const float fv = defocused ? g.defocus_fv : g.normal_fv;
+        float fsu = (uniform(base+1)-.5f)*fu;
+        float fsv = (uniform(base+2)-.5f)*fv;
         float du = ((float)u0 - .5f*(g.nu-1) + uniform(base+3)-.5f)*g.pu;
         float dv = ((float)v0 - .5f*(g.nv-1) + uniform(base+4)-.5f)*g.pv;
         float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
@@ -213,13 +243,13 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
         float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z); d.x/=length; d.y/=length; d.z/=length;
         float paths[MaterialCount] = {};
-        accumulatePaths<MaterialCount>(g, labels, label_to_material,
+        object_hit = accumulatePaths<MaterialCount>(g, labels, label_to_material,
             phantomInverse(g, source, false), phantomInverse(g, d, true),
-            lo, hi, paths);
-        float r2=length*length; float flux=g.apply_flux ? 1000000.f/fmaxf(r2,1e-6f) : 1.f;
+            lo, hi, paths) || object_hit;
+        float r2=length*length; float flux=g.geometry_flux ? 1000000.f/fmaxf(r2,1e-6f) : 1.f;
         // Geometry samples share one pixel exposure. They are not separate
         // exposures; each sample carries 1/g.samples of the pixel photons.
-        const float photons_per_sample = 1.f / static_cast<float>(g.samples);
+        const float photons_per_sample = exposure_fraction / static_cast<float>(g.samples);
         for(int e=0;e<g.ne;++e){float exponent=0.f;
             #pragma unroll
             for(int m=0;m<MaterialCount;++m) exponent+=paths[m]*readMu(g, mu, m*g.ne+e);
@@ -230,15 +260,18 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
             expected_counts[e] += lambda;
             expected_air_energy += weight * energies[e];
         }
+        }
     }
-    float sum_energy = 0.f;
+    float expected_energy = 0.f;
+    float sampled_energy = 0.f;
     for (int e=0; e<g.ne; ++e) {
         const unsigned noise_seed = quantum_seed
             ^ (unsigned)(view * pixels + pixel) * 0x9e3779b9U
             ^ (unsigned)e * 0x27d4eb2dU;
-        const float count = quantum_noise ? poissonSample(expected_counts[e], noise_seed)
-                                          : expected_counts[e];
-        sum_energy += count * readEnergy(g, energies, e);
+        const float sampled_count = quantum_noise ? poissonSample(expected_counts[e], noise_seed)
+                                                  : expected_counts[e];
+        expected_energy += expected_counts[e] * readEnergy(g, energies, e);
+        sampled_energy += sampled_count * readEnergy(g, energies, e);
     }
     const float sum_air_energy = expected_air_energy;
     // Actual transmitted counts fluctuate; normalize only by the configured
@@ -246,10 +279,11 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     // Return energy per incident photon. The configured exposure is applied
     // only inside the sample weights above, so increasing g.samples does not
     // increase dose.
-    const float avg_energy = sum_energy;
     const float avg_air_energy = sum_air_energy;
-energy_out[pixel]=avg_energy;
+    expected_energy_out[pixel]=expected_energy;
+    sampled_energy_out[pixel]=sampled_energy;
     air_out[pixel]=avg_air_energy;
+    object_mask_out[pixel] = object_hit ? 1 : 0;
 }
 
 template <int MaterialCount>
@@ -257,12 +291,13 @@ void launchPrimaryKernel(const DeviceGeometry& geometry,
     const unsigned char* labels, const int* label_to_material,
     const float* mu, const float* spectrum, const float* energies,
     float incident, int quantum_noise, int view, unsigned seed,
-    unsigned quantum_seed, float* energy_out, float* air_out) {
+    unsigned quantum_seed, float* expected_energy_out,
+    float* sampled_energy_out, float* air_out, unsigned char* object_mask_out) {
     const int pixels = geometry.nu * geometry.nv;
     primaryKernel<MaterialCount><<< (pixels + 255) / 256, 256 >>>(
         geometry, labels, label_to_material, mu, spectrum, energies,
         incident, quantum_noise, view, seed, quantum_seed,
-        energy_out, air_out);
+        expected_energy_out, sampled_energy_out, air_out, object_mask_out);
 }
 
 __global__ void detectorEfficiencyKernel(DeviceGeometry g,
@@ -423,15 +458,26 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
     const SpectralTransmissionModel& model, const std::filesystem::path& out_file, std::string& err) const {
     try {
         const auto& g=c.geometry.parameters; const int pixels=g.detector_u*g.detector_v; const int nm=(int)c.projection.materials.size(), ne=(int)model.spectrum().size();
+        const std::unique_ptr<FasksRuntimeModel> scatter_model = c.projection.scatter.enabled
+            ? std::make_unique<FasksRuntimeModel>(c.projection.scatter.model_file) : nullptr;
+        const std::unique_ptr<CudaFasksScatter> fasks_scatter = scatter_model
+            ? std::make_unique<CudaFasksScatter>(g.detector_u, g.detector_v,
+                                                  g.pixel_u_mm, g.pixel_v_mm,
+                                                  *scatter_model)
+            : nullptr;
         if(g.volume_x<=0||g.volume_y<=0||g.volume_z<=0||labels.size()!=(size_t)g.volume_x*g.volume_y*g.volume_z) throw std::runtime_error("CUDA前投标签体尺寸不匹配");
         if(nm > 32) throw std::runtime_error("CUDA primary projector supports at most 32 materials");
         const int cylindrical = (c.geometry.kind == GeometryKind::CylCbct || c.geometry.kind == GeometryKind::CylHelical) ? 1 : 0;
-        DeviceGeometry dg{g.detector_u,g.detector_v,g.views,g.views_per_turn,g.rotation_direction,c.projection.sampling.samples_per_pixel,g.volume_x,g.volume_y,g.volume_z,nm,ne,(float)g.pixel_u_mm,(float)g.pixel_v_mm,(float)g.sid_mm,(float)g.sdd_mm,(float)g.voxel_x_mm,(float)g.voxel_y_mm,(float)g.voxel_z_mm,(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_u_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.size_v_mm:0),(float)g.offset_u_mm,(float)g.offset_n_mm,(float)g.offset_v_mm,(float)g.source_offset_x_mm,(float)g.source_offset_y_mm,(float)g.source_offset_z_mm,(float)g.tilt_u_rad,(float)g.tilt_v_rad,(float)g.tilt_n_rad,(float)g.start_angle_rad,(float)g.pitch_mm_per_turn,(float)g.start_z_mm,(float)g.phantom_offset_x_mm,(float)g.phantom_offset_y_mm,(float)g.phantom_offset_z_mm,(float)g.phantom_rotation_x_rad,(float)g.phantom_rotation_y_rad,(float)g.phantom_rotation_z_rad,cylindrical,c.projection.apply_geometry_flux ? 1 : 0,0,0,0,nullptr,0};
+        DeviceGeometry dg{g.detector_u,g.detector_v,g.views,g.views_per_turn,g.rotation_direction,c.projection.sampling.samples_per_pixel,g.volume_x,g.volume_y,g.volume_z,nm,ne,(float)g.pixel_u_mm,(float)g.pixel_v_mm,(float)g.sid_mm,(float)g.sdd_mm,(float)g.voxel_x_mm,(float)g.voxel_y_mm,(float)g.voxel_z_mm,(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.normal_size_u_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.normal_size_v_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.defocus_size_u_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.defocus_size_v_mm:0),(float)(c.projection.focal_spot.enabled?c.projection.focal_spot.epsilon:0),(float)g.offset_u_mm,(float)g.offset_n_mm,(float)g.offset_v_mm,(float)g.source_offset_x_mm,(float)g.source_offset_y_mm,(float)g.source_offset_z_mm,(float)g.tilt_u_rad,(float)g.tilt_v_rad,(float)g.tilt_n_rad,(float)g.start_angle_rad,(float)g.pitch_mm_per_turn,(float)g.start_z_mm,(float)g.phantom_offset_x_mm,(float)g.phantom_offset_y_mm,(float)g.phantom_offset_z_mm,(float)g.phantom_rotation_x_rad,(float)g.phantom_rotation_y_rad,(float)g.phantom_rotation_z_rad,cylindrical,c.projection.geometry_flux.enabled ? 1 : 0,0,0,0,nullptr,0};
         std::vector<int> map(256,-1); for(int m=0;m<nm;++m)map[c.projection.materials[m].label]=m;
         std::vector<float> mu(nm*ne), sw(ne), en(ne); float incident=0;
         const double pixel_area_cm2 = g.pixel_u_mm * g.pixel_v_mm / 100.0;
         for(int e=0;e<ne;++e){const auto& point=model.spectrum()[e];sw[e]=(float)(point.fluence_per_keV_cm2_mAs_at_1m*point.bin_width_keV*c.projection.mAs_per_view*pixel_area_cm2);en[e]=(float)point.energy_keV;incident+=sw[e]*en[e];for(int m=0;m<nm;++m)mu[m*ne+e]=(float)(c.projection.materials[m].density_g_cm3*model.massAttenuation(c.projection.materials[m].label)[e]);}
         const bool detector_response = c.projection.detector_response.enabled;
+        float total_incident_photons = 0.f;
+        for (float value : sw) total_incident_photons += value;
+        const float mean_photon_energy = total_incident_photons > 0.f
+            ? incident / total_incident_photons : 0.f;
         std::vector<float> protective_mu, impurity_mu, scintillator_mu;
         std::vector<float> protective_thickness, impurity_thickness, scintillator_thickness;
         if (detector_response) {
@@ -450,12 +496,12 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
             impurity_thickness = impurity.enabled
                 ? loadLayerThickness(impurity, pixels) : std::vector<float>(static_cast<size_t>(pixels), 0.f);
         }
-        unsigned char* dl=nullptr; int* dm=nullptr; float *dmu=nullptr,*ds=nullptr,*de=nullptr,*dresponse=nullptr,*do1=nullptr,*do2=nullptr;
+        unsigned char* dl=nullptr; unsigned char* dmask=nullptr; int* dm=nullptr; float *dmu=nullptr,*ds=nullptr,*de=nullptr,*dresponse=nullptr,*do1=nullptr,*do2=nullptr,*do3=nullptr;
         cudaArray_t label_array=nullptr; cudaTextureObject_t label_texture=0;
         float *dprotective_thickness=nullptr,*dimpurity_thickness=nullptr,*dscintillator_thickness=nullptr;
         float *dprotective_mu=nullptr,*dimpurity_mu=nullptr,*dscintillator_mu=nullptr;
         auto ck=[&](cudaError_t x,const char* w){return ok(x,w,err);};
-        if(!ck(cudaMalloc(&dl,labels.size()),"cudaMalloc labels")||!ck(cudaMalloc(&dm,256*sizeof(int)),"cudaMalloc map")||!ck(cudaMalloc(&dmu,mu.size()*sizeof(float)),"cudaMalloc mu")||!ck(cudaMalloc(&ds,sw.size()*sizeof(float)),"cudaMalloc spectrum")||!ck(cudaMalloc(&de,en.size()*sizeof(float)),"cudaMalloc energies")||!ck(cudaMalloc(&do1,pixels*sizeof(float)),"cudaMalloc projection")||!ck(cudaMalloc(&do2,pixels*sizeof(float)),"cudaMalloc energy")) throw std::runtime_error(err);
+        if(!ck(cudaMalloc(&dl,labels.size()),"cudaMalloc labels")||!ck(cudaMalloc(&dmask,pixels),"cudaMalloc object mask")||!ck(cudaMalloc(&dm,256*sizeof(int)),"cudaMalloc map")||!ck(cudaMalloc(&dmu,mu.size()*sizeof(float)),"cudaMalloc mu")||!ck(cudaMalloc(&ds,sw.size()*sizeof(float)),"cudaMalloc spectrum")||!ck(cudaMalloc(&de,en.size()*sizeof(float)),"cudaMalloc energies")||!ck(cudaMalloc(&do1,pixels*sizeof(float)),"cudaMalloc expected primary")||!ck(cudaMalloc(&do2,pixels*sizeof(float)),"cudaMalloc air energy")||!ck(cudaMalloc(&do3,pixels*sizeof(float)),"cudaMalloc sampled primary")) throw std::runtime_error(err);
         cudaMemcpy(dl,labels.data(),labels.size(),cudaMemcpyHostToDevice);cudaMemcpy(dm,map.data(),256*sizeof(int),cudaMemcpyHostToDevice);cudaMemcpy(dmu,mu.data(),mu.size()*sizeof(float),cudaMemcpyHostToDevice);cudaMemcpy(ds,sw.data(),sw.size()*sizeof(float),cudaMemcpyHostToDevice);cudaMemcpy(de,en.data(),en.size()*sizeof(float),cudaMemcpyHostToDevice);
         const bool use_constant_tables = ne <= 256 && nm * ne <= 15000;
         if (use_constant_tables) {
@@ -517,7 +563,7 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
             const auto parent = c.projection.air_output_file.parent_path();
             if (!parent.empty()) std::filesystem::create_directories(parent);
         }
-        std::vector<float> ho(pixels),he(pixels),air(pixels); std::ofstream fo(out_file,std::ios::binary);
+        std::vector<float> ho(pixels),he(pixels),air(pixels),sampled_primary(pixels),expected_primary(pixels),sampled_scatter(pixels); std::vector<unsigned char> object_mask(pixels); std::ofstream fo(out_file,std::ios::binary);
         std::vector<std::vector<float>> object_afterglow_state;
         std::vector<std::vector<float>> air_afterglow_state;
         std::vector<float> processed_air(pixels);
@@ -530,22 +576,59 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
         if (write_air) fa.open(c.projection.air_output_file, std::ios::binary);
         if (write_air && !fa) throw std::runtime_error("cannot open air output");
         if(!fo || (write_energy && !fe)) throw std::runtime_error("无法创建CUDA前投输出");
+        using Clock = std::chrono::steady_clock;
+        double primary_ms = 0.0, transfer_ms = 0.0, scatter_ms = 0.0;
+        double scatter_noise_ms = 0.0, postprocess_ms = 0.0, output_ms = 0.0;
+        const auto projection_start = Clock::now();
+        auto elapsed_ms = [](Clock::time_point start) {
+            return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        };
         for(int v=0;v<g.views;++v){
-            const int quantum_noise = c.projection.quantum_noise_enabled ? 1 : 0;
+            const int quantum_noise = c.projection.quantum_noise.enabled ? 1 : 0;
+            auto stage_start = Clock::now();
             switch (dg.nm) {
-            case 1: launchPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 2: launchPrimaryKernel<2>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 3: launchPrimaryKernel<3>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 4: launchPrimaryKernel<4>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 5: launchPrimaryKernel<5>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 6: launchPrimaryKernel<6>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 7: launchPrimaryKernel<7>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 8: launchPrimaryKernel<8>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 9: launchPrimaryKernel<9>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            case 10: launchPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
-            default: launchPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise_seed,do1,do2); break;
+            case 1: launchPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 2: launchPrimaryKernel<2>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 3: launchPrimaryKernel<3>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 4: launchPrimaryKernel<4>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 5: launchPrimaryKernel<5>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 6: launchPrimaryKernel<6>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 7: launchPrimaryKernel<7>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 8: launchPrimaryKernel<8>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 9: launchPrimaryKernel<9>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 10: launchPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            default: launchPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,v,c.projection.sampling.seed,c.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
             }
-            if(!ck(cudaGetLastError(),"primary kernel")||!ck(cudaDeviceSynchronize(),"primary synchronize"))throw std::runtime_error(err);cudaMemcpy(he.data(),do1,pixels*sizeof(float),cudaMemcpyDeviceToHost);cudaMemcpy(air.data(),do2,pixels*sizeof(float),cudaMemcpyDeviceToHost);
+            if(!ck(cudaGetLastError(),"primary kernel")||!ck(cudaDeviceSynchronize(),"primary synchronize"))throw std::runtime_error(err);
+            primary_ms += elapsed_ms(stage_start);
+            stage_start = Clock::now();
+            cudaMemcpy(expected_primary.data(),do1,pixels*sizeof(float),cudaMemcpyDeviceToHost);
+            cudaMemcpy(air.data(),do2,pixels*sizeof(float),cudaMemcpyDeviceToHost);
+            cudaMemcpy(sampled_primary.data(),do3,pixels*sizeof(float),cudaMemcpyDeviceToHost);
+            cudaMemcpy(object_mask.data(),dmask,pixels,cudaMemcpyDeviceToHost);
+            transfer_ms += elapsed_ms(stage_start);
+            he = expected_primary;
+            stage_start = Clock::now();
+            if (fasks_scatter) fasks_scatter->apply(he, air, object_mask);
+            scatter_ms += elapsed_ms(stage_start);
+            stage_start = Clock::now();
+            if (scatter_model && c.projection.quantum_noise.enabled) {
+                for (int p=0; p<pixels; ++p)
+                    sampled_scatter[p] = std::max(he[p] - expected_primary[p], 0.f);
+                if(!ck(cudaMemcpy(do1, sampled_scatter.data(), pixels*sizeof(float), cudaMemcpyHostToDevice),
+                        "upload scatter quantum expectation")) throw std::runtime_error(err);
+                applyQuantumNoiseAfterScatter<<<(pixels + 255) / 256, 256>>>(
+                    do1, pixels, mean_photon_energy,
+                    c.projection.quantum_noise.seed ^ 0xa511e9b3U, v);
+                if(!ck(cudaGetLastError(), "scatter quantum noise") ||
+                   !ck(cudaMemcpy(he.data(), do1, pixels*sizeof(float), cudaMemcpyDeviceToHost),
+                       "download scatter quantum noise")) throw std::runtime_error(err);
+                for (int p=0; p<pixels; ++p) he[p] += sampled_primary[p];
+            } else if (c.projection.quantum_noise.enabled) {
+                he = sampled_primary;
+            }
+            scatter_noise_ms += elapsed_ms(stage_start);
+            stage_start = Clock::now();
             applyCrosstalkSignal(he, g.detector_u, g.detector_v,
                 c.projection.detector_postprocess.optical_crosstalk);
             applyAfterglowSignal(he, c.projection.detector_postprocess.afterglow,
@@ -563,24 +646,41 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c, const std::vector<std:
                     air_afterglow_state);
                 applyCrosstalkSignal(processed_air, g.detector_u, g.detector_v,
                     c.projection.detector_postprocess.electronic_crosstalk);
-                applyDasSignal(processed_air,
-                    c.projection.detector_postprocess.das, air_das_random);
+                // Air is a high-statistics reference: keep it deterministic and
+                // do not apply electronic noise or stochastic DAS effects.
                 have_air = true;
                 if (write_air)
                     fa.write(reinterpret_cast<const char*>(processed_air.data()), pixels*sizeof(float));
             }
+            postprocess_ms += elapsed_ms(stage_start);
+            stage_start = Clock::now();
             for (int p=0; p<pixels; ++p)
                 ho[p] = -std::log(std::max(he[p] / std::max(processed_air[p], 1e-30f), 1e-30f));
             fo.write(reinterpret_cast<const char*>(ho.data()), pixels*sizeof(float));
             if (write_energy)
                 fe.write(reinterpret_cast<const char*>(he.data()), pixels*sizeof(float));
+            output_ms += elapsed_ms(stage_start);
             if ((v + 1) == 1 || (v + 1) == g.views || (v + 1) % 10 == 0)
                 std::cerr << "projection frame " << (v + 1) << "/" << g.views << std::endl;
         }
-        cudaFree(dl);cudaFree(dm);cudaFree(dmu);cudaFree(ds);cudaFree(de);cudaFree(dresponse);
+        const double projection_ms = elapsed_ms(projection_start);
+        auto percent = [projection_ms](double value) {
+            return projection_ms > 0.0 ? 100.0 * value / projection_ms : 0.0;
+        };
+        std::ostringstream timing;
+        timing << std::fixed << std::setprecision(1)
+            << "projection_stage_timing_ms total=" << projection_ms
+            << " primary=" << primary_ms << " (" << percent(primary_ms) << "%)"
+            << " transfer=" << transfer_ms << " (" << percent(transfer_ms) << "%)"
+            << " scatter=" << scatter_ms << " (" << percent(scatter_ms) << "%)"
+            << " scatter_noise=" << scatter_noise_ms << " (" << percent(scatter_noise_ms) << "%)"
+            << " postprocess=" << postprocess_ms << " (" << percent(postprocess_ms) << "%)"
+            << " output=" << output_ms << " (" << percent(output_ms) << "%)";
+        SimLogger::instance().info(timing.str());
+        cudaFree(dl);cudaFree(dmask);cudaFree(dm);cudaFree(dmu);cudaFree(ds);cudaFree(de);cudaFree(dresponse);
         cudaFree(dprotective_thickness);cudaFree(dimpurity_thickness);cudaFree(dscintillator_thickness);
         cudaFree(dprotective_mu);cudaFree(dimpurity_mu);cudaFree(dscintillator_mu);
-        cudaFree(do1);cudaFree(do2); if(label_texture) cudaDestroyTextureObject(label_texture); if(label_array) cudaFreeArray(label_array); fo.close();fe.close();fa.close();
+        cudaFree(do1);cudaFree(do2);cudaFree(do3); if(label_texture) cudaDestroyTextureObject(label_texture); if(label_array) cudaFreeArray(label_array); fo.close();fe.close();fa.close();
         if (c.projection.save_metadata)
             writeMetadata(out_file,g.detector_u,g.detector_v,g.views,"air_corrected_negative_log_attenuation");
         if (write_energy)

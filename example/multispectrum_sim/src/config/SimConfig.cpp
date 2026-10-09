@@ -50,13 +50,31 @@ namespace yk::spectral {
             c.projection.output_file = resolve(config_directory, (*p)["output_file"].value_or(std::string("projection.raw")));
             c.projection.energy_output_file = resolve(config_directory, (*p)["energy_output_file"].value_or(std::string{}));
             c.projection.air_output_file = resolve(config_directory, (*p)["air_output_file"].value_or(std::string{}));
-            c.projection.apply_geometry_flux = (*p)["apply_geometry_flux"].value_or(true);
             c.projection.mAs_per_view = (*p)["mAs_per_view"].value_or(1.0);
-            c.projection.quantum_noise_enabled = (*p)["quantum_noise_enabled"].value_or(true);
-            c.projection.quantum_noise_seed = (*p)["quantum_noise_seed"].value_or(67890u);
+            for (const char* removed : { "apply_geometry_flux", "quantum_noise_enabled", "quantum_noise_seed" })
+                if (p->contains(removed))
+                    throw std::runtime_error(std::string("projection.") + removed + " has been moved to a dedicated section");
+            auto* flux = (*p)["geometry_flux"].as_table();
+            if (!flux) throw std::runtime_error("missing [projection.geometry_flux]");
+            c.projection.geometry_flux.enabled = (*flux)["enabled"].value_or(true);
+            auto* noise = (*p)["quantum_noise"].as_table();
+            if (!noise) throw std::runtime_error("missing [projection.quantum_noise]");
+            c.projection.quantum_noise.enabled = (*noise)["enabled"].value_or(true);
+            c.projection.quantum_noise.seed = (*noise)["seed"].value_or(67890u);
             if (!std::isfinite(c.projection.mAs_per_view) || c.projection.mAs_per_view <= 0.0)
                 throw std::runtime_error("projection.mAs_per_view must be positive");
             c.projection.save_metadata = (*p)["save_metadata"].value_or(true);
+            if (auto* scatter = (*p)["scatter"].as_table()) {
+                c.projection.scatter.enabled = (*scatter)["enabled"].value_or(false);
+                c.projection.scatter.model_file = resolve(config_directory,
+                    (*scatter)["model_file"].value_or(std::string{}));
+                if (c.projection.scatter.enabled) {
+                    if (!std::filesystem::is_regular_file(c.projection.scatter.model_file))
+                        throw std::runtime_error("scatter.model_file must point to an existing kernel model");
+                    if (c.geometry.kind == GeometryKind::CylCbct || c.geometry.kind == GeometryKind::CylHelical)
+                        throw std::runtime_error("kernel scatter currently supports flat detectors only");
+                }
+            }
         }
         auto* reconstruction_table = t["reconstruction"].as_table();
         if (c.runsReconstruction() && !reconstruction_table)
@@ -322,10 +340,23 @@ namespace yk::spectral {
         if (auto* f = p ? (*p)["focal_spot"].as_table() : nullptr) {
             auto& spot = c.projection.focal_spot;
             spot.enabled = (*f)["enabled"].value_or(false);
-            spot.size_u_mm = (*f)["size_u_mm"].value_or(0.0);
-            spot.size_v_mm = (*f)["size_v_mm"].value_or(0.0);
+            spot.normal_size_u_mm = (*f)["normal_size_u_mm"].value_or(0.0);
+            spot.normal_size_v_mm = (*f)["normal_size_v_mm"].value_or(0.0);
+            spot.defocus_size_u_mm = (*f)["defocus_size_u_mm"].value_or(0.0);
+            spot.defocus_size_v_mm = (*f)["defocus_size_v_mm"].value_or(0.0);
+            if (f->contains("size_u_mm") || f->contains("size_v_mm"))
+                throw std::runtime_error("use normal_size_*_mm and defocus_size_*_mm for focal spot sizes");
+            spot.epsilon = (*f)["epsilon"].value_or(0.0);
             if (f->contains("rotation_deg")) throw std::runtime_error("矩形焦点不支持 rotation_deg");
-            if (spot.enabled && (spot.size_u_mm <= 0 || spot.size_v_mm <= 0))
+            if (!std::isfinite(spot.epsilon) || spot.epsilon < 0.0 || spot.epsilon > 1.0)
+                throw std::runtime_error("projection.focal_spot.epsilon must be in [0, 1]");
+            if (spot.enabled &&
+                ((!std::isfinite(spot.normal_size_u_mm) || spot.normal_size_u_mm < 0) ||
+                 (!std::isfinite(spot.normal_size_v_mm) || spot.normal_size_v_mm < 0) ||
+                 (!std::isfinite(spot.defocus_size_u_mm) || spot.defocus_size_u_mm < 0) ||
+                 (!std::isfinite(spot.defocus_size_v_mm) || spot.defocus_size_v_mm < 0) ||
+                 (spot.epsilon < 1.0 && (spot.normal_size_u_mm <= 0 || spot.normal_size_v_mm <= 0)) ||
+                 (spot.epsilon > 0.0 && (spot.defocus_size_u_mm <= 0 || spot.defocus_size_v_mm <= 0))))
                 throw std::runtime_error("矩形焦点尺寸必须为正");
         }
         if (c.projection.sampling.samples_per_pixel <= 0 || c.projection.sampling.samples_per_pixel > 4096)

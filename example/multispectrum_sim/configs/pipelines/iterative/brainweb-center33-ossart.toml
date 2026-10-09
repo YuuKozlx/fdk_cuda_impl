@@ -9,7 +9,18 @@ spectrum_file = "../../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
 xcom_data_directory = "../../../../../thirdparty/nist_xcom/data"
 output_file = "../../../outputs/projections/brainweb-center33-fdk.raw"
 energy_output_file = "../../../outputs/projections/brainweb-center33-fdk-energy.raw"
-apply_geometry_flux = true
+mAs_per_view = 1.0
+
+[projection.geometry_flux]
+enabled = true
+[projection.quantum_noise]
+enabled = true
+seed = 67890
+
+# Detector layer absorption/efficiency, separate from crosstalk and DAS.
+[projection.detector_response]
+enabled = false
+oblique_path_correction = true
 
 [projection.sampling]
 samples_per_pixel = 50
@@ -17,8 +28,11 @@ spatial_seed = 12345
 
 [projection.focal_spot]
 enabled = false
-size_u_mm = 0.0
-size_v_mm = 0.0
+normal_size_u_mm = 0.0
+normal_size_v_mm = 0.0
+defocus_size_u_mm = 0.0
+defocus_size_v_mm = 0.0
+epsilon = 0.0
 
 [geometry]
 kind = "flat_cbct"
@@ -135,4 +149,3 @@ tv_alpha = 0.002
 tv_alpha_reduction = 0.95
 maximum_update_ratio = 0.95
 non_negative = true
-

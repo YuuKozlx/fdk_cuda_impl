@@ -99,10 +99,35 @@ int main() {
             "[geometry]\nkind='flat_cbct'\nviews=1\nviews_per_turn=1\n"
             "detector_u=1\ndetector_v=1\nvolume_x=1\nvolume_y=1\nvolume_z=1\n"
             "[projection]\noutput_file='projection.raw'\nengine='pixel_local_random'\n"
+            "[projection.geometry_flux]\nenabled=true\n"
+            "[projection.quantum_noise]\nenabled=true\nseed=67890\n"
             "[projection.sampling]\nsamples_per_pixel=1\n"
             "[[projection.materials]]\nlabel=1\nname='water'\nformula='H2O'\n"
             "[reconstruction]\ntype='analytic'\n"
             "[reconstruction.analytic]\npipeline='fdk'\n", true);
+        testV2(
+            "[workflow]\nmode='project'\n"
+            "[geometry]\nkind='flat_cbct'\nviews=1\nviews_per_turn=1\n"
+            "detector_u=1\ndetector_v=1\nvolume_x=1\nvolume_y=1\nvolume_z=1\n"
+            "[projection]\noutput_file='projection.raw'\n"
+            "[projection.geometry_flux]\nenabled=true\n"
+            "[projection.quantum_noise]\nenabled=false\nseed=67890\n"
+            "[projection.focal_spot]\nenabled=true\n"
+            "normal_size_u_mm=0.4\nnormal_size_v_mm=0.4\n"
+            "defocus_size_u_mm=3.0\ndefocus_size_v_mm=2.0\nepsilon=0.01\n"
+            "[projection.sampling]\nsamples_per_pixel=8\n"
+            "[[projection.materials]]\nlabel=1\nname='water'\nformula='H2O'\n", true);
+        testV2(
+            "[workflow]\nmode='project'\n"
+            "[geometry]\nkind='flat_cbct'\n"
+            "[projection]\noutput_file='projection.raw'\n"
+            "[projection.geometry_flux]\nenabled=true\n"
+            "[projection.quantum_noise]\nenabled=true\n"
+            "[projection.focal_spot]\nenabled=true\n"
+            "normal_size_u_mm=0.4\nnormal_size_v_mm=0.4\n"
+            "defocus_size_u_mm=3.0\ndefocus_size_v_mm=2.0\nepsilon=1.01\n"
+            "[projection.sampling]\nsamples_per_pixel=8\n"
+            "[[projection.materials]]\nlabel=1\nname='water'\nformula='H2O'\n", false);
         std::filesystem::remove(path);
         return 0;
     } catch (const std::exception& e) {
