@@ -17,11 +17,21 @@ EReleaseDecision releaseDecision(const SSystemSpec& source)
     if ((detector != EDetectorKind::Flat &&
          detector != EDetectorKind::Cylindrical) ||
         (trajectory != ETrajectoryKind::Circular &&
-         trajectory != ETrajectoryKind::Helical))
+         trajectory != ETrajectoryKind::Helical &&
+         trajectory != ETrajectoryKind::PlanarSourceOrbit &&
+         trajectory != ETrajectoryKind::NikonTilted))
         return EReleaseDecision::Invalid;
 
     const bool cyl = detector == EDetectorKind::Cylindrical;
     const bool helical = trajectory == ETrajectoryKind::Helical;
+    const bool nonstandard = trajectory == ETrajectoryKind::PlanarSourceOrbit ||
+        trajectory == ETrajectoryKind::NikonTilted;
+    if (nonstandard) {
+        if (cyl) return EReleaseDecision::Invalid;
+        return source.reconstruction.pipeline == EPipeline::FDK ||
+            source.reconstruction.pipeline == EPipeline::ForwardProjection
+            ? EReleaseDecision::Released : EReleaseDecision::Invalid;
+    }
     switch (source.reconstruction.pipeline) {
     case EPipeline::ForwardProjection:
         return EReleaseDecision::Released;
@@ -131,6 +141,14 @@ public:
             return fail_(EApiErrorCode::UnsupportedCombination,
                 "当前 DLL 构建未启用 YKCBCT_BUILD_HELICAL，缺少 wFBP 后端");
 #endif
+        const bool nonstandard =
+            system.geometry.trajectory == ETrajectoryKind::PlanarSourceOrbit ||
+            system.geometry.trajectory == ETrajectoryKind::NikonTilted;
+        if (nonstandard &&
+            !hasBytes(system.struct_size,
+                offsetof(SSystemSpec, nonstandard) + sizeof(system.nonstandard)))
+            return fail_(EApiErrorCode::InvalidConfig,
+                "Non-standard trajectories require the SSystemSpec nonstandard tail");
         SSystemConfig backend_geometry = system.geometry;
         if (!validForwardProjectionPose(backend_geometry.forward_projection_pose))
             return fail_(EApiErrorCode::InvalidGeometry,
@@ -147,13 +165,19 @@ public:
         }
         session_ = detail::createExecutionBackend();
         if (!session_ || !session_->initialize(backend_geometry,
-                system.reconstruction, system.device)) {
+                system.reconstruction,
+                nonstandard ? &system.nonstandard : nullptr, system.device)) {
             release();
             return fail_(EApiErrorCode::InvalidGeometry, "几何或算法初始化失败");
         }
-        view_count_ = system.geometry.trajectory == ETrajectoryKind::Helical
-            ? system.geometry.helical.total_views
-            : system.geometry.circular.total_views;
+        if (system.geometry.trajectory == ETrajectoryKind::Helical)
+            view_count_ = system.geometry.helical.total_views;
+        else if (system.geometry.trajectory == ETrajectoryKind::PlanarSourceOrbit)
+            view_count_ = system.nonstandard.planar_source_orbit.total_views;
+        else if (system.geometry.trajectory == ETrajectoryKind::NikonTilted)
+            view_count_ = system.nonstandard.nikon_tilted.total_views;
+        else
+            view_count_ = system.geometry.circular.total_views;
         const int channels = system.geometry.detector == EDetectorKind::Cylindrical
             ? system.geometry.cylindrical_detector.channels
             : system.geometry.flat_detector.channels;
@@ -164,7 +188,7 @@ public:
         volume_elements_ = static_cast<size_t>(system.geometry.volume.nx) *
             system.geometry.volume.ny * system.geometry.volume.nz;
         streaming_fdk_ = system.reconstruction.pipeline == EPipeline::FDK &&
-            system.geometry.detector == EDetectorKind::Flat;
+            system.geometry.detector == EDetectorKind::Flat && !nonstandard;
         received_views_ = 0;
         initialized_ = true;
         return true;

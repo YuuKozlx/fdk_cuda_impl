@@ -1,6 +1,7 @@
 #pragma once
 
 #include "YKCBCT/geometry/YkSystemGeometry.hpp"
+#include "YKCBCT/geometry/YkNonStandardGeometrySpec.hpp"
 #include "YKCBCT/interface/YkSystemReconstruction.hpp"
 #include "common/YkOperatorTypes.hpp"
 
@@ -12,7 +13,8 @@ class IExecutionBackend {
 public:
     virtual ~IExecutionBackend() = default;
     virtual bool initialize(const SSystemConfig& system,
-        const SReconstructionSpec& reconstruction, int device) = 0;
+        const SReconstructionSpec& reconstruction,
+        const SNonStandardGeometrySpec* nonstandard, int device) = 0;
     virtual bool execute(const ExecuteRequest& request) = 0;
     virtual void reset() = 0;
     virtual void release() = 0;

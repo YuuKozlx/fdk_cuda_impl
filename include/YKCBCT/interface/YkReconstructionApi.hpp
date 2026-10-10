@@ -5,6 +5,7 @@
 
 #include "YKCBCT/global/YkExport.hpp"
 #include "YKCBCT/geometry/YkSystemGeometry.hpp"
+#include "YKCBCT/geometry/YkNonStandardGeometrySpec.hpp"
 #include "YKCBCT/interface/YkSystemReconstruction.hpp"
 #include "YKCBCT/interface/YkReconstructionTypes.hpp"
 
@@ -18,6 +19,10 @@ struct SSystemSpec {
     SSystemConfig geometry{};
     SReconstructionSpec reconstruction{};
     int device = 0;
+    // Optional ABI tail. Older api_version=2 clients have a smaller
+    // struct_size and remain valid because this field is read only for a
+    // non-standard trajectory.
+    SNonStandardGeometrySpec nonstandard{};
 };
 
 struct SExecutionRequest {

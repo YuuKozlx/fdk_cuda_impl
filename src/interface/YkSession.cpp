@@ -8,6 +8,10 @@
 #include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
 #include "Reconstruction/Analytic/Circular/Flat/XFDK/YkXfdkPipeline.hpp"
 #include "Reconstruction/Analytic/Circular/Flat/CFDK/YkCurveFilteredFdkPipeline.hpp"
+#include "NonStandardFpBp/Geometry/YkTrajectorySampling.hpp"
+#include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtGeometry.hpp"
+#include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtPipeline.hpp"
+#include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitTomographyPipeline.hpp"
 #include "CylFpBp/Analytic/YkCylAnalyticReconstruction.hpp"
 #include "CylFpBp/FP/YkCylForwardProjection.hpp"
 #include "CylFpBp/Iter/YkCylAlgebraicReconstructor.hpp"
@@ -31,6 +35,8 @@
 
 namespace YK {
 namespace {
+
+enum class ENonStandardKind { None, PlanarSourceOrbit, NikonTilted };
 
 SFilterKernelDesc makeFilterDesc(const SFdkAlgoParams& ap)
 {
@@ -73,18 +79,35 @@ public:
     ~Session() override { release(); }
 
     bool initialize(const SSystemConfig& system,
-        const SReconstructionSpec& reconstruction, int device) override
+        const SReconstructionSpec& reconstruction,
+        const SNonStandardGeometrySpec* nonstandard, int device) override
     {
         release();
-        PreparedGeometry prepared;
-        if (!prepared.initialize(system) || device < 0) {
-            YK_LOGE("[Session] initialize: invalid geometry or GPU selection.");
+        if (device < 0) {
+            YK_LOGE("[Session] initialize: invalid GPU selection.");
             return false;
         }
         reconstruction_ = reconstruction;
         device_ = device;
-        geometry_ = std::move(prepared);
         if (!resources_.initialize(device_)) return false;
+        if (system.trajectory == ETrajectoryKind::PlanarSourceOrbit ||
+            system.trajectory == ETrajectoryKind::NikonTilted) {
+            const bool ok = nonstandard &&
+                initializeNonStandard_(system, *nonstandard);
+            if (!ok) {
+                release();
+                return false;
+            }
+            initialized_ = true;
+            return true;
+        }
+        PreparedGeometry prepared;
+        if (!prepared.initialize(system)) {
+            YK_LOGE("[Session] initialize: invalid geometry or GPU selection.");
+            release();
+            return false;
+        }
+        geometry_ = std::move(prepared);
         params_ = geometry_.base();
         params_.scan.short_scan = !geometry_.isCylindrical() &&
             system.trajectory == ETrajectoryKind::Circular &&
@@ -329,7 +352,10 @@ public:
             return false;
         }
         switch (reconstruction_.pipeline) {
-        case EPipeline::FDK: return cylindrical_ ? executeCylFdk_(r) : executeFdk_(r);
+        case EPipeline::FDK:
+            if (nonstandard_kind_ != ENonStandardKind::None)
+                return executeNonStandardFdk_(r);
+            return cylindrical_ ? executeCylFdk_(r) : executeFdk_(r);
         case EPipeline::XFDK: return executeXfdk_(r);
         case EPipeline::CFDK: return executeCfdk_(r);
         case EPipeline::ForwardProjection: return executeFp_(r);
@@ -361,6 +387,8 @@ public:
 
     void release() override
     {
+        planar_pipeline_.release();
+        tilted_pipeline_.release();
         fdk_.release();
         xfdk_.release();
         cfdk_.release();
@@ -382,11 +410,198 @@ public:
         reconstruction_ = {};
         initialized_ = false;
         cylindrical_ = false;
+        nonstandard_kind_ = ENonStandardKind::None;
+        acquired_u_ = 0;
+        acquired_v_ = 0;
     }
 
     bool isInitialized() const override { return initialized_; }
 
 private:
+    bool makeNonStandardParams_(const SSystemConfig& system,
+        const std::vector<float>& angles, float sid_mm, float sdd_mm,
+        SReconstructionParams& params) const
+    {
+        SVolGeom volume{};
+        const auto& detector = system.flat_detector;
+        if (system.detector != EDetectorKind::Flat ||
+            detector.channels <= 0 || detector.rows <= 0 ||
+            !(detector.channel_size_mm > 0.f) ||
+            !(detector.row_size_mm > 0.f) || angles.empty() ||
+            !(sid_mm > 0.f) || !(sdd_mm > sid_mm) ||
+            !buildVolumeGeometry(system.volume, volume))
+            return false;
+        const auto& pose = detector.pose;
+        if (!std::isfinite(pose.offset_unv_mm.x) ||
+            !std::isfinite(pose.offset_unv_mm.y) ||
+            !std::isfinite(pose.offset_unv_mm.z) ||
+            !std::isfinite(pose.tilt_u_rad) ||
+            !std::isfinite(pose.tilt_v_rad) ||
+            !std::isfinite(pose.tilt_n_rad)) {
+            YK_LOGE("[Session] non-standard detector pose must contain finite values.");
+            return false;
+        }
+        params = {};
+        params.scan.angles = angles;
+        params.scan.Nu = detector.channels;
+        params.scan.Nv = detector.rows;
+        params.scan.NAng = static_cast<int>(angles.size());
+        params.scan.totalViews = params.scan.NAng;
+        params.scan.du_mm = detector.channel_size_mm;
+        params.scan.dv_mm = detector.row_size_mm;
+        params.scan.sid_mm = sid_mm;
+        params.scan.sdd_mm = sdd_mm;
+        params.volume.Nx = volume.Nx;
+        params.volume.Ny = volume.Ny;
+        params.volume.Nz = volume.Nz;
+        params.volume.voxelX_mm = volume.vox_x;
+        params.volume.voxelY_mm = volume.vox_y;
+        params.volume.voxelZ_mm = volume.vox_z;
+        params.volume.centerX_mm = volume.center.x;
+        params.volume.centerY_mm = volume.center.y;
+        params.volume.centerZ_mm = volume.center.z;
+        params.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
+        return true;
+    }
+
+    bool textureGridCompatible_(int detector_u, int detector_v) const
+    {
+        cudaDeviceProp properties{};
+        if (cudaGetDeviceProperties(&properties, device_) != cudaSuccess)
+            return false;
+        const size_t pitch = static_cast<size_t>(detector_u) * sizeof(float);
+        const size_t slice = pitch * detector_v;
+        if (pitch % properties.texturePitchAlignment != 0 ||
+            slice % properties.textureAlignment != 0) {
+            YK_LOGE("[Session] detector grid is incompatible with the current linear-texture alignment: {}x{}",
+                detector_u, detector_v);
+            return false;
+        }
+        return true;
+    }
+
+    bool initializeNonStandard_(const SSystemConfig& system,
+        const SNonStandardGeometrySpec& nonstandard)
+    {
+        NonStandardFpBp::TrajectorySampling sampling{};
+        std::vector<float> angles;
+        std::vector<SConeProjGeomVec> geometry;
+        if (system.trajectory == ETrajectoryKind::PlanarSourceOrbit) {
+            const auto& spec = nonstandard.planar_source_orbit;
+            if (spec.rotation_direction != 1 && spec.rotation_direction != -1)
+                return false;
+            sampling = {spec.total_views, spec.start_angle_rad,
+                spec.scan_range_rad, static_cast<float>(spec.rotation_direction)};
+            if (!NonStandardFpBp::buildUniformTrajectoryParameters(sampling, angles) ||
+                !makeNonStandardParams_(system, angles, spec.sid_mm,
+                    spec.sid_mm + spec.detector_y_mm, params_))
+                return false;
+            params_.scan.start_angle_rad = spec.start_angle_rad;
+            params_.scan.range_rad = spec.scan_range_rad;
+            params_.scan.direction = spec.rotation_direction;
+            NonStandardFpBp::SourceOrbitGeometryConfig config{};
+            config.detector_u = system.flat_detector.channels;
+            config.detector_v = system.flat_detector.rows;
+            config.detector_pixel_u_mm = system.flat_detector.channel_size_mm;
+            config.detector_pixel_v_mm = system.flat_detector.row_size_mm;
+            config.sid_mm = spec.sid_mm;
+            config.detector_y_mm = spec.detector_y_mm;
+            config.source_orbit_radius_mm = spec.source_orbit_radius_mm;
+            config.source_lateral_offset_mm = spec.source_lateral_offset_mm;
+            config.detector_pose = system.flat_detector.pose;
+            if (!NonStandardFpBp::buildSourceOrbitGeometry(config, angles, geometry))
+                return false;
+            const float3 center = system.volume.center_mm;
+            if (center.x != 0.f || center.y != 0.f || center.z != 0.f) {
+                for (auto& view : geometry) {
+                    view.src.x += center.x; view.src.y += center.y; view.src.z += center.z;
+                    view.detS.x += center.x; view.detS.y += center.y; view.detS.z += center.z;
+                }
+            }
+            if (!geometry_.initialize(params_, geometry)) return false;
+            acquired_u_ = params_.scan.Nu;
+            acquired_v_ = params_.scan.Nv;
+            nonstandard_kind_ = ENonStandardKind::PlanarSourceOrbit;
+            if (reconstruction_.pipeline == EPipeline::ForwardProjection) {
+                forward_ = makeForwardOperator(forwardTask_());
+                return forward_ && forward_->prepare(geometry_, resources_);
+            }
+            if (reconstruction_.pipeline != EPipeline::FDK ||
+                spec.reconstruction_channels <= 0 ||
+                spec.reconstruction_rows <= 0 ||
+                !textureGridCompatible_(spec.reconstruction_channels,
+                    spec.reconstruction_rows))
+                return false;
+            std::vector<SFDKGeoParamPerView> raw_derived;
+            if (!NonStandardFpBp::buildSourceOrbitDerivedGeometry(
+                    acquired_u_, acquired_v_, spec.scan_range_rad, center,
+                    geometry, raw_derived))
+                return false;
+            std::vector<NonStandardFpBp::ProjectionWindow> windows;
+            windows.reserve(raw_derived.size());
+            for (const auto& view : raw_derived) {
+                const float center_u = 0.5f * (acquired_u_ - 1) + view.offsetU_pix;
+                const float center_v = 0.5f * (acquired_v_ - 1) + view.offsetV_pix;
+                const auto safe = NonStandardFpBp::makeSafeWindow(acquired_u_,
+                    acquired_v_, spec.reconstruction_channels,
+                    spec.reconstruction_rows, center_u, center_v);
+                if (!safe.valid) return false;
+                windows.push_back(safe.window);
+            }
+            SReconstructionParams local = params_;
+            local.scan.Nu = spec.reconstruction_channels;
+            local.scan.Nv = spec.reconstruction_rows;
+            const auto mode = spec.resample_mode ==
+                    EPlanarResampleMode::InPlaneRotated
+                ? NonStandardFpBp::SourceOrbitResampleMode::InPlaneRotated
+                : NonStandardFpBp::SourceOrbitResampleMode::PerspectiveOrthogonal;
+            return planar_pipeline_.prepare(local, geometry, windows,
+                acquired_u_, acquired_v_, mode, resources_.stream(), device_);
+        }
+
+        const auto& spec = nonstandard.nikon_tilted;
+        if (spec.rotation_direction != 1 && spec.rotation_direction != -1)
+            return false;
+        sampling = {spec.total_views, spec.start_angle_rad,
+            spec.scan_range_rad, static_cast<float>(spec.rotation_direction)};
+        if (!NonStandardFpBp::buildUniformTrajectoryParameters(sampling, angles) ||
+            !makeNonStandardParams_(system, angles, spec.sid_mm,
+                spec.sdd_mm, params_))
+            return false;
+        params_.scan.start_angle_rad = spec.start_angle_rad;
+        params_.scan.range_rad = spec.scan_range_rad;
+        params_.scan.direction = spec.rotation_direction;
+        NonStandardFpBp::NikonTiltedCt::GeometryConfig config{};
+        config.detector_u = system.flat_detector.channels;
+        config.detector_v = system.flat_detector.rows;
+        config.detector_pixel_u_mm = system.flat_detector.channel_size_mm;
+        config.detector_pixel_v_mm = system.flat_detector.row_size_mm;
+        config.sid_mm = spec.sid_mm;
+        config.sdd_mm = spec.sdd_mm;
+        config.tilt_rad = spec.tilt_rad;
+        config.tilt_axis_azimuth_rad = spec.tilt_axis_azimuth_rad;
+        config.source = make_float3(spec.source_offset_mm.x,
+            -spec.sid_mm + spec.source_offset_mm.y,
+            spec.source_offset_mm.z);
+        config.rotation_axis_pivot = spec.rotation_axis_pivot_mm;
+        config.detector_pose = system.flat_detector.pose;
+        std::vector<NonStandardFpBp::NonStandardViewPose> poses;
+        if (!NonStandardFpBp::NikonTiltedCt::buildTiltedAxisGeometry(
+                config, angles, poses, geometry) ||
+            !geometry_.initialize(params_, geometry))
+            return false;
+        acquired_u_ = params_.scan.Nu;
+        acquired_v_ = params_.scan.Nv;
+        nonstandard_kind_ = ENonStandardKind::NikonTilted;
+        if (reconstruction_.pipeline == EPipeline::ForwardProjection) {
+            forward_ = makeForwardOperator(forwardTask_());
+            return forward_ && forward_->prepare(geometry_, resources_);
+        }
+        return reconstruction_.pipeline == EPipeline::FDK &&
+            textureGridCompatible_(params_.scan.Nu, params_.scan.Nv) &&
+            tilted_pipeline_.prepare(params_, geometry, resources_.stream(), device_);
+    }
+
     ETask forwardTask_() const
     {
         return reconstruction_.projection_model == EProjectionModel::Siddon
@@ -462,6 +677,38 @@ private:
                 cudaMemcpyDeviceToHost, resources_.stream()));
             YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
         }
+        return true;
+    }
+
+    bool executeNonStandardFdk_(const ExecuteRequest& r)
+    {
+        if (r.K != params_.scan.NAng || !r.projection.data || !r.volume.data ||
+            acquired_u_ <= 0 || acquired_v_ <= 0)
+            return false;
+        const size_t projection_bytes = static_cast<size_t>(r.K) *
+            acquired_u_ * acquired_v_ * sizeof(float);
+        float* projection = r.projection.location == EMemoryLocation::Device
+            ? r.projection.data : ensureProjectionScratch_(r.K);
+        float* volume = r.volume.location == EMemoryLocation::Device
+            ? r.volume.data : ensureVolumeScratch_();
+        if (!projection || !volume) return false;
+        if (r.projection.location == EMemoryLocation::Host)
+            YK_CUDA_CHECK(cudaMemcpyAsync(projection, r.projection.data,
+                projection_bytes, cudaMemcpyHostToDevice, resources_.stream()));
+        if (r.volume.location == EMemoryLocation::Host && !r.clear_output)
+            YK_CUDA_CHECK(cudaMemcpyAsync(volume, r.volume.data, volumeBytes_(),
+                cudaMemcpyHostToDevice, resources_.stream()));
+        const bool ok = nonstandard_kind_ == ENonStandardKind::PlanarSourceOrbit
+            ? planar_pipeline_.process(projection, volume, r.clear_output)
+            : tilted_pipeline_.process(projection, volume, r.clear_output);
+        if (!ok) {
+            cudaStreamSynchronize(resources_.stream());
+            return false;
+        }
+        if (r.volume.location == EMemoryLocation::Host)
+            YK_CUDA_CHECK(cudaMemcpyAsync(r.volume.data, volume, volumeBytes_(),
+                cudaMemcpyDeviceToHost, resources_.stream()));
+        YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
         return true;
     }
 
@@ -726,6 +973,11 @@ private:
     int device_ = 0;
     bool initialized_ = false;
     bool cylindrical_ = false;
+    ENonStandardKind nonstandard_kind_ = ENonStandardKind::None;
+    int acquired_u_ = 0;
+    int acquired_v_ = 0;
+    NonStandardFpBp::SourceOrbitTomographyPipeline planar_pipeline_{};
+    NonStandardFpBp::NikonTiltedCt::Pipeline tilted_pipeline_{};
     FdkPipeline fdk_;
     PreparedGeometry geometry_;
     ResourceContext resources_;

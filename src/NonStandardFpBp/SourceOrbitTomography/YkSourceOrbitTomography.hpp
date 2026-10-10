@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "YKCBCT/geometry/YkPlanarGeometryBuilder.hpp"
+#include "YKCBCT/geometry/YkDetectorGeometryBuilders.hpp"
 #include "NonStandardFpBp/Geometry/YkTrajectorySampling.hpp"
 
 namespace YK::NonStandardFpBp {
@@ -29,6 +30,8 @@ struct SourceOrbitGeometryConfig {
     float detector_y_mm = 0.f;
     float source_orbit_radius_mm = 0.f;
     float source_lateral_offset_mm = 0.f;
+    // Static detector-local pose, using the standard flat U/N/V convention.
+    SDetectorPoseSpec detector_pose{};
 };
 
 // Uniform trajectory sampling shared by non-standard source paths.  The
@@ -113,10 +116,28 @@ inline bool buildSourceTrajectoryGeometry(
         !std::isfinite(config.detector_y_mm) ||
         trajectory_parameters.empty() || !source_position) return false;
 
-    return buildPlanarProjectionGeometry(trajectory_parameters,
-        config.detector_u, config.detector_v,
-        config.detector_pixel_u_mm, config.detector_pixel_v_mm,
-        config.detector_y_mm, source_position, geometry);
+    SFlatDetectorSpec detector{};
+    detector.channels = config.detector_u; detector.rows = config.detector_v;
+    detector.channel_size_mm = config.detector_pixel_u_mm;
+    detector.row_size_mm = config.detector_pixel_v_mm;
+    detector.pose = config.detector_pose;
+    std::vector<SScannerViewFrame> frames(trajectory_parameters.size());
+    for (size_t i = 0; i < trajectory_parameters.size(); ++i) {
+        const float angle = trajectory_parameters[i];
+        const float3 source = source_position(angle);
+        if (!std::isfinite(angle) || !std::isfinite(source.x) ||
+            !std::isfinite(source.y) || !std::isfinite(source.z)) {
+            geometry.clear(); return false;
+        }
+        auto& frame = frames[i];
+        frame.source = source;
+        frame.detector_principal = make_float3(0.f, config.detector_y_mm, 0.f);
+        frame.tangent_u = make_float3(1.f, 0.f, 0.f);
+        frame.axis_v = make_float3(0.f, 0.f, 1.f);
+        frame.radial_n = make_float3(0.f, -1.f, 0.f);
+        frame.angle_rad = angle;
+    }
+    return buildFlatProjectionGeometry(frames, detector, geometry);
 }
 
 // Build the per-view ray geometry used by the existing generic flat

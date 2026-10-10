@@ -10,7 +10,12 @@
 namespace YK {
 
 enum class EDetectorKind : int32_t { Flat, Cylindrical };
-enum class ETrajectoryKind : int32_t { Circular, Helical };
+enum class ETrajectoryKind : int32_t {
+    Circular,
+    Helical,
+    PlanarSourceOrbit,
+    NikonTilted,
+};
 
 // 库对外唯一的宏观系统配置。探测器和轨迹通过两个枚举组合成 Flat/Cyl
 // 与 Circular/Helical 四种系统；builder 负责只读取对应分支并生成规范几何。

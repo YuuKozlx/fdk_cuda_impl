@@ -109,8 +109,13 @@ bool testForwardProjection(const YK::SSystemSpec& desc, const char* name) {
         return false;
     }
     const size_t volN = size_t(kNx) * kNy * kNz;
-    const int views = desc.geometry.trajectory == YK::ETrajectoryKind::Helical
-        ? desc.geometry.helical.total_views : desc.geometry.circular.total_views;
+    int views = desc.geometry.circular.total_views;
+    if (desc.geometry.trajectory == YK::ETrajectoryKind::Helical)
+        views = desc.geometry.helical.total_views;
+    else if (desc.geometry.trajectory == YK::ETrajectoryKind::PlanarSourceOrbit)
+        views = desc.nonstandard.planar_source_orbit.total_views;
+    else if (desc.geometry.trajectory == YK::ETrajectoryKind::NikonTilted)
+        views = desc.nonstandard.nikon_tilted.total_views;
     const size_t sinoN = size_t(views) * kNu * kNv;
     float *dVol = nullptr, *dSino = nullptr;
     bool ok = cudaOk(cudaMalloc(reinterpret_cast<void**>(&dVol), volN * sizeof(float)), "cudaMalloc(volume)") &&
@@ -322,6 +327,49 @@ YK::SSystemSpec makeWfbpDesc()
     d.geometry.helical.sdd_mm = 1000.f;
     d.geometry.helical.start_z_mm = -1.f;
     d.geometry.helical.pitch_mm_per_turn = 2.f;
+    return d;
+}
+
+YK::SSystemSpec makePlanarCtDesc(YK::EPipeline pipeline)
+{
+    auto d = makeDesc(pipeline);
+    d.geometry.trajectory = YK::ETrajectoryKind::PlanarSourceOrbit;
+    auto& p = d.nonstandard.planar_source_orbit;
+    p.total_views = kAnalyticAngles;
+    p.start_angle_rad = 0.f;
+    p.scan_range_rad = 6.28318530717958647692f;
+    p.rotation_direction = 1;
+    p.sid_mm = 50.f;
+    p.detector_y_mm = 50.f;
+    p.source_orbit_radius_mm = 0.5f;
+    p.reconstruction_channels = 16;
+    p.reconstruction_rows = 8;
+    p.resample_mode = YK::EPlanarResampleMode::PerspectiveOrthogonal;
+    return d;
+}
+
+YK::SSystemSpec makeNikonTiltedDesc(YK::EPipeline pipeline)
+{
+    auto d = makeDesc(pipeline);
+    d.geometry.trajectory = YK::ETrajectoryKind::NikonTilted;
+    auto& p = d.nonstandard.nikon_tilted;
+    p.total_views = kAnalyticAngles;
+    p.start_angle_rad = 0.f;
+    p.scan_range_rad = 6.28318530717958647692f;
+    p.rotation_direction = 1;
+    p.sid_mm = 50.f;
+    p.sdd_mm = 100.f;
+    p.tilt_rad = 0.2617993877991494f;
+    return d;
+}
+
+YK::SSystemSpec withNonstandardDetectorPose(YK::SSystemSpec d)
+{
+    auto& pose = d.geometry.flat_detector.pose;
+    pose.offset_unv_mm = make_float3(0.1f, 0.2f, 0.15f);
+    pose.tilt_u_rad = 0.01f;
+    pose.tilt_v_rad = -0.015f;
+    pose.tilt_n_rad = 0.02f;
     return d;
 }
 
@@ -572,6 +620,14 @@ int main() {
         makeCylDesc(YK::EPipeline::ForwardProjection), "Cyl circular FP");
     const bool cylHelicalFp = testForwardProjection(makeHelical(
         makeCylDesc(YK::EPipeline::ForwardProjection)), "Cyl helical FP");
+    const bool planarFp = testForwardProjection(
+        makePlanarCtDesc(YK::EPipeline::ForwardProjection), "Planar CT FP");
+    const bool tiltedFp = testForwardProjection(
+        makeNikonTiltedDesc(YK::EPipeline::ForwardProjection), "Nikon tilted CT FP");
+    const bool planarPoseFp = testForwardProjection(withNonstandardDetectorPose(
+        makePlanarCtDesc(YK::EPipeline::ForwardProjection)), "Planar CT detector-pose FP");
+    const bool tiltedPoseFp = testForwardProjection(withNonstandardDetectorPose(
+        makeNikonTiltedDesc(YK::EPipeline::ForwardProjection)), "Nikon tilted detector-pose FP");
     const bool validationOk = testValidationError();
     const bool volumePoseValidationOk = testVolumePoseValidationAndIsolation();
     const bool executionValidationOk = testExecutionValidation();
@@ -600,6 +656,18 @@ int main() {
             d.geometry.cylindrical_detector.curvature_radius_mm = 1000.f;
             return d;
         }(), kAnalyticAngles, "Cyl circular unified FDK", true);
+    const bool planarFdk = testReconstruction(
+        makePlanarCtDesc(YK::EPipeline::FDK), kAnalyticAngles,
+        "Planar CT non-standard FDK", true);
+    const bool tiltedFdk = testReconstruction(
+        makeNikonTiltedDesc(YK::EPipeline::FDK), kAnalyticAngles,
+        "Nikon tilted CT non-standard FDK", true);
+    const bool planarPoseFdk = testReconstruction(withNonstandardDetectorPose(
+        makePlanarCtDesc(YK::EPipeline::FDK)), kAnalyticAngles,
+        "Planar CT detector-pose FDK", true);
+    const bool tiltedPoseFdk = testReconstruction(withNonstandardDetectorPose(
+        makeNikonTiltedDesc(YK::EPipeline::FDK)), kAnalyticAngles,
+        "Nikon tilted detector-pose FDK", true);
     const bool flatTigre = testReconstruction(
         makeAnalyticDesc(YK::EPipeline::TigreGradient, kAnalyticAngles),
         kAnalyticAngles, "Flat circular TIGRE gradient");
@@ -615,6 +683,10 @@ int main() {
         << " FlatHeli=" << status(flatHelicalFp)
         << " CylCir=" << status(cylCircularFp)
         << " CylHeli=" << status(cylHelicalFp)
+        << " PlanarFP=" << status(planarFp)
+        << " TiltedFP=" << status(tiltedFp)
+        << " PlanarPoseFP=" << status(planarPoseFp)
+        << " TiltedPoseFP=" << status(tiltedPoseFp)
         << " FlatHeliIter=" << status(flatHelicalIter)
         << " CylCirIter=" << status(cylCircularIter)
         << " CylHeliIter=" << status(cylHelicalIter)
@@ -629,11 +701,17 @@ int main() {
         << " FDKStreaming=" << status(fdkStreaming)
         << " FlatXFDK=" << status(flatXfdk)
         << " CylFDK=" << status(cylFdk)
+        << " PlanarFDK=" << status(planarFdk)
+        << " TiltedFDK=" << status(tiltedFdk)
+        << " PlanarPoseFDK=" << status(planarPoseFdk)
+        << " TiltedPoseFDK=" << status(tiltedPoseFdk)
         << " FlatTigre=" << status(flatTigre)
         << " WFBP=" << status(wfbp) << '\n';
     return flatCircularFp && flatHelicalFp && cylCircularFp && cylHelicalFp &&
+        planarFp && tiltedFp && planarPoseFp && tiltedPoseFp &&
         flatHelicalIter && cylCircularIter && cylHelicalIter && sessionResetReuse && validationOk &&
         executionValidationOk && volumePoseValidationOk &&
         policyOk && fdkPolicyOk && offsetNormalizationOk && flatFdk && fdkStreaming && flatXfdk && cylFdk &&
+        planarFdk && tiltedFdk && planarPoseFdk && tiltedPoseFdk &&
         flatTigre && wfbp ? 0 : 1;
 }
