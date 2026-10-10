@@ -1,0 +1,119 @@
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
+[projection]
+# Generate this file with example/phantom_generator (command in README).
+label_volume = "../../../inputs/generated/pcb-test-100mm-0p1mm.raw"
+spectrum_file = "../../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
+output_file = "../../../outputs/projections/pcb-planar-pose-projection.raw"
+energy_output_file = "../../../outputs/projections/pcb-planar-pose-energy.raw"
+air_output_file = "../../../outputs/projections/pcb-planar-pose-air.raw"
+mAs_per_view = 0.5
+
+[projection.geometry_flux]
+enabled = true
+
+[projection.quantum_noise]
+enabled = false
+seed = 67890
+
+[projection.detector_response]
+enabled = false
+oblique_path_correction = true
+
+[projection.sampling]
+samples_per_pixel = 1
+spatial_seed = 12345
+
+[projection.focal_spot]
+enabled = false
+normal_size_u_mm = 0.0
+normal_size_v_mm = 0.0
+defocus_size_u_mm = 0.0
+defocus_size_v_mm = 0.0
+epsilon = 0.0
+
+[geometry]
+kind = "planar_source_orbit"
+views = 180
+views_per_turn = 180
+rotation_direction = 1
+scan_range_rad = 6.283185307179586
+detector_u = 1024
+detector_v = 1024
+pixel_u_mm = 0.417
+pixel_v_mm = 0.417
+sid_mm = 200.0
+sdd_mm = 300.0
+planar_detector_y_mm = 100.0
+source_orbit_radius_mm = 15.0
+source_lateral_offset_mm = 0.0
+reconstruction_detector_u = 512
+reconstruction_detector_v = 512
+planar_resample_mode = "perspective_orthogonal"
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+start_angle_rad = 0.0
+offset_u_mm = 5.0
+offset_n_mm = 2.0
+offset_v_mm = 10.0
+tilt_u_rad = 0.01
+tilt_v_rad = -0.015
+tilt_n_rad = 0.0174532925199433
+
+# 100 x 100 x 3.2 mm label volume; PCB itself is 1.6 mm thick.
+volume_x = 1000
+volume_y = 1000
+volume_z = 32
+voxel_x_mm = 0.1
+voxel_y_mm = 0.1
+voxel_z_mm = 0.1
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+# Rotate the XY PCB into the detector-parallel XZ plane.
+phantom_rotation_x_rad = -1.570796326794897
+
+reconstruction_volume_x = 512
+reconstruction_volume_y = 48
+reconstruction_volume_z = 512
+reconstruction_voxel_x_mm = 0.2
+reconstruction_voxel_y_mm = 0.1
+reconstruction_voxel_z_mm = 0.2
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+[[projection.materials]]
+label = 1
+name = "fr4_glass_epoxy_equivalent"
+# Glass-dominant effective FR-4 model at a representative bulk density.
+formula = "SiO2"
+density_g_cm3 = 1.85
+
+[[projection.materials]]
+label = 2
+name = "copper_foil"
+formula = "Cu"
+density_g_cm3 = 8.96
+
+[[projection.materials]]
+label = 3
+name = "sac305_solder"
+# Atomic ratio equivalent to 96.5 wt% Sn, 3.0 wt% Ag and 0.5 wt% Cu.
+formula = "Sn103.3Ag3.53Cu"
+density_g_cm3 = 7.38
+
+[reconstruction]
+type = "analytic"
+output_volume_file = "../../../outputs/reconstructions/pcb-planar-pose-fdk.raw"
+slice_prefix = "../../../outputs/images/pcb-planar-pose-fdk"
+save_slices = true
+
+[reconstruction.analytic]
+pipeline = "fdk"
+filter = "ramlak"
+chunk_views = 32

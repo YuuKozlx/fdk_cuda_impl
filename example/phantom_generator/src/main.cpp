@@ -581,6 +581,71 @@ void makeSheppLogan(Phantom& p)
     p.variant = "material-label 3D Shepp-Logan";
 }
 
+void makePcbTest(Phantom& p)
+{
+    constexpr std::uint8_t kFr4 = 1;
+    constexpr std::uint8_t kCopper = 2;
+    constexpr std::uint8_t kSolder = 3;
+    constexpr double board_half = 50.0;
+    constexpr double board_half_thickness = 0.8;
+    constexpr double copper_top = 0.9;
+    constexpr double solder_top = 1.3;
+    if (p.voxel_mm > 0.1)
+        throw std::runtime_error("pcb_test requires voxel_mm <= 0.1 mm");
+    if (p.nx * p.voxel_mm < 100.0 || p.ny * p.voxel_mm < 100.0 ||
+        p.nz * p.voxel_mm < 3.0)
+        throw std::runtime_error("pcb_test requires at least 100 x 100 x 3 mm");
+
+    const auto on_pad = [](double x, double y, double radius) {
+        for (int iy = -2; iy <= 2; ++iy)
+            for (int ix = -2; ix <= 2; ++ix) {
+                const double dx = x - ix * 18.0;
+                const double dy = y - iy * 18.0;
+                if (dx * dx + dy * dy <= radius * radius) return true;
+            }
+        return false;
+    };
+    for (int z = 0; z < p.nz; ++z) for (int y = 0; y < p.ny; ++y)
+        for (int x = 0; x < p.nx; ++x) {
+            const double px = p.x(x), py = p.y(y), pz = p.z(z);
+            if (std::abs(px) > board_half || std::abs(py) > board_half ||
+                pz < -board_half_thickness || pz > solder_top) continue;
+            std::uint8_t label = pz <= board_half_thickness ? kFr4 : 0;
+            const bool pad = on_pad(px, py, 3.0);
+            const bool horizontal_trace = std::abs(py + 12.0) <= 0.45 &&
+                std::abs(px) <= 42.0;
+            const bool vertical_trace = std::abs(px - 12.0) <= 0.45 &&
+                std::abs(py) <= 42.0;
+            if (pz > board_half_thickness && pz <= copper_top &&
+                (pad || horizontal_trace || vertical_trace))
+                label = kCopper;
+            if (pz > copper_top && pz <= solder_top && on_pad(px, py, 2.6))
+                label = kSolder;
+
+            // Two solder voids, one plated through-hole, and two open-trace gaps.
+            const bool void_a = (px + 18.0) * (px + 18.0) +
+                (py - 18.0) * (py - 18.0) <= 1.0 * 1.0;
+            const bool void_b = (px - 18.6) * (px - 18.6) +
+                (py + 17.5) * (py + 17.5) <= 0.7 * 0.7;
+            if (pz > copper_top && (void_a || void_b)) label = 0;
+            const bool through_hole = px * px + py * py <= 1.0;
+            if (through_hole) label = 0;
+            if (pz > board_half_thickness && pz <= copper_top &&
+                ((std::abs(px + 7.0) <= 0.35 && std::abs(py + 12.0) <= 1.0) ||
+                 (std::abs(py - 6.0) <= 0.35 && std::abs(px - 12.0) <= 1.0)))
+                label = kFr4;
+            p.labels[p.index(x, y, z)] = label;
+        }
+    p.materials = {
+        {kFr4, "fr4_glass_epoxy_equivalent", 1.85, "SiO2", {},
+            "glass-dominant FR-4 attenuation equivalent"},
+        {kCopper, "copper_foil", 8.96, "Cu", {}, "PCB copper foil and pads"},
+        {kSolder, "sac305_solder", 7.38, "Sn103.3Ag3.53Cu", {},
+            "SAC305 96.5 wt% Sn, 3.0 wt% Ag, 0.5 wt% Cu equivalent atomic ratio"}};
+    p.variant = "100 x 100 x 1.6 mm PCB with copper pads/traces, solder, "
+        "two solder voids, a plated-hole void, and two open-trace cracks";
+}
+
 int integer(const char* text, const char* name) {
     const int value = std::stoi(text);
     if (value <= 0) throw std::runtime_error(std::string(name) + " must be positive");
@@ -600,6 +665,7 @@ phantom_generator::GeneratorRegistry makeRegistry()
     r.add("water_ellipse", [](Phantom& p, const Arguments&) { fillWaterShell(p, true); });
     r.add("catphan", [](Phantom& p, const Arguments&) { makeCatphan(p); });
     r.add("low_contrast", [](Phantom& p, const Arguments&) { makeLowContrast(p); });
+    r.add("pcb_test", [](Phantom& p, const Arguments&) { makePcbTest(p); });
     r.add("tungsten_bead_line", [](Phantom& p, const Arguments& a) {
         if (a.size() != 2)
             throw std::runtime_error("tungsten_bead_line requires bead diameter and center spacing");
@@ -633,7 +699,7 @@ void printHelp(const std::string& type = {})
             << "types:\n"
             << "  shepp_logan\n  tungsten_wire\n  tungsten_wire_slanted\n  gold_foil\n"
             << "  water_cylinder\n  water_cylinder_200mm\n  water_ellipse\n"
-            << "  catphan\n  low_contrast\n  tungsten_bead_line\n"
+            << "  catphan\n  low_contrast\n  pcb_test\n  tungsten_bead_line\n"
             << "  tungsten_bead_double_ring\n"
             << "  tungsten_bead_double_ring_cylinder_marker\n"
             << "  tungsten_bead_double_ring_cylinder_replace\n"

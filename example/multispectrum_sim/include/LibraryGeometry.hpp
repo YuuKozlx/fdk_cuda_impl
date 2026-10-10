@@ -2,6 +2,7 @@
 
 #include "config/SimConfig.hpp"
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
+#include <vector>
 
 namespace yk::spectral {
 
@@ -17,5 +18,10 @@ YK::SSystemSpec makeLibrarySystem(const SimulationConfig& config,
     YK::EPipeline pipeline, YK::EProjectionModel projection_model = YK::EProjectionModel::Joseph,
     YK::EFdkFilter filter = YK::EFdkFilter::RamLak,
     GeometryUse use = GeometryUse::PhantomProjection);
+
+// Per-view flat ConeVec geometry used by the spectral projector. Standard
+// geometries return an empty vector and continue through the legacy path.
+std::vector<YK::SConeProjGeomVec> buildNonStandardProjectionViews(
+    const SimulationConfig& config);
 
 }

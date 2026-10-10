@@ -9,7 +9,7 @@
 #include <stdexcept>
 namespace yk::spectral {
     namespace {
-        GeometryKind geometry(std::string_view v) { if (v == "flat_cbct")return GeometryKind::FlatCbct; if (v == "flat_helical")return GeometryKind::FlatHelical; if (v == "cyl_cbct")return GeometryKind::CylCbct; if (v == "cyl_helical")return GeometryKind::CylHelical; throw std::runtime_error("未知 geometry: " + std::string(v)); }
+        GeometryKind geometry(std::string_view v) { if (v == "flat_cbct")return GeometryKind::FlatCbct; if (v == "flat_helical")return GeometryKind::FlatHelical; if (v == "cyl_cbct")return GeometryKind::CylCbct; if (v == "cyl_helical")return GeometryKind::CylHelical; if (v == "planar_source_orbit")return GeometryKind::PlanarSourceOrbit; if (v == "nikon_tilted")return GeometryKind::NikonTilted; throw std::runtime_error("unknown geometry: " + std::string(v)); }
         WorkflowMode workflow(std::string_view v) { if (v == "project")return WorkflowMode::Project; if (v == "reconstruct")return WorkflowMode::Reconstruct; if (v == "project_and_reconstruct")return WorkflowMode::ProjectAndReconstruct; throw std::runtime_error("未知 workflow.mode: " + std::string(v)); }
         std::filesystem::path resolve(const std::filesystem::path& b, std::string_view v) {
             if (v.empty()) return {};
@@ -189,6 +189,18 @@ namespace yk::spectral {
             c.geometry.parameters.offset_u_mm = real("offset_u_mm", 0.0); c.geometry.parameters.offset_n_mm = real("offset_n_mm", 0.0); c.geometry.parameters.offset_v_mm = real("offset_v_mm", 0.0);
             c.geometry.parameters.tilt_u_rad = real("tilt_u_rad", 0.0); c.geometry.parameters.tilt_v_rad = real("tilt_v_rad", 0.0); c.geometry.parameters.tilt_n_rad = real("tilt_n_rad", 0.0);
             c.geometry.parameters.source_offset_x_mm = real("source_offset_x_mm", 0.0); c.geometry.parameters.source_offset_y_mm = real("source_offset_y_mm", 0.0); c.geometry.parameters.source_offset_z_mm = real("source_offset_z_mm", 0.0); c.geometry.parameters.start_angle_rad = real("start_angle_rad", 0.0); c.geometry.parameters.pitch_mm_per_turn = real("pitch_mm_per_turn", 0.0); c.geometry.parameters.start_z_mm = real("start_z_mm", 0.0);
+            c.geometry.parameters.scan_range_rad = real("scan_range_rad", 6.28318530717958647692);
+            c.geometry.parameters.planar_detector_y_mm = real("planar_detector_y_mm", c.geometry.parameters.sdd_mm - c.geometry.parameters.sid_mm);
+            c.geometry.parameters.source_orbit_radius_mm = real("source_orbit_radius_mm", 0.0);
+            c.geometry.parameters.source_lateral_offset_mm = real("source_lateral_offset_mm", 0.0);
+            c.geometry.parameters.reconstruction_detector_u = integer("reconstruction_detector_u", c.geometry.parameters.detector_u);
+            c.geometry.parameters.reconstruction_detector_v = integer("reconstruction_detector_v", c.geometry.parameters.detector_v);
+            c.geometry.parameters.planar_resample_mode = (*g)["planar_resample_mode"].value_or(std::string("perspective_orthogonal"));
+            c.geometry.parameters.nikon_tilt_rad = real("nikon_tilt_rad", 0.0);
+            c.geometry.parameters.nikon_tilt_axis_azimuth_rad = real("nikon_tilt_axis_azimuth_rad", 0.0);
+            c.geometry.parameters.rotation_axis_pivot_x_mm = real("rotation_axis_pivot_x_mm", 0.0);
+            c.geometry.parameters.rotation_axis_pivot_y_mm = real("rotation_axis_pivot_y_mm", 0.0);
+            c.geometry.parameters.rotation_axis_pivot_z_mm = real("rotation_axis_pivot_z_mm", 0.0);
             c.geometry.parameters.voxel_x_mm = real("voxel_x_mm", 1.0); c.geometry.parameters.voxel_y_mm = real("voxel_y_mm", 1.0); c.geometry.parameters.voxel_z_mm = real("voxel_z_mm", 1.0); c.geometry.parameters.volume_x = integer("volume_x", 0); c.geometry.parameters.volume_y = integer("volume_y", 0); c.geometry.parameters.volume_z = integer("volume_z", 0);
             c.geometry.parameters.reconstruction_volume_x = integer("reconstruction_volume_x", c.geometry.parameters.volume_x); c.geometry.parameters.reconstruction_volume_y = integer("reconstruction_volume_y", c.geometry.parameters.volume_y); c.geometry.parameters.reconstruction_volume_z = integer("reconstruction_volume_z", c.geometry.parameters.volume_z); c.geometry.parameters.reconstruction_voxel_x_mm = real("reconstruction_voxel_x_mm", c.geometry.parameters.voxel_x_mm); c.geometry.parameters.reconstruction_voxel_y_mm = real("reconstruction_voxel_y_mm", c.geometry.parameters.voxel_y_mm); c.geometry.parameters.reconstruction_voxel_z_mm = real("reconstruction_voxel_z_mm", c.geometry.parameters.voxel_z_mm);
             c.geometry.parameters.phantom_offset_x_mm = real("phantom_offset_x_mm", 0.0); c.geometry.parameters.phantom_offset_y_mm = real("phantom_offset_y_mm", 0.0); c.geometry.parameters.phantom_offset_z_mm = real("phantom_offset_z_mm", 0.0);
@@ -209,7 +221,9 @@ namespace yk::spectral {
         }
         if (c.runsProjection() &&
             c.geometry.kind != GeometryKind::FlatCbct && c.geometry.kind != GeometryKind::FlatHelical &&
-            c.geometry.kind != GeometryKind::CylCbct && c.geometry.kind != GeometryKind::CylHelical)
+            c.geometry.kind != GeometryKind::CylCbct && c.geometry.kind != GeometryKind::CylHelical &&
+            c.geometry.kind != GeometryKind::PlanarSourceOrbit &&
+            c.geometry.kind != GeometryKind::NikonTilted)
             throw std::runtime_error("随机多能谱前投不支持该几何类型");
         if (c.runsProjection() &&
             c.projection.materials.size() > 32)
@@ -361,6 +375,21 @@ namespace yk::spectral {
         }
         if (c.projection.sampling.samples_per_pixel <= 0 || c.projection.sampling.samples_per_pixel > 4096)
             throw std::runtime_error("projection.sampling.samples_per_pixel must be in 1..4096");
+        const bool planar = c.geometry.kind == GeometryKind::PlanarSourceOrbit;
+        const bool tilted = c.geometry.kind == GeometryKind::NikonTilted;
+        if ((planar || tilted) &&
+            (!(c.geometry.parameters.scan_range_rad > 0.0) ||
+             !std::isfinite(c.geometry.parameters.scan_range_rad)))
+            throw std::runtime_error("non-standard geometry requires positive scan_range_rad");
+        if (planar &&
+            (!(c.geometry.parameters.planar_detector_y_mm > 0.0) ||
+             c.geometry.parameters.reconstruction_detector_u <= 0 ||
+             c.geometry.parameters.reconstruction_detector_v <= 0 ||
+             (c.geometry.parameters.planar_resample_mode != "in_plane_rotated" &&
+              c.geometry.parameters.planar_resample_mode != "perspective_orthogonal")))
+            throw std::runtime_error("invalid planar_source_orbit geometry parameters");
+        if ((planar || tilted) && c.projection.detector_response.enabled)
+            throw std::runtime_error("non-standard trajectories do not yet support detector response");
         std::array<bool, 256> used_labels{};
         if (auto* a = p ? (*p)["materials"].as_array() : nullptr)for (auto& n : *a) { auto* m = n.as_table(); if (!m)throw std::runtime_error("projection.materials 必须是表数组"); MaterialSpec x; x.label = (std::uint8_t)(*m)["label"].value_or(0); x.name = (*m)["name"].value_or(std::string("material")); x.formula = (*m)["formula"].value_or(std::string{}); x.preset = (*m)["preset"].value_or(std::string{}); x.density_g_cm3 = (*m)["density_g_cm3"].value_or(1.0); if ((x.formula.empty() == x.preset.empty()) || x.density_g_cm3 <= 0)throw std::runtime_error("材料配置必须且只能填写 formula 或 preset，且密度必须为正"); if (used_labels[x.label])throw std::runtime_error("材料 label 不得重复: " + std::to_string(x.label)); used_labels[x.label] = true; if (!x.preset.empty()) { const auto* b = findBuiltinMaterial(x.preset); if (!b)throw std::runtime_error("未知内置材料 preset: " + x.preset); if (!m->contains("density_g_cm3"))x.density_g_cm3 = b->density_g_cm3; }c.projection.materials.push_back(std::move(x)); }
         if (c.runsProjection() && c.projection.materials.empty())
@@ -370,7 +399,7 @@ namespace yk::spectral {
         if (c.runsReconstruction() && c.reconstruction.input_projection_file.empty())
             throw std::runtime_error("重建工作流需要 reconstruction.input_projection_file");
         if (c.runsReconstruction()) {
-            if ((c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "fdk" && c.geometry.kind != GeometryKind::FlatCbct && c.geometry.kind != GeometryKind::CylCbct) ||
+            if ((c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "fdk" && c.geometry.kind != GeometryKind::FlatCbct && c.geometry.kind != GeometryKind::CylCbct && c.geometry.kind != GeometryKind::PlanarSourceOrbit && c.geometry.kind != GeometryKind::NikonTilted) ||
                 (c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "wfbp" && c.geometry.kind != GeometryKind::CylHelical))
                 throw std::runtime_error("解析重建支持 flat_cbct/cyl_cbct+fdk、cyl_helical+wfbp");
         }

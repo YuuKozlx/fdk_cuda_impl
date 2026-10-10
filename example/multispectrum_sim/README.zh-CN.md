@@ -267,3 +267,45 @@ density_g_cm3 = 1.050
 示例输出包括 `[view][v][u]` 排列的 float32 投影、`[z][y][x]`
 排列的 float32 FDK 重建体，以及轴位、冠状位和矢状位中心切片 BMP。BMP 仅用于观察，
 数值分析应读取重建体 raw。
+
+## 多能前投 Pipeline 与 PCB 模体
+
+多能前投采用“后端 → 按物理阶段排序的信号处理 → 输出端”的流程。新增处理可实现
+`IProjectionStage` 并通过 `SpectralProjectionPipeline::addStage` 注册；后端负责 CUDA
+资源，处理模块负责时序与随机状态，输出端负责空气归一化和文件保存。帧数据区分能量积分
+与光子计数，后者预留能量网格、计数阈值、多通道计数及空气参考，尚未实现实际计数探测器响应。
+当前模块边界使用主机帧，设备端处理需另行扩展设备帧接口。
+
+flat 焦点尺寸沿探测器局部 U/V 定义，普通几何与 ConeVec 使用同一采样函数。
+空气参考按每一帧的几何和通量计算，余辉状态与物体信号独立；空气输出为
+`[view][row][column]` 的 float32，元数据帧数与投影一致。`AirReferenceReader` 同时支持
+旧的单帧空气文件（广播）与逐帧空气序列。
+
+`planar_source_orbit` 与 `nikon_tilted` 轨迹支持 flat 探测器的 U/N/V 偏移和绕 U/V/N
+的转角，正投和 DLL 重建消费相同 ConeVec。非标准解析重建一次提交完整视图序列；
+Planar CT 会检查裁窗范围。非标准轨迹暂不支持探测器分层响应。
+
+PCB 模体由独立工具生成。以下命令在仓库根目录执行（Linux/CUDA 容器）：
+
+```sh
+cmake -S example/phantom_generator -B out/docker-phantom-generator -G Ninja
+cmake --build out/docker-phantom-generator
+mkdir -p example/multispectrum_sim/inputs/generated
+./out/docker-phantom-generator/phantom_generator pcb_test \
+  example/multispectrum_sim/inputs/generated/pcb-test-100mm-0p1mm.raw 1000 1000 32 0.1
+```
+
+模体尺寸为 100 × 100 mm，基板厚 1.6 mm，包含 5 × 5 焊盘、走线、焊料空隙、通孔和
+断线缺陷。铜层采用测试网格可表达的 0.1 mm 厚度。材料为铜、SAC305 配比焊料和玻璃主导
+的 FR-4 等效材料；FR-4 的 SiO2 模型不代表完整玻纤/环氧配方。
+
+两份组合案例位于 `configs/pipelines/analytic/pcb-nikon-tilted-fdk.toml` 和
+`pcb-planar-pose-fdk.toml`。生成标签体后，将配置路径传给 `multispectrum_sim` 即可运行。
+
+小模块测试直接调用 CPU 函数与 CUDA kernel，覆盖材料路径、多能透射、焦点、探测器响应、
+噪声、串扰、余辉、DAS、空气读写和姿态映射。容器内运行：
+
+```sh
+ctest --test-dir out/docker-test/example/multispectrum_sim -L unit --output-on-failure
+ctest --test-dir out/docker-test/example/multispectrum_sim -R multispectrum_projection_pipeline --output-on-failure
+```

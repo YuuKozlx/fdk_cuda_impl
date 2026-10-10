@@ -22,9 +22,15 @@ target_link_libraries(multispectrum_sim PRIVATE nist_xcom_core)
 
 # 在线多能谱前投由示例自身的 CUDA kernel 完成；YKCBCT DLL 只提供重建后端。
 if(TARGET YKCBCT)
-    target_sources(multispectrum_sim PRIVATE src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/CudaPrimaryProjector.cu src/CudaFasksScatter.cu)
+    target_sources(multispectrum_sim PRIVATE
+        src/LibraryGeometry.cpp src/LibraryReconstructor.cpp
+        src/CudaPrimaryProjector.cu src/SpectralProjectionPipeline.cpp
+        src/primary/CudaProjectionBackend.cu src/primary/DetectorSignal.cpp
+        src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
+        src/CudaFasksScatter.cu)
     target_include_directories(multispectrum_sim PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
     target_link_libraries(multispectrum_sim PRIVATE YKCBCT)
     target_link_libraries(multispectrum_sim PRIVATE CUDA::cufft)
     target_compile_definitions(multispectrum_sim PRIVATE
@@ -44,7 +50,55 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(multispectrum_signal_unit_test tests/primary/test_detector_signal.cpp
+        src/primary/DetectorSignal.cpp src/primary/ProjectionOutput.cpp)
+    target_include_directories(multispectrum_signal_unit_test PRIVATE include src)
+    if(MSVC)
+        target_compile_options(multispectrum_signal_unit_test PRIVATE /utf-8)
+    endif()
+    foreach(module IN ITEMS crosstalk afterglow das thickness output air_input)
+        add_test(NAME multispectrum_unit_${module} COMMAND multispectrum_signal_unit_test
+            ${module} "${CMAKE_CURRENT_BINARY_DIR}/unit-test-output/${module}")
+        set_tests_properties(multispectrum_unit_${module} PROPERTIES LABELS "unit;cpu;multispectrum")
+    endforeach()
     if(TARGET YKCBCT)
+        add_executable(multispectrum_pose_unit_test tests/primary/test_nonstandard_pose.cpp
+            src/LibraryGeometry.cpp)
+        target_include_directories(multispectrum_pose_unit_test PRIVATE include src
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+        target_link_libraries(multispectrum_pose_unit_test PRIVATE YKCBCT)
+        if(MSVC)
+            target_compile_options(multispectrum_pose_unit_test PRIVATE /utf-8)
+        endif()
+        add_test(NAME multispectrum_unit_nonstandard_pose COMMAND multispectrum_pose_unit_test)
+        set_tests_properties(multispectrum_unit_nonstandard_pose PROPERTIES LABELS "unit;cpu;multispectrum")
+        add_executable(multispectrum_cuda_unit_test tests/primary/test_cuda_modules.cu)
+        target_include_directories(multispectrum_cuda_unit_test PRIVATE include src)
+        target_link_libraries(multispectrum_cuda_unit_test PRIVATE CUDA::cudart)
+        if(MSVC)
+            target_compile_options(multispectrum_cuda_unit_test PRIVATE -Xcompiler=/utf-8)
+        endif()
+        foreach(module IN ITEMS geometry paths noise response transmission focal)
+            add_test(NAME multispectrum_unit_${module} COMMAND multispectrum_cuda_unit_test ${module})
+            set_tests_properties(multispectrum_unit_${module} PROPERTIES LABELS "unit;gpu;multispectrum")
+        endforeach()
+        add_executable(multispectrum_pipeline_test tests/test_projection_pipeline.cpp
+            src/primary/CudaProjectionBackend.cu src/LibraryGeometry.cpp
+            src/SpectralProjectionPipeline.cpp src/SpectralModel.cpp src/SimLogger.cpp
+            src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
+            src/primary/DetectorSignal.cpp src/FasksRuntimeModel.cpp src/CudaFasksScatter.cu)
+        target_include_directories(multispectrum_pipeline_test PRIVATE include
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../src"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+        target_link_libraries(multispectrum_pipeline_test PRIVATE YKCBCT CUDA::cudart CUDA::cufft)
+        if(MSVC)
+            target_compile_options(multispectrum_pipeline_test PRIVATE
+                $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+                $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+        endif()
+        add_test(NAME multispectrum_projection_pipeline COMMAND multispectrum_pipeline_test
+            "${CMAKE_CURRENT_BINARY_DIR}/pipeline-test-output")
         add_executable(multispectrum_scatter_test tests/test_scatter.cpp
             src/FasksRuntimeModel.cpp src/CudaFasksScatter.cu)
         target_include_directories(multispectrum_scatter_test PRIVATE include

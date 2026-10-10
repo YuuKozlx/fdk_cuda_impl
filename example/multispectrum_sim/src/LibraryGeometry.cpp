@@ -1,4 +1,7 @@
 #include "LibraryGeometry.hpp"
+#include "NonStandardFpBp/Geometry/YkTrajectorySampling.hpp"
+#include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtGeometry.hpp"
+#include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitTomography.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -29,12 +32,50 @@ namespace yk::spectral {
             config.geometry.kind == GeometryKind::CylCbct ||
             config.geometry.kind == GeometryKind::CylHelical
             ? YK::EDetectorKind::Cylindrical : YK::EDetectorKind::Flat;
-        system.geometry.trajectory =
+        system.geometry.trajectory = config.geometry.kind == GeometryKind::PlanarSourceOrbit
+            ? YK::ETrajectoryKind::PlanarSourceOrbit
+            : config.geometry.kind == GeometryKind::NikonTilted
+            ? YK::ETrajectoryKind::NikonTilted
+            :
             config.geometry.kind == GeometryKind::FlatHelical ||
             config.geometry.kind == GeometryKind::CylHelical
             ? YK::ETrajectoryKind::Helical : YK::ETrajectoryKind::Circular;
 
-        if (system.geometry.trajectory == YK::ETrajectoryKind::Circular) {
+        if (system.geometry.trajectory == YK::ETrajectoryKind::PlanarSourceOrbit) {
+            auto& scan = system.nonstandard.planar_source_orbit;
+            scan.total_views = g.views;
+            scan.start_angle_rad = static_cast<float>(g.start_angle_rad);
+            scan.scan_range_rad = static_cast<float>(g.scan_range_rad);
+            scan.rotation_direction = g.rotation_direction;
+            scan.sid_mm = static_cast<float>(g.sid_mm);
+            scan.detector_y_mm = static_cast<float>(g.planar_detector_y_mm);
+            scan.source_orbit_radius_mm = static_cast<float>(g.source_orbit_radius_mm);
+            scan.source_lateral_offset_mm = static_cast<float>(g.source_lateral_offset_mm);
+            scan.reconstruction_channels = g.reconstruction_detector_u;
+            scan.reconstruction_rows = g.reconstruction_detector_v;
+            scan.resample_mode = g.planar_resample_mode == "in_plane_rotated"
+                ? YK::EPlanarResampleMode::InPlaneRotated
+                : YK::EPlanarResampleMode::PerspectiveOrthogonal;
+        }
+        else if (system.geometry.trajectory == YK::ETrajectoryKind::NikonTilted) {
+            auto& scan = system.nonstandard.nikon_tilted;
+            scan.total_views = g.views;
+            scan.start_angle_rad = static_cast<float>(g.start_angle_rad);
+            scan.scan_range_rad = static_cast<float>(g.scan_range_rad);
+            scan.rotation_direction = g.rotation_direction;
+            scan.sid_mm = static_cast<float>(g.sid_mm);
+            scan.sdd_mm = static_cast<float>(g.sdd_mm);
+            scan.tilt_rad = static_cast<float>(g.nikon_tilt_rad);
+            scan.tilt_axis_azimuth_rad = static_cast<float>(g.nikon_tilt_axis_azimuth_rad);
+            scan.source_offset_mm = make_float3(static_cast<float>(g.source_offset_x_mm),
+                static_cast<float>(g.source_offset_y_mm),
+                static_cast<float>(g.source_offset_z_mm));
+            scan.rotation_axis_pivot_mm = make_float3(
+                static_cast<float>(g.rotation_axis_pivot_x_mm),
+                static_cast<float>(g.rotation_axis_pivot_y_mm),
+                static_cast<float>(g.rotation_axis_pivot_z_mm));
+        }
+        else if (system.geometry.trajectory == YK::ETrajectoryKind::Circular) {
             auto& scan = system.geometry.circular;
             scan.total_views = g.views;
             scan.views_per_turn = g.views_per_turn;
@@ -149,5 +190,63 @@ namespace yk::spectral {
         system.reconstruction.tigre.non_negative = iterative.non_negative;
         system.reconstruction.fdk.filter = filter;
         return system;
+    }
+
+    std::vector<YK::SConeProjGeomVec> buildNonStandardProjectionViews(
+        const SimulationConfig& config)
+    {
+        if (config.geometry.kind != GeometryKind::PlanarSourceOrbit &&
+            config.geometry.kind != GeometryKind::NikonTilted)
+            return {};
+        const auto system = makeLibrarySystem(config, YK::EPipeline::ForwardProjection,
+            YK::EProjectionModel::Joseph, YK::EFdkFilter::RamLak,
+            GeometryUse::PhantomProjection);
+        YK::NonStandardFpBp::TrajectorySampling sampling{};
+        if (config.geometry.kind == GeometryKind::PlanarSourceOrbit) {
+            const auto& spec = system.nonstandard.planar_source_orbit;
+            sampling = {spec.total_views, spec.start_angle_rad,
+                spec.scan_range_rad, static_cast<float>(spec.rotation_direction)};
+        } else {
+            const auto& spec = system.nonstandard.nikon_tilted;
+            sampling = {spec.total_views, spec.start_angle_rad,
+                spec.scan_range_rad, static_cast<float>(spec.rotation_direction)};
+        }
+        std::vector<float> angles;
+        check(YK::NonStandardFpBp::buildUniformTrajectoryParameters(sampling, angles),
+            "invalid non-standard trajectory sampling");
+        std::vector<YK::SConeProjGeomVec> geometry;
+        if (config.geometry.kind == GeometryKind::PlanarSourceOrbit) {
+            const auto& g = config.geometry.parameters;
+            YK::NonStandardFpBp::SourceOrbitGeometryConfig c{};
+            c.detector_u = g.detector_u; c.detector_v = g.detector_v;
+            c.detector_pixel_u_mm = static_cast<float>(g.pixel_u_mm);
+            c.detector_pixel_v_mm = static_cast<float>(g.pixel_v_mm);
+            c.sid_mm = static_cast<float>(g.sid_mm);
+            c.detector_y_mm = static_cast<float>(g.planar_detector_y_mm);
+            c.source_orbit_radius_mm = static_cast<float>(g.source_orbit_radius_mm);
+            c.source_lateral_offset_mm = static_cast<float>(g.source_lateral_offset_mm);
+            c.detector_pose = system.geometry.flat_detector.pose;
+            check(YK::NonStandardFpBp::buildSourceOrbitGeometry(c, angles, geometry),
+                "failed to build planar source-orbit geometry");
+        } else {
+            const auto& spec = system.nonstandard.nikon_tilted;
+            const auto& g = config.geometry.parameters;
+            YK::NonStandardFpBp::NikonTiltedCt::GeometryConfig c{};
+            c.detector_u = g.detector_u; c.detector_v = g.detector_v;
+            c.detector_pixel_u_mm = static_cast<float>(g.pixel_u_mm);
+            c.detector_pixel_v_mm = static_cast<float>(g.pixel_v_mm);
+            c.sid_mm = spec.sid_mm; c.sdd_mm = spec.sdd_mm;
+            c.tilt_rad = spec.tilt_rad;
+            c.tilt_axis_azimuth_rad = spec.tilt_axis_azimuth_rad;
+            c.source = make_float3(spec.source_offset_mm.x,
+                -spec.sid_mm + spec.source_offset_mm.y,
+                spec.source_offset_mm.z);
+            c.rotation_axis_pivot = spec.rotation_axis_pivot_mm;
+            c.detector_pose = system.geometry.flat_detector.pose;
+            std::vector<YK::NonStandardFpBp::NonStandardViewPose> poses;
+            check(YK::NonStandardFpBp::NikonTiltedCt::buildTiltedAxisGeometry(
+                c, angles, poses, geometry), "failed to build Nikon tilted geometry");
+        }
+        return geometry;
     }
 }

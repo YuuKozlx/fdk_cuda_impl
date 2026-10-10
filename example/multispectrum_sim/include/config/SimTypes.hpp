@@ -4,7 +4,10 @@
 #include <string>
 #include <vector>
 namespace yk::spectral {
-enum class GeometryKind { FlatCbct, FlatHelical, CylCbct, CylHelical };
+enum class GeometryKind {
+    FlatCbct, FlatHelical, CylCbct, CylHelical,
+    PlanarSourceOrbit, NikonTilted,
+};
 enum class WorkflowMode { Project, Reconstruct, ProjectAndReconstruct };
 struct WorkflowConfig { WorkflowMode mode = WorkflowMode::Project; };
 // 材料可以用 formula 表示单一化合物，也可以用 preset 引用内置的
@@ -79,6 +82,19 @@ struct GeometryConfig {
     double start_angle_rad = 0.0;
     double pitch_mm_per_turn = 0.0;
     double start_z_mm = 0.0;
+    // Parameters for non-standard flat-detector trajectories.
+    double scan_range_rad = 6.28318530717958647692;
+    double planar_detector_y_mm = 0.0;
+    double source_orbit_radius_mm = 0.0;
+    double source_lateral_offset_mm = 0.0;
+    int reconstruction_detector_u = 0;
+    int reconstruction_detector_v = 0;
+    std::string planar_resample_mode = "perspective_orthogonal";
+    double nikon_tilt_rad = 0.0;
+    double nikon_tilt_axis_azimuth_rad = 0.0;
+    double rotation_axis_pivot_x_mm = 0.0;
+    double rotation_axis_pivot_y_mm = 0.0;
+    double rotation_axis_pivot_z_mm = 0.0;
     double voxel_x_mm = 1.0;
     double voxel_y_mm = 1.0;
     double voxel_z_mm = 1.0;

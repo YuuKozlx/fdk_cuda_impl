@@ -15,7 +15,7 @@ include(CTest)
 if(BUILD_TESTING)
     foreach(type IN ITEMS shepp_logan tungsten_wire tungsten_wire_slanted gold_foil water_cylinder
             water_ellipse water_cylinder_200mm catphan low_contrast
-            tungsten_bead_line)
+            tungsten_bead_line pcb_test)
         add_test(NAME phantom_generator_${type}
             COMMAND ${CMAKE_COMMAND}
                 -DGENERATOR=$<TARGET_FILE:phantom_generator>

@@ -149,11 +149,15 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         const bool fdk = pipeline_name == "fdk";
         const bool wfbp = pipeline_name == "wfbp";
         const bool cyl_fdk = fdk && config.geometry.kind == GeometryKind::CylCbct;
+        const bool nonstandard_fdk = fdk &&
+            (config.geometry.kind == GeometryKind::PlanarSourceOrbit ||
+             config.geometry.kind == GeometryKind::NikonTilted);
         const bool iterative = !analytic;
         const auto pipeline = parsePipeline(pipeline_name);
         check(fdk || wfbp || iterative, "不支持的 DLL 重建管线");
-        check(!fdk || config.geometry.kind == GeometryKind::FlatCbct || cyl_fdk,
-            "DLL FDK requires a circular Flat or Cyl acquisition");
+        check(!fdk || config.geometry.kind == GeometryKind::FlatCbct ||
+            cyl_fdk || nonstandard_fdk,
+            "DLL FDK requires a supported flat, cylindrical, or non-standard acquisition");
         check(!cyl_fdk || config.geometry.kind == GeometryKind::CylCbct,
             "DLL cyl_fdk 只放行 cyl_cbct");
         check(!wfbp || config.geometry.kind == GeometryKind::CylHelical,
@@ -183,7 +187,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         check(initialized, std::string("YKCBCT 初始化失败: ") + session->lastErrorMessage());
 
         std::vector<float> volume(volume_elements, 0.f);
-        if (fdk && !cyl_fdk) {
+        if (fdk && !cyl_fdk && !nonstandard_fdk) {
             std::vector<float> chunk;
             const int chunk_views = std::min(g.views,
                 std::max(1, config.reconstruction.analytic.chunk_views));
@@ -204,7 +208,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 check(session->execute(request), std::string(
                     "YKCBCT FDK 执行失败: ") + session->lastErrorMessage());
             }
-        } else if (wfbp || cyl_fdk) {
+        } else if (wfbp || cyl_fdk || nonstandard_fdk) {
             // 全量 Host 输入交给 DLL；显存由 Session 的统一分配器管理。
             std::vector<float> projection(projection_elements);
             input.read(reinterpret_cast<char*>(projection.data()),
