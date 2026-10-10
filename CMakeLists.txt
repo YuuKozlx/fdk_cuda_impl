@@ -163,6 +163,7 @@ add_subdirectory(src/FlatFpBp/BP)
 add_subdirectory(src/FlatFpBp/FP)
 add_subdirectory(src/DLTFpBp)
 add_subdirectory(src/CylFpBp)
+add_subdirectory(src/NonStandardFpBp)
 add_subdirectory(src/Reconstruction/Iterative/Common)
 
 if(YKCBCT_BUILD_HELICAL)

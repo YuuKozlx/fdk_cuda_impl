@@ -19,6 +19,7 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     # 框架、几何与重建冒烟测试
     ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_nikon_tilted_ct.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_water.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_arrow.cpp

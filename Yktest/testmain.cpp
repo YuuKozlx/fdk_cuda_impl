@@ -46,6 +46,9 @@ int main_dlt_algebraic_methods();
 int main_dlt_phantom_reconstruction();
 int main_yang_sart_full_resolution_comparison();
 int main_operator_matrix_smoke(); int main_planar_geometry_operator_smoke();
+int main_source_orbit_tomography_smoke();
+int main_source_orbit_pcb_reconstruction();
+int main_nikon_tilted_pcb_reconstruction();
 int main_algebraic_ex_smoke();
 int main_iterative_convergence_smoke();
 int main_ossart_tv_smoke();
@@ -168,6 +171,12 @@ namespace {
         TEST_INT("dlt/yang-full-resolution-sart-comparison", "dlt", true,
             main_yang_sart_full_resolution_comparison),
         TEST_INT("geometry/planar-fp-bp", "geometry", false, main_planar_geometry_operator_smoke),
+        TEST_INT("recon/source-orbit-tomography", "recon", false,
+            main_source_orbit_tomography_smoke),
+        TEST_INT("recon/source-orbit-pcb", "source-orbit", false,
+            main_source_orbit_pcb_reconstruction),
+        TEST_INT("recon/nikon-tilted-pcb-reconstruction", "recon", false,
+            main_nikon_tilted_pcb_reconstruction),
 
         // Synthetic reconstruction smoke tests.
         TEST_INT("recon/algebraic-ex", "recon", false, main_algebraic_ex_smoke),
