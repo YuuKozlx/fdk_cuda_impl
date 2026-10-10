@@ -45,10 +45,14 @@ void fillWaterShell(Phantom& p, bool elliptical)
         "circular PMMA shell water phantom";
 }
 
-void makeWaterCylinder200mm(Phantom& p)
+void makeWaterCylinder(Phantom& p, double diameter_mm = 200.0, double shell = 5.0)
 {
-    constexpr double outer_radius = 100.0;
-    constexpr double shell = 5.0;
+    if (!std::isfinite(diameter_mm) || !std::isfinite(shell) || diameter_mm <= 0.0 ||
+        shell <= 0.0 || 2.0 * shell >= diameter_mm)
+        throw std::runtime_error("invalid water cylinder diameter or shell thickness");
+    if (p.nx * p.voxel_mm < diameter_mm || p.ny * p.voxel_mm < diameter_mm)
+        throw std::runtime_error("water cylinder does not fit the voxel grid");
+    const double outer_radius = diameter_mm * 0.5;
     const double inner_radius = outer_radius - shell;
     for (int z = 0; z < p.nz; ++z) for (int y = 0; y < p.ny; ++y)
         for (int x = 0; x < p.nx; ++x) {
@@ -59,7 +63,8 @@ void makeWaterCylinder200mm(Phantom& p)
     p.materials = {{1, "water", 1.0, "H2O", {}, {}},
                    {2, "pmma", 1.18, "C5H8O2", {}, {}}};
     p.target_diameter_mm = 2.0 * outer_radius;
-    p.variant = "200 mm water cylinder with 5 mm PMMA shell";
+    p.variant = std::to_string(diameter_mm) + " mm water cylinder with " +
+        std::to_string(shell) + " mm PMMA shell";
 }
 
 void requireTargetResolution(const Phantom& p, double feature_mm)
@@ -660,8 +665,12 @@ phantom_generator::GeneratorRegistry makeRegistry()
     r.add("tungsten_wire", [](Phantom& p, const Arguments&) { makeWire(p, false); });
     r.add("tungsten_wire_slanted", [](Phantom& p, const Arguments&) { makeWire(p, true); });
     r.add("gold_foil", [](Phantom& p, const Arguments&) { makeGoldFoil(p); });
-    r.add("water_cylinder", [](Phantom& p, const Arguments&) { fillWaterShell(p, false); });
-    r.add("water_cylinder_200mm", [](Phantom& p, const Arguments&) { makeWaterCylinder200mm(p); });
+    r.add("water_cylinder", [](Phantom& p, const Arguments& a) {
+        if (a.empty()) fillWaterShell(p, false);
+        else if (a.size() == 2) makeWaterCylinder(p, std::stod(a[0]), std::stod(a[1]));
+        else throw std::runtime_error("water_cylinder accepts optional diameter_mm shell_thickness_mm");
+    });
+    r.add("water_cylinder_200mm", [](Phantom& p, const Arguments&) { makeWaterCylinder(p); });
     r.add("water_ellipse", [](Phantom& p, const Arguments&) { fillWaterShell(p, true); });
     r.add("catphan", [](Phantom& p, const Arguments&) { makeCatphan(p); });
     r.add("low_contrast", [](Phantom& p, const Arguments&) { makeLowContrast(p); });
@@ -713,7 +722,10 @@ void printHelp(const std::string& type = {})
         throw std::invalid_argument("unknown phantom type: " + type);
     std::cout << "type: " << type << "\ncommon arguments:\n"
               << "  output.raw nx ny nz voxel_mm\n";
-    if (type == "tungsten_bead_line")
+    if (type == "water_cylinder")
+        std::cout << "type arguments:\n  [outer_diameter_mm shell_thickness_mm]\n"
+                  << "example:\n  phantom_generator water_cylinder water350.raw 701 701 256 0.5 350 5\n";
+    else if (type == "tungsten_bead_line")
         std::cout << "type arguments:\n  bead_diameter_mm center_spacing_mm\n"
                   << "example:\n  phantom_generator tungsten_bead_line beads.raw 256 256 960 0.125 3 10\n";
     else if (type == "tungsten_bead_double_ring" ||
