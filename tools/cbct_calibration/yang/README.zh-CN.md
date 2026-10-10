@@ -109,12 +109,19 @@ python -m tools.cbct_calibration.yang.pic points.npy `
 
 实现说明：第 6 步默认使用式 (26) 的线性 `sin/cos` 解，退化时回退到周期一维重投影搜索；自动比较两个编号方向并在 diagnostics 中记录所选方向。第 7 节的固定源/固定探测器联合优化已由 `extended_calibrate_stack` 实现。零 roll 使用式 (14)-(16)，无穷远 D 输出为 null。
 
-测试命令：
-
-```powershell
-python -m unittest discover -s tools -p "test_*.py" -v
-```
+统一回归在 Linux 容器中运行，环境和可复现命令见 `../container/README.zh-CN.md`。
 
 单元测试覆盖零 roll、近零 roll、非零姿态、非方形像素、坐标转换、源位置、phantom 中心、
 SDD、主点和像素重投影误差。真实 RAW 的全链路结果以 `workflow.py::calibrate_raw()` 生成的
 `calibration.json` 和追踪诊断为准，不在本指南中缓存固定数值。
+
+## 粘连帧的处理边界
+
+追踪层为每个目标、每一帧保存 `observed`、`merged` 和 `usable`。粘连表示目标仍在前景中，
+但共享连通域不能提供彼此独立的亚像素质心，因此只用预测坐标维持编号和下一帧搜索，
+该帧的对应点标记为 `usable=false`。重新分离后会立即恢复使用；出界或门限外则不记为
+`observed`。
+
+逐帧 DLT 与固定源规范联合拟合只使用 `usable` 点，每帧至少需要 6 个点。Yang PIC 的
+解析式依赖完整的对置点关系，故跳过不完整帧，并在输出中保存真实 `frame_id`。预测点和
+插值点不会进入 PIC、DLT 或联合拟合残差。

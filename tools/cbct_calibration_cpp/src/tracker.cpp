@@ -14,8 +14,10 @@ namespace {
 
 std::vector<Component> connectedComponents(const std::vector<float>& image,
                                            ImageShape shape, float threshold,
-                                           int min_pixels) {
+                                           int min_pixels,
+                                           std::vector<int>* labels = nullptr) {
     const int count = shape.rows * shape.cols;
+    if (labels) labels->assign(static_cast<std::size_t>(count), 0);
     std::vector<unsigned char> mask(static_cast<std::size_t>(count), 0);
     for (int i = 0; i < count; ++i) mask[static_cast<std::size_t>(i)] = image[static_cast<std::size_t>(i)] > threshold;
     std::vector<Component> components;
@@ -42,8 +44,11 @@ std::vector<Component> connectedComponents(const std::vector<float>& image,
                 }
             }
         }
-        if (static_cast<int>(queue.size()) >= min_pixels)
+        if (static_cast<int>(queue.size()) >= min_pixels) {
+            if (labels) for (int id : queue)
+                (*labels)[static_cast<std::size_t>(id)] = static_cast<int>(components.size()) + 1;
             components.push_back({weighted / weight_sum, static_cast<int>(queue.size()), peak});
+        }
     }
     return components;
 }
@@ -79,7 +84,8 @@ std::vector<Point2> candidateFromComponents(const std::vector<Component>& compon
     std::vector<Component> b(ordinary.begin() + spec.beads_per_ring, ordinary.end());
     if (swap) std::swap(a, b);
     a = sortByAngle(a); b = sortByAngle(b);
-    if (reverse_a) std::reverse(a.begin(), a.end()); if (reverse_b) std::reverse(b.begin(), b.end());
+    if (reverse_a) std::reverse(a.begin(), a.end());
+    if (reverse_b) std::reverse(b.begin(), b.end());
     std::rotate(a.begin(), a.begin() + (shift_a % static_cast<int>(a.size())), a.end());
     std::rotate(b.begin(), b.begin() + (shift_b % static_cast<int>(b.size())), b.end());
     std::vector<Point2> result(static_cast<std::size_t>(2 * spec.beads_per_ring + marker_count));
@@ -219,7 +225,10 @@ TrackingResult trackIdentifiablePhantom(RawStackReader& raw, const TrackerConfig
     const int targets = static_cast<int>(anchor_points.size());
     TrackingResult result; result.views = raw.views(); result.targets = targets; result.anchor_frame = anchor;
     result.points.assign(static_cast<std::size_t>(result.views * targets), Point2::Constant(std::numeric_limits<double>::quiet_NaN()));
-    result.observed.assign(static_cast<std::size_t>(result.views * targets), 0); result.dlt_rmse_px.assign(result.views, std::numeric_limits<double>::quiet_NaN());
+    result.observed.assign(static_cast<std::size_t>(result.views * targets), 0);
+    result.merged.assign(static_cast<std::size_t>(result.views * targets), 0);
+    result.usable.assign(static_cast<std::size_t>(result.views * targets), 0);
+    result.dlt_rmse_px.assign(result.views, std::numeric_limits<double>::quiet_NaN());
     auto run = [&](int direction) {
         std::vector<float> frame; std::vector<Point2> previous = anchor_points, before; std::vector<unsigned char> active(static_cast<std::size_t>(targets), 1);
         const int steps = (raw.views() + 1) / 2;
@@ -228,10 +237,18 @@ TrackingResult trackIdentifiablePhantom(RawStackReader& raw, const TrackerConfig
             if (step != 0) {
                 raw.readFrame(view, frame); std::vector<Point2> predicted = previous;
                 if (!before.empty()) for (int i = 0; i < targets; ++i) predicted[i] = previous[i] + (previous[i] - before[i]);
-                const auto components = detectComponents(frame, config.image, config.threshold, config.min_pixels);
+                bool all_finite = true;
+                for (int i = 0; i < targets; ++i) {
+                    if (!active[static_cast<std::size_t>(i)])
+                        predicted[static_cast<std::size_t>(i)] = Point2::Constant(std::numeric_limits<double>::quiet_NaN());
+                    all_finite = all_finite && predicted[static_cast<std::size_t>(i)].allFinite();
+                }
+                std::vector<int> labels;
+                const auto components = connectedComponents(frame, config.image,
+                    config.threshold, config.min_pixels, &labels);
                 std::vector<Point2> measured;
                 std::vector<unsigned char> valid;
-                if (static_cast<int>(components.size()) == targets) {
+                if (static_cast<int>(components.size()) == targets && all_finite) {
                     measured.assign(static_cast<std::size_t>(targets), Point2::Constant(std::numeric_limits<double>::quiet_NaN()));
                     valid.assign(static_cast<std::size_t>(targets), 0);
                     const auto assignment = nearestAssignment(predicted, components);
@@ -245,14 +262,69 @@ TrackingResult trackIdentifiablePhantom(RawStackReader& raw, const TrackerConfig
                 } else {
                     measured = measureFromSeeds(frame, config.image, predicted, config.threshold, config.gate_radius_px, config.min_pixels, valid);
                 }
-                for (int i = 0; i < targets; ++i) active[static_cast<std::size_t>(i)] = active[static_cast<std::size_t>(i)] && valid[static_cast<std::size_t>(i)] && predicted[i].x() >= 0.0 && predicted[i].x() < config.image.cols && predicted[i].y() >= 0.0 && predicted[i].y() < config.image.rows;
+                std::vector<unsigned char> frame_merged(static_cast<std::size_t>(targets), 0);
+                std::vector<int> component_owner(static_cast<std::size_t>(targets), -1);
+                // Classify by the nearest foreground pixel's component, not
+                // by the component centroid (which shifts strongly on merging).
+                for (int i = 0; i < targets; ++i) if (active[static_cast<std::size_t>(i)] && predicted[i].allFinite()) {
+                    double best_squared = config.gate_radius_px * config.gate_radius_px;
+                    const int x0 = std::max(0, static_cast<int>(std::floor(predicted[i].x() - config.gate_radius_px)));
+                    const int x1 = std::min(config.image.cols - 1, static_cast<int>(std::ceil(predicted[i].x() + config.gate_radius_px)));
+                    const int y0 = std::max(0, static_cast<int>(std::floor(predicted[i].y() - config.gate_radius_px)));
+                    const int y1 = std::min(config.image.rows - 1, static_cast<int>(std::ceil(predicted[i].y() + config.gate_radius_px)));
+                    for (int y = y0; y <= y1; ++y) for (int x = x0; x <= x1; ++x) {
+                        const int label = labels[static_cast<std::size_t>(y * config.image.cols + x)];
+                        const double squared = (predicted[i] - Point2(x, y)).squaredNorm();
+                        if (label > 0 && squared <= best_squared) {
+                            best_squared = squared;
+                            component_owner[static_cast<std::size_t>(i)] = label;
+                        }
+                    }
+                }
+                for (int i = 0; i < targets; ++i) for (int j = i + 1; j < targets; ++j) {
+                    if (component_owner[static_cast<std::size_t>(i)] >= 0 &&
+                        component_owner[static_cast<std::size_t>(i)] == component_owner[static_cast<std::size_t>(j)]) {
+                        frame_merged[static_cast<std::size_t>(i)] = 1;
+                        frame_merged[static_cast<std::size_t>(j)] = 1;
+                    }
+                }
+                for (int i = 0; i < targets; ++i) {
+                    const auto index = static_cast<std::size_t>(i);
+                    const bool inside = predicted[index].allFinite() &&
+                        predicted[index].x() >= 0.0 && predicted[index].x() < config.image.cols &&
+                        predicted[index].y() >= 0.0 && predicted[index].y() < config.image.rows;
+                    // A merged component confirms that the targets remain in
+                    // view even when it cannot provide two independent
+                    // centroids.  Bridge this frame with the prediction; the
+                    // point is excluded from calibration by usable below.
+                    if (inside && frame_merged[index] && !valid[index])
+                        measured[index] = predicted[index];
+                    active[index] = static_cast<unsigned char>(
+                        active[index] && inside && (valid[index] || frame_merged[index]));
+                }
                 before = previous; previous = measured;
+                // At the overlap of the two tracking directions, a failed
+                // pass must not erase a valid observation from the other pass.
+                for (int i = 0; i < targets; ++i) if (active[static_cast<std::size_t>(i)]) {
+                    const auto index = static_cast<std::size_t>(view * targets + i);
+                    if (result.usable[index] && frame_merged[static_cast<std::size_t>(i)]) continue;
+                    result.points[index] = previous[static_cast<std::size_t>(i)];
+                    result.observed[index] = 1;
+                    result.merged[index] = frame_merged[static_cast<std::size_t>(i)];
+                    result.usable[index] = static_cast<unsigned char>(!frame_merged[static_cast<std::size_t>(i)]);
+                }
             }
-            for (int i = 0; i < targets; ++i) if (active[static_cast<std::size_t>(i)]) { result.points[static_cast<std::size_t>(view * targets + i)] = previous[i]; result.observed[static_cast<std::size_t>(view * targets + i)] = 1; }
+            for (int i = 0; step == 0 && i < targets; ++i) {
+                const auto index = static_cast<std::size_t>(view * targets + i);
+                result.points[index] = previous[i];
+                result.observed[index] = 1;
+                result.usable[index] = 1;
+            }
         }
     };
     run(+1); run(-1);
     return result;
 }
+
 
 }  // namespace cbct::calibration

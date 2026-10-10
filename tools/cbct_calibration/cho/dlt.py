@@ -176,11 +176,27 @@ def calibrate_view(points_px: np.ndarray, config: ChoConfig,
 
 
 def calibrate_stack(points_stack_px: np.ndarray, config: ChoConfig) -> list[ChoPose]:
+    return calibrate_stack_masked(points_stack_px, config)
+
+
+def calibrate_stack_masked(points_stack_px: np.ndarray, config: ChoConfig,
+                           usable_mask: np.ndarray | None = None) -> list[ChoPose]:
+    """Calibrate each view from its independent, measured centroids only."""
     stack = np.asarray(points_stack_px, dtype=float)
     expected = 2 * config.beads_per_ring
     if stack.ndim != 3 or stack.shape[1:] != (expected, 2):
         raise ValueError(f"points_stack_px must have shape (views,{expected},2)")
-    return [calibrate_view(frame, config) for frame in stack]
+    usable = (np.isfinite(stack).all(axis=2) if usable_mask is None else
+              np.asarray(usable_mask, dtype=bool) & np.isfinite(stack).all(axis=2))
+    if usable.shape != stack.shape[:2]:
+        raise ValueError("usable_mask must have shape (views, targets)")
+    counts = usable.sum(axis=1)
+    if np.any(counts < 6):
+        view = int(np.flatnonzero(counts < 6)[0])
+        raise ValueError(f"view {view} has only {counts[view]} usable DLT points")
+    world = phantom_points(config)
+    return [calibrate_view(frame[valid], config, world[valid])
+            for frame, valid in zip(stack, usable)]
 
 
 def calibrate_stack_joint(points_stack_px: np.ndarray, config: ChoConfig) -> ChoJointResult:

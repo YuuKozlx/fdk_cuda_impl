@@ -15,5 +15,5 @@ TrackingResult trackIdentifiablePhantom(RawStackReader& raw,
                                         const PhantomSpec& phantom,
                                         PixelSize pixel);
 
-}  // namespace cbct::calibration
 
+}  // namespace cbct::calibration

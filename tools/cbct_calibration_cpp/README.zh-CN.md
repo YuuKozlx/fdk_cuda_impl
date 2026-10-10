@@ -4,8 +4,8 @@
 
 | 模体 | 点集/业务入口 | 当前状态 |
 |---|---|---|
-| Cho 双环 | `makeChoDoubleRing()` + Cho 业务 tracker | 点集工厂已提供 |
-| Yang 双环 | `makeYangDoubleRing()` + Yang PIC 业务层 | 点集工厂已提供 |
+| Cho 双环 | `makeChoDoubleRing()` + Cho 业务 tracker | 点集工厂和逐点掩码几何核心已提供 |
+| Yang 双环 | `makeYangDoubleRing()` + Yang PIC 业务层 | 点集工厂和逐点掩码几何核心已提供 |
 | 可编号双环 | `makeIdentifiableDoubleRing()` | 完整 C++ DLT/源圆/联合拟合 |
 | 单排钢珠 | `makeSingleRow()` + `trackSingleRow()` | C++ 检测、亚像素质心、永久失效跟踪 |
 
@@ -37,13 +37,9 @@ CalibrationResult result = calibrateIndexedPoints(points2d, points3d,
 
 ## 构建和回归
 
-项目使用自己的 `CMakeLists.txt` 和 vcpkg 配置，不加入仓库主工程。建议单独配置和构建：
-
-```powershell
-cmake -S tools/cbct_calibration_cpp -B out/cbct-calibration-cpp-build
-cmake --build out/cbct-calibration-cpp-build --config Release
-ctest --test-dir out/cbct-calibration-cpp-build -C Release --output-on-failure
-```
+项目使用自己的 `CMakeLists.txt`，不加入仓库主工程。标准回归使用 Linux 容器中的 GCC、
+Ninja 和系统 Eigen，不依赖 Windows 的 MSVC 或 vcpkg；环境和可复现命令见
+`../cbct_calibration/container/README.zh-CN.md`。
 
 合成回归覆盖：
 
@@ -52,8 +48,9 @@ ctest --test-dir out/cbct-calibration-cpp-build -C Release --output-on-failure
 - SID/SDD、探测器 offset 和三轴 tilt；
 - 源圆拟合；
 - 固定源偏移的联合拟合；
+- Cho 12+12 与 Yang 6+6 的逐点屏蔽 DLT/联合拟合；
+- 合成 RAW 中的粘连标记和后续帧恢复；
 - Cho/Yang/单排点集工厂。
 
-当前 C++ 核心接收的是已经有序的二维/三维点；它不替代 Python 业务层的 RAW 检测、粘连分割、
-镜像候选和论文 PIC 步骤。真实 RAW 入口仍是显式测试程序，不能把某一批 RAW 的高残差隐藏为“通过”；
+对于 RAW 追踪，C++ 采用与 Python 相同的 `observed / merged / usable` 语义：粘连目标维持轨迹，但只在当前帧从 DLT 和联合拟合中排除，下一帧独立检测后即可恢复。C++ 核心也可接收已经有序的二维/三维点和逐点 `usable` 掩码；它不替代 Python 业务层的镜像候选和论文 PIC 步骤。真实 RAW 入口仍是显式测试程序，不能把某一批 RAW 的高残差隐藏为“通过”；
 真实数据必须另外检查追踪、粘连分割和 map 是否正确。

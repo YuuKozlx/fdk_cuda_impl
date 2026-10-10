@@ -15,7 +15,8 @@ for directory in (HERE, PARENT):
 
 from .phantom import marked_points
 from .joint_fit import project
-from .tracker import (_extract_from_predictions, initialize_indices)
+from .tracker import (FormalTrackerConfig, _extract_from_predictions,
+                      initialize_indices, _track_direction)
 
 
 class FormalTrackerTests(unittest.TestCase):
@@ -58,6 +59,38 @@ class FormalTrackerTests(unittest.TestCase):
         self.assertTrue(np.all(valid))
         self.assertLess(measured[0, 0], measured[1, 0])
         self.assertLess(np.max(np.linalg.norm(measured - predicted, axis=1)), 1.5)
+
+    def test_touching_targets_are_excluded_from_calibration(self):
+        yy, xx = np.indices((80, 80))
+        image = np.zeros((80, 80), dtype=np.float32)
+        image[(xx - 38) ** 2 + (yy - 40) ** 2 <= 5 ** 2] = 20.0
+        image[(xx - 44) ** 2 + (yy - 40) ** 2 <= 5 ** 2] = 20.0
+        _, valid, stats = _extract_from_predictions(
+            image, np.array([[38.0, 40.0], [44.0, 40.0]]),
+            threshold=5.0, gate_radius_px=12.0, min_pixels=4)
+        np.testing.assert_array_equal(valid, [True, True])
+        self.assertEqual(stats["merged_ids"], [0, 1])
+
+    def test_merged_frame_does_not_retire_tracks(self):
+        raw = np.zeros((3, 40, 40), dtype=np.float32)
+        raw[:, 19:22, 9:12] = 20.0
+        raw[:, 19:22, 19:22] = 20.0
+        raw[1, 20, 12:19] = 20.0
+        seeds = np.array([[10.0, 20.0], [20.0, 20.0]])
+        config = FormalTrackerConfig(Path("."), Path("."), views=3,
+                                     rows=40, cols=40, gate_radius_px=10.0)
+        _, observed, merged, _ = _track_direction(raw, 0, seeds, 1, config)
+        np.testing.assert_array_equal(observed, np.ones((3, 2), dtype=bool))
+        np.testing.assert_array_equal(merged, [[False, False], [True, True],
+                                              [False, False]])
+
+    def test_missing_target_outside_gate_is_not_marked_merged(self):
+        image = np.zeros((40, 40), dtype=np.float32)
+        image[19:22, 9:12] = 20.0
+        _, valid, stats = _extract_from_predictions(
+            image, np.array([[10., 20.], [35., 20.]]), 5., 5., 4)
+        np.testing.assert_array_equal(valid, [True, False])
+        self.assertEqual(stats["merged_ids"], [])
 
 
 if __name__ == "__main__":

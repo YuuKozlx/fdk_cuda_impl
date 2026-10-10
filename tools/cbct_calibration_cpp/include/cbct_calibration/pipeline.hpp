@@ -15,6 +15,12 @@ CalibrationResult calibrateIndexedPoints(const std::vector<Point2>& indexed_poin
                                          int views,
                                          const PipelineConfig& config);
 
+CalibrationResult calibrateIndexedPoints(const std::vector<Point2>& indexed_points,
+                                         const std::vector<Point3>& world_points,
+                                         const std::vector<unsigned char>& usable,
+                                         int views,
+                                         const PipelineConfig& config);
+
 CalibrationResult calibrateRaw(const PipelineConfig& config);
 
 }  // namespace cbct::calibration

@@ -24,14 +24,27 @@ from .tracker import FormalTrackerConfig, track_stack
 
 def calibrate_indexed(points_px, pixel_size_mm=(0.417, 0.417),
                       image_shape=(1024, 1024), max_nfev=1200,
-                      marker_points_mm=None) -> dict:
+                      marker_points_mm=None, local_points=None,
+                      usable_mask=None) -> dict:
     """DLT cameras -> source circle -> fixed-source joint calibration."""
     points = np.asarray(points_px, dtype=float)
-    local = marked_points(marker_points_mm)
+    local = (marked_points(marker_points_mm) if local_points is None else
+             np.asarray(local_points, dtype=float))
+    if points.ndim != 3 or points.shape[1:] != (len(local), 2):
+        raise ValueError("points must have shape (views, targets, 2) in local point ID order")
+    if usable_mask is not None and np.shape(usable_mask) != points.shape[:2]:
+        raise ValueError("usable_mask must have shape (views, targets)")
+    usable = (np.isfinite(points).all(axis=2) if usable_mask is None else
+              np.asarray(usable_mask, dtype=bool) & np.isfinite(points).all(axis=2))
+    counts = usable.sum(axis=1)
+    if np.any(counts < 6):
+        frame = int(np.flatnonzero(counts < 6)[0])
+        raise ValueError(f"view {frame} has only {counts[frame]} usable DLT points")
     dlt_config = DltConfig(pixel_size_mm=tuple(pixel_size_mm))
-    cameras = [calibrate_view(frame, dlt_config, local) for frame in points]
+    cameras = [calibrate_view(frame[valid], dlt_config, local[valid])
+               for frame, valid in zip(points, usable)]
     circle = fit_source_circle(np.asarray([c.source_phantom_mm for c in cameras]))
-    joint = fit(points, pixel_size_mm, image_shape, max_nfev, local)
+    joint = fit(points, pixel_size_mm, image_shape, max_nfev, local, usable)
     return {
         "workflow": "indexed_points -> per_view_dlt -> source_circle -> fixed_source_joint_fit",
         "dlt_cameras": [{"projection_matrix": c.projection_matrix.tolist(),
@@ -46,6 +59,7 @@ def calibrate_indexed(points_px, pixel_size_mm=(0.417, 0.417),
                           "radial_rms_mm": circle.radial_rms_mm,
                           "axial_rms_mm": circle.axial_rms_mm},
         "joint_fit": joint,
+        "usable_count_per_view": counts.tolist(),
     }
 
 
@@ -95,11 +109,6 @@ def mirror_correspondence() -> np.ndarray:
 def calibrate_identifiable_phantom(config: IdentifiablePhantomConfig) -> dict:
     """Fit reconstruction-oriented equivalent geometry with source fixed to zero."""
     tracking = preprocess_identifiable_phantom(config)
-    if not np.all(tracking.observed):
-        missing = int(np.size(tracking.observed) - np.count_nonzero(tracking.observed))
-        raise RuntimeError(
-            f"formal tracking contains {missing} missing observations; "
-            "the dense joint fit requires a complete stack")
     identity = np.arange(tracking.points_px.shape[1], dtype=int)
     correspondence_candidates = []
     maps = [("as_tracked", identity)]
@@ -107,15 +116,18 @@ def calibrate_identifiable_phantom(config: IdentifiablePhantomConfig) -> dict:
         maps.append(("mirror_relabelled", mirror_correspondence()))
     for name, indices in maps:
         candidate_points = tracking.points_px[:, indices]
+        candidate_usable = tracking.usable[:, indices]
         candidate_report = calibrate_indexed(
             candidate_points, config.pixel_size_mm, (config.rows, config.cols),
-            marker_points_mm=config.marker_points_mm)
+            marker_points_mm=config.marker_points_mm,
+            usable_mask=candidate_usable)
         correspondence_candidates.append((
             candidate_report["joint_fit"]["diagnostics"]["rmse_px"], name, indices,
-            candidate_points, candidate_report))
-    _, correspondence_name, correspondence, canonical_points, report = min(
+            candidate_points, candidate_usable, candidate_report))
+    _, correspondence_name, correspondence, canonical_points, canonical_usable, report = min(
         correspondence_candidates, key=lambda item: item[0])
     canonical_observed = tracking.observed[:, correspondence]
+    canonical_merged = tracking.merged[:, correspondence]
     report.update({
         "workflow": "identifiable_phantom_equivalent_geometry",
         "input": {**asdict(config), "raw_path": str(config.raw_path),
@@ -137,7 +149,7 @@ def calibrate_identifiable_phantom(config: IdentifiablePhantomConfig) -> dict:
                           "selected_correspondence": correspondence_name,
                           "correspondence_candidate_rmse_px": {
                               name: float(rmse)
-                              for rmse, name, _, _, _ in correspondence_candidates
+                              for rmse, name, _, _, _, _ in correspondence_candidates
                           },
                           "correspondence_index": correspondence.tolist(),
                           "fixed_source_offset_mm": [0.0, 0.0, 0.0],
@@ -146,6 +158,8 @@ def calibrate_identifiable_phantom(config: IdentifiablePhantomConfig) -> dict:
     config.output_directory.mkdir(parents=True, exist_ok=True)
     np.save(config.output_directory / "points.npy", canonical_points)
     np.save(config.output_directory / "observed.npy", canonical_observed)
+    np.save(config.output_directory / "merged.npy", canonical_merged)
+    np.save(config.output_directory / "usable.npy", canonical_usable)
     (config.output_directory / "calibration.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     return report

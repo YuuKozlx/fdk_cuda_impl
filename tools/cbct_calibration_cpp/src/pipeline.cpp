@@ -72,6 +72,7 @@ struct JointCandidate {
 JointCandidate fitJoint(const std::vector<Point2>& measured,
                         const std::vector<Point3>& local,
                         const std::vector<DltCamera>& cameras,
+                        const std::vector<unsigned char>& usable,
                         const SourceCircle& circle,
                         int views, const PipelineConfig& config) {
     Eigen::Matrix3d rotation0; Point3 translation0;
@@ -111,10 +112,13 @@ JointCandidate fitJoint(const std::vector<Point2>& measured,
         const auto prediction = projectJoint(trial, local, 1, 1, config.pixel,
                                              config.tracker.image);
         double squared = 0.0;
+        std::size_t used = 0;
         for (std::size_t target = 0; target < local.size(); ++target) {
+            if (!usable[target]) continue;
             squared += (prediction[target] - measured[target]).squaredNorm();
+            ++used;
         }
-        const double score = std::sqrt(squared / local.size());
+        const double score = std::sqrt(squared / std::max<std::size_t>(used, 1));
         if (score < best_phase_score) {
             best_phase_score = score;
             best_rotation = trial_rotation;
@@ -135,15 +139,20 @@ JointCandidate fitJoint(const std::vector<Point2>& measured,
               0.03, 0.03, 0.03, 10.0, 10.0, 10.0;
     JointCandidate best;
     for (const int direction : {1, -1}) {
+        const auto usable_count = static_cast<Eigen::Index>(std::count_if(
+            usable.begin(), usable.end(), [](unsigned char value) { return value != 0; }));
         auto residual = [&](const Eigen::VectorXd& free) {
             Eigen::VectorXd state = state0; state.tail(12) = free;
             const auto prediction = projectJoint(state, local, views, direction,
                                                  config.pixel, config.tracker.image);
-            Eigen::VectorXd r(2 * static_cast<Eigen::Index>(measured.size()));
+            Eigen::VectorXd r(2 * usable_count);
+            Eigen::Index k = 0;
             for (std::size_t i = 0; i < measured.size(); ++i) {
+                if (!usable[i]) continue;
                 const Point2 e = prediction[i] - measured[i];
-                r(2 * static_cast<Eigen::Index>(i)) = e.x();
-                r(2 * static_cast<Eigen::Index>(i) + 1) = e.y();
+                r(2 * k) = e.x();
+                r(2 * k + 1) = e.y();
+                ++k;
             }
             return r;
         };
@@ -154,10 +163,13 @@ JointCandidate fitJoint(const std::vector<Point2>& measured,
         const auto prediction = projectJoint(state, local, views, direction,
                                              config.pixel, config.tracker.image);
         double squared = 0.0, maximum = 0.0;
+        std::size_t evaluated = 0;
         for (std::size_t i = 0; i < measured.size(); ++i) {
+            if (!usable[i]) continue;
             const double error = (prediction[i] - measured[i]).norm(); squared += error * error; maximum = std::max(maximum, error);
+            ++evaluated;
         }
-        const double rmse = std::sqrt(squared / measured.size());
+        const double rmse = std::sqrt(squared / std::max<std::size_t>(evaluated, 1));
         if (rmse < best.rmse) best = {state, direction, rmse, maximum,
                                       optimized.iterations, optimized.converged};
     }
@@ -168,9 +180,11 @@ JointCandidate fitJoint(const std::vector<Point2>& measured,
 
 CalibrationResult calibrateIndexedPoints(const std::vector<Point2>& indexed_points,
                                          const std::vector<Point3>& local,
+                                         const std::vector<unsigned char>& usable,
                                          int views, const PipelineConfig& config) {
     const int targets = static_cast<int>(local.size());
-    if (views < 3 || indexed_points.size() != static_cast<std::size_t>(views * targets))
+    if (views < 3 || indexed_points.size() != static_cast<std::size_t>(views * targets) ||
+        usable.size() != indexed_points.size())
         throw std::invalid_argument("indexed point array has an invalid size");
     CalibrationResult result;
     result.cameras.reserve(static_cast<std::size_t>(views));
@@ -178,11 +192,21 @@ CalibrationResult calibrateIndexedPoints(const std::vector<Point2>& indexed_poin
     for (int view = 0; view < views; ++view) {
         std::vector<Point2> frame(indexed_points.begin() + view * targets,
                                   indexed_points.begin() + (view + 1) * targets);
-        auto camera = calibratePhysicalCamera(local, frame, config.pixel);
+        std::vector<Point3> world_used; std::vector<Point2> image_used;
+        for (int target = 0; target < targets; ++target) {
+            if (!usable[static_cast<std::size_t>(view * targets + target)]) continue;
+            world_used.push_back(local[static_cast<std::size_t>(target)]);
+            image_used.push_back(frame[static_cast<std::size_t>(target)]);
+        }
+        if (world_used.size() < 6)
+            throw std::invalid_argument("each frame needs at least six usable DLT points");
+        for (const auto& point : image_used)
+            if (!point.allFinite()) throw std::invalid_argument("usable image points must be finite");
+        auto camera = calibratePhysicalCamera(world_used, image_used, config.pixel);
         sources.push_back(camera.source_phantom_mm); result.cameras.push_back(std::move(camera));
     }
     result.source_circle = fitSourceCircle(sources);
-    const JointCandidate joint = fitJoint(indexed_points, local, result.cameras,
+    const JointCandidate joint = fitJoint(indexed_points, local, result.cameras, usable,
                                           result.source_circle, views, config);
     result.machine.sid_mm = joint.state(0); result.machine.sdd_mm = joint.state(1);
     result.machine.offset_u_mm = joint.state(2); result.machine.offset_v_mm = joint.state(3);
@@ -194,6 +218,14 @@ CalibrationResult calibrateIndexedPoints(const std::vector<Point2>& indexed_poin
     result.max_point_error_px = joint.max_error; result.joint_iterations = joint.iterations;
     result.joint_converged = joint.converged;
     return result;
+}
+
+CalibrationResult calibrateIndexedPoints(const std::vector<Point2>& indexed_points,
+                                         const std::vector<Point3>& local,
+                                         int views, const PipelineConfig& config) {
+    return calibrateIndexedPoints(indexed_points, local,
+                                  std::vector<unsigned char>(indexed_points.size(), 1),
+                                  views, config);
 }
 
 CalibrationResult calibrateIndexed(const std::vector<Point2>& indexed_points,
@@ -213,7 +245,7 @@ CalibrationResult calibrateRaw(const PipelineConfig& config) {
         std::vector<Point3> world;
         std::vector<Point2> image;
         for (int target = 0; target < tracking.targets; ++target) {
-            if (!tracking.isObserved(view, target)) continue;
+            if (!tracking.isUsable(view, target)) continue;
             world.push_back(local[static_cast<std::size_t>(target)]);
             image.push_back(tracking.at(view, target));
         }
@@ -223,16 +255,15 @@ CalibrationResult calibrateRaw(const PipelineConfig& config) {
                 reprojectionRmse(projection, world, image);
         }
     }
-    for (int view = 0; view < tracking.views; ++view)
-        for (int target = 0; target < tracking.targets; ++target)
-            if (!tracking.isObserved(view, target))
-                throw std::runtime_error("dense joint fit requires every target in every frame");
     // A synchronized circular ring has two mirror-related numberings with
     // essentially the same single-view DLT residual.  Close both candidates
     // against the shared circular scanner model and retain the globally
     // consistent hand.  External markers fix phase/ring identity, but a
     // single frame alone still does not reliably fix winding in noisy data.
     std::vector<Point2> reversed = tracking.points;
+    std::vector<unsigned char> reversed_usable = tracking.usable;
+    std::vector<unsigned char> reversed_observed = tracking.observed;
+    std::vector<unsigned char> reversed_merged = tracking.merged;
     const int n = config.phantom.beads_per_ring;
     const int lower_mirror_shift = static_cast<int>(std::llround(
         config.phantom.lower_phase_deg * n / 180.0));
@@ -244,17 +275,36 @@ CalibrationResult calibrateRaw(const PipelineConfig& config) {
             reversed[static_cast<std::size_t>(view * tracking.targets + 2 * bead)] =
                 tracking.points[static_cast<std::size_t>(view * tracking.targets +
                                                          2 * upper_source_bead)];
+            reversed_usable[static_cast<std::size_t>(view * tracking.targets + 2 * bead)] =
+                tracking.usable[static_cast<std::size_t>(view * tracking.targets + 2 * upper_source_bead)];
+            reversed_observed[static_cast<std::size_t>(view * tracking.targets + 2 * bead)] =
+                tracking.observed[static_cast<std::size_t>(view * tracking.targets + 2 * upper_source_bead)];
+            reversed_merged[static_cast<std::size_t>(view * tracking.targets + 2 * bead)] =
+                tracking.merged[static_cast<std::size_t>(view * tracking.targets + 2 * upper_source_bead)];
             reversed[static_cast<std::size_t>(view * tracking.targets + 2 * bead + 1)] =
                 tracking.points[static_cast<std::size_t>(view * tracking.targets +
                                                          2 * lower_source_bead + 1)];
+            reversed_usable[static_cast<std::size_t>(view * tracking.targets + 2 * bead + 1)] =
+                tracking.usable[static_cast<std::size_t>(view * tracking.targets + 2 * lower_source_bead + 1)];
+            reversed_observed[static_cast<std::size_t>(view * tracking.targets + 2 * bead + 1)] =
+                tracking.observed[static_cast<std::size_t>(view * tracking.targets + 2 * lower_source_bead + 1)];
+            reversed_merged[static_cast<std::size_t>(view * tracking.targets + 2 * bead + 1)] =
+                tracking.merged[static_cast<std::size_t>(view * tracking.targets + 2 * lower_source_bead + 1)];
         }
     }
-    CalibrationResult direct = calibrateIndexed(tracking.points, tracking.views, config);
-    CalibrationResult mirrored = calibrateIndexed(reversed, tracking.views, config);
+    CalibrationResult direct = calibrateIndexedPoints(tracking.points,
+        makeIdentifiableDoubleRing(config.phantom), tracking.usable, tracking.views, config);
+    CalibrationResult mirrored = calibrateIndexedPoints(reversed,
+        makeIdentifiableDoubleRing(config.phantom), reversed_usable, tracking.views, config);
     const bool use_mirrored = mirrored.joint_rmse_px < direct.joint_rmse_px;
     CalibrationResult result = !use_mirrored
         ? std::move(direct) : std::move(mirrored);
-    if (use_mirrored) tracking.points = std::move(reversed);
+    if (use_mirrored) {
+        tracking.points = std::move(reversed);
+        tracking.usable = std::move(reversed_usable);
+        tracking.observed = std::move(reversed_observed);
+        tracking.merged = std::move(reversed_merged);
+    }
     result.tracking = std::move(tracking);
     return result;
 }

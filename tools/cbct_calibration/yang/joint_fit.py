@@ -283,6 +283,7 @@ def fit_fixed_source(points_px: np.ndarray, poses: list[YangPose], config: YangC
                      max_nfev: int = 1200,
                      projection_matrices: list[np.ndarray] | None = None,
                      correspondence: PointCorrespondence | None = None,
+                     usable_mask: np.ndarray | None = None,
                      frame_transform: PhantomFrameTransform =
                      YANG_PHANTOM_TO_FDK_FRAME) -> dict:
     """Estimate seven machine values in fdk-test image coordinates.
@@ -297,6 +298,12 @@ def fit_fixed_source(points_px: np.ndarray, poses: list[YangPose], config: YangC
             f"points_px must have shape (views,{expected},2)")
     if len(poses) != len(measured):
         raise ValueError("poses and points_px must contain the same views")
+    usable = (np.isfinite(measured).all(axis=2) if usable_mask is None else
+              np.asarray(usable_mask, dtype=bool) & np.isfinite(measured).all(axis=2))
+    if usable.shape != measured.shape[:2]:
+        raise ValueError("usable_mask must have shape (views, targets)")
+    if np.any(usable.sum(axis=1) < 6):
+        raise ValueError("each frame needs at least six usable points")
     ids = np.arange(len(measured)) if frame_ids is None else np.asarray(frame_ids)
     period = len(measured) if total_views is None else int(total_views)
     if ids.shape != (len(measured),) or period <= int(np.max(ids)):
@@ -328,8 +335,9 @@ def fit_fixed_source(points_px: np.ndarray, poses: list[YangPose], config: YangC
         def residual(values):
             state = initial.copy()
             state[free] = values
-            return (project(state, points, angles, config.pixel_size_mm, center)
-                    - measured).ravel()
+            prediction = project(state, points, angles, config.pixel_size_mm, center)
+            return np.concatenate([(prediction[i, valid] - measured[i, valid]).ravel()
+                                   for i, valid in enumerate(usable)])
 
         lower = np.full(len(free), -np.inf)
         upper = np.full(len(free), np.inf)
@@ -353,8 +361,10 @@ def fit_fixed_source(points_px: np.ndarray, poses: list[YangPose], config: YangC
             ftol=1e-12, xtol=1e-12, gtol=1e-12)
         state = initial.copy()
         state[free] = solved.x
-        error = residual(solved.x).reshape(measured.shape)
-        candidates.append((float(np.sqrt(np.mean(error * error))), direction,
+        error = project(state, points, angles, config.pixel_size_mm, center) - measured
+        error[~usable] = 0.0
+        residual_values = residual(solved.x)
+        candidates.append((float(np.sqrt(np.mean(residual_values * residual_values))), direction,
                            state, solved, error))
     rmse, direction, state, solved, error = min(candidates, key=lambda item: item[0])
     return {
@@ -380,7 +390,7 @@ def fit_fixed_source(points_px: np.ndarray, poses: list[YangPose], config: YangC
         },
         "diagnostics": {
             "rmse_px": rmse,
-            "max_point_error_px": float(np.max(np.linalg.norm(error, axis=2))),
+            "max_point_error_px": float(np.max(np.linalg.norm(error[usable], axis=1))),
             "rotation_direction": int(direction), "success": bool(solved.success),
             "nfev": int(solved.nfev),
             "gauge": "source offsets and detector normal offset fixed to zero",

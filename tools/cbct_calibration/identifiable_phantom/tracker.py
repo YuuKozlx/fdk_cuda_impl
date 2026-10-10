@@ -42,6 +42,8 @@ class FormalTrackerConfig:
 class TrackingResult:
     points_px: np.ndarray
     observed: np.ndarray
+    merged: np.ndarray
+    usable: np.ndarray
     report: dict
 
 
@@ -237,10 +239,14 @@ def _extract_from_predictions(image: np.ndarray, predicted: np.ndarray,
                               min_pixels: int) -> tuple[np.ndarray, np.ndarray, dict]:
     """Split ordinary and merged components by nearest predicted pixel seed."""
     image = np.asarray(image)
-    yy, xx = np.nonzero(image > threshold)
-    if len(xx) == 0:
+    foreground = image > threshold
+    labels, _ = ndimage.label(foreground, structure=np.ones((3, 3), dtype=int))
+    yy, xx = np.nonzero(foreground)
+    finite_seeds = np.isfinite(predicted).all(axis=1)
+    if len(xx) == 0 or not finite_seeds.any():
         return (np.full_like(predicted, np.nan), np.zeros(len(predicted), bool),
-                {"foreground_pixels": 0, "valid_count": 0})
+                {"foreground_pixels": 0, "valid_count": 0,
+                 "merged_ids": []})
     pixels = np.column_stack([xx, yy]).astype(float)
     values = np.maximum(image[yy, xx].astype(float) - threshold, 1.0e-6)
     owner = np.empty(len(pixels), dtype=np.int32)
@@ -249,9 +255,24 @@ def _extract_from_predictions(image: np.ndarray, predicted: np.ndarray,
         stop = min(start + 65536, len(pixels))
         delta = pixels[start:stop, None, :] - predicted[None, :, :]
         squared = np.sum(delta * delta, axis=2)
+        squared[:, ~finite_seeds] = np.inf
         owner[start:stop] = np.argmin(squared, axis=1)
         distance[start:stop] = np.sqrt(np.min(squared, axis=1))
     accepted = distance <= gate_radius_px
+    nearest = ndimage.distance_transform_edt(
+        ~foreground, return_distances=False, return_indices=True)
+    seed_labels = np.zeros(len(predicted), dtype=int)
+    for target in np.flatnonzero(finite_seeds):
+        u, v = np.rint(predicted[target]).astype(int)
+        if 0 <= u < labels.shape[1] and 0 <= v < labels.shape[0]:
+            ny, nx = nearest[:, v, u]
+            if np.linalg.norm(predicted[target] - [nx, ny]) <= gate_radius_px:
+                seed_labels[target] = int(labels[ny, nx])
+    merged = np.zeros(len(predicted), dtype=bool)
+    for label in np.unique(seed_labels[seed_labels > 0]):
+        members = np.flatnonzero(seed_labels == label)
+        if len(members) > 1:
+            merged[members] = True
     output = np.full_like(predicted, np.nan, dtype=float)
     valid = np.zeros(len(predicted), dtype=bool)
     counts = np.zeros(len(predicted), dtype=int)
@@ -269,15 +290,17 @@ def _extract_from_predictions(image: np.ndarray, predicted: np.ndarray,
         "pixel_counts_min": int(counts.min()),
         "pixel_counts_median": float(np.median(counts)),
         "pixel_counts_max": int(counts.max()),
+        "merged_ids": np.flatnonzero(merged).tolist(),
     }
 
 
 def _track_direction(raw: np.ndarray, anchor_frame: int,
                     anchor_points: np.ndarray, direction: int,
-                    config: FormalTrackerConfig) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+                    config: FormalTrackerConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
     views, targets = raw.shape[0], anchor_points.shape[0]
     points = np.full((views, targets, 2), np.nan, dtype=float)
     observed = np.zeros((views, targets), dtype=bool)
+    merged = np.zeros_like(observed)
     diagnostics = []
     points[anchor_frame] = anchor_points
     observed[anchor_frame] = True
@@ -299,12 +322,19 @@ def _track_direction(raw: np.ndarray, anchor_frame: int,
             np.asarray(raw[frame]), predicted, config.threshold,
             config.gate_radius_px, config.min_pixels)
         valid &= valid_prediction
+        frame_merged = np.zeros(targets, dtype=bool)
+        frame_merged[stats["merged_ids"]] = True
+        frame_merged &= valid_prediction
         # A target that leaves the panel or cannot be measured is permanently
-        # inactive for this direction; it is never reassigned to another ID.
-        active &= valid
+        # inactive for this direction.  A merged target is the exception: its
+        # predicted position bridges only this frame and it remains eligible
+        # for an independent measurement in the following frame.
+        measured[frame_merged & ~valid] = predicted[frame_merged & ~valid]
+        active &= valid | frame_merged
         measured[~active] = np.nan
         points[frame] = measured
         observed[frame] = active
+        merged[frame] = active & frame_merged
         if np.any(active):
             jump = np.linalg.norm(measured[active] - predicted[active], axis=1)
             jump_max = float(np.max(jump))
@@ -323,7 +353,7 @@ def _track_direction(raw: np.ndarray, anchor_frame: int,
         previous_previous = previous
         previous = measured
         frame += direction
-    return points, observed, diagnostics
+    return points, observed, merged, diagnostics
 
 
 def _save_diagnostics(path: Path, raw: np.ndarray, points: np.ndarray,
@@ -385,20 +415,23 @@ def track_stack(config: FormalTrackerConfig) -> TrackingResult:
     anchor_points, anchor_info = initialize_indices(
         np.asarray(raw[anchor_frame]), config.threshold, config.pixel_size_mm,
         marker_points_mm=config.marker_points_mm)
-    forward, forward_valid, forward_diag = _track_direction(
+    forward, forward_valid, forward_merged, forward_diag = _track_direction(
         raw, anchor_frame, anchor_points, +1, config)
-    backward, backward_valid, backward_diag = _track_direction(
+    backward, backward_valid, backward_merged, backward_diag = _track_direction(
         raw, anchor_frame, anchor_points, -1, config)
     points = np.where(forward_valid[..., None], forward, backward)
     observed = forward_valid | backward_valid
+    merged = np.where(forward_valid, forward_merged, backward_merged)
     # Anchor is valid in both passes. Prefer forward values where both exist.
     points[anchor_frame] = anchor_points
     observed[anchor_frame] = True
+    merged[anchor_frame] = False
+    usable = observed & ~merged
     world = marked_points(config.marker_points_mm)
     dlt_rmse = []
     dlt_max_error = []
     for frame in range(config.views):
-        valid = observed[frame]
+        valid = usable[frame]
         if np.count_nonzero(valid) < 8:
             dlt_rmse.append(None)
             dlt_max_error.append(None)
@@ -431,6 +464,8 @@ def track_stack(config: FormalTrackerConfig) -> TrackingResult:
         "target_count": int(points.shape[1]),
         "observed_count_per_target": observed.sum(axis=0).tolist(),
         "observed_count_per_frame": observed.sum(axis=1).tolist(),
+        "merged_count_per_frame": merged.sum(axis=1).tolist(),
+        "usable_count_per_frame": usable.sum(axis=1).tolist(),
         "dlt_validation": {
             "valid_frame_count": int(len(finite_rmse)),
             "rmse_mean_px": float(np.mean(finite_rmse)),
@@ -445,8 +480,10 @@ def track_stack(config: FormalTrackerConfig) -> TrackingResult:
     config.output_directory.mkdir(parents=True, exist_ok=True)
     np.save(config.output_directory / "points.npy", points)
     np.save(config.output_directory / "observed.npy", observed)
+    np.save(config.output_directory / "merged.npy", merged)
+    np.save(config.output_directory / "usable.npy", usable)
     (config.output_directory / "tracking_report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     _save_diagnostics(config.output_directory / "tracking_diagnostics.png",
                       raw, points, anchor_frame, anchor_scan, dlt_rmse)
-    return TrackingResult(points, observed, report)
+    return TrackingResult(points, observed, merged, usable, report)

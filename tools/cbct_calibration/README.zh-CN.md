@@ -8,6 +8,7 @@
 ```text
 single_row/             单排等间距钢珠
 identifiable_phantom/   大小环、异相位、外部标记的可编号模体
+spiral_phantom/         带外部标记的螺旋钢珠，独立追踪和编号
 cho/                    Cho 2005 PIC/DLT
 yang/                   Yang 2017 PIC/DLT
 ```
@@ -27,6 +28,7 @@ tracker -> 编号二维点 -> 理论三维点 -> 几何求解 -> 验证 -> 导�
 |---|---|---|---|---|
 | 单排钢珠 | 等间距、圆轨道、简化平板姿态 | SOD、SDD、主点、面内角、钢珠位置 | 简化圆轨道 FDK | 完整三轴 tilt、源/探测器偏移的唯一分解 |
 | 可编号双环 | 已知三维点和可靠编号 | 每帧 DLT、源圆、固定源规范下的 7 参数 | DLT 迭代重建或等效 FDK | 无机器基准时的唯一机械 offset |
+| 可编号螺旋 | 已知螺旋点、外部标记和可靠编号 | 每帧 DLT、源圆、固定源规范下的 7 参数 | DLT 迭代重建或等效 FDK | 无机器基准时的唯一机械 offset |
 | Cho PIC/DLT | 同步双环、对置点关系、标记辅助编号 | 每帧 eta、穿刺点、DLT、源点、主点和 detector 三轴 | 逐帧射线；联合后可生成等效 FDK | 模体姿态与机械姿态的无约束分离 |
 | Yang PIC/DLT | 双环、已知环参数和编号，默认 6/12 球每环 | O、eta、roll、pitch、S、W、SDD、主点、相位和 DLT | 逐帧射线；固定规范联合后可生成等效 FDK | 无机器基准时的真实逐帧机械 offset |
 
@@ -125,15 +127,26 @@ FDK 需要共享圆轨道模型。此时以逐帧 DLT 和源圆作为初值，�
 - `docs/CALIBRATION_FORMULAS.zh-CN.md`：单排钢珠的逐式公式；
 - `single_row/SINGLE_ROW_GUIDE.zh-CN.md`：单排钢珠从 RAW 到结果；
 - `identifiable_phantom/IDENTIFIABLE_PHANTOM_GUIDE.zh-CN.md`：可编号双环和标记点的完整链路；
+- `spiral_phantom/README.zh-CN.md`：螺旋模体定义、标记识别、编号追踪及实际 RAW 标定；
 - `cho/CHO_GUIDE.zh-CN.md`：Cho 的 PIC、DLT、源轨迹和固定源规范联合拟合；
 - `yang/README.zh-CN.md`、`yang/PIC_DERIVATION.zh-CN.md`：Yang 的 PIC、坐标适配和联合拟合；
 - `../cbct_calibration_cpp/README.zh-CN.md`：独立 C++ 核心的接口和测试边界。
 
-测试入口：
-
-```powershell
-python -m unittest discover -s tools -p "test_*.py"
-```
+统一的 Python/C++ 测试入口和可复现命令见 `container/README.zh-CN.md`。
 
 行为闭合检查必须同时看 DLT 重投影 RMSE、源轨迹残差、联合拟合 RMSE 和输出的逐帧
 几何；不能只看某个中位数，也不能用仿真真值初始化生产流程。
+
+## 粘连状态与标定输入
+
+Cho、Yang 和可编号模体的逐点状态采用统一语义：`observed` 表示前景仍可见，`merged`
+表示多个目标共享连通域，`usable = observed & ~merged` 才是可以进入标定的独立质心。
+粘连帧中的预测坐标只用于延续编号；DLT 和联合拟合逐点屏蔽，PIC 跳过点集不完整的帧。
+
+单排钢珠仍保留原有策略：某颗钢珠检测失败、出界或移动越界后永久停用，不套用临时
+粘连恢复规则。
+
+## 统一测试环境
+
+回归环境位于 `container/`。Python 与独立 C++ 项目都在同一个 Linux 镜像内测试，不依赖
+Windows Python、Visual Studio 或 vcpkg；真实 RAW 从工作区读取，构建结果写入 `out/`。

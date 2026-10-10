@@ -54,6 +54,28 @@ class ConstrainedJointTests(unittest.TestCase):
         self.assertEqual(
             {key: machine[key] for key in FIXED_PARAMETERS}, FIXED_PARAMETERS)
 
+    def test_masked_corrupt_points_never_enter_dlt_or_joint_residual(self):
+        tracks = project(self.truth, self.points, self.angles,
+                         self.pixel, self.image_center)
+        usable = np.ones(tracks.shape[:2], dtype=bool)
+        for frame in range(len(tracks)):
+            targets = np.arange(frame % 4)
+            usable[frame, targets] = False
+            tracks[frame, targets] += [80.0, -60.0]
+        report = fit(tracks, max_nfev=200, usable_mask=usable)
+        self.assertLess(report["diagnostics"]["rmse_px"], 1.0e-8)
+        self.assertAlmostEqual(report["machine"]["sdd_mm"], 770.0, places=7)
+        self.assertEqual(report["diagnostics"]["usable_observation_count"],
+                         int(usable.sum()))
+
+    def test_too_few_points_are_rejected_before_dlt(self):
+        tracks = project(self.truth, self.points, self.angles,
+                         self.pixel, self.image_center)
+        usable = np.ones(tracks.shape[:2], dtype=bool)
+        usable[3, 5:] = False
+        with self.assertRaisesRegex(ValueError, "view 3 has only 5"):
+            fit(tracks, usable_mask=usable)
+
 
 if __name__ == "__main__":
     unittest.main()

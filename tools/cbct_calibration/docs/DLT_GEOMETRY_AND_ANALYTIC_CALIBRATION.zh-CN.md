@@ -10,7 +10,7 @@
 
 - 大小双环模体；
 - 带特殊标记的双环模体；
-- 螺旋钢珠模体（当前还需要专门测试编号和 DLT 条件）。
+- 带外部标记的螺旋钢珠模体（已完成 360 帧实际 RAW 编号和 DLT 标定测试）。
 
 它们的共同要求不是“必须知道 SID、SDD、offset”，而是：在每个视角中能得到足够数量的已编号三维点与二维质心对应关系。
 
@@ -961,15 +961,32 @@ Cho 的核心做法不是要求模体精确放置，而是用逐帧 DLT 得到�
 
 ### 6.3 螺旋钢珠模体
 
-螺旋分布破坏了平面圆环的对称性，理论上能提供更强的三维编号辨识能力。要用于当前流程，需要验证：
+螺旋分布提供非共面的已知三维点。本次使用 24 颗普通钢珠和 1 颗外部标记球：
 
-1. 三维点集的 DLT 条件数；
-2. 是否能稳定得到首帧编号；
-3. 后续帧是否能用运动预测完成永久索引；
-4. 局部粘连和出界时是否仍有足够点支撑 DLT；
-5. DLT 得到的 cone-vector 与已知仿真射线的重投影误差。
+\[
+P_j=(50\cos(30^\circ j),50\sin(30^\circ j),-57.5+5j),
+\quad j=0,\ldots,23,
+\qquad M=(50,0,-67.5)\ \mathrm{mm}.
+\]
 
-如果这些条件满足，螺旋模体不需要额外的 FDK 参数分解，也可以直接服务于迭代重建。
+普通球直径 3 mm，标记球直径 5 mm；标记与 0 号球处于同一圆柱母线，向下间隔 10 mm。
+标记位置锚定轴向起点；轴向递增、相位递增和已知三维螺旋共同限制编号。
+
+处理顺序为：
+
+1. 在 RAW 中检测目标并计算强度加权亚像素质心，选取目标完整的锚点帧。
+2. 枚举标记候选、投影排序方向及轴向正反；对每个候选建立完整点对应。
+3. 用归一化 DLT 预筛，再用已知像素尺寸、单一 SDD 的物理相机模型精化；按重投影误差选定编号，不输入仿真几何真值。
+4. 从锚点向两个方向预测追踪，用预测种子分配粘连前景，维持同一编号。每帧同时保存 `observed`、`merged` 和 `usable`：粘连目标可用于跨帧预测，但从该帧 DLT 与联合残差中排除；只有出界或真实检测失败才会终止该方向的轨迹。
+5. 对每帧已编号点计算物理约束 DLT，再拟合源圆；将源圆结果作为固定源端联合拟合的初值。
+
+本次 360 帧 RAW 中，25 个目标均完成追踪；平均 DLT 重投影 RMSE 为 0.106 px，
+最大帧 RMSE 为 0.362 px。源圆半径为 440.114 mm，联合拟合 SDD 为 769.837 mm，
+联合重投影 RMSE 为 0.120 px。实现和可直接调用样例位于 `spiral_phantom/`。
+
+该数据含源偏移，固定源为零后输出的是等效几何，不能把联合 offset 和倾角逐项视为原始机械真值。
+本次验证不覆盖目标出界或大量缺失；当前螺旋联合入口遇到缺失点会明确拒绝运行。
+逐帧 DLT 仍可在同一模体坐标系下直接定义迭代重建射线；本次未额外运行重建或螺旋专用 cone-vector 射线对比。
 
 ---
 
@@ -1029,6 +1046,7 @@ RAW
 | detector/论文坐标转换 | `tools/cbct_calibration/coordinates/detector.py`、`coordinates/phantom.py` |
 | 单排钢珠全链路 | `tools/cbct_calibration/single_row/single_row_workflow.py` |
 | 可编号双环全链路 | `tools/cbct_calibration/identifiable_phantom/workflow.py` |
+| 可编号螺旋全链路 | `tools/cbct_calibration/spiral_phantom/workflow.py` |
 | 7 参数联合求解 | `identifiable_phantom/joint_fit.py`、`cho/joint_fit.py`、`yang/joint_fit.py` |
 | Cho PIC 与完整流程 | `tools/cbct_calibration/cho/pic.py`、`cho/workflow.py` |
 | Yang PIC | `tools/cbct_calibration/yang/pic.py`、`yang/workflow.py` |

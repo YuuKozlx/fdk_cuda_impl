@@ -18,6 +18,7 @@ from .coordinate_adapter import (YANG_PAPER_CONVENTION,
                                  YANG_TRACKER_RING_ORDER)
 from ..geometry.dlt_to_conevec import conevec_normal, dlt_to_conevec
 from ..math.dlt import normalized_dlt
+from ..cho.dlt import ChoConfig, calibrate_view as calibrate_dlt_view
 from .pic import (YangConfig, calibrate_stack_geometries, calibrate_view,
                   extended_calibrate_stack, extended_result_to_dict,
                   geometry_to_dict, pose_to_dict)
@@ -111,7 +112,8 @@ def _dlt_geometry_dict(projection: np.ndarray, pixel_size_mm: tuple[float, float
     }
 
 
-def calibrate_indexed_points(points_px: np.ndarray, config: YangWorkflowConfig) -> dict:
+def calibrate_indexed_points(points_px: np.ndarray, config: YangWorkflowConfig,
+                             usable_mask: np.ndarray | None = None) -> dict:
     """Run Yang PIC; retain its native results and expose fdk-test outputs."""
     image_points = np.asarray(points_px, dtype=float)
     expected = 2 * int(config.beads_per_ring)
@@ -129,19 +131,38 @@ def calibrate_indexed_points(points_px: np.ndarray, config: YangWorkflowConfig) 
                       beads_per_ring=config.beads_per_ring,
                       pixel_size_mm=config.pixel_size_mm,
                       gantry_solver="paper_linear")
-    poses, geometries = calibrate_stack_geometries(points, yang)
     canonical_points = phantom_points(
         yang, config.point_correspondence, config.phantom_frame_transform)
     # The PIC phase is a diagnostic quantity; the complete ray matrix is
     # estimated directly from this frame's indexed 3-D targets and pixels.
-    dlt_matrices = [normalized_dlt(canonical_points, frame)[0]
-                    for frame in canonical_image_points]
+    usable = (np.isfinite(canonical_image_points).all(axis=2) if usable_mask is None else
+              np.asarray(usable_mask, dtype=bool) &
+              np.isfinite(canonical_image_points).all(axis=2))
+    if usable.shape != canonical_image_points.shape[:2]:
+        raise ValueError("usable_mask must have shape (views, targets)")
+    counts = usable.sum(axis=1)
+    if np.any(counts < 6):
+        view = int(np.flatnonzero(counts < 6)[0])
+        raise ValueError(f"view {view} has only {counts[view]} usable DLT points")
+    complete = np.all(usable, axis=1)
+    pic_frame_ids = np.flatnonzero(complete)
+    poses, geometries = calibrate_stack_geometries(points[complete], yang)
+    camera_config = ChoConfig(
+        ring_radius_mm=config.ring_radius_mm,
+        ring_half_spacing_mm=config.ring_half_spacing_mm,
+        beads_per_ring=config.beads_per_ring,
+        pixel_size_mm=config.pixel_size_mm,
+        marker_points_mm=(), max_nfev=500)
+    dlt_poses = [calibrate_dlt_view(frame[valid], camera_config,
+                                    canonical_points[valid])
+                 for frame, valid in zip(canonical_image_points, usable)]
+    dlt_matrices = [pose.projection_matrix for pose in dlt_poses]
     paper_poses = [pose_to_dict(pose) for pose in poses]
     paper_geometries = [geometry_to_dict(geometry) for geometry in geometries]
     fdk_poses = []
     fdk_geometries = []
-    for pose, geometry, pose_dict, geometry_dict in zip(
-            poses, geometries, paper_poses, paper_geometries):
+    for local_index, (pose, geometry, pose_dict, geometry_dict) in enumerate(zip(
+            poses, geometries, paper_poses, paper_geometries)):
         fdk_pose = convert_pose_pixel_fields(
             pose_dict, config.image_shape,
             YANG_PAPER_CONVENTION, FDK_TEST_CONVENTION)
@@ -149,10 +170,15 @@ def calibrate_indexed_points(points_px: np.ndarray, config: YangWorkflowConfig) 
         # source and detector axes cannot accidentally remain in Yang's local
         # virtual-detector frame.
         fdk_geometry = _dlt_geometry_dict(
-            dlt_matrices[len(fdk_geometries)], config.pixel_size_mm,
+            dlt_matrices[int(pic_frame_ids[local_index])], config.pixel_size_mm,
             config.image_shape)
+        fdk_pose["frame_id"] = int(pic_frame_ids[local_index])
+        pose_dict["frame_id"] = int(pic_frame_ids[local_index])
         fdk_poses.append(fdk_pose)
         fdk_geometries.append(fdk_geometry)
+    reconstruction_geometries = [
+        _dlt_geometry_dict(p, config.pixel_size_mm, config.image_shape)
+        for p in dlt_matrices]
     report = {
         "method": "Yang_2017_PIC",
         "image_coordinate_convention": FDK_TEST_CONVENTION.name,
@@ -161,18 +187,21 @@ def calibrate_indexed_points(points_px: np.ndarray, config: YangWorkflowConfig) 
         "pic_steps_paper_coordinates": paper_poses,
         "pic_steps": fdk_poses,
         "reconstruction_geometries_paper_coordinates": paper_geometries,
-        "reconstruction_geometries": fdk_geometries,
+        "reconstruction_geometries": reconstruction_geometries,
         "dlt_projection_matrices": [p.tolist() for p in dlt_matrices],
+        "usable_count_per_view": usable.sum(axis=1).astype(int).tolist(),
+        "pic_skipped_frames": np.flatnonzero(~complete).astype(int).tolist(),
     }
     report["fixed_source_joint_fit"] = fit_fixed_source(
-        canonical_image_points, poses, yang, config.image_shape,
+        canonical_image_points, dlt_poses, yang, config.image_shape,
         max_nfev=config.extended_max_nfev,
         projection_matrices=dlt_matrices,
         correspondence=config.point_correspondence,
-        frame_transform=config.phantom_frame_transform)
-    if config.run_extended:
+        frame_transform=config.phantom_frame_transform,
+        usable_mask=usable)
+    if config.run_extended and np.any(complete):
         result = extended_calibrate_stack(
-            points, yang, source_constraint_weight=config.source_constraint_weight,
+            points[complete], yang, source_constraint_weight=config.source_constraint_weight,
             max_nfev=config.extended_max_nfev, initial_poses=poses)
         extended_paper = extended_result_to_dict(result)
         extended_fdk = dict(extended_paper)
@@ -181,6 +210,7 @@ def calibrate_indexed_points(points_px: np.ndarray, config: YangWorkflowConfig) 
             FDK_TEST_CONVENTION) for pose in extended_paper["poses"]]
         report["extended_joint_fit_paper_coordinates"] = extended_paper
         report["extended_joint_fit"] = extended_fdk
+        report["extended_joint_fit_frame_ids"] = pic_frame_ids.astype(int).tolist()
     return report
 
 
@@ -240,15 +270,19 @@ def calibrate_raw(config: YangWorkflowConfig) -> dict:
     if not candidates:
         raise RuntimeError("all Yang initial index candidates failed PIC")
     _, selected, initial_points, markers0 = min(candidates, key=lambda item: item[0])
-    image_points, diagnostics = track_standard_stack(
+    image_points, observed, merged, usable, diagnostics = track_standard_stack(
         raw, config.threshold, initial_points,
-        initial_markers=(None if np.asarray(markers0).size == 0 else markers0))
+        initial_markers=(None if np.asarray(markers0).size == 0 else markers0),
+        return_masks=True)
     points = np.asarray(image_points, dtype=float)
-    report = calibrate_indexed_points(points, config)
+    report = calibrate_indexed_points(points, config, usable)
     report["input"] = {"raw_path": str(config.raw_path), "views": config.views,
                         "image_shape": list(config.image_shape),
                         "pixel_size_mm": list(config.pixel_size_mm)}
     report["tracking"] = diagnostics
+    report["tracking_observed"] = observed.tolist()
+    report["tracking_merged"] = merged.tolist()
+    report["tracking_usable"] = usable.tolist()
     report["index_initialization"] = {
         "selected_candidate": int(selected),
         "candidate_rmse_px": {str(i): float(score) for score, i, _, _ in candidates},

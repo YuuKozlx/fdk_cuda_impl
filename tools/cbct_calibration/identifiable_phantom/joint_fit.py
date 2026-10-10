@@ -43,13 +43,24 @@ def project(state, local_points, angles, pixel, image_center):
 
 
 def fit(points, pixel_size_mm=(0.417, 0.417), image_shape=(1024, 1024),
-        max_nfev=1200, local_points=None):
+        max_nfev=1200, local_points=None, usable_mask=None):
     """Estimate the seven machine values after DLT source-circle initialization."""
     points = np.asarray(points, dtype=float)
     local = marked_points() if local_points is None else np.asarray(local_points, dtype=float)
+    if points.ndim != 3 or points.shape[1:] != (len(local), 2):
+        raise ValueError("points must have shape (views, targets, 2) in local point ID order")
+    if usable_mask is not None and np.shape(usable_mask) != points.shape[:2]:
+        raise ValueError("usable_mask must have shape (views, targets)")
+    usable = (np.isfinite(points).all(axis=2) if usable_mask is None else
+              np.asarray(usable_mask, dtype=bool) & np.isfinite(points).all(axis=2))
+    counts = usable.sum(axis=1)
+    if np.any(counts < 6):
+        frame = int(np.flatnonzero(counts < 6)[0])
+        raise ValueError(f"view {frame} has only {counts[frame]} usable DLT points")
     pixel = np.asarray(pixel_size_mm, dtype=float)
     cfg = DltConfig(pixel_size_mm=tuple(pixel_size_mm))
-    poses = [calibrate_view(frame, cfg, local) for frame in points]
+    poses = [calibrate_view(frame[valid], cfg, local[valid])
+             for frame, valid in zip(points, usable)]
     sources = np.asarray([pose.source_phantom_mm for pose in poses])
     circle = fit_source_circle(sources)
     rotation0, translation0 = scanner_alignment(circle)
@@ -64,12 +75,13 @@ def fit(points, pixel_size_mm=(0.417, 0.417), image_shape=(1024, 1024),
         angles = direction * np.arange(len(points)) * 2 * np.pi / len(points)
         def residual(values):
             state = state0.copy(); state[free] = values
-            return (project(state, local, angles, pixel, center) - points).ravel()
+            error = project(state, local, angles, pixel, center) - points
+            return error[usable].ravel()
         result = least_squares(residual, state0[free], x_scale=np.array([100, 2, 2, .02, .02, .02, .03, .03, .03, 10, 10, 10]),
                                loss="soft_l1", f_scale=.15, max_nfev=max_nfev,
                                ftol=1e-12, xtol=1e-12, gtol=1e-12)
         state = state0.copy(); state[free] = result.x
-        error = residual(result.x).reshape(points.shape)
+        error = residual(result.x).reshape(-1, 2)
         candidates.append((np.sqrt(np.mean(error * error)), direction, state, result, error))
     rmse, direction, state, result, error = min(candidates, key=lambda item: item[0])
     return {"machine": {"sid_mm": float(state[0]), "sdd_mm": float(state[1]),
@@ -82,5 +94,7 @@ def fit(points, pixel_size_mm=(0.417, 0.417), image_shape=(1024, 1024),
             "source_circle": {"center_phantom_mm": circle.center_phantom_mm.tolist(),
                               "axis_phantom": circle.axis_phantom.tolist(), "radius_mm": float(circle.radius_mm),
                               "radial_rms_mm": float(circle.radial_rms_mm), "axial_rms_mm": float(circle.axial_rms_mm)},
-            "diagnostics": {"rmse_px": float(rmse), "max_point_error_px": float(np.max(np.linalg.norm(error, axis=2))),
-                            "rotation_direction": int(direction), "success": bool(result.success), "nfev": int(result.nfev)}}
+            "diagnostics": {"rmse_px": float(rmse), "max_point_error_px": float(np.max(np.linalg.norm(error, axis=1))),
+                            "rotation_direction": int(direction), "success": bool(result.success), "nfev": int(result.nfev),
+                            "usable_observation_count": int(np.count_nonzero(usable)),
+                            "usable_count_per_view": counts.tolist()}}

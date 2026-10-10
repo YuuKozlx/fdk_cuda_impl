@@ -59,6 +59,10 @@ struct TrackingResult {
     int anchor_frame = -1;
     std::vector<Point2> points;
     std::vector<unsigned char> observed;
+    // A merged target remains trackable, but is excluded from the current
+    // frame's DLT and joint residual through usable.
+    std::vector<unsigned char> merged;
+    std::vector<unsigned char> usable;
     std::vector<double> dlt_rmse_px;
 
     const Point2& at(int view, int target) const {
@@ -66,6 +70,9 @@ struct TrackingResult {
     }
     bool isObserved(int view, int target) const {
         return observed.at(static_cast<std::size_t>(view * targets + target)) != 0;
+    }
+    bool isUsable(int view, int target) const {
+        return usable.at(static_cast<std::size_t>(view * targets + target)) != 0;
     }
 };
 

@@ -1,7 +1,7 @@
 schema_version = 2
 
 [workflow]
-mode = "project_and_reconstruct"
+mode = "project"
 
 [projection]
 label_volume = "../../../inputs/generated/tungsten-bead-spiral-diameter100-spacing5-phase30-count24-marker5-below10-0p2mm.raw"

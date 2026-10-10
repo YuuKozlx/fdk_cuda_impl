@@ -7,12 +7,32 @@ centres.  It deliberately contains no camera calibration or geometry fitting.
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
 from ..math.dlt import normalized_dlt, project_points
 from .dlt import ChoConfig, full_phantom_points, marker_points, phantom_points
+
+
+@dataclass(frozen=True)
+class ChoTrackingResult:
+    """Tracked coordinates and their measurement provenance.
+
+    ``points_px`` stays dense so motion prediction can bridge an overlap.
+    Only ``usable`` points are real, independent centroids suitable for
+    calibration.  A merged point is observed as part of a foreground blob but
+    its predicted/split coordinate is deliberately not a calibration sample.
+    """
+
+    points_px: np.ndarray
+    observed: np.ndarray
+    merged: np.ndarray
+    usable: np.ndarray
+    frame_ids: np.ndarray
+    diagnostics: list[dict]
+    rejected_frames: list[dict]
 
 
 def _components(image: np.ndarray, threshold: float) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
@@ -121,6 +141,60 @@ def detect_frame(image: np.ndarray, threshold: float = 5.0,
     if len(centers) != expected:
         raise ValueError(f"expected {expected} beads, found {len(centers)}")
     return np.asarray(centers)
+
+
+def detect_frame_with_status(
+        image: np.ndarray, predicted: np.ndarray, components, threshold: float,
+        expected_beads: int, gate_radius_px: float = 25.0
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Assign one frame and retain which coordinates came from a merger."""
+    expected = int(expected_beads)
+    predicted = np.asarray(predicted, dtype=float)
+    centers = np.asarray([item[3] for item in components], dtype=float)
+    if len(components) >= expected:
+        cost = np.sum((predicted[:, None, :] - centers[None, :, :]) ** 2, axis=2)
+        rows, columns = linear_sum_assignment(cost)
+        if len(rows) != expected:
+            raise ValueError(f"could not assign {expected} ring targets")
+        output = predicted.copy()
+        output[rows] = centers[columns]
+        error = np.linalg.norm(output - predicted, axis=1)
+        observed = error <= gate_radius_px
+        output[~observed] = predicted[~observed]
+        return (output, observed.copy(), np.zeros(expected, dtype=bool),
+                observed)
+    if len(components) < 6:
+        raise ValueError(
+            f"expected at least 6 target components after "
+            f"marker removal, found {len(components)}")
+    # Give every connected component enough virtual slots for all targets.
+    # Hungarian assignment then keeps target IDs globally one-to-one while
+    # allowing several predicted tracks to select the same physical blob.
+    virtual = np.repeat(centers, expected, axis=0)
+    cost = np.sum((predicted[:, None, :] - virtual[None, :, :]) ** 2, axis=2)
+    rows, columns = linear_sum_assignment(cost)
+    assigned_component = columns // expected
+    output = predicted.copy()
+    observed = np.zeros(expected, dtype=bool)
+    merged = np.zeros(expected, dtype=bool)
+    for component in range(len(centers)):
+        targets = rows[assigned_component == component]
+        if len(targets) == 1:
+            target = targets[0]
+            if np.linalg.norm(predicted[target] - centers[component]) <= gate_radius_px:
+                output[target] = centers[component]
+                observed[target] = True
+        elif len(targets) > 1:
+            close = targets[np.linalg.norm(
+                predicted[targets] - centers[component], axis=1) <= gate_radius_px]
+            if len(close) > 1:
+                observed[close] = True
+                merged[close] = True
+            elif len(close) == 1:
+                output[close[0]] = centers[component]
+                observed[close[0]] = True
+    usable = observed & ~merged
+    return output, observed, merged, usable
 
 
 def initialize_marker_indices(components, config: ChoConfig) -> tuple[np.ndarray, np.ndarray, float]:
@@ -289,7 +363,7 @@ def frame_component_stats(image: np.ndarray, threshold: float) -> dict:
 def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
                     views: int = 360,
                     image_shape: tuple[int, int] = (1024, 1024)
-                    ) -> tuple[np.ndarray, list[int], list[dict], list[dict]]:
+                    ) -> ChoTrackingResult:
     """Return indexed observations and preprocessing diagnostics.
 
     The point array has shape ``(valid_views, 2*N, 2)`` and is the interface
@@ -301,6 +375,9 @@ def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
     components0 = _components(np.asarray(raw[0]), threshold)
     indexed0, marker0, marker_score = initialize_marker_indices(components0, config)
     stack = [indexed0]
+    observed_stack = [np.ones(expected, dtype=bool)]
+    merged_stack = [np.zeros(expected, dtype=bool)]
+    usable_stack = [np.ones(expected, dtype=bool)]
     frame_ids = [0]
     rejected = []
     diagnostics = [{**frame_component_stats(np.asarray(raw[0]), threshold),
@@ -345,9 +422,10 @@ def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
             components = [item for j, item in enumerate(components) if j not in selected]
         stats = frame_component_stats(image, threshold)
         try:
-            assigned = detect_frame(image, threshold, predicted=predicted,
-                                    expected_beads=expected,
-                                    components=components)
+            assigned, observed, merged, usable = detect_frame_with_status(
+                image, predicted, components, threshold, expected)
+            if np.count_nonzero(usable) < 6:
+                raise ValueError("fewer than six independent centroids remain")
         except ValueError as exc:
             item = {"frame": i, "reason": str(exc)}
             rejected.append(item)
@@ -355,11 +433,13 @@ def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
                                 "assigned_count": 0, "rejected": True,
                                 "reason": str(exc)})
             continue
-        err = np.linalg.norm(assigned - predicted, axis=1)
+        err = np.linalg.norm(assigned[usable] - predicted[usable], axis=1)
         diagnostics.append({**stats, "frame": i,
-                            "split_used": stats["raw_component_count"] == expected - 1,
-                            "prediction_max_error_px": float(err.max()),
-                            "prediction_rmse_px": float(np.sqrt(np.mean(err ** 2))),
+                            "split_used": bool(np.any(merged)),
+                            "merged_target_ids": np.flatnonzero(merged).tolist(),
+                            "usable_count": int(np.count_nonzero(usable)),
+                            "prediction_max_error_px": float(err.max()) if len(err) else 0.0,
+                            "prediction_rmse_px": float(np.sqrt(np.mean(err ** 2))) if len(err) else 0.0,
                             "assigned_count": expected, "rejected": False})
         if marker_component:
             marker_centres.append(np.asarray([item[3] for item in marker_component]))
@@ -368,5 +448,11 @@ def track_raw_stack(raw_path: Path, config: ChoConfig, threshold: float = 5.0,
         diagnostics[-1]["marker_center_px"] = np.asarray(marker_centres[-1]).tolist()
         diagnostics[-1]["marker_detected"] = bool(marker_component)
         stack.append(assigned)
+        observed_stack.append(observed)
+        merged_stack.append(merged)
+        usable_stack.append(usable)
         frame_ids.append(i)
-    return np.asarray(stack), frame_ids, diagnostics, rejected
+    return ChoTrackingResult(
+        np.asarray(stack), np.asarray(observed_stack), np.asarray(merged_stack),
+        np.asarray(usable_stack), np.asarray(frame_ids, dtype=int),
+        diagnostics, rejected)

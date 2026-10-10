@@ -57,6 +57,7 @@ def fit_with_handedness_search(
         image_shape: tuple[int, int] = (1024, 1024),
         frame_ids: np.ndarray | None = None,
         total_views: int | None = None,
+        usable_mask: np.ndarray | None = None,
         max_nfev: int = 1200,
 ) -> tuple[np.ndarray, JointFitResult, dict]:
     """Select the ring numbering hand by global mechanical-model closure.
@@ -66,14 +67,21 @@ def fit_with_handedness_search(
     retain the one with the lower all-view reprojection RMSE.
     """
     original = np.asarray(points_px, dtype=float)
+    mask = (np.isfinite(original).all(axis=2) if usable_mask is None else
+            np.asarray(usable_mask, dtype=bool) & np.isfinite(original).all(axis=2))
     candidates = {
         "as_tracked": original,
         "ring_order_reversed": reverse_ring_handedness(
             original, config.beads_per_ring),
     }
+    n = int(config.beads_per_ring)
+    reverse = np.r_[np.mod(-np.arange(n), n),
+                    n + np.mod(-np.arange(n), n)]
+    masks = {"as_tracked": mask, "ring_order_reversed": mask[:, reverse]}
     fitted = {
         name: fit_fixed_source(values, config, image_shape, frame_ids,
-                               total_views, max_nfev)
+                               total_views, max_nfev,
+                               masks[name])
         for name, values in candidates.items()
     }
     selected = min(fitted, key=lambda name: fitted[name].diagnostics["rmse_px"])
@@ -147,7 +155,8 @@ def fit_fixed_source(points_px: np.ndarray, config: ChoConfig,
                      image_shape: tuple[int, int] = (1024, 1024),
                      frame_ids: np.ndarray | None = None,
                      total_views: int | None = None,
-                     max_nfev: int = 1200) -> JointFitResult:
+                     max_nfev: int = 1200,
+                     usable_mask: np.ndarray | None = None) -> JointFitResult:
     """Run DLT source-circle initialization followed by the constrained fit."""
     measured = np.asarray(points_px, dtype=float)
     local = phantom_points(config)
@@ -157,7 +166,14 @@ def fit_fixed_source(points_px: np.ndarray, config: ChoConfig,
     period = len(measured) if total_views is None else int(total_views)
     if ids.shape != (len(measured),) or period <= int(np.max(ids)):
         raise ValueError("frame_ids/total_views do not describe the point stack")
-    poses = [calibrate_view(frame, config, local) for frame in measured]
+    usable = (np.isfinite(measured).all(axis=2) if usable_mask is None else
+              np.asarray(usable_mask, dtype=bool) & np.isfinite(measured).all(axis=2))
+    if usable.shape != measured.shape[:2]:
+        raise ValueError("usable_mask must have shape (views, targets)")
+    if np.any(usable.sum(axis=1) < 6):
+        raise ValueError("each frame needs at least six usable points")
+    poses = [calibrate_view(frame[valid], config, local[valid])
+             for frame, valid in zip(measured, usable)]
     circle = fit_circle_3d(np.asarray([pose.source_world_mm for pose in poses]))
     rotation0, translation0 = phantom_to_scanner_from_circle(circle)
     # Resolve the remaining in-plane phase from the first indexed ring.  The
@@ -165,7 +181,9 @@ def fit_fixed_source(points_px: np.ndarray, config: ChoConfig,
     # marked phantom makes the first bead correspondence observable.
     local = phantom_points(config)
     camera0 = poses[0]
-    measured0 = measured[0]
+    first_view = int(np.flatnonzero(usable.any(axis=1))[0])
+    measured0 = measured[first_view]
+    local0 = local[usable[first_view]]
     phase_candidates = np.linspace(-np.pi, np.pi, 73)[:-1]
     best_phase = 0.0
     best_phase_score = np.inf
@@ -174,10 +192,10 @@ def fit_fixed_source(points_px: np.ndarray, config: ChoConfig,
         trial_state = np.r_[circle.radius_mm, camera0.source_detector_distance_mm,
                             np.zeros(5), Rotation.from_matrix(phase_rotation @ rotation0).as_rotvec(),
                             translation0]
-        trial_px = project(trial_state, local, np.array([0.0]), config.pixel_size_mm,
+        trial_px = project(trial_state, local0, np.array([0.0]), config.pixel_size_mm,
                            np.array([(image_shape[1] - 1) / 2.0,
                                      (image_shape[0] - 1) / 2.0]))[0]
-        score = float(np.sqrt(np.mean((trial_px - measured0) ** 2)))
+        score = float(np.sqrt(np.mean((trial_px - measured0[usable[first_view]]) ** 2)))
         if score < best_phase_score:
             best_phase_score, best_phase = score, phase
     phase_rotation = Rotation.from_rotvec(np.array([0.0, 0.0, best_phase])).as_matrix()
@@ -202,8 +220,9 @@ def fit_fixed_source(points_px: np.ndarray, config: ChoConfig,
         def residual(values):
             state = initial.copy()
             state[free] = values
-            return (project(state, local, angles, config.pixel_size_mm, center)
-                    - measured).ravel()
+            prediction = project(state, local, angles, config.pixel_size_mm, center)
+            return np.concatenate([(prediction[i, valid] - measured[i, valid]).ravel()
+                                   for i, valid in enumerate(usable)])
 
         coarse = least_squares(
             residual, initial[free], x_scale=scales, loss="linear",
@@ -215,8 +234,10 @@ def fit_fixed_source(points_px: np.ndarray, config: ChoConfig,
             ftol=1e-12, xtol=1e-12, gtol=1e-12)
         state = initial.copy()
         state[free] = solved.x
-        error = residual(solved.x).reshape(measured.shape)
-        candidates.append((float(np.sqrt(np.mean(error * error))), direction,
+        error = project(state, local, angles, config.pixel_size_mm, center) - measured
+        error[~usable] = 0.0
+        residual_values = residual(solved.x)
+        candidates.append((float(np.sqrt(np.mean(residual_values * residual_values))), direction,
                            solved, state, error))
     rmse, direction, solved, state, error = min(candidates, key=lambda item: item[0])
     return JointFitResult(
@@ -243,7 +264,7 @@ def fit_fixed_source(points_px: np.ndarray, config: ChoConfig,
         },
         diagnostics={
             "rmse_px": rmse,
-            "max_point_error_px": float(np.max(np.linalg.norm(error, axis=2))),
+            "max_point_error_px": float(np.max(np.linalg.norm(error[usable], axis=1))),
             "rotation_direction": int(direction),
             "success": bool(solved.success), "nfev": int(solved.nfev),
             "gauge": "source offsets and detector normal offset fixed to zero",

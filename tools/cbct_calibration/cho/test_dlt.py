@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from .dlt import (ChoConfig, calibrate_stack_joint, calibrate_view,
-                              phantom_points, project_points)
+                              calibrate_stack_masked, phantom_points, project_points)
 from .joint_fit import reverse_ring_handedness
 
 
@@ -50,6 +50,15 @@ class ChoCalibrationTests(unittest.TestCase):
         # point uncertainty in this intentionally oblique configuration.
         self.assertLess(np.linalg.norm(pose.principal_point_px - principal), 3.0)
         self.assertLess(abs(pose.source_detector_distance_mm - sdd), 2.0)
+
+    def test_masked_centroid_is_excluded_from_dlt(self):
+        config, measured, _, _, _ = self.make_view()
+        corrupted = measured.copy()
+        corrupted[3] += [80.0, -60.0]
+        usable = np.ones((1, len(measured)), dtype=bool)
+        usable[0, 3] = False
+        pose = calibrate_stack_masked(corrupted[None, ...], config, usable)[0]
+        self.assertLess(pose.reprojection_rmse_px, 1.0e-7)
 
     def test_joint_shared_intrinsics(self):
         config, _, _, principal, sdd = self.make_view()

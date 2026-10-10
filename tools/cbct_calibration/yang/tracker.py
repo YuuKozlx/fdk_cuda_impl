@@ -224,9 +224,12 @@ def _assign_components(components: list[Component], predicted: np.ndarray
             raise ValueError("could not assign twelve ring targets")
         output = np.full((12, 2), np.nan, dtype=float)
         output[rows] = centres[columns]
-        return output, np.ones(12, dtype=bool), ()
-    if count != 11:
-        raise ValueError(f"expected at least 11 target components, found {count}")
+        distances = np.linalg.norm(output - predicted, axis=1)
+        valid = distances <= 25.0
+        output[~valid] = predicted[~valid]
+        return output, valid, ()
+    if count < 6:
+        raise ValueError(f"expected at least 6 target components, found {count}")
     centres = np.asarray([item.centroid for item in components])
     if count == 12:
         cost = np.sum((predicted[:, None, :] - centres[None, :, :]) ** 2, axis=2)
@@ -236,34 +239,31 @@ def _assign_components(components: list[Component], predicted: np.ndarray
         valid = np.ones(12, dtype=bool)
         return output, valid, ()
 
-    # Try each component as the duplicated (merged) observation.  Assignment
-    # distance identifies the only target pair whose predicted tracks meet.
-    best = None
-    areas = np.asarray([item.area for item in components], dtype=float)
-    typical_area = float(np.median(areas))
-    for duplicate in range(11):
-        virtual = np.vstack([centres, centres[duplicate]])
-        cost = np.sum((predicted[:, None, :] - virtual[None, :, :]) ** 2, axis=2)
-        rows, columns = linear_sum_assignment(cost)
-        score = float(cost[rows, columns].sum())
-        # A merged component should be larger than an ordinary spherical bead.
-        score += max(0.0, 1.35 * typical_area - areas[duplicate]) ** 2
-        if best is None or score < best[0]:
-            best = (score, duplicate, rows, columns)
-    assert best is not None
-    _, duplicate, rows, columns = best
-    virtual_to_component = np.arange(12)
-    virtual_to_component[11] = duplicate
-    assigned_component = virtual_to_component[columns]
+    virtual = np.repeat(centres, 12, axis=0)
+    cost = np.sum((predicted[:, None, :] - virtual[None, :, :]) ** 2, axis=2)
+    rows, columns = linear_sum_assignment(cost)
+    assigned_component = columns // 12
     output = np.asarray(predicted, dtype=float).copy()
     valid = np.ones(12, dtype=bool)
-    merged_ids = tuple(int(x) for x in rows[assigned_component == duplicate])
-    if len(merged_ids) != 2:
-        raise ValueError("could not identify the two targets inside the merged component")
-    for target, component in zip(rows, assigned_component):
-        if target not in merged_ids:
-            output[target] = centres[component]
-    valid[list(merged_ids)] = False
+    merged = []
+    for component in range(count):
+        targets = rows[assigned_component == component]
+        if len(targets) == 1:
+            target = targets[0]
+            if np.linalg.norm(predicted[target] - centres[component]) <= 25.0:
+                output[target] = centres[component]
+            else:
+                valid[target] = False
+        elif len(targets) > 1:
+            close = targets[np.linalg.norm(
+                predicted[targets] - centres[component], axis=1) <= 25.0]
+            valid[targets] = False
+            if len(close) > 1:
+                merged.extend(int(x) for x in close)
+            elif len(close) == 1:
+                output[close[0]] = centres[component]
+                valid[close[0]] = True
+    merged_ids = tuple(sorted(merged))
     return output, valid, merged_ids
 
 
@@ -314,11 +314,12 @@ def _track_ordered_stack(raw: np.ndarray, threshold: float,
                          initial_points: np.ndarray,
                          initial_marker: np.ndarray | None = None,
                          initial_markers: np.ndarray | None = None
-                         ) -> tuple[np.ndarray, list[dict]]:
+                         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
     """Track twelve indexed targets and interpolate complete-overlap intervals."""
     views = int(raw.shape[0])
     points = np.empty((views, 12, 2), dtype=float)
     observed = np.ones((views, 12), dtype=bool)
+    usable = np.ones((views, 12), dtype=bool)
     points[0] = np.asarray(initial_points, dtype=float)
     if initial_markers is None and initial_marker is not None:
         initial_markers = np.asarray(initial_marker, dtype=float).reshape(1, 2)
@@ -370,6 +371,8 @@ def _track_ordered_stack(raw: np.ndarray, threshold: float,
                     f"{float(error.max()) if len(error) else float('nan'):.3f} px")
         points[frame] = assigned
         observed[frame] = valid
+        observed[frame, list(merged_ids)] = True
+        usable[frame] = valid
         diagnostics.append({
             "frame": frame,
             "component_count": len(components) + int(marker is not None),
@@ -379,7 +382,7 @@ def _track_ordered_stack(raw: np.ndarray, threshold: float,
             "interpolated": bool(merged_ids),
             "prediction_max_error_px": float(error.max()) if len(error) else 0.0,
         })
-    return _fill_periodic_gaps(points, observed), diagnostics
+    return _fill_periodic_gaps(points, usable), observed, usable, diagnostics
 
 
 class _FrameOrder:
@@ -396,22 +399,33 @@ class _FrameOrder:
 def track_standard_stack(raw: np.ndarray, threshold: float,
                          initial_points: np.ndarray,
                          initial_marker: np.ndarray | None = None,
-                         initial_markers: np.ndarray | None = None
-                         ) -> tuple[np.ndarray, list[dict]]:
+                         initial_markers: np.ndarray | None = None,
+                         return_masks: bool = False):
     """Track from frame zero in both directions and merge two half-turns."""
     views = int(raw.shape[0])
     split = views // 2
     forward_ids = np.arange(0, split + 1)
     backward_ids = np.r_[0, np.arange(views - 1, split, -1)]
-    forward, forward_diag = _track_ordered_stack(
+    forward, forward_observed, forward_usable, forward_diag = _track_ordered_stack(
         _FrameOrder(raw, forward_ids), threshold, initial_points,
         initial_marker, initial_markers)
-    backward, backward_diag = _track_ordered_stack(
+    backward, backward_observed, backward_usable, backward_diag = _track_ordered_stack(
         _FrameOrder(raw, backward_ids), threshold, initial_points,
         initial_marker, initial_markers)
     points = np.empty((views, 12, 2), dtype=float)
+    observed = np.zeros((views, 12), dtype=bool)
+    usable = np.zeros((views, 12), dtype=bool)
     points[forward_ids] = forward
     points[backward_ids] = backward
+    observed[forward_ids] = forward_observed
+    usable[forward_ids] = forward_usable
+    # The second tracking direction may recover a point that the first pass
+    # could only predict. Prefer that real measurement at the shared boundary.
+    for local, frame in enumerate(backward_ids):
+        recovered = backward_usable[local] & ~usable[frame]
+        points[frame, recovered] = backward[local, recovered]
+        observed[frame] |= backward_observed[local]
+        usable[frame] |= backward_usable[local]
     diagnostics = []
     for item in forward_diag:
         converted = dict(item)
@@ -424,4 +438,7 @@ def track_standard_stack(raw: np.ndarray, threshold: float,
         converted["tracking_direction"] = -1
         diagnostics.append(converted)
     diagnostics.sort(key=lambda item: item["frame"])
+    if return_masks:
+        merged = observed & ~usable
+        return points, observed, merged, usable, diagnostics
     return points, diagnostics

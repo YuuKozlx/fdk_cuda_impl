@@ -1,5 +1,6 @@
 #include "cbct_calibration/io.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -73,6 +74,28 @@ void writeCalibrationJson(const std::filesystem::path& path,
         << "    \"iterations\": " << result.joint_iterations << ",\n"
         << "    \"converged\": " << (result.joint_converged ? "true" : "false") << "\n"
         << "  },\n"
+        << "  \"tracking\": {\n"
+        << "    \"merged_count\": "
+        << std::count(result.tracking.merged.begin(), result.tracking.merged.end(),
+                      static_cast<unsigned char>(1))
+        << ",\n    \"usable_count_per_view\": [";
+    for (int view = 0; view < result.tracking.views; ++view) {
+        if (view) out << ", ";
+        int count = 0;
+        for (int target = 0; target < result.tracking.targets; ++target)
+            count += result.tracking.isUsable(view, target) ? 1 : 0;
+        out << count;
+    }
+    out << "],\n    \"merged_count_per_view\": [";
+    for (int view = 0; view < result.tracking.views; ++view) {
+        if (view) out << ", ";
+        int count = 0;
+        for (int target = 0; target < result.tracking.targets; ++target)
+            count += result.tracking.merged[static_cast<std::size_t>(
+                view * result.tracking.targets + target)] ? 1 : 0;
+        out << count;
+    }
+    out << "]\n  },\n"
         << "  \"per_view\": {\n"
         << "    \"dlt_rmse_px\": [";
     for (std::size_t i = 0; i < result.tracking.dlt_rmse_px.size(); ++i) {
