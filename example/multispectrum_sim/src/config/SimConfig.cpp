@@ -46,7 +46,6 @@ namespace yk::spectral {
                     throw std::runtime_error(std::string("projection.") + removed + " 已删除");
             c.projection.label_volume = resolve(config_directory, (*p)["label_volume"].value_or(std::string{}));
             c.projection.spectrum_file = resolve(config_directory, (*p)["spectrum_file"].value_or(std::string{}));
-            c.projection.xcom_data_directory = resolve(config_directory, (*p)["xcom_data_directory"].value_or(std::string{}));
             c.projection.output_file = resolve(config_directory, (*p)["output_file"].value_or(std::string("projection.raw")));
             c.projection.energy_output_file = resolve(config_directory, (*p)["energy_output_file"].value_or(std::string{}));
             c.projection.air_output_file = resolve(config_directory, (*p)["air_output_file"].value_or(std::string{}));
@@ -68,6 +67,21 @@ namespace yk::spectral {
                 c.projection.scatter.enabled = (*scatter)["enabled"].value_or(false);
                 c.projection.scatter.model_file = resolve(config_directory,
                     (*scatter)["model_file"].value_or(std::string{}));
+                bool kernel_segments_explicit = false;
+                if (auto* kernel = (*scatter)["kernel"].as_table()) {
+                    c.projection.scatter.kernel.mode = (*kernel)["mode"].value_or(std::string("all"));
+                    c.projection.scatter.kernel.segments = (*kernel)["segments"].value_or(3);
+                    kernel_segments_explicit = kernel->contains("segments");
+                }
+                if (c.projection.scatter.kernel.mode != "all" &&
+                    c.projection.scatter.kernel.mode != "segmented")
+                    throw std::runtime_error("projection.scatter.kernel.mode must be all or segmented");
+                if (c.projection.scatter.kernel.mode == "segmented" &&
+                    c.projection.scatter.kernel.segments < 2)
+                    throw std::runtime_error("projection.scatter.kernel.segments must be at least 2");
+                if (c.projection.scatter.kernel.mode == "all" && kernel_segments_explicit)
+                    throw std::runtime_error(
+                        "projection.scatter.kernel.segments is only valid for segmented mode");
                 if (c.projection.scatter.enabled) {
                     if (!std::filesystem::is_regular_file(c.projection.scatter.model_file))
                         throw std::runtime_error("scatter.model_file must point to an existing kernel model");
@@ -91,6 +105,117 @@ namespace yk::spectral {
             c.reconstruction.save_slices = (*r)["save_slices"].value_or(false);
             if (auto value = (*r)["input_projection_file"].value<std::string>())
                 c.reconstruction.input_projection_file = resolve(config_directory, *value);
+            if (auto* preprocessing = (*r)["preprocessing"].as_table()) {
+                auto& pp = c.reconstruction.preprocessing;
+                pp.enabled = (*preprocessing)["enabled"].value_or(false);
+                if (auto* hardening = (*preprocessing)["beam_hardening"].as_table()) {
+                    auto& bh = pp.beam_hardening;
+                    bh.enabled = (*hardening)["enabled"].value_or(false);
+                    bh.fit_from_water_plate = (*hardening)["fit_from_water_plate"].value_or(false);
+                    if (auto value = (*hardening)["spectrum_file"].value<std::string>())
+                        bh.spectrum_file = resolve(config_directory, *value);
+                    bh.order = (*hardening)["order"].value_or(1);
+                    bh.clamp_min = (*hardening)["clamp_min"].value_or(0.0);
+                    bh.clamp_max = (*hardening)["clamp_max"].value_or(20.0);
+                    bh.water_plate_max_mm = (*hardening)["water_plate_max_mm"].value_or(400.0);
+                    bh.water_plate_samples = (*hardening)["water_plate_samples"].value_or(81);
+                    bh.reference_energy_keV = (*hardening)["reference_energy_keV"].value_or(0.0);
+                    if (auto* values = (*hardening)["coefficients"].as_array()) {
+                        bh.coefficients.clear();
+                        for (const auto& item : *values) {
+                            const auto value = item.value<double>();
+                            if (!value || !std::isfinite(*value))
+                                throw std::runtime_error("reconstruction.preprocessing.beam_hardening.coefficients must contain finite numbers");
+                            bh.coefficients.push_back(*value);
+                        }
+                    }
+                }
+                if (auto* scatter = (*preprocessing)["scatter"].as_table()) {
+                    auto& sc = pp.scatter;
+                    sc.enabled = (*scatter)["enabled"].value_or(false);
+                    if (auto value = (*scatter)["air_projection_file"].value<std::string>())
+                        sc.air_projection_file = resolve(config_directory, *value);
+                    if (auto value = (*scatter)["model_file"].value<std::string>())
+                        sc.model_file = resolve(config_directory, *value);
+                    for (const char* key : { "iterations", "damping", "scatter_scale", "object_mask_threshold" })
+                        if (scatter->contains(key))
+                            throw std::runtime_error(std::string("reconstruction.preprocessing.scatter.") + key +
+                                " has moved to reconstruction.preprocessing.scatter.correction");
+                    if (auto* correction = (*scatter)["correction"].as_table()) {
+                        sc.correction.iterations = (*correction)["iterations"].value_or(3);
+                        sc.correction.damping = (*correction)["damping"].value_or(0.7);
+                        sc.correction.scatter_scale = (*correction)["scatter_scale"].value_or(1.0);
+                        sc.correction.object_mask_threshold =
+                            (*correction)["object_mask_threshold"].value_or(1.0e-6);
+                    }
+                    if (auto* guide = (*scatter)["guide"].as_table()) {
+                        sc.guide.enabled = (*guide)["enabled"].value_or(false);
+                        sc.guide.sigma_u_pixels = (*guide)["sigma_u_pixels"].value_or(2.0);
+                        sc.guide.sigma_v_pixels = (*guide)["sigma_v_pixels"].value_or(2.0);
+                    }
+                    if (auto* solver = (*scatter)["solver"].as_table()) {
+                        sc.solver.type = (*solver)["type"].value_or(std::string("fixed"));
+                        if (auto* adaptive = (*solver)["adaptive"].as_table()) {
+                            auto& a = sc.solver.adaptive;
+                            if (adaptive->contains("relative_tolerance") || adaptive->contains("max_iterations"))
+                                throw std::runtime_error("adaptive scatter solver uses iterations; tolerance stopping has been removed");
+                            a.iterations = (*adaptive)["iterations"].value_or(10);
+                            a.initial_damping = (*adaptive)["initial_damping"].value_or(0.7);
+                            a.min_damping = (*adaptive)["min_damping"].value_or(0.1);
+                            a.damping_decay = (*adaptive)["damping_decay"].value_or(1.0);
+                            if (adaptive->contains("guide"))
+                                throw std::runtime_error("use reconstruction.preprocessing.scatter.guide for either solver");
+                            if (auto* guard = (*adaptive)["transmission_guard"].as_table()) {
+                                a.transmission_guard.low_quantile = (*guard)["low_quantile"].value_or(0.01);
+                                a.transmission_guard.risk_threshold = (*guard)["risk_threshold"].value_or(0.02);
+                                a.transmission_guard.positivity_margin = (*guard)["positivity_margin"].value_or(0.9);
+                            }
+                            if (sc.solver.type != "adaptive_experimental")
+                                throw std::runtime_error("scatter.solver.adaptive requires adaptive_experimental");
+                        }
+                    }
+                    if (sc.solver.type != "fixed" && sc.solver.type != "adaptive_experimental")
+                        throw std::runtime_error("scatter.solver.type must be fixed or adaptive_experimental");
+                    const auto& adaptive = sc.solver.adaptive;
+                    if (!std::isfinite(adaptive.damping_decay) || adaptive.damping_decay <= 0 || adaptive.damping_decay > 1)
+                        throw std::runtime_error("adaptive damping_decay must be in (0,1]");
+                    if (sc.guide.enabled &&
+                        (!std::isfinite(sc.guide.sigma_u_pixels) || sc.guide.sigma_u_pixels <= 0 || sc.guide.sigma_u_pixels > 32 ||
+                         !std::isfinite(sc.guide.sigma_v_pixels) || sc.guide.sigma_v_pixels <= 0 || sc.guide.sigma_v_pixels > 32))
+                        throw std::runtime_error("scatter guide sigma must be in (0,32] pixels");
+                    if (adaptive.iterations <= 0 ||
+                        !std::isfinite(adaptive.initial_damping) || adaptive.initial_damping <= 0.0 ||
+                        adaptive.initial_damping > 1.0 || !std::isfinite(adaptive.min_damping) ||
+                        adaptive.min_damping <= 0.0 || adaptive.min_damping > adaptive.initial_damping)
+                        throw std::runtime_error("invalid experimental adaptive scatter solver parameters");
+                    const auto& guard = adaptive.transmission_guard;
+                    if (!std::isfinite(guard.low_quantile) || guard.low_quantile <= 0 || guard.low_quantile > 1 ||
+                        !std::isfinite(guard.risk_threshold) || guard.risk_threshold <= 0 || guard.risk_threshold >= 1 ||
+                        !std::isfinite(guard.positivity_margin) || guard.positivity_margin <= 0 || guard.positivity_margin >= 1)
+                        throw std::runtime_error("invalid adaptive scatter transmission guard");
+                    if (sc.solver.type == "adaptive_experimental") {
+                        const auto* correction = (*scatter)["correction"].as_table();
+                        if (correction && (correction->contains("iterations") || correction->contains("damping")))
+                            throw std::runtime_error("adaptive scatter solver uses solver.adaptive iteration and damping parameters");
+                    }
+                    if (auto* kernel = (*scatter)["kernel"].as_table()) {
+                        sc.kernel.mode = (*kernel)["mode"].value_or(std::string("all"));
+                        sc.kernel.segments = (*kernel)["segments"].value_or(3);
+                    }
+                    if (sc.kernel.mode != "all" && sc.kernel.mode != "segmented")
+                        throw std::runtime_error(
+                            "reconstruction.preprocessing.scatter.kernel.mode must be all or segmented");
+                    if (sc.kernel.mode == "segmented" && sc.kernel.segments < 2)
+                        throw std::runtime_error(
+                            "reconstruction.preprocessing.scatter.kernel.segments must be at least 2");
+                    if (sc.kernel.mode == "all") {
+                        const auto* kernel = (*scatter)["kernel"].as_table();
+                        if (kernel && kernel->contains("segments"))
+                            throw std::runtime_error(
+                                "reconstruction.preprocessing.scatter.kernel.segments is only valid for segmented mode");
+                    }
+                }
+            }
             auto* a = (*r)["analytic"].as_table();
             auto* i = (*r)["iterative"].as_table();
             if (c.reconstruction.type != "analytic" && c.reconstruction.type != "iterative")
@@ -163,6 +288,39 @@ namespace yk::spectral {
                     !std::isfinite(rc.tv_alpha_reduction) || rc.tv_alpha_reduction <= 0)) ||
                     !std::isfinite(rc.maximum_update_ratio) || rc.maximum_update_ratio <= 0)
                     throw std::runtime_error("iterative 参数必须为正数");
+            }
+            const auto& pp = c.reconstruction.preprocessing;
+            if (pp.enabled) {
+                if (!pp.beam_hardening.enabled && !pp.scatter.enabled)
+                    throw std::runtime_error("reconstruction.preprocessing must enable beam_hardening or scatter");
+                const auto& bh = pp.beam_hardening;
+                if (bh.enabled && (bh.order < 1 || bh.order > 16 ||
+                    (!bh.fit_from_water_plate &&
+                     bh.coefficients.size() != static_cast<std::size_t>(bh.order + 1)) ||
+                    !std::isfinite(bh.clamp_min) || !std::isfinite(bh.clamp_max) ||
+                    bh.clamp_min < 0.0 || bh.clamp_max <= bh.clamp_min))
+                    throw std::runtime_error("invalid beam hardening polynomial configuration");
+                if (bh.enabled && bh.fit_from_water_plate &&
+                    (!std::filesystem::is_regular_file(bh.spectrum_file.empty()
+                        ? c.projection.spectrum_file : bh.spectrum_file) ||
+                     !std::isfinite(bh.water_plate_max_mm) || bh.water_plate_max_mm <= 0.0 ||
+                     bh.water_plate_samples < bh.order + 2 ||
+                     !std::isfinite(bh.reference_energy_keV) || bh.reference_energy_keV < 0.0))
+                    throw std::runtime_error("invalid water-plate beam hardening calibration configuration");
+                const auto& sc = pp.scatter;
+                if (sc.enabled && (sc.air_projection_file.empty() || sc.model_file.empty() ||
+                    (!std::filesystem::is_regular_file(sc.air_projection_file) &&
+                     !(c.runsProjection() && sc.air_projection_file.lexically_normal() ==
+                       c.projection.air_output_file.lexically_normal())) ||
+                    !std::filesystem::is_regular_file(sc.model_file) || sc.correction.iterations <= 0 ||
+                    !std::isfinite(sc.correction.damping) || sc.correction.damping <= 0.0 ||
+                    sc.correction.damping > 1.0 ||
+                    !std::isfinite(sc.correction.scatter_scale) || sc.correction.scatter_scale < 0.0 ||
+                    (sc.kernel.mode != "all" && sc.kernel.mode != "segmented") ||
+                    (sc.kernel.mode == "segmented" && sc.kernel.segments < 2) ||
+                    !std::isfinite(sc.correction.object_mask_threshold) ||
+                    sc.correction.object_mask_threshold < 0.0))
+                    throw std::runtime_error("invalid reconstruction scatter correction configuration");
             }
             const auto output_tag = c.reconstruction.type == "iterative"
                 ? c.reconstruction.iterative.algorithm : c.reconstruction.analytic.pipeline;

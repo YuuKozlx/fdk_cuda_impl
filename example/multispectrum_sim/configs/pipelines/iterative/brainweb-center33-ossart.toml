@@ -6,7 +6,6 @@ mode = "project_and_reconstruct"
 [projection]
 label_volume = "../../../inputs/brainweb/brainweb-normal-1mm-center33-181x217x33-u8.raw"
 spectrum_file = "../../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
-xcom_data_directory = "../../../../../thirdparty/nist_xcom/data"
 output_file = "../../../outputs/projections/brainweb-center33-fdk.raw"
 energy_output_file = "../../../outputs/projections/brainweb-center33-fdk-energy.raw"
 mAs_per_view = 1.0

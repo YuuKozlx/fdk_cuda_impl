@@ -36,6 +36,47 @@ int main() {
             (diagnostic.empty() ? std::string{} : "\nreason: " + diagnostic));
     };
     try {
+        const std::string preprocess_base = "type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\n";
+        test(preprocess_base + "[reconstruction.preprocessing]\nenabled=true\n"
+             "[reconstruction.preprocessing.beam_hardening]\nenabled=true\norder=2\ncoefficients=[0,1,0.1]\n", true);
+        test(preprocess_base + "[reconstruction.preprocessing]\nenabled=true\n"
+             "[reconstruction.preprocessing.beam_hardening]\nenabled=true\norder=3\ncoefficients=[0,1]\n", false);
+        test(preprocess_base + "[reconstruction.preprocessing]\nenabled=true\n"
+             "[reconstruction.preprocessing.scatter]\nenabled=true\n", false);
+        const std::string kernel_base = preprocess_base +
+            "[reconstruction.preprocessing]\nenabled=true\n"
+            "[reconstruction.preprocessing.beam_hardening]\nenabled=true\norder=1\ncoefficients=[0,1]\n";
+        test(kernel_base + "[reconstruction.preprocessing.scatter.kernel]\nmode='all'\n", true);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.kernel]\nmode='segmented'\nsegments=3\n", true);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.kernel]\nmode='unknown'\n", false);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.kernel]\nmode='segmented'\nsegments=1\n", false);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.kernel]\nmode='all'\nsegments=3\n", false);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.solver]\ntype='fixed'\n", true);
+        const std::string adaptive_base = kernel_base +
+            "[reconstruction.preprocessing.scatter.solver]\ntype='adaptive_experimental'\n"
+            "[reconstruction.preprocessing.scatter.solver.adaptive]\n";
+        test(adaptive_base + "iterations=10\ninitial_damping=0.7\nmin_damping=0.1\n", true);
+        test(adaptive_base + "min_damping=0.9\n", false);
+        test(adaptive_base + "damping_decay=0.9\n[reconstruction.preprocessing.scatter.guide]\nenabled=true\nsigma_u_pixels=2\nsigma_v_pixels=2\n", true);
+        test(adaptive_base + "damping_decay=0\n", false);
+        test(adaptive_base + "damping_decay=1.1\n", false);
+        test(adaptive_base + "[reconstruction.preprocessing.scatter.guide]\nenabled=true\nsigma_u_pixels=0\n", false);
+        test(adaptive_base + "[reconstruction.preprocessing.scatter.solver.adaptive.guide]\nenabled=true\n", false);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.solver]\ntype='fixed'\n"
+             "[reconstruction.preprocessing.scatter.guide]\nenabled=true\nsigma_u_pixels=2\nsigma_v_pixels=2\n", true);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.guide]\nenabled=true\nsigma_v_pixels=33\n", false);
+        test(adaptive_base + "iterations=0\n", false);
+        test(adaptive_base + "relative_tolerance=0.001\n", false);
+        test(adaptive_base + "max_iterations=10\n", false);
+        test(adaptive_base + "[reconstruction.preprocessing.scatter.solver.adaptive.transmission_guard]\n"
+             "low_quantile=0.01\nrisk_threshold=0.02\npositivity_margin=0.9\n", true);
+        test(adaptive_base + "[reconstruction.preprocessing.scatter.solver.adaptive.transmission_guard]\n"
+             "risk_threshold=0\n", false);
+        test(adaptive_base + "[reconstruction.preprocessing.scatter.solver.adaptive.transmission_guard]\n"
+             "positivity_margin=1\n", false);
+        test(adaptive_base + "[reconstruction.preprocessing.scatter.correction]\ndamping=0.6\n", false);
+        test(kernel_base + "[reconstruction.preprocessing.scatter.solver]\ntype='fixed'\n"
+             "[reconstruction.preprocessing.scatter.solver.adaptive]\niterations=10\n", false);
         {
             const auto spectrum_path = std::filesystem::current_path() /
                 "spectrum-normalization-test.csv";

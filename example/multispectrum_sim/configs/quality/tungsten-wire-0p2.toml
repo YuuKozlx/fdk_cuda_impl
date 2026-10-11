@@ -6,7 +6,6 @@ mode = "project_and_reconstruct"
 [projection]
 label_volume = "../../inputs/generated/tungsten-wire-0p05.raw"
 spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
-xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/quality/tungsten-wire-0p2-projection.raw"
 energy_output_file = "../../outputs/quality/tungsten-wire-0p2-energy.raw"
 mAs_per_view = 1.0

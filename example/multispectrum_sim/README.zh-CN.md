@@ -268,6 +268,46 @@ density_g_cm3 = 1.050
 排列的 float32 FDK 重建体，以及轴位、冠状位和矢状位中心切片 BMP。BMP 仅用于观察，
 数值分析应读取重建体 raw。
 
+### 正式固定迭代去散射
+
+默认 `scatter.solver.type = "fixed"` 使用 CUDA 常驻迭代：每帧上传测量信号和
+空气场一次，散射预测、固定步长更新和逐像素正值截断均在 GPU 上完成，结束后
+仅下载最终初级信号。FFT 计划、核频谱和设备缓冲区跨帧复用；每次预测仍有小型
+有效性标志回读，不再逐轮传输整张投影。无需增加配置开关，也无需启用实验插件。
+
+参数仍由 `scatter.correction.iterations`、`damping` 和 `scatter_scale` 控制。
+正值下限仍为对应空气信号的 `1e-8`，没有增加自适应步长或统计降噪，低曝光截断
+导致的条纹风险仍然存在。
+
+可选的平滑引导由正式与自适应求解器共用：
+
+```toml
+[reconstruction.preprocessing.scatter.guide]
+enabled = true # 默认false
+sigma_u_pixels = 2.0
+sigma_v_pixels = 2.0
+```
+
+该选项在 CUDA 上平滑测量能量图和空气场，使用平滑副本估计掩膜及散射；最终
+仍从原始能量图扣除预测散射，不把平滑图作为重建输入。关闭时保留原流程。
+正式 `fixed` 不需要开启实验插件，次数和 damping 仍在 `scatter.correction` 中设置。
+原实验性的 `solver.adaptive.guide` 配置已删除，统一使用上述共享配置。
+
+### 实验性动态散射求解插件
+
+固定迭代仍是默认流程。实验插件需在 CUDA 顶层构建时显式打开
+`MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER=ON`，然后在
+`[reconstruction.preprocessing.scatter.solver]` 中选择
+`type = "adaptive_experimental"`。独立参数放在 `solver.adaptive` 下；此时
+`scatter.correction` 不再填写 `iterations` 和 `damping`，仍保留散射幅度和物体掩膜阈值。
+
+示例见 `configs/reconstruction/experimental/water-cylinder-adaptive-scatter.toml`，
+算法与限制见 `plugins/adaptive_scatter/README.md`。插件在 GPU 上执行像素更新和
+残差统计，在 CPU 上控制回退与固定次数；日志逐轮和逐帧报告实际迭代次数、预测次数、最终
+damping、残差、信号变化量和耗时。插件不设置容差提前停止，正常运行 iterations 次
+后仅报告 completed；最低安全步长仍无法下降会单独报告异常状态。插件不自动调整
+gamma 或散射幅度，也不使用图像平坦度作为求解目标。
+
 ## 多能前投 Pipeline 与 PCB 模体
 
 多能前投采用“后端 → 按物理阶段排序的信号处理 → 输出端”的流程。新增处理可实现

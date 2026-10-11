@@ -18,7 +18,9 @@ public:
         const auto& g = c.geometry.parameters;
         model_ = std::make_unique<FasksRuntimeModel>(c.projection.scatter.model_file);
         scatter_ = std::make_unique<CudaFasksScatter>(g.detector_u, g.detector_v,
-            g.pixel_u_mm, g.pixel_v_mm, *model_);
+            g.pixel_u_mm, g.pixel_v_mm, *model_,
+            c.projection.scatter.kernel.mode == "segmented"
+                ? c.projection.scatter.kernel.segments : 0);
     }
     void process(ProjectionFrame& f, const ProjectionStageContext&) override {
         scatter_->apply(f.signal_energy, f.air_energy, f.object_mask);

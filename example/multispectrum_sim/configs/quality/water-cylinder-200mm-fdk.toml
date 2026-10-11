@@ -6,9 +6,9 @@ mode = "project_and_reconstruct"
 [projection]
 label_volume = "../../inputs/generated/water-cylinder-200mm-pmma5mm.raw"
 spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
-xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/projections/water-cylinder-scatter-fixed64-projection.raw"
 energy_output_file = "../../outputs/projections/water-cylinder-scatter-fixed64-energy.raw"
+air_output_file = "../../outputs/projections/water-cylinder-scatter-fixed64-air.raw"
 mAs_per_view = 0.36
 
 [projection.geometry_flux]
@@ -19,7 +19,10 @@ seed = 67890
 
 [projection.scatter]
 enabled = true
-model_file = "G:/Code/ggems/examples/10_ASKS_EndToEnd/runs/new-cbct-fasks-finite-plate/runtime/fasks_runtime_model.json"
+model_file = "../../inputs/scatter/fasks_runtime_model_v4.json"
+
+[projection.scatter.kernel]
+mode = "all"
 
 [projection.detector_postprocess.afterglow]
 enabled = false
@@ -100,6 +103,7 @@ density_g_cm3 = 1.18
 
 [reconstruction]
 type = "analytic"
+
 output_volume_file = "../../outputs/reconstructions/water-cylinder-scatter-fixed64-recon.raw"
 slice_prefix = "../../outputs/images/water-cylinder-200mm-pmma5mm-px50-fdk-nofocal-1024x1024x30"
 
@@ -107,3 +111,28 @@ slice_prefix = "../../outputs/images/water-cylinder-200mm-pmma5mm-px50-fdk-nofoc
 pipeline = "fdk"
 filter = "ramlak"
 chunk_views = 8
+
+[reconstruction.preprocessing]
+enabled = true
+
+[reconstruction.preprocessing.beam_hardening]
+enabled = true
+fit_from_water_plate = true
+order = 3
+water_plate_max_mm = 400.0
+water_plate_samples = 81
+clamp_min = 0.0
+clamp_max = 20.0
+
+[reconstruction.preprocessing.scatter]
+enabled = true
+air_projection_file = "../../outputs/projections/water-cylinder-scatter-fixed64-air.raw"
+model_file = "../../inputs/scatter/fasks_runtime_model_v4.json"
+
+[reconstruction.preprocessing.scatter.correction]
+iterations = 3
+damping = 0.7
+object_mask_threshold = 0.001
+
+[reconstruction.preprocessing.scatter.kernel]
+mode = "all"

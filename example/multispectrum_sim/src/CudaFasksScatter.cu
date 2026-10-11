@@ -5,6 +5,7 @@
 #include <cufft.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -27,27 +28,46 @@ void checkFft(cufftResult result, const char* operation) {
                                  std::to_string(static_cast<int>(result)));
 }
 
-__global__ void multiplySpectra(cufftComplex* a, const cufftComplex* b,
-                                size_t count) {
-    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= count) return;
-    const cufftComplex x = a[i];
-    const cufftComplex y = b[i];
-    a[i].x = x.x * y.x - x.y * y.y;
-    a[i].y = x.x * y.y + x.y * y.x;
+__global__ void updateFixedPrimary(float* primary, const float* measured,
+    const float* air, const float* scatter, size_t pixels, double damping,
+    float scatter_scale, int* invalid) {
+    const size_t p = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (p >= pixels) return;
+    if (!isfinite(scatter[p])) { atomicExch(invalid, 1); return; }
+    const float scaled_scatter = __fmul_rn(scatter_scale, fmaxf(0.0f, scatter[p]));
+    const float estimate = fmaxf(__fmul_rn(air[p], 1.0e-8f),
+                                __fsub_rn(measured[p], scaled_scatter));
+    primary[p] = static_cast<float>((1.0 - damping) * primary[p] + damping * estimate);
+    if (!isfinite(primary[p])) atomicExch(invalid, 1);
 }
 
-__global__ void cropToImage(const float* padded, float* output, int width,
-                            int height, int padded_width, float scale) {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= width || y >= height) return;
-    output[y * width + x] = padded[y * padded_width + x] * scale;
+__global__ void multiplyAndSumSpectra(const cufftComplex* spectra,
+                                     const cufftComplex* kernels, cufftComplex* total,
+                                     int batch, size_t count) {
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    cufftComplex sum = {0.0f, 0.0f};
+    for (int b = 0; b < batch; ++b) {
+        const cufftComplex x = spectra[static_cast<size_t>(b) * count + i];
+        const cufftComplex y = kernels[static_cast<size_t>(b) * count + i];
+        sum.x += x.x * y.x - x.y * y.y;
+        sum.y += x.x * y.y + x.y * y.x;
+    }
+    total[i] = sum;
 }
 
 __global__ void addImage(float* destination, const float* source, size_t count) {
     const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < count) destination[i] += source[i];
+}
+
+__global__ void cropConvolution(float* destination, const float* image,
+                               int width, int height, int padded_width, float scale) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= width || y >= height) return;
+    const size_t pixel = static_cast<size_t>(y) * width + x;
+    destination[pixel] = image[static_cast<size_t>(y) * padded_width + x] * scale;
 }
 
 __global__ void accumulateGammaCorrected(float* destination, const float* normal,
@@ -57,6 +77,118 @@ __global__ void accumulateGammaCorrected(float* destination, const float* normal
     if (i >= count) return;
     destination[i] += (1.0f - gamma * wet[i]) * normal[i]
                     + gamma * wet_convolved[i];
+}
+
+__global__ void computeWetFromPrimary(const float* primary, const float* air,
+                                      float* wet, size_t count,
+                                      const double* attenuation_nodes,
+                                      const double* thickness_nodes,
+                                      const double* slopes, int node_count) {
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    const double raw_t = air[i] > 0.0f
+        ? static_cast<double>(primary[i]) / static_cast<double>(air[i]) : 1.0;
+    const double physical_t = fmin(fmax(raw_t, static_cast<double>(FLT_MIN)), 1.0);
+    double value = log(1.0 / physical_t);
+    value = fmin(fmax(value, attenuation_nodes[0]), attenuation_nodes[node_count - 1]);
+    int interval = 0;
+    while (interval + 2 < node_count && attenuation_nodes[interval + 1] <= value)
+        ++interval;
+    const double h = attenuation_nodes[interval + 1] - attenuation_nodes[interval];
+    const double t = (value - attenuation_nodes[interval]) / h;
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+    wet[i] = static_cast<float>(
+        (2.0 * t3 - 3.0 * t2 + 1.0) * thickness_nodes[interval]
+        + (t3 - 2.0 * t2 + t) * h * slopes[interval]
+        + (-2.0 * t3 + 3.0 * t2) * thickness_nodes[interval + 1]
+        + (t3 - t2) * h * slopes[interval + 1]);
+}
+
+__global__ void smoothHorizontalNearest(const float* input, float* output,
+                                        int width, int height,
+                                        const float* weights, int radius) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= width || y >= height) return;
+    double sum = 0.0;
+    for (int k = -radius; k <= radius; ++k) {
+        const int sample_x = max(0, min(width - 1, x + k));
+        sum += static_cast<double>(input[static_cast<size_t>(y) * width + sample_x])
+             * weights[k + radius];
+    }
+    output[static_cast<size_t>(y) * width + x] = static_cast<float>(sum);
+}
+
+__global__ void smoothVerticalNearest(const float* input, float* output,
+                                      int width, int height,
+                                      const float* weights, int radius) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= width || y >= height) return;
+    double sum = 0.0;
+    for (int k = -radius; k <= radius; ++k) {
+        const int sample_y = max(0, min(height - 1, y + k));
+        sum += static_cast<double>(input[static_cast<size_t>(sample_y) * width + x])
+             * weights[k + radius];
+    }
+    output[static_cast<size_t>(y) * width + x] = static_cast<float>(sum);
+}
+
+__global__ void buildBatchSources(float* batch_source, const float* primary,
+    const float* air, const float* edge, const double* basis_nodes, int basis_count,
+    const double* amplitude_nodes, const double* amplitude_values, int amplitude_count,
+    double transmission_max, int width, int height, int padded_width,
+    size_t image_count, const float* wet, int* invalid) {
+    const int x_pixel = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x_pixel >= width || y >= height) return;
+    const size_t p = static_cast<size_t>(y) * width + x_pixel;
+    if (!isfinite(primary[p]) || primary[p] < 0 || !isfinite(air[p])) {
+        atomicExch(invalid, 1); return;
+    }
+    if (!(edge[p] > 0)) return;
+    const double raw_t = air[p] > 0 ? static_cast<double>(primary[p]) / air[p] : 1.0;
+    const double physical_t = fmin(fmax(raw_t, DBL_MIN), 1.0);
+    if (physical_t >= 1.0) return;
+    const double attenuation = log(1.0 / physical_t);
+    const double amplitude_x = fmin(fmax(attenuation, amplitude_nodes[0]),
+                                   amplitude_nodes[amplitude_count - 1]);
+    int i = 0;
+    while (i + 2 < amplitude_count && amplitude_nodes[i + 1] <= amplitude_x) ++i;
+    const double fraction = (amplitude_x - amplitude_nodes[i]) /
+                            (amplitude_nodes[i + 1] - amplitude_nodes[i]);
+    double amplitude = amplitude_values[i] + fraction *
+                       (amplitude_values[i + 1] - amplitude_values[i]);
+    if (attenuation < amplitude_nodes[0])
+        amplitude = transmission_max * amplitude_values[0] * attenuation /
+                    amplitude_nodes[0] / physical_t;
+    if (!isfinite(amplitude) || amplitude < 0) { atomicExch(invalid, 1); return; }
+    const double source = static_cast<double>(primary[p]) * amplitude * edge[p];
+    if (!(source > 0) || !isfinite(source)) return;
+    const double clipped = fmin(fmax(attenuation, basis_nodes[0]), basis_nodes[basis_count - 1]);
+    int lower = 0;
+    while (lower + 1 < basis_count && basis_nodes[lower + 1] <= clipped) ++lower;
+    const int upper = min(lower + 1, basis_count - 1);
+    const float upper_fraction = upper == lower ? 0.0f : static_cast<float>(
+        (clipped - basis_nodes[lower]) / (basis_nodes[upper] - basis_nodes[lower]));
+    const float signal = static_cast<float>(source);
+    const float w = wet ? wet[p] : 1.0f;
+    const size_t pixel = static_cast<size_t>(y) * padded_width + x_pixel;
+    // Each thread owns this pixel in every basis; no atomics are needed.
+    batch_source[static_cast<size_t>(lower) * image_count + pixel] += signal * (1.0f - upper_fraction) * w;
+    batch_source[static_cast<size_t>(upper) * image_count + pixel] += signal * upper_fraction * w;
+}
+
+__global__ void maximumAbsolute(const float* values, size_t count, unsigned* maximum) {
+    const size_t p = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (p < count) atomicMax(maximum, __float_as_uint(fabsf(values[p])));
+}
+__global__ void cleanGammaRoundoff(float* values, size_t count, const unsigned* maximum) {
+    const size_t p = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (p >= count) return;
+    const float tolerance = 1e-6f * fmaxf(1.0f, __uint_as_float(*maximum));
+    if (values[p] < 0 && values[p] > -tolerance) values[p] = 0;
 }
 
 std::vector<double> edt1d(const std::vector<double>& input, double spacing) {
@@ -127,50 +259,45 @@ std::vector<float> edgeWindow(const std::vector<unsigned char>& mask, int width,
     return result;
 }
 
-void smoothNearest(std::vector<float>& image, int width, int height,
-                   double pixel_u, double pixel_v, double sigma) {
-    if (sigma <= 0.0) return;
-    const auto weights = [](double pixel, double sigma) {
-        const int radius = std::max(1, static_cast<int>(std::ceil(4.0 * sigma / pixel)));
-        std::vector<float> result(static_cast<size_t>(2 * radius + 1));
-        double sum = 0.0;
-        for (int k = -radius; k <= radius; ++k) {
-            result[static_cast<size_t>(k + radius)] = static_cast<float>(
-                std::exp(-0.5 * std::pow(k * pixel / sigma, 2.0)));
-            sum += result[static_cast<size_t>(k + radius)];
-        }
-        for (float& value : result) value = static_cast<float>(value / sum);
-        return result;
-    };
-    const auto wu = weights(pixel_u, sigma);
-    const auto wv = weights(pixel_v, sigma);
-    std::vector<float> horizontal(image.size());
-    const int ru = static_cast<int>(wu.size() / 2);
-    for (int y = 0; y < height; ++y)
-        for (int x = 0; x < width; ++x) {
-            double sum = 0.0;
-            for (int k = -ru; k <= ru; ++k)
-                sum += image[static_cast<size_t>(y) * width +
-                             std::clamp(x + k, 0, width - 1)] * wu[k + ru];
-            horizontal[static_cast<size_t>(y) * width + x] = static_cast<float>(sum);
-        }
-    image.assign(image.size(), 0.0f);
-    const int rv = static_cast<int>(wv.size() / 2);
-    for (int y = 0; y < height; ++y)
-        for (int x = 0; x < width; ++x) {
-            double sum = 0.0;
-            for (int k = -rv; k <= rv; ++k)
-                sum += horizontal[static_cast<size_t>(std::clamp(y + k, 0, height - 1)) * width + x]
-                     * wv[k + rv];
-            image[static_cast<size_t>(y) * width + x] = static_cast<float>(sum);
-        }
+std::vector<float> gaussianWeights(double pixel, double sigma) {
+    const int radius = std::max(1, static_cast<int>(std::ceil(4.0 * sigma / pixel)));
+    std::vector<float> result(static_cast<size_t>(2 * radius + 1));
+    double sum = 0.0;
+    for (int k = -radius; k <= radius; ++k) {
+        result[static_cast<size_t>(k + radius)] = static_cast<float>(
+            std::exp(-0.5 * std::pow(k * pixel / sigma, 2.0)));
+        sum += result[static_cast<size_t>(k + radius)];
+    }
+    for (float& value : result) value = static_cast<float>(value / sum);
+    return result;
+}
+
+int kernelRadius(int size, double pixel, double support) {
+    if (size <= 0 || !std::isfinite(pixel) || pixel <= 0 ||
+        !std::isfinite(support) || support <= 0)
+        throw std::runtime_error("invalid fASKS convolution geometry");
+    const double extent = std::min(support, std::max((size - 1) * pixel, pixel));
+    return std::max(1, static_cast<int>(std::ceil(extent / pixel)));
+}
+
+int fastFftSize(int minimum) {
+    for (int size = minimum; ; ++size) {
+        int remaining = size;
+        for (int factor : {2, 3, 5})
+            while (remaining % factor == 0) remaining /= factor;
+        if (remaining == 1) return size;
+    }
 }
 
 class FftWorkspace {
 public:
-    FftWorkspace(int width, int height) : width_(width), height_(height) {
-        padded_width_ = 2 * width_ - 1;
-        padded_height_ = 2 * height_ - 1;
+    FftWorkspace(int width, int height, int radius_u, int radius_v)
+        : width_(width), height_(height) {
+        // Only the input-sized crop is retained. W + radius prevents wrapped
+        // tails entering that crop; 2*radius+1 keeps kernel offsets distinct.
+        // A smaller support must also shrink the FFT workspace to save work.
+        padded_width_ = fastFftSize(std::max(width_ + radius_u, 2 * radius_u + 1));
+        padded_height_ = fastFftSize(std::max(height_ + radius_v, 2 * radius_v + 1));
         image_count_ = static_cast<size_t>(padded_width_) * padded_height_;
         spectrum_count_ = static_cast<size_t>(padded_height_) *
                           (padded_width_ / 2 + 1);
@@ -189,6 +316,18 @@ public:
         for (auto spectrum : kernels_) if (spectrum) cudaFree(spectrum);
         if (forward_plan_) cufftDestroy(forward_plan_);
         if (inverse_plan_) cufftDestroy(inverse_plan_);
+        if (batch_forward_plan_) cufftDestroy(batch_forward_plan_);
+        if (batch_source_) cudaFree(batch_source_);
+        if (batch_fft_) cudaFree(batch_fft_);
+        if (batch_kernel_spectra_) cudaFree(batch_kernel_spectra_);
+        if (primary_) cudaFree(primary_);
+        if (air_) cudaFree(air_);
+        if (edge_) cudaFree(edge_);
+        if (basis_nodes_) cudaFree(basis_nodes_);
+        if (amplitude_nodes_) cudaFree(amplitude_nodes_);
+        if (amplitude_values_) cudaFree(amplitude_values_);
+        if (invalid_) cudaFree(invalid_);
+        if (maximum_) cudaFree(maximum_);
         if (wet_) cudaFree(wet_);
         if (wet_convolved_) cudaFree(wet_convolved_);
         if (normal_) cudaFree(normal_);
@@ -229,29 +368,84 @@ public:
         return static_cast<int>(kernels_.size() - 1);
     }
 
-    void begin(const std::vector<float>& wet) {
-        check(cudaMemset(scatter_, 0, imagePixels() * sizeof(float)), "clear fASKS scatter");
-        check(cudaMemcpy(wet_, wet.data(), imagePixels() * sizeof(float), cudaMemcpyHostToDevice),
-              "upload fASKS WET");
+    void configureBatch(int batch) {
+        batch_ = batch;
+        const int dims[2] = {padded_height_, padded_width_};
+        int inembed[2] = {padded_height_, padded_width_};
+        int onembed[2] = {padded_height_, padded_width_ / 2 + 1};
+        const int istride = 1;
+        const int ostride = 1;
+        const int idist = static_cast<int>(image_count_);
+        const int odist = static_cast<int>(spectrum_count_);
+        checkFft(cufftPlanMany(&batch_forward_plan_, 2, const_cast<int*>(dims),
+            inembed, istride, idist, onembed, ostride, odist,
+            CUFFT_R2C, batch), "cufftPlanMany fASKS forward");
+        check(cudaMalloc(&batch_source_, static_cast<size_t>(batch_) * image_count_ * sizeof(float)),
+              "cudaMalloc fASKS batch source");
+        check(cudaMalloc(&batch_fft_, static_cast<size_t>(batch_) * spectrum_count_ * sizeof(cufftComplex)),
+              "cudaMalloc fASKS batch FFT");
+        check(cudaMalloc(&batch_kernel_spectra_,
+                         static_cast<size_t>(batch_) * spectrum_count_ * sizeof(cufftComplex)),
+              "cudaMalloc fASKS batch kernel spectra");
+        for (int b = 0; b < batch_; ++b)
+            check(cudaMemcpy(batch_kernel_spectra_ + static_cast<size_t>(b) * spectrum_count_,
+                             kernels_.at(b), spectrum_count_ * sizeof(cufftComplex),
+                             cudaMemcpyDeviceToDevice),
+                  "copy fASKS batch kernel spectrum");
     }
 
-    void convolve(const float* host_source, int kernel_id, float* output) {
-        check(cudaMemset(source_, 0, image_count_ * sizeof(float)), "clear fASKS source");
-        check(cudaMemcpy2D(source_, static_cast<size_t>(padded_width_) * sizeof(float),
-                           host_source, static_cast<size_t>(width_) * sizeof(float),
-                           static_cast<size_t>(width_) * sizeof(float), height_,
-                           cudaMemcpyHostToDevice), "upload fASKS source");
-        checkFft(cufftExecR2C(forward_plan_, source_, source_fft_), "FFT fASKS source");
+    void configureSources(const std::vector<double>& basis, const FasksRuntimeModel& model) {
+        amplitude_count_ = static_cast<int>(model.amplitudeValues().size());
+        transmission_max_ = model.transmissionMax();
+        check(cudaMalloc(&primary_, imagePixels() * sizeof(float)), "allocate fASKS primary");
+        check(cudaMalloc(&air_, imagePixels() * sizeof(float)), "allocate fASKS air");
+        check(cudaMalloc(&edge_, imagePixels() * sizeof(float)), "allocate fASKS edge window");
+        check(cudaMalloc(&basis_nodes_, basis.size() * sizeof(double)), "allocate fASKS basis nodes");
+        check(cudaMalloc(&amplitude_nodes_, model.amplitudeAttenuationNodes().size() * sizeof(double)), "allocate fASKS amplitude nodes");
+        check(cudaMalloc(&amplitude_values_, model.amplitudeValues().size() * sizeof(double)), "allocate fASKS amplitude values");
+        check(cudaMalloc(&invalid_, sizeof(int)), "allocate fASKS source error");
+        check(cudaMalloc(&maximum_, sizeof(unsigned)), "allocate fASKS roundoff maximum");
+        check(cudaMemcpy(basis_nodes_, basis.data(), basis.size() * sizeof(double), cudaMemcpyHostToDevice), "upload fASKS basis nodes");
+        check(cudaMemcpy(amplitude_nodes_, model.amplitudeAttenuationNodes().data(),
+            model.amplitudeAttenuationNodes().size() * sizeof(double), cudaMemcpyHostToDevice), "upload fASKS amplitude nodes");
+        check(cudaMemcpy(amplitude_values_, model.amplitudeValues().data(),
+            model.amplitudeValues().size() * sizeof(double), cudaMemcpyHostToDevice), "upload fASKS amplitude values");
+    }
+
+    void begin() {
+        check(cudaMemset(scatter_, 0, imagePixels() * sizeof(float)), "clear fASKS scatter");
+        check(cudaMemset(invalid_, 0, sizeof(int)), "clear fASKS source error");
+    }
+
+    void convolveBatch(const float* primary, const float* air,
+                       bool apply_wet, float* output) {
+        check(cudaMemset(batch_source_, 0,
+                         static_cast<size_t>(batch_) * image_count_ * sizeof(float)),
+              "clear fASKS batch sources");
+        const dim3 source_block(16, 16);
+        const dim3 source_grid((width_ + 15) / 16, (height_ + 15) / 16);
+        buildBatchSources<<<source_grid, source_block>>>(batch_source_, primary, air, edge_,
+            basis_nodes_, batch_, amplitude_nodes_, amplitude_values_, amplitude_count_,
+            transmission_max_, width_, height_, padded_width_, image_count_,
+            apply_wet ? wet_ : nullptr, invalid_);
+        check(cudaGetLastError(), "generate fASKS sources on CUDA");
+        checkFft(cufftExecR2C(batch_forward_plan_, batch_source_, batch_fft_),
+                 "batched FFT fASKS sources");
         const int threads = 256;
-        const int blocks = static_cast<int>((spectrum_count_ + threads - 1) / threads);
-        multiplySpectra<<<blocks, threads>>>(source_fft_, kernels_.at(kernel_id), spectrum_count_);
-        check(cudaGetLastError(), "multiply fASKS spectra");
-        checkFft(cufftExecC2R(inverse_plan_, source_fft_, source_), "inverse FFT fASKS source");
+        if (batch_kernel_spectra_ == nullptr)
+            throw std::runtime_error("fASKS batch kernels are not initialized");
+        // Linearity allows summing all kernel contributions before the IFFT.
+        // Keep all forward transforms, but perform only one inverse transform.
+        multiplyAndSumSpectra<<<static_cast<int>((spectrum_count_ + threads - 1) / threads), threads>>>(
+            batch_fft_, batch_kernel_spectra_, source_fft_, batch_, spectrum_count_);
+        check(cudaGetLastError(), "sum fASKS spectra");
+        checkFft(cufftExecC2R(inverse_plan_, source_fft_, source_),
+                 "single inverse FFT fASKS sources");
         const dim3 block(16, 16);
         const dim3 grid((width_ + 15) / 16, (height_ + 15) / 16);
-        cropToImage<<<grid, block>>>(source_, output, width_, height_, padded_width_,
-                                     1.0f / static_cast<float>(image_count_));
-        check(cudaGetLastError(), "crop fASKS convolution");
+        cropConvolution<<<grid, block>>>(output, source_, width_, height_, padded_width_,
+            1.0f / static_cast<float>(image_count_));
+        check(cudaGetLastError(), "crop batched fASKS convolution");
     }
 
     void addNormal() {
@@ -276,6 +470,24 @@ public:
 
     float* normal() { return normal_; }
     float* wetConvolved() { return wet_convolved_; }
+    float* wet() { return wet_; }
+    float* primary() { return primary_; }
+    float* air() { return air_; }
+    float* edge() { return edge_; }
+    float* scatter() { return scatter_; }
+
+    void finish(bool gamma) {
+        if (gamma) {
+            check(cudaMemset(maximum_, 0, sizeof(unsigned)), "clear fASKS roundoff maximum");
+            const int blocks = static_cast<int>((imagePixels() + 255) / 256);
+            maximumAbsolute<<<blocks, 256>>>(scatter_, imagePixels(), maximum_);
+            cleanGammaRoundoff<<<blocks, 256>>>(scatter_, imagePixels(), maximum_);
+            check(cudaGetLastError(), "clean fASKS gamma roundoff");
+        }
+        int invalid = 0;
+        check(cudaMemcpy(&invalid, invalid_, sizeof(int), cudaMemcpyDeviceToHost), "check fASKS source values");
+        if (invalid) throw std::runtime_error("fASKS requires finite nonnegative primary and amplitude, and finite air");
+    }
 
 private:
     int width_ = 0, height_ = 0, padded_width_ = 0, padded_height_ = 0;
@@ -288,7 +500,121 @@ private:
     float* wet_ = nullptr;
     cufftComplex* source_fft_ = nullptr;
     cufftHandle forward_plan_ = 0, inverse_plan_ = 0;
+    cufftHandle batch_forward_plan_ = 0;
+    int batch_ = 0;
+    float* batch_source_ = nullptr;
+    cufftComplex* batch_fft_ = nullptr;
+    cufftComplex* batch_kernel_spectra_ = nullptr;
     std::vector<cufftComplex*> kernels_;
+    float *primary_ = nullptr, *air_ = nullptr, *edge_ = nullptr;
+    double *basis_nodes_ = nullptr, *amplitude_nodes_ = nullptr, *amplitude_values_ = nullptr;
+    int *invalid_ = nullptr, amplitude_count_ = 0;
+    unsigned* maximum_ = nullptr;
+    double transmission_max_ = 0;
+};
+
+class WetWorkspace {
+public:
+    WetWorkspace(int width, int height, double pixel_u, double pixel_v,
+                 const FasksRuntimeModel& model)
+        : width_(width), height_(height), pixels_(static_cast<size_t>(width) * height),
+          node_count_(static_cast<int>(model.wetAttenuationNodes().size())) {
+        if (node_count_ < 2 || model.wetThicknessNodes().size() != node_count_ ||
+            model.wetSlopes().size() != node_count_)
+            throw std::runtime_error("invalid fASKS WET interpolation table");
+        try {
+            check(cudaMalloc(&raw_, pixels_ * sizeof(float)), "cudaMalloc fASKS raw WET");
+            check(cudaMalloc(&temporary_, pixels_ * sizeof(float)), "cudaMalloc fASKS temporary WET");
+            check(cudaMalloc(&attenuation_nodes_, static_cast<size_t>(node_count_) * sizeof(double)),
+                  "cudaMalloc fASKS WET attenuation nodes");
+            check(cudaMalloc(&thickness_nodes_, static_cast<size_t>(node_count_) * sizeof(double)),
+                  "cudaMalloc fASKS WET thickness nodes");
+            check(cudaMalloc(&slopes_, static_cast<size_t>(node_count_) * sizeof(double)),
+                  "cudaMalloc fASKS WET slopes");
+            check(cudaMemcpy(attenuation_nodes_, model.wetAttenuationNodes().data(),
+                             static_cast<size_t>(node_count_) * sizeof(double), cudaMemcpyHostToDevice),
+                  "upload fASKS WET attenuation nodes");
+            check(cudaMemcpy(thickness_nodes_, model.wetThicknessNodes().data(),
+                             static_cast<size_t>(node_count_) * sizeof(double), cudaMemcpyHostToDevice),
+                  "upload fASKS WET thickness nodes");
+            check(cudaMemcpy(slopes_, model.wetSlopes().data(),
+                             static_cast<size_t>(node_count_) * sizeof(double), cudaMemcpyHostToDevice),
+                  "upload fASKS WET slopes");
+
+            if (model.wetSmoothSigmaMm() > 0.0) {
+                const auto weights_u = gaussianWeights(pixel_u, model.wetSmoothSigmaMm());
+                const auto weights_v = gaussianWeights(pixel_v, model.wetSmoothSigmaMm());
+                radius_u_ = static_cast<int>(weights_u.size() / 2);
+                radius_v_ = static_cast<int>(weights_v.size() / 2);
+                check(cudaMalloc(&weights_u_, weights_u.size() * sizeof(float)),
+                      "cudaMalloc fASKS WET U weights");
+                check(cudaMalloc(&weights_v_, weights_v.size() * sizeof(float)),
+                      "cudaMalloc fASKS WET V weights");
+                check(cudaMemcpy(weights_u_, weights_u.data(), weights_u.size() * sizeof(float),
+                                 cudaMemcpyHostToDevice), "upload fASKS WET U weights");
+                check(cudaMemcpy(weights_v_, weights_v.data(), weights_v.size() * sizeof(float),
+                                 cudaMemcpyHostToDevice), "upload fASKS WET V weights");
+            }
+        } catch (...) {
+            release();
+            throw;
+        }
+    }
+
+    ~WetWorkspace() { release(); }
+
+    void compute(const float* primary, const float* air,
+                 float* destination) {
+        const int threads = 256;
+        computeWetFromPrimary<<<static_cast<int>((pixels_ + threads - 1) / threads), threads>>>(
+            primary, air, raw_, pixels_, attenuation_nodes_, thickness_nodes_, slopes_, node_count_);
+        check(cudaGetLastError(), "compute fASKS WET");
+        if (!weights_u_ || !weights_v_) {
+            check(cudaMemcpy(destination, raw_, pixels_ * sizeof(float), cudaMemcpyDeviceToDevice),
+                  "copy fASKS WET");
+            return;
+        }
+        const dim3 block(16, 16);
+        const dim3 grid((width_ + 15) / 16, (height_ + 15) / 16);
+        smoothHorizontalNearest<<<grid, block>>>(raw_, temporary_, width_, height_,
+                                                 weights_u_, radius_u_);
+        check(cudaGetLastError(), "smooth fASKS WET horizontally");
+        smoothVerticalNearest<<<grid, block>>>(temporary_, destination, width_, height_,
+                                               weights_v_, radius_v_);
+        check(cudaGetLastError(), "smooth fASKS WET vertically");
+    }
+
+private:
+    void release() noexcept {
+        if (weights_v_) cudaFree(weights_v_);
+        if (weights_u_) cudaFree(weights_u_);
+        if (slopes_) cudaFree(slopes_);
+        if (thickness_nodes_) cudaFree(thickness_nodes_);
+        if (attenuation_nodes_) cudaFree(attenuation_nodes_);
+        if (temporary_) cudaFree(temporary_);
+        if (raw_) cudaFree(raw_);
+        weights_v_ = nullptr;
+        weights_u_ = nullptr;
+        slopes_ = nullptr;
+        thickness_nodes_ = nullptr;
+        attenuation_nodes_ = nullptr;
+        temporary_ = nullptr;
+        raw_ = nullptr;
+    }
+
+    int width_ = 0;
+    int height_ = 0;
+    size_t pixels_ = 0;
+    int node_count_ = 0;
+    int radius_u_ = 0;
+    int radius_v_ = 0;
+    float* raw_ = nullptr;
+    float* temporary_ = nullptr;
+    float* weights_u_ = nullptr;
+    float* weights_v_ = nullptr;
+    double* attenuation_nodes_ = nullptr;
+    double* thickness_nodes_ = nullptr;
+    double* slopes_ = nullptr;
 };
 
 }
@@ -300,124 +626,212 @@ struct CudaFasksScatter::Impl {
     double pixel_u = 0.0;
     double pixel_v = 0.0;
     const FasksRuntimeModel& model;
-    std::vector<int> kernel_ids;
+    std::vector<double> attenuation_nodes;
     FftWorkspace workspace;
+    std::unique_ptr<WetWorkspace> wet_workspace;
+    std::vector<unsigned char> cached_mask;
+    float* fixed_measured = nullptr;
+    int* fixed_invalid = nullptr;
+    float *guide_weights_u = nullptr, *guide_weights_v = nullptr;
+    double guide_sigma_u = -1, guide_sigma_v = -1;
+
+    ~Impl() {
+        cudaFree(fixed_measured); cudaFree(fixed_invalid);
+        cudaFree(guide_weights_u); cudaFree(guide_weights_v);
+    }
 
     Impl(int width_in, int height_in, double pixel_u_in, double pixel_v_in,
-         const FasksRuntimeModel& model_in)
+         const FasksRuntimeModel& model_in,
+         int transmission_segments)
         : width(width_in), height(height_in), pixels(static_cast<size_t>(width_in) * height_in),
           pixel_u(pixel_u_in), pixel_v(pixel_v_in), model(model_in),
-          workspace(width_in, height_in) {
+          workspace(width_in, height_in,
+              kernelRadius(width_in, pixel_u_in, model_in.supportUMm()),
+              kernelRadius(height_in, pixel_v_in, model_in.supportVMm())) {
         if (width <= 0 || height <= 0 || !(pixel_u > 0.0 && pixel_v > 0.0))
             throw std::runtime_error("invalid fASKS detector dimensions");
         const double support_u = std::min(model.supportUMm(),
             std::max((width - 1) * pixel_u, pixel_u));
         const double support_v = std::min(model.supportVMm(),
             std::max((height - 1) * pixel_v, pixel_v));
-        const int basis_count = model.discreteKernelCount();
+        if (transmission_segments <= 0) {
+            attenuation_nodes.reserve(static_cast<size_t>(model.discreteKernelCount()));
+            for (int i = 0; i < model.discreteKernelCount(); ++i)
+                attenuation_nodes.push_back(model.discreteAttenuationNode(i));
+        } else {
+            const int segment_count = std::max(2, transmission_segments);
+            const double x_min = model.discreteAttenuationNode(0);
+            const double x_max = model.discreteAttenuationNode(model.discreteKernelCount() - 1);
+            const double width = (x_max - x_min) / segment_count;
+            attenuation_nodes.reserve(static_cast<size_t>(segment_count));
+            for (int segment = 0; segment < segment_count; ++segment)
+                attenuation_nodes.push_back(x_min + (segment + 0.5) * width);
+        }
+        const int basis_count = static_cast<int>(attenuation_nodes.size());
         if (basis_count < 2)
             throw std::runtime_error("fASKS model needs at least two discrete kernels");
-        kernel_ids.reserve(static_cast<size_t>(basis_count));
         for (int basis = 0; basis < basis_count; ++basis) {
-            const double x = model.discreteAttenuationNode(basis);
+            const double x = attenuation_nodes[static_cast<size_t>(basis)];
             const auto kernel = model.makeDiscreteKernel(
                 std::exp(-x), pixel_u, pixel_v, support_u, support_v);
-            kernel_ids.push_back(workspace.registerKernel(kernel,
+            workspace.registerKernel(kernel,
                 2 * static_cast<int>(std::ceil(support_u / pixel_u)) + 1,
-                2 * static_cast<int>(std::ceil(support_v / pixel_v)) + 1));
+                2 * static_cast<int>(std::ceil(support_v / pixel_v)) + 1);
         }
+        workspace.configureBatch(basis_count);
+        workspace.configureSources(attenuation_nodes, model);
+        if (model.gammaPerMm() != 0.0)
+            wet_workspace = std::make_unique<WetWorkspace>(
+                width, height, pixel_u, pixel_v, model);
+    }
+
+    void predictOnDevice(const float* primary, const float* air,
+                         const std::vector<unsigned char>& mask) {
+        if (!primary || !air || mask.size() != pixels)
+            throw std::runtime_error("invalid fASKS device image dimensions");
+        if (cached_mask != mask) {
+            const auto edge = edgeWindow(mask, width, height, pixel_u, pixel_v, model);
+            check(cudaMemcpy(workspace.edge(), edge.data(), pixels * sizeof(float),
+                             cudaMemcpyHostToDevice), "upload fASKS cached edge window");
+            cached_mask = mask;
+        }
+        const bool gamma_enabled = model.gammaPerMm() != 0.0;
+        workspace.begin();
+        if (gamma_enabled) wet_workspace->compute(primary, air, workspace.wet());
+        workspace.convolveBatch(primary, air, false, workspace.normal());
+        if (!gamma_enabled) {
+            workspace.addNormal();
+        } else {
+            workspace.convolveBatch(primary, air, true, workspace.wetConvolved());
+            workspace.addGammaCorrected(model.gammaPerMm());
+        }
+        workspace.finish(gamma_enabled);
+    }
+
+    void predict(const std::vector<float>& primary, const std::vector<float>& air,
+                 const std::vector<unsigned char>& mask, std::vector<float>& scatter) {
+        if (primary.size() != pixels || air.size() != pixels || mask.size() != pixels)
+            throw std::runtime_error("invalid fASKS image dimensions");
+        check(cudaMemcpy(workspace.primary(), primary.data(), pixels * sizeof(float),
+                         cudaMemcpyHostToDevice), "upload fASKS primary");
+        check(cudaMemcpy(workspace.air(), air.data(), pixels * sizeof(float),
+                         cudaMemcpyHostToDevice), "upload fASKS air");
+        predictOnDevice(workspace.primary(), workspace.air(), mask);
+        workspace.download(scatter);
     }
 
     void apply(std::vector<float>& primary, const std::vector<float>& air,
                const std::vector<unsigned char>& mask) {
-        if (primary.size() != pixels || air.size() != pixels || mask.size() != pixels)
-            throw std::runtime_error("invalid fASKS image dimensions");
-        const std::vector<float> edge = edgeWindow(mask, width, height, pixel_u, pixel_v, model);
-        std::vector<float> wet(pixels, 0.0f);
-        for (size_t p = 0; p < pixels; ++p) {
-            if (!std::isfinite(primary[p]) || primary[p] < 0.0f ||
-                !std::isfinite(air[p]))
-                throw std::runtime_error("fASKS requires finite nonnegative primary and finite air");
-            const double raw_t = air[p] > 0.0f
-                ? static_cast<double>(primary[p]) / air[p] : 1.0;
-            const double physical_t = std::clamp(raw_t,
-                std::numeric_limits<double>::min(), 1.0);
-            wet[p] = static_cast<float>(model.wetFromLogAttenuation(
-                std::log(1.0 / physical_t)));
-        }
-        smoothNearest(wet, width, height, pixel_u, pixel_v,
-                      model.wetSmoothSigmaMm());
-        workspace.begin(wet);
-
-        const int basis_count = model.discreteKernelCount();
-        const double x_min = model.discreteAttenuationNode(0);
-        const double x_max = model.discreteAttenuationNode(basis_count - 1);
-        std::vector<std::vector<float>> sources(
-            static_cast<size_t>(basis_count), std::vector<float>(pixels, 0.0f));
-        for (size_t p = 0; p < pixels; ++p) {
-            if (!mask[p] || !(edge[p] > 0.0f)) continue;
-            const double raw_t = air[p] > 0.0f
-                ? static_cast<double>(primary[p]) / air[p] : 1.0;
-            const double source = static_cast<double>(primary[p])
-                * model.amplitude(raw_t) * edge[p];
-            if (!(source > 0.0) || !std::isfinite(source)) continue;
-            const double physical_t = std::clamp(raw_t,
-                std::numeric_limits<double>::min(), 1.0);
-            const double x = std::log(1.0 / physical_t);
-            const double clipped = std::clamp(x, x_min, x_max);
-            int lower = 0;
-            while (lower + 1 < basis_count &&
-                   model.discreteAttenuationNode(lower + 1) <= clipped)
-                ++lower;
-            const int upper = std::min(lower + 1, basis_count - 1);
-            const double lower_x = model.discreteAttenuationNode(lower);
-            const double upper_x = model.discreteAttenuationNode(upper);
-            const float upper_fraction = upper == lower
-                ? 0.0f
-                : static_cast<float>((clipped - lower_x) / (upper_x - lower_x));
-            sources[lower][p] += static_cast<float>(source) * (1.0f - upper_fraction);
-            sources[upper][p] += static_cast<float>(source) * upper_fraction;
-        }
-
         std::vector<float> scatter;
-        std::vector<float> wet_source(pixels);
-        for (int basis = 0; basis < basis_count; ++basis) {
-            const auto& source = sources[basis];
-            if (std::none_of(source.begin(), source.end(), [](float value) { return value != 0.0f; }))
-                continue;
-            workspace.convolve(source.data(), kernel_ids[basis], workspace.normal());
-            if (model.gammaPerMm() == 0.0) {
-                workspace.addNormal();
-            } else {
-                for (size_t p = 0; p < pixels; ++p)
-                    wet_source[p] = source[p] * wet[p];
-                workspace.convolve(wet_source.data(), kernel_ids[basis],
-                                   workspace.wetConvolved());
-                workspace.addGammaCorrected(model.gammaPerMm());
-            }
-        }
-        workspace.download(scatter);
-        const float maximum = *std::max_element(scatter.begin(), scatter.end(),
-            [](float a, float b) { return std::abs(a) < std::abs(b); });
-        const float tolerance = 1e-6f * std::max(1.0f, std::abs(maximum));
-        for (size_t p = 0; p < pixels; ++p) {
-            if (scatter[p] < 0.0f && scatter[p] > -tolerance) scatter[p] = 0.0f;
-            primary[p] += scatter[p];
-        }
+        predict(primary, air, mask, scatter);
+        for (size_t p = 0; p < pixels; ++p) primary[p] += scatter[p];
     }
 };
 
 CudaFasksScatter::CudaFasksScatter(int width, int height, double pixel_u_mm,
                                    double pixel_v_mm,
-                                   const FasksRuntimeModel& model)
-    : impl_(std::make_unique<Impl>(width, height, pixel_u_mm, pixel_v_mm, model)) {}
+                                   const FasksRuntimeModel& model,
+                                   int transmission_segments)
+    : impl_(std::make_unique<Impl>(width, height, pixel_u_mm, pixel_v_mm, model,
+                                   transmission_segments)) {}
 
 CudaFasksScatter::~CudaFasksScatter() = default;
+
+void CudaFasksScatter::predictDevice(const float* primary, const float* air,
+    const std::vector<unsigned char>& mask, float* scatter) {
+    if (!scatter) throw std::runtime_error("null fASKS device output");
+    impl_->predictOnDevice(primary, air, mask);
+    check(cudaMemcpy(scatter, impl_->workspace.scatter(), impl_->pixels * sizeof(float),
+                     cudaMemcpyDeviceToDevice), "copy fASKS device scatter");
+}
+
+void CudaFasksScatter::predict(const std::vector<float>& primary,
+                               const std::vector<float>& air_primary,
+                               const std::vector<unsigned char>& object_mask,
+                               std::vector<float>& scatter) {
+    impl_->predict(primary, air_primary, object_mask, scatter);
+}
 
 void CudaFasksScatter::apply(std::vector<float>& primary,
                              const std::vector<float>& air_primary,
                              const std::vector<unsigned char>& object_mask) {
     impl_->apply(primary, air_primary, object_mask);
+}
+
+void CudaFasksScatter::correctFixed(const std::vector<float>& measured,
+    const std::vector<float>& air, const std::vector<unsigned char>& mask,
+    int iterations, double damping, double scale, std::vector<float>& primary) {
+    if (measured.size() != impl_->pixels || air.size() != impl_->pixels ||
+        mask.size() != impl_->pixels || iterations <= 0 ||
+        !std::isfinite(damping) || damping <= 0.0 || damping > 1.0 ||
+        !std::isfinite(scale) || scale < 0.0 || scale > FLT_MAX)
+        throw std::runtime_error("invalid fixed scatter correction arguments");
+    for (size_t p = 0; p < impl_->pixels; ++p)
+        if (!std::isfinite(measured[p]) || measured[p] < 0.0f ||
+            !std::isfinite(air[p]) || air[p] <= 0.0f)
+            throw std::runtime_error("invalid fixed scatter correction signal");
+    const size_t bytes = impl_->pixels * sizeof(float);
+    if (!impl_->fixed_measured)
+        check(cudaMalloc(&impl_->fixed_measured, bytes), "allocate fixed scatter measurement");
+    if (!impl_->fixed_invalid)
+        check(cudaMalloc(&impl_->fixed_invalid, sizeof(int)), "allocate fixed scatter validity flag");
+    check(cudaMemset(impl_->fixed_invalid, 0, sizeof(int)), "clear fixed scatter validity flag");
+    check(cudaMemcpy(impl_->fixed_measured, measured.data(), bytes, cudaMemcpyHostToDevice),
+          "upload fixed scatter measurement");
+    check(cudaMemcpy(impl_->workspace.primary(), impl_->fixed_measured, bytes, cudaMemcpyDeviceToDevice),
+          "initialize fixed scatter primary");
+    check(cudaMemcpy(impl_->workspace.air(), air.data(), bytes, cudaMemcpyHostToDevice),
+          "upload fixed scatter air");
+    constexpr int threads = 256;
+    for (int iteration = 0; iteration < iterations; ++iteration) {
+        impl_->predictOnDevice(impl_->workspace.primary(), impl_->workspace.air(), mask);
+        updateFixedPrimary<<<static_cast<int>((impl_->pixels + threads - 1) / threads), threads>>>(
+            impl_->workspace.primary(), impl_->fixed_measured, impl_->workspace.air(),
+            impl_->workspace.scatter(), impl_->pixels, damping, static_cast<float>(scale), impl_->fixed_invalid);
+        check(cudaGetLastError(), "update fixed scatter primary");
+    }
+    int invalid = 0;
+    check(cudaMemcpy(&invalid, impl_->fixed_invalid, sizeof(int), cudaMemcpyDeviceToHost),
+          "check fixed scatter correction result");
+    if (invalid) throw std::runtime_error("fixed scatter correction produced a non-finite value");
+    primary.resize(impl_->pixels);
+    check(cudaMemcpy(primary.data(), impl_->workspace.primary(), bytes, cudaMemcpyDeviceToHost),
+          "download fixed scatter primary");
+}
+
+void CudaFasksScatter::smoothGuide(const std::vector<float>& input, double su,
+    double sv, std::vector<float>& output) {
+    if (input.size() != impl_->pixels || !std::isfinite(su) || !std::isfinite(sv) ||
+        su <= 0 || su > 32 || sv <= 0 || sv > 32)
+        throw std::runtime_error("invalid Gaussian guide dimensions or sigma");
+    for (float x : input) if (!std::isfinite(x) || x < 0)
+        throw std::runtime_error("invalid Gaussian guide signal");
+    auto configure = [&](double sigma, double& cached, float*& weights) {
+        if (!weights) check(cudaMalloc(&weights, 193*sizeof(float)), "allocate guide weights");
+        const int radius = static_cast<int>(std::ceil(3*sigma));
+        if (cached != sigma) {
+            std::vector<float> w(2*radius+1);
+            double sum = 0;
+            for (int k=-radius;k<=radius;++k) { w[k+radius]=static_cast<float>(std::exp(-.5*k*k/(sigma*sigma))); sum+=w[k+radius]; }
+            for (float& x : w) x=static_cast<float>(x/sum);
+            check(cudaMemcpy(weights,w.data(),w.size()*sizeof(float),cudaMemcpyHostToDevice), "upload guide weights");
+            cached=sigma;
+        }
+        return radius;
+    };
+    const int ru=configure(su,impl_->guide_sigma_u,impl_->guide_weights_u);
+    const int rv=configure(sv,impl_->guide_sigma_v,impl_->guide_weights_v);
+    const size_t bytes=impl_->pixels*sizeof(float);
+    check(cudaMemcpy(impl_->workspace.primary(),input.data(),bytes,cudaMemcpyHostToDevice), "upload Gaussian guide");
+    const dim3 block(16,16), grid((impl_->width+15)/16,(impl_->height+15)/16);
+    smoothHorizontalNearest<<<grid,block>>>(impl_->workspace.primary(),impl_->workspace.normal(),
+        impl_->width,impl_->height,impl_->guide_weights_u,ru);
+    check(cudaGetLastError(), "smooth guide U");
+    smoothVerticalNearest<<<grid,block>>>(impl_->workspace.normal(),impl_->workspace.air(),
+        impl_->width,impl_->height,impl_->guide_weights_v,rv);
+    check(cudaGetLastError(), "smooth guide V");
+    output.resize(impl_->pixels);
+    check(cudaMemcpy(output.data(),impl_->workspace.air(),bytes,cudaMemcpyDeviceToHost), "download Gaussian guide");
 }
 
 }

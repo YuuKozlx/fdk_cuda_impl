@@ -1,6 +1,7 @@
 #include "LibraryReconstructor.hpp"
 
 #include "LibraryGeometry.hpp"
+#include "ReconstructionPreprocessor.hpp"
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <vector>
 #include <iostream>
+#include <random>
 #include <cuda_runtime_api.h>
 
 namespace yk::spectral {
@@ -20,6 +22,17 @@ void check(bool condition, const std::string& message)
 {
     if (!condition) throw std::runtime_error(message);
 }
+
+struct TemporaryProjection {
+    std::filesystem::path directory;
+    ~TemporaryProjection() {
+        if (!directory.empty()) {
+            std::error_code error;
+            std::filesystem::remove(directory / "projection.raw", error);
+            std::filesystem::remove(directory, error);
+        }
+    }
+};
 
 void writeLe16(std::ofstream& out, std::uint16_t value)
 {
@@ -131,13 +144,30 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
     std::string& diagnostic)
 {
     YK::IReconstructionSession* session = nullptr;
+    std::filesystem::path reconstruction_input = projection_file;
+    TemporaryProjection temporary;
     try {
+        if (config.reconstruction.preprocessing.enabled) {
+            std::random_device random;
+            for (int attempt = 0; attempt < 16 && temporary.directory.empty(); ++attempt) {
+                const auto candidate = std::filesystem::temp_directory_path() /
+                    ("multispectrum-preprocessing-" + std::to_string(random()));
+                if (std::filesystem::create_directory(candidate)) temporary.directory = candidate;
+            }
+            check(!temporary.directory.empty(), "cannot create preprocessing temporary directory");
+            reconstruction_input = temporary.directory / "projection.raw";
+            std::string preprocessing_diagnostic;
+            const bool prepared = prepareReconstructionProjection(config, projection_file,
+                reconstruction_input, preprocessing_diagnostic);
+            check(prepared, preprocessing_diagnostic);
+            std::cout << preprocessing_diagnostic << std::endl;
+        }
         const auto& g = config.geometry.parameters;
         const std::size_t pixels = static_cast<std::size_t>(g.detector_u) * g.detector_v;
     const std::size_t volume_elements = static_cast<std::size_t>(g.reconstruction_volume_x) *
         g.reconstruction_volume_y * g.reconstruction_volume_z;
         const std::size_t projection_elements = static_cast<std::size_t>(g.views) * pixels;
-        std::ifstream input(projection_file, std::ios::binary);
+        std::ifstream input(reconstruction_input, std::ios::binary);
         check(static_cast<bool>(input), "无法读取投影文件: " + projection_file.string());
         input.seekg(0, std::ios::end);
         check(static_cast<std::uint64_t>(input.tellg()) == projection_elements * sizeof(float),
