@@ -16,6 +16,7 @@ void checkCuda(cudaError_t error, const char* operation) {
 struct CudaProjectionBackend::Impl {
     SimulationConfig config;
     DeviceGeometry dg{};
+    std::vector<DeviceConeView> host_cone_views;
     int pixels = 0;
     float incident = 0.f, mean_photon_energy = 0.f;
         unsigned char* dl=nullptr; unsigned char* dmask=nullptr; int* dm=nullptr; float *dmu=nullptr,*ds=nullptr,*de=nullptr,*dresponse=nullptr,*do1=nullptr,*do2=nullptr,*do3=nullptr;
@@ -64,6 +65,7 @@ struct CudaProjectionBackend::Impl {
                 make_float3(view.detV.x, view.detV.y, view.detV.z)});
         if (!cone_views.empty() && static_cast<int>(cone_views.size()) != g.views)
             throw std::runtime_error("non-standard projection geometry view count mismatch");
+        host_cone_views = cone_views;
         std::vector<int> map(256,-1); for(int m=0;m<nm;++m)map[c.projection.materials[m].label]=m;
         std::vector<float> mu(nm*ne), sw(ne), en(ne); incident=0;
         const double pixel_area_cm2 = g.pixel_u_mm * g.pixel_v_mm / 100.0;
@@ -213,6 +215,35 @@ void CudaProjectionBackend::project(int view, ProjectionFrame& frame) {
 void CudaProjectionBackend::sampleScatterNoise(ProjectionFrame& frame) {
     if (!impl_) throw std::runtime_error("CUDA backend is not prepared");
     impl_->sampleScatterNoise(frame);
+}
+ProjectionViewGeometry CudaProjectionBackend::geometryForDisplay(int view) const {
+    if(!impl_||view<0||view>=impl_->dg.views)throw std::runtime_error("invalid display geometry request");
+    auto g=impl_->dg;
+    // dg points at device storage; display uses the identical resolved host views.
+    if(g.use_cone_views)g.cone_views=impl_->host_cone_views.data();
+    auto point=[](float3 p)->yk::visualization::Point{return {p.x,p.y,p.z};};
+    auto unit=[](float3 p){return scale3(p,1.f/sqrtf(p.x*p.x+p.y*p.y+p.z*p.z));};
+    ProjectionViewGeometry out;out.view=view;
+    const float cu=.5f*(g.nu-1),cv=.5f*(g.nv-1);
+    auto center=scannerRay(g,view,cu,cv);out.source=point(center.source);out.detector_center=point(center.detector);
+    float3 u,v,n;
+    if(g.use_cone_views){u=unit(g.cone_views[view].detector_u);v=unit(g.cone_views[view].detector_v);}
+    else {
+        const float pi=3.14159265358979323846f;
+        const float angle=g.start+g.rotation_direction*2.f*pi*view/g.views_per_turn-.5f*pi;
+        detectorFrame(g,angle,u,v,n);
+        if(g.cylindrical){const float gamma=g.offset_u/g.sdd;u=add3(scale3(u,cosf(gamma)),scale3(n,sinf(gamma)));}
+        u=unit(u);v=unit(v);
+    }
+    out.detector_axes={point(u),point(v),point(unit(cross3(u,v)))};
+    const int segments=g.cylindrical?128:1;
+    for(int row=0;row<2;++row)for(int col=0;col<=segments;++col)
+        out.detector.push_back(point(scannerRay(g,view,-.5f+g.nu*float(col)/segments,row?g.nv-.5f:-.5f).detector));
+    const auto origin=phantomForward(g,make_float3(0,0,0),false);
+    const float3 basis[]={make_float3(1,0,0),make_float3(0,1,0),make_float3(0,0,1)};
+    const auto t=point(origin);for(int r=0;r<3;++r)out.object_pose[r*4+3]=t[r];
+    for(int c=0;c<3;++c){const auto b=point(phantomForward(g,basis[c],true));for(int r=0;r<3;++r)out.object_pose[r*4+c]=b[r];}
+    return out;
 }
 void CudaProjectionBackend::reset() noexcept { impl_.reset(); }
 } // namespace yk::spectral::primary_detail

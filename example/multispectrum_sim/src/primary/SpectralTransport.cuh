@@ -97,13 +97,6 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     float expected_counts[256] = {};
     float expected_air_energy = 0.f;
     bool object_hit = false;
-    const float pi = 3.14159265358979323846f;
-    const float angle = g.start + static_cast<float>(g.rotation_direction) * 2.f*pi*view / g.views_per_turn;
-    // The library frame at angle zero has source at -Y, U at +X, and N at
-    // +Y. Apply the same phase to both flat and cylindrical detectors.
-    const float frame_angle = angle - 0.5f*pi;
-    const float ca = cosf(frame_angle), sa = sinf(frame_angle);
-    const float z = g.start_z + g.pitch * (angle - g.start) / (2.f*pi);
     float3 lo = make_float3(-0.5f*g.nx*g.vx, -0.5f*g.ny*g.vy, -0.5f*g.nz*g.vz);
     float3 hi = make_float3(-lo.x, -lo.y, -lo.z);
     // Integrate each component separately so a small defocus dose cannot be
@@ -120,50 +113,9 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         float fsv = (uniform(base+2)-.5f)*fv;
         const float jitter_u = uniform(base+3)-.5f;
         const float jitter_v = uniform(base+4)-.5f;
-        float du = ((float)u0 - .5f*(g.nu-1) + jitter_u)*g.pu;
-        float dv = ((float)v0 - .5f*(g.nv-1) + jitter_v)*g.pv;
-        float3 uaxis, vaxis, naxis; detectorFrame(g, frame_angle, uaxis, vaxis, naxis);
-        const float3 nominal_naxis = make_float3(ca, sa, 0.f);
-        float3 source = make_float3(g.sid*ca + g.source_x*ca - g.source_y*sa,
-            g.sid*sa + g.source_x*sa + g.source_y*ca, z+g.source_z);
-        const float center_u = du + g.offset_u;
-        const float center_v = dv + g.offset_v;
-        // Keep the detector fixed in the scanner frame. Source offsets and
-        // focal-spot samples affect only the source; the panel starts at the
-        // isocenter and is SDD-SID away from it.
-        const float detector_distance = g.sdd - g.sid;
-        const float3 isocenter = make_float3(0.f, 0.f, z);
-        const float3 detector_principal = add3(isocenter,
-            scale3(nominal_naxis, -detector_distance));
-        float3 detector_center = add3(add3(add3(detector_principal,
-            scale3(naxis, g.offset_n)),
-            scale3(uaxis, center_u)), scale3(vaxis, center_v));
-        float3 det;
-        if (g.use_cone_views) {
-            const DeviceConeView cone_view = g.cone_views[view];
-            source = sampleFlatFocalSource(cone_view.source,
-                cone_view.detector_u, cone_view.detector_v, fsu, fsv);
-            det = add3(cone_view.detector_start,
-                add3(scale3(cone_view.detector_u, static_cast<float>(u0) + jitter_u),
-                    scale3(cone_view.detector_v, static_cast<float>(v0) + jitter_v)));
-        } else if (g.cylindrical) {
-            // Keep the existing cylindrical focal model outside this flat-only change.
-            source = add3(source, make_float3(fsu*ca, fsu*sa, fsv));
-            const float gamma = center_u / g.sdd;
-            // Match the DLL cylindrical builder: detector_principal is
-            // SDD-SID from isocenter, offset_n moves the cylindrical surface
-            // along its normal, offset_u selects an arc position, and
-            // offset_v moves along the detector axis.
-            const float3 cylinder_center = add3(detector_principal,
-                scale3(naxis, g.offset_n + g.sdd));
-            const float3 radial = add3(scale3(naxis, -cosf(gamma)),
-                scale3(uaxis, sinf(gamma)));
-            det = add3(add3(cylinder_center, scale3(radial, g.sdd)),
-                scale3(vaxis, center_v));
-        } else {
-            source = sampleFlatFocalSource(source, uaxis, vaxis, fsu, fsv);
-            det = detector_center;
-        }
+        const auto ray = scannerRay(g, view, static_cast<float>(u0),
+            static_cast<float>(v0), fsu, fsv, jitter_u, jitter_v);
+        const float3 source = ray.source, det = ray.detector;
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
         float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z); d.x/=length; d.y/=length; d.z/=length;
         float paths[MaterialCount] = {};

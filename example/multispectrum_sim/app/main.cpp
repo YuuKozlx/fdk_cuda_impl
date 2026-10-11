@@ -62,11 +62,20 @@ int main(int argc, char** argv)
             }
             return 0;
         }
+        if (argc == 4 && std::string_view(argv[1]) == "--export-spectrum") {
+            auto config = yk::spectral::loadConfig(argv[2]);
+            config.projection.spectrum.export_file.clear();
+            const auto spectrum = yk::spectral::loadProjectionSpectrum(config.projection);
+            yk::spectral::saveSpectrum(spectrum, argv[3]);
+            std::cout << "spectrum_bins=" << spectrum.size() << " output=" << argv[3] << '\n';
+            return 0;
+        }
         const bool validate_config = argc == 3 &&
             std::string(argv[1]) == "--validate-config";
         if (argc != 2 && !validate_config) {
             std::cerr << "用法: multispectrum_sim <config.toml>\n"
                 << "   或: multispectrum_sim --validate-config <config.toml>\n"
+                << "   或: multispectrum_sim --export-spectrum <config.toml> <output.spec>\n"
                 << "   或: multispectrum_sim --list-materials\n"
                 << "   或: multispectrum_sim --material-info <id-or-alias>\n";
             return 2;
@@ -96,7 +105,7 @@ int main(int argc, char** argv)
                 << config.reconstruction.output_volume_file << '\n';
             return 0;
         }
-        auto spectrum = yk::spectral::loadSpectrum(config.projection.spectrum_file);
+        auto spectrum = yk::spectral::loadProjectionSpectrum(config.projection);
         auto labels = yk::spectral::loadLabelVolume(config.projection.label_volume);
         yk::spectral::XcomAttenuationProvider attenuation({});
         yk::spectral::SpectralTransmissionModel model(

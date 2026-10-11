@@ -169,6 +169,13 @@ int main(int argc, char** argv) {
         require(bool(logsFile)&&bool(airFile),"GPU per-view output incomplete");
         for(float value:logs)require(std::abs(value)<1e-6,"GPU vacuum nonzero attenuation");
         require(std::abs(airFrames[0]-airFrames[pixels])>1.f,"GPU fixture did not vary air fluence");
+#ifndef YK_SPECTRAL_VTK
+        gpuConfig.visualization.enabled=true;
+        require(!gpu.run(gpuConfig,std::vector<std::uint8_t>(512,0),gpuModel,directory/"unavailable-display.raw",error),
+            "display silently enabled in a non-VTK build");
+        require(error.find("BUILD_VTK_VISUALIZATION=ON")!=std::string::npos,"missing display build diagnostic");
+        gpuConfig.visualization.enabled=false;
+#endif
 
         State counts;
         SpectralProjectionPipeline counting(

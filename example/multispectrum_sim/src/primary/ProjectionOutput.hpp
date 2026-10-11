@@ -11,6 +11,8 @@ public:
     void write(const ProjectionFrame&) override;
     void finish() override;
     void reset() noexcept override;
+    const std::vector<float>& attenuationForDisplay() const { return attenuation_buffer_; }
+
 private:
     void writeBuffer(std::ofstream&, const std::vector<float>&);
     ProjectionConfig config_;

@@ -2,12 +2,14 @@
 
 #include "config/SimConfig.hpp"
 #include "SpectralModel.hpp"
+#include "../../../visualization/LiveView.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <vector>
 
 namespace yk::spectral {
+using ProjectionViewGeometry = yk::visualization::FrameGeometry;
 
 // Architecture:
 //   backend.prepare/project -> ordered signal stages -> domain-specific sink
@@ -59,6 +61,7 @@ public:
     virtual void prepare(const SimulationConfig&, const std::vector<std::uint8_t>&,
         const SpectralTransmissionModel&) = 0;
     virtual void project(int view, ProjectionFrame&) = 0;
+    virtual ProjectionViewGeometry geometryForDisplay(int view) const;
     virtual void sampleScatterNoise(ProjectionFrame&) = 0;
     virtual void reset() noexcept = 0;
 };
@@ -100,6 +103,7 @@ public:
     ~SpectralProjectionPipeline();
     void addStage(std::unique_ptr<IProjectionStage> stage);
     void setOutputSink(std::unique_ptr<IProjectionOutputSink> sink);
+    void setVisualization(yk::visualization::LiveView*);
     bool run(const SimulationConfig&, const std::vector<std::uint8_t>&,
         const SpectralTransmissionModel&, const std::filesystem::path& output,
         std::string& error);
@@ -108,6 +112,7 @@ private:
     std::vector<std::unique_ptr<IProjectionStage>> extensions_;
     std::unique_ptr<IProjectionOutputSink> sink_;
     bool running_ = false;
+    yk::visualization::LiveView* visualization_ = nullptr;
 };
 
 } // namespace yk::spectral

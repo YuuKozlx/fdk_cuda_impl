@@ -46,6 +46,7 @@ option(BUILD_DLLTEST "构建 DLL 公共接口测试" ON)
 option(BUILD_MULTISPECTRUM_SIM "构建独立多能谱 CBCT 仿真示例" ON)
 option(BUILD_MULTISPECTRUM_PLOT_TOOLS "构建基于 Matplot++ 的重建结果分析工具" OFF)
 option(BUILD_VTK_VIEWER "构建独立 VTK 几何与体数据查看器" OFF)
+option(BUILD_VTK_VISUALIZATION "构建多能前投实时 VTK 显示层" OFF)
 
 # ============================================================================
 # 工具链和全局默认值
@@ -213,6 +214,10 @@ endif()
 
 if(BUILD_DLLTEST)
     add_subdirectory(dlltest)
+endif()
+
+if(BUILD_VTK_VISUALIZATION)
+    add_subdirectory(visualization)
 endif()
 
 if(BUILD_MULTISPECTRUM_SIM)

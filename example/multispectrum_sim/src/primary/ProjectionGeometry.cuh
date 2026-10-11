@@ -3,6 +3,7 @@
 // Internal device geometry and world/phantom coordinate transforms.
 
 #include <cuda_runtime.h>
+#include <cmath>
 #include "config/SimConfig.hpp"
 
 namespace yk::spectral::primary_detail {
@@ -118,14 +119,14 @@ inline DeviceGeometry makeDeviceGeometry(const SimulationConfig& c,
     return result;
 }
 
-__device__ float3 add3(float3 a, float3 b) { return make_float3(a.x+b.x, a.y+b.y, a.z+b.z); }
-__device__ float3 scale3(float3 a, float s) { return make_float3(a.x*s, a.y*s, a.z*s); }
-__device__ float3 cross3(float3 a, float3 b) { return make_float3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
-__device__ float3 rotateAxis(float3 value, float3 axis, float angle) {
+__host__ __device__ inline float3 add3(float3 a, float3 b) { return make_float3(a.x+b.x, a.y+b.y, a.z+b.z); }
+__host__ __device__ inline float3 scale3(float3 a, float s) { return make_float3(a.x*s, a.y*s, a.z*s); }
+__host__ __device__ inline float3 cross3(float3 a, float3 b) { return make_float3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
+__host__ __device__ inline float3 rotateAxis(float3 value, float3 axis, float angle) {
     const float c=cosf(angle), s=sinf(angle);
     return add3(add3(scale3(value,c),scale3(cross3(axis,value),s)),scale3(axis,(axis.x*value.x+axis.y*value.y+axis.z*value.z)*(1.f-c)));
 }
-__device__ void detectorFrame(DeviceGeometry g, float angle, float3& u, float3& v, float3& n) {
+__host__ __device__ inline void detectorFrame(DeviceGeometry g, float angle, float3& u, float3& v, float3& n) {
     const float ca=cosf(angle), sa=sinf(angle);
     u=make_float3(-sa,ca,0.f); v=make_float3(0.f,0.f,1.f); n=make_float3(ca,sa,0.f);
     v=rotateAxis(v,u,g.tilt_u); n=rotateAxis(n,u,g.tilt_u);
@@ -134,7 +135,7 @@ __device__ void detectorFrame(DeviceGeometry g, float angle, float3& u, float3& 
 }
 // Flat focal spot sizes use detector-local U/V for both scanner and ConeVec rays.
 // Normalize pixel vectors so focal dimensions remain physical millimeters.
-__device__ float3 sampleFlatFocalSource(float3 nominal, float3 u, float3 v,
+__host__ __device__ inline float3 sampleFlatFocalSource(float3 nominal, float3 u, float3 v,
     float offset_u_mm, float offset_v_mm) {
     const float ul = sqrtf(u.x*u.x + u.y*u.y + u.z*u.z);
     const float vl = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
@@ -142,7 +143,7 @@ __device__ float3 sampleFlatFocalSource(float3 nominal, float3 u, float3 v,
         scale3(v, offset_v_mm / vl)));
 }
 
-__device__ float3 phantomInverse(DeviceGeometry g, float3 value, bool direction) {
+__host__ __device__ inline float3 phantomInverse(DeviceGeometry g, float3 value, bool direction) {
     const float3 x = make_float3(1.f, 0.f, 0.f);
     const float3 y = make_float3(0.f, 1.f, 0.f);
     const float3 z = make_float3(0.f, 0.f, 1.f);
@@ -153,6 +154,43 @@ __device__ float3 phantomInverse(DeviceGeometry g, float3 value, bool direction)
     // transform therefore applies inverse rotation before removing the offset.
     if (!direction) value = make_float3(value.x-g.phantom_x, value.y-g.phantom_y, value.z-g.phantom_z);
     return value;
+}
+
+// Shared by the CUDA projector and its display snapshot. u/v are sample indices;
+// integer values are pixel centers, -.5 and size-.5 are physical panel edges.
+struct ScannerRay { float3 source, detector; };
+__host__ __device__ inline ScannerRay scannerRay(DeviceGeometry g, int view,
+    float u, float v, float focal_u=0, float focal_v=0, float jitter_u=0, float jitter_v=0) {
+    if(g.use_cone_views) {
+        const auto c=g.cone_views[view];
+        return {sampleFlatFocalSource(c.source,c.detector_u,c.detector_v,focal_u,focal_v),
+            add3(c.detector_start,add3(scale3(c.detector_u,u+jitter_u),scale3(c.detector_v,v+jitter_v)))};
+    }
+    const float pi=3.14159265358979323846f;
+    const float angle=g.start+static_cast<float>(g.rotation_direction)*2.f*pi*view/g.views_per_turn;
+    const float phase=angle-.5f*pi, ca=cosf(phase),sa=sinf(phase);
+    const float z=g.start_z+g.pitch*(angle-g.start)/(2.f*pi);
+    float3 ua,va,na;detectorFrame(g,phase,ua,va,na);
+    float3 source=make_float3(g.sid*ca+g.source_x*ca-g.source_y*sa,
+        g.sid*sa+g.source_x*sa+g.source_y*ca,z+g.source_z);
+    // Preserve the projector's pixel-center subtraction / jitter order.
+    const float du=(u-.5f*(g.nu-1)+jitter_u)*g.pu+g.offset_u;
+    const float dv=(v-.5f*(g.nv-1)+jitter_v)*g.pv+g.offset_v;
+    const float3 principal=add3(make_float3(0,0,z),scale3(make_float3(ca,sa,0),-(g.sdd-g.sid)));
+    if(g.cylindrical){
+        source=add3(source,make_float3(focal_u*ca,focal_u*sa,focal_v));
+        const float gamma=du/g.sdd;
+        const auto center=add3(principal,scale3(na,g.offset_n+g.sdd));
+        return {source,add3(add3(center,scale3(add3(scale3(na,-cosf(gamma)),scale3(ua,sinf(gamma))),g.sdd)),scale3(va,dv))};
+    }
+    source=sampleFlatFocalSource(source,ua,va,focal_u,focal_v);
+    return {source,add3(add3(add3(principal,scale3(na,g.offset_n)),scale3(ua,du)),scale3(va,dv))};
+}
+__host__ __device__ inline float3 phantomForward(DeviceGeometry g,float3 value,bool direction) {
+    if(!direction)value=add3(value,make_float3(g.phantom_x,g.phantom_y,g.phantom_z));
+    value=rotateAxis(value,make_float3(1,0,0),g.phantom_rx);
+    value=rotateAxis(value,make_float3(0,1,0),g.phantom_ry);
+    return rotateAxis(value,make_float3(0,0,1),g.phantom_rz);
 }
 
 

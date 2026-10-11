@@ -12,6 +12,7 @@ public:
     void prepare(const SimulationConfig&, const std::vector<std::uint8_t>&,
         const SpectralTransmissionModel&) override;
     void project(int view, ProjectionFrame&) override;
+    ProjectionViewGeometry geometryForDisplay(int view) const override;
     void sampleScatterNoise(ProjectionFrame&) override;
     void reset() noexcept override;
 private:

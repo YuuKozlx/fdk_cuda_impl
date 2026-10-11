@@ -36,6 +36,14 @@ int main() {
             (diagnostic.empty() ? std::string{} : "\nreason: " + diagnostic));
     };
     try {
+        const std::string display_base="[workflow]\nmode='reconstruct'\n[geometry]\nkind='flat_cbct'\n"
+            "[reconstruction]\ninput_projection_file='input.raw'\n[reconstruction.analytic]\npipeline='fdk'\n[visualization]\n";
+        testV2(display_base+"enabled=false\ntexture_max_size=512\nmax_fps=15\nprojection='signal'\n",true);
+        testV2(display_base+"enabled=true\n",false);
+        testV2(display_base+"texture_max_size=0\n",false);
+        testV2(display_base+"max_fps=nan\n",false);
+        testV2(display_base+"max_fps=0\n",false);
+        testV2(display_base+"projection='unknown'\n",false);
         const std::string preprocess_base = "type='iterative'\n[reconstruction.iterative]\nalgorithm='sirt'\n";
         test(preprocess_base + "[reconstruction.preprocessing]\nenabled=true\n"
              "[reconstruction.preprocessing.beam_hardening]\nenabled=true\norder=2\ncoefficients=[0,1,0.1]\n", true);

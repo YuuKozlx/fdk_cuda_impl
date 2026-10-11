@@ -64,9 +64,8 @@ std::vector<double> solveLinearSystem(std::vector<std::vector<double>> matrix,
 BeamHardeningConfig fitWaterPlate(const SimulationConfig& config,
                                   const BeamHardeningConfig& input)
 {
-    const auto spectrum_path = input.spectrum_file.empty()
-        ? config.projection.spectrum_file : input.spectrum_file;
-    const auto spectrum = loadSpectrum(spectrum_path);
+    const auto spectrum = input.spectrum_file.empty()
+        ? loadProjectionSpectrum(config.projection) : loadSpectrum(input.spectrum_file);
     std::vector<double> energies;
     double photon_weight_sum = 0.0;
     double energy_weight_sum = 0.0;

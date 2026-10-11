@@ -33,6 +33,23 @@ namespace yk::spectral {
         auto* w = t["workflow"].as_table();
         if (!w) throw std::runtime_error("缺少 [workflow] 配置表");
         c.workflow.mode = workflow((*w)["mode"].value_or<std::string>("project"));
+        if(auto* display=t["visualization"].as_table()) {
+            auto& v=c.visualization;
+            v.enabled=(*display)["enabled"].value_or(false);
+            v.interactive=(*display)["interactive"].value_or(false);
+            v.texture_max_size=(*display)["texture_max_size"].value_or(512);
+            v.max_fps=(*display)["max_fps"].value_or(15.0);
+            v.projection=(*display)["projection"].value_or(std::string("signal"));
+            v.hold_open=(*display)["hold_open"].value_or(true);
+            v.offscreen=(*display)["offscreen"].value_or(false);
+            v.snapshot_directory=resolve(config_directory,(*display)["snapshot_directory"].value_or(std::string{}));
+            if(v.texture_max_size<1||v.texture_max_size>8192||!std::isfinite(v.max_fps)||v.max_fps<=0||v.max_fps>120||
+                (v.projection!="signal"&&v.projection!="primary"&&v.projection!="log"))
+                throw std::runtime_error("invalid visualization options");
+            if(v.enabled&&!c.runsProjection())throw std::runtime_error("visualization requires a projection workflow");
+            if(v.interactive&&(!v.enabled||c.workflow.mode!=WorkflowMode::Project||v.offscreen||!v.hold_open))
+                throw std::runtime_error("interactive visualization requires enabled=true, project workflow, offscreen=false and hold_open=true");
+        }
         if (c.runsProjection() && !p)
             throw std::runtime_error("投影工作流需要 [projection]");
         auto* g = t["geometry"].as_table();
@@ -46,6 +63,44 @@ namespace yk::spectral {
                     throw std::runtime_error(std::string("projection.") + removed + " 已删除");
             c.projection.label_volume = resolve(config_directory, (*p)["label_volume"].value_or(std::string{}));
             c.projection.spectrum_file = resolve(config_directory, (*p)["spectrum_file"].value_or(std::string{}));
+            if (auto* spectrum = (*p)["spectrum"].as_table()) {
+                for (const char* key : {"source", "model", "export_file"})
+                    if (spectrum->contains(key) && !(*spectrum)[key].is_string())
+                        throw std::runtime_error(std::string("spectrum.") + key + " must be a string");
+                for (const char* key : {"kvp", "anode_angle_deg", "bin_width_keV"})
+                    if (spectrum->contains(key) && !(*spectrum)[key].is_number())
+                        throw std::runtime_error(std::string("spectrum.") + key + " must be numeric");
+                auto& sp = c.projection.spectrum;
+                sp.source = (*spectrum)["source"].value_or(std::string("file"));
+                sp.model = (*spectrum)["model"].value_or(std::string("spekpy-v1"));
+                sp.kvp = (*spectrum)["kvp"].value_or(120.0);
+                sp.anode_angle_deg = (*spectrum)["anode_angle_deg"].value_or(12.0);
+                sp.bin_width_keV = (*spectrum)["bin_width_keV"].value_or(1.0);
+                sp.export_file = resolve(config_directory, (*spectrum)["export_file"].value_or(std::string{}));
+                if (auto* filters = (*spectrum)["filters"].as_array()) {
+                    for (const auto& node : *filters) {
+                        const auto* f = node.as_table();
+                        if (!f) throw std::runtime_error("spectrum.filters must contain tables");
+                        if ((f->contains("material") && !(*f)["material"].is_string()) ||
+                            (f->contains("atomic_number") && !(*f)["atomic_number"].is_integer()))
+                            throw std::runtime_error("invalid spectrum filter material or atomic number type");
+                        for (const char* key : {"thickness_mm", "density_g_cm3"})
+                            if (f->contains(key) && !(*f)[key].is_number())
+                                throw std::runtime_error(std::string("spectrum filter ") + key + " must be numeric");
+                        SpectrumFilterConfig filter;
+                        filter.material = (*f)["material"].value_or(std::string{});
+                        filter.thickness_mm = (*f)["thickness_mm"].value_or(0.0);
+                        filter.atomic_number = (*f)["atomic_number"].value_or(0);
+                        filter.density_g_cm3 = (*f)["density_g_cm3"].value_or(0.0);
+                        sp.filters.push_back(filter);
+                    }
+                } else if (spectrum->contains("filters")) {
+                    throw std::runtime_error("spectrum.filters must be an array of tables");
+                }
+                validateSpectrumSource(sp);
+                if (sp.source == "generated" && !c.projection.spectrum_file.empty())
+                    throw std::runtime_error("generated spectrum conflicts with projection.spectrum_file");
+            }
             c.projection.output_file = resolve(config_directory, (*p)["output_file"].value_or(std::string("projection.raw")));
             c.projection.energy_output_file = resolve(config_directory, (*p)["energy_output_file"].value_or(std::string{}));
             c.projection.air_output_file = resolve(config_directory, (*p)["air_output_file"].value_or(std::string{}));
@@ -301,8 +356,9 @@ namespace yk::spectral {
                     bh.clamp_min < 0.0 || bh.clamp_max <= bh.clamp_min))
                     throw std::runtime_error("invalid beam hardening polynomial configuration");
                 if (bh.enabled && bh.fit_from_water_plate &&
-                    (!std::filesystem::is_regular_file(bh.spectrum_file.empty()
-                        ? c.projection.spectrum_file : bh.spectrum_file) ||
+                    ((!(bh.spectrum_file.empty() && c.projection.spectrum.source == "generated") &&
+                     !std::filesystem::is_regular_file(bh.spectrum_file.empty()
+                        ? c.projection.spectrum_file : bh.spectrum_file)) ||
                      !std::isfinite(bh.water_plate_max_mm) || bh.water_plate_max_mm <= 0.0 ||
                      bh.water_plate_samples < bh.order + 2 ||
                      !std::isfinite(bh.reference_energy_keV) || bh.reference_energy_keV < 0.0))
@@ -569,7 +625,11 @@ namespace yk::spectral {
         std::vector<SpectrumPoint> result;
         std::string line;
         bool in_spectrum = false;
+        bool explicit_widths = false;
+        bool mcgpu_edges = false;
         while (std::getline(f, line)) {
+            if (line.find("Format: YK-SPECTRUM 1.0") != std::string::npos) explicit_widths = true;
+            if (line.find("Format: MCGPU-SPEC 1.0") != std::string::npos) mcgpu_edges = true;
             if (line.find("Energy[keV]") != std::string::npos && line.find("N[") != std::string::npos) {
                 in_spectrum = true;
                 continue;
@@ -580,6 +640,9 @@ namespace yk::spectral {
             SpectrumPoint point;
             if (stream >> point.energy_keV >> point.fluence_per_keV_cm2_mAs_at_1m &&
                 point.energy_keV > 0 && point.fluence_per_keV_cm2_mAs_at_1m >= 0) {
+                if (explicit_widths && (!(stream >> point.bin_width_keV) ||
+                    !std::isfinite(point.bin_width_keV) || point.bin_width_keV <= 0))
+                    throw std::runtime_error("invalid explicit spectrum bin width");
                 result.push_back(point);
             }
         }
@@ -588,6 +651,17 @@ namespace yk::spectral {
         for (size_t i=1; i<result.size(); ++i)
             if (!(result[i].energy_keV > result[i-1].energy_keV))
                 throw std::runtime_error("spectrum energies must be strictly increasing");
+        if (mcgpu_edges) {
+            if (result.size() < 2 || result.back().fluence_per_keV_cm2_mAs_at_1m != 0)
+                throw std::runtime_error("MCGPU-SPEC requires an upper edge with zero fluence");
+            for (size_t i = 0; i + 1 < result.size(); ++i) {
+                result[i].bin_width_keV = result[i+1].energy_keV - result[i].energy_keV;
+                result[i].energy_keV += 0.5 * result[i].bin_width_keV;
+            }
+            result.pop_back();
+            return result;
+        }
+        if (explicit_widths) return result;
         for (size_t i=0; i<result.size(); ++i) {
             if (result.size() == 1) result[i].bin_width_keV = 1.0;
             else if (i == 0) result[i].bin_width_keV = result[1].energy_keV-result[0].energy_keV;

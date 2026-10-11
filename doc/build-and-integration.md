@@ -32,6 +32,7 @@ Windows 请从 VS x64 Developer PowerShell 执行，确保 `cl`、`link`、`rc` 
 | `BUILD_MULTISPECTRUM_SIM` | ON | 独立多能谱应用；只构建本体库时显式关闭 |
 | `BUILD_MULTISPECTRUM_PLOT_TOOLS` | OFF | Matplot++ 分析工具 |
 | `BUILD_VTK_VIEWER` | OFF | 独立 VTK 几何/体数据查看器；仅打开时寻找 VTK，不向主库增加链接依赖 |
+| `BUILD_VTK_VISUALIZATION` | OFF | 独立实时显示模块，接入多能前投；不依赖查看器源码，不向主库增加 VTK 依赖 |
 
 `CMAKE_CUDA_ARCHITECTURES` 未指定时默认 `75;80;86`。仓库 Release 预设指定 `86`，不是运行时自动适配所有 GPU。Ninja 未指定构建类型时默认为 Release。MSVC Release 使用 AVX2；GNU/Clang Release 使用 `-march=native`，跨机器分发时需检查 CPU 兼容性。CUDA Release 使用 fast math，数值比较应保留浮点容差。
 
@@ -135,3 +136,5 @@ Windows 运行前，将安装 `bin/` 加入当前进程 `PATH`，或把所需 DL
 `tools/geometry_viewer` 提供独立 C++ 原型，直接使用本库几何 builder，不链接主 DLL 或 CUDA 算法。它也能作为 CXX-only 小工程单独配置；CUDA Toolkit 只提供几何头文件使用的向量类型。主库 BUILD_VTK_VIEWER 默认 OFF，普通构建不需要 VTK。
 
 准备 VTK C++ 包后，可在主工程添加 `-DBUILD_VTK_VIEWER=ON -DVTK_DIR=<包配置目录>` 并构建 geometry_viewer 目标。也可直接以 tools/geometry_viewer 为源码目录配置，跳过主库编译。运行需要 VTK 对应的 DLL/共享库，操作、RAW 布局、导出与验证见 [查看器说明](../tools/geometry_viewer/README.zh-CN.md)。
+
+多能前投的内置实时显示使用独立 `BUILD_VTK_VISUALIZATION` 开关和 `ykcbct_visualization` 模块，配置、完整体数据与投影贴图约定见 [实时显示层](../visualization/README.zh-CN.md)。两个开关均关闭时不寻找 VTK。

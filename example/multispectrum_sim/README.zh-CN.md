@@ -51,13 +51,54 @@ CSV 第二列按光子数谱解释。CUDA 多能谱积分对每个能量 bin 计
 
 在线前投直接完成焦点与探测器位置采样、射线与体素盒求交、材料路径累计和能谱积分，并逐视图写出能量域与对数投影，不保存中间路径表。
 
-当前已实现的物理过程是材料路径积分、能谱指数衰减和常数探测器效率。散射、电子/光学串扰、余晖和电子噪声保留配置字段与扩展位置，但尚未宣称已经生效。
+当前已实现材料路径积分、多能谱指数衰减、分层探测器响应，以及可独立开关的散射、量子噪声、光学/电子串扰、余晖和 DAS 信号处理。具体组合由配置校验和后端能力检查决定。
 
 顶层工程开启 `BUILD_MULTISPECTRUM_SIM=ON` 后会编译在线 CUDA 前投；链接 YKCBCT 时同时提供重建能力。配置中不再区分 DLL FP 或 CPU/CUDA 能谱积分。
 
-探测器效率、散射、光学串扰、余晖、电子噪声均已保留配置字段。当前仅效率常数参与积分，其余字段明确为关闭占位，后续通过可组合效果接口实现。
+探测器处理按流水线阶段组合，开关关闭时跳过对应阶段。能谱可从文件导入，也可由内置原生生成器产生。
 
 构建：`cmake -S example/multispectrum_sim -B out/multispectrum_sim`，然后 `cmake --build out/multispectrum_sim --config Release`。相对路径以 TOML 所在目录为基准。能谱 谱文件为 SpekCalc 格式：表头后的每个有效数据行由 `energy_keV fluence` 构成，单位固定为 `photons/(keV cm² mAs) @ 1m`，读取器自动计算 bin 宽。
+
+## 导入与生成能谱
+
+不填写 `[projection.spectrum]` 时保持原行为，使用 `projection.spectrum_file`。
+选择本地生成时移除 `spectrum_file`，填写：
+
+```toml
+[projection.spectrum]
+source = "generated"        # file / generated，默认 file
+model = "spekpy-v1"          # spekpy-v1 / spekcalc，钨反射靶
+kvp = 120.0
+anode_angle_deg = 12.0
+bin_width_keV = 1.0
+export_file = "../../outputs/spectra/generated-120kv.spec" # 可选
+filters = [
+    { material = "Al", thickness_mm = 2.0 },
+    { material = "Cu", thickness_mm = 0.1 },
+]
+```
+
+生成器来自仓库内 `thirdparty/spek_spectrum`，以静态库链接到多能前投工具。
+正常构建、运行无需 Python、SciPy 或外部数值表；不增加 YKCBCT 核心 DLL 的依赖。
+只生成或导出能谱可运行 `multispectrum_sim --export-spectrum <config.toml> <output.spec>`，
+此命令不加载标签体、不运行投影或重建，也可使用独立 C++ 构建。实际前投仍需要 CUDA 父工程构建。
+支持的过滤材料快捷名为 Be/Ti/Al/Cu/Mo/Rh/Ag/Sn/W/Au/Pb；其他元素可写为
+`{ atomic_number = 13, density_g_cm3 = 2.699, thickness_mm = 2.0 }`，此时不要同时填写 `material`。
+厚度单位为 mm，密度为 g/cm³；未设置过滤层表示无附加过滤。生成控制应在模型和数据适用范围内使用。
+
+生成结果直接使用能量中心及显式分箱宽度，通量固定为
+`photons/(keV cm² mAs) @ 1m`。实际曝光量由 `projection.mAs_per_view` 控制，
+几何距离由前投几何控制，不再在生成参数里重复设置曝光和距离。
+`export_file` 相对 TOML 所在目录解析，保存为带中心能量和分箱宽度的 `YK-SPECTRUM 1.0`，
+可通过原文件导入入口重新读取，读回后积分与内存生成结果一致。
+带 `Format: MCGPU-SPEC 1.0` 标记的文件按区间边界读取，最后一行必须是零通量上边界；
+无该标记的旧两列文件继续按中心能量读取并推导分箱宽度。
+
+水板硬化校正未单独指定能谱文件时，使用同一前投能谱来源，支持本地生成。
+`loadProjectionSpectrum()` 可供后续界面直接调用；当前尚未增加能谱导入按钮、生成面板和曲线预览。
+
+验证：`ctest --test-dir <build-dir> -R multispectrum_spectrum_source --output-on-failure`。
+覆盖两个模型的平均能量、过滤层效果、曝光归一化、中心格式读写、MCGPU 边界转换及配置校验。
 
 ## BrainWeb 测试数据
 
@@ -349,3 +390,6 @@ mkdir -p example/multispectrum_sim/inputs/generated
 ctest --test-dir out/docker-test/example/multispectrum_sim -L unit --output-on-failure
 ctest --test-dir out/docker-test/example/multispectrum_sim -R multispectrum_projection_pipeline --output-on-failure
 ```
+## 可选实时显示
+
+主工程启用 `BUILD_VTK_VISUALIZATION=ON` 并提供 VTK C++ 包后，在 TOML 增加 `[visualization] enabled=true`，即可边前投边显示实际材料标签体、源/探测器姿态与偏移和当前帧投影贴图。体数据保留原分辨率，仅显示贴图可降采样；关闭显示时计算和输出不变。显示模块独立位于 `visualization/`，不依赖 geometry_viewer 工具源码。构建、配置及自生成验证见 [实时显示层说明](../../visualization/README.zh-CN.md)。

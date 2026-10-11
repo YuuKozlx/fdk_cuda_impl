@@ -97,6 +97,33 @@ int main()
                 throw std::runtime_error("EID water plate fit mismatch at sample " + std::to_string(i) +
                     ": actual=" + std::to_string(output[i]) + " expected=" + std::to_string(expected[i]));
         fitted.close();
+        // Generated and exported/imported spectra must produce identical BHC fits.
+        config.projection.spectrum_file.clear();
+        config.projection.spectrum.source = "generated";
+        config.projection.spectrum.filters = {{"Al", 2.0}};
+        config.projection.spectrum.export_file = root / "generated-bhc.spec";
+        if (!prepareReconstructionProjection(config, input_path, output_path, diagnostic))
+            throw std::runtime_error("generated BHC: " + diagnostic);
+        std::vector<float> generated_output(input.size());
+        {
+            std::ifstream generated_file(output_path, std::ios::binary);
+            generated_file.read(reinterpret_cast<char*>(generated_output.data()), generated_output.size()*sizeof(float));
+            if (!generated_file) throw std::runtime_error("cannot read generated BHC output");
+        }
+        config.projection.spectrum_file = config.projection.spectrum.export_file;
+        config.projection.spectrum.export_file.clear();
+        config.projection.spectrum.source = "file";
+        if (!prepareReconstructionProjection(config, input_path, output_path, diagnostic))
+            throw std::runtime_error("imported BHC: " + diagnostic);
+        {
+            std::ifstream imported_file(output_path, std::ios::binary);
+            imported_file.read(reinterpret_cast<char*>(output.data()), output.size()*sizeof(float));
+            if (!imported_file) throw std::runtime_error("cannot read imported BHC output");
+        }
+        for (size_t i=0; i<output.size(); ++i)
+            if (std::abs(output[i]-generated_output[i]) > 1e-6f)
+                throw std::runtime_error("generated/imported water-plate fit differs");
+        config.projection.spectrum_file = spectrum_path;
         // Fixed guidance must estimate scatter from the smoothed copy without
         // replacing the original projection, including across multiple frames.
         std::vector<double> radii(256), density(256,1.0);

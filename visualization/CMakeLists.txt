@@ -1,0 +1,50 @@
+cmake_minimum_required(VERSION 3.24)
+option(BUILD_VTK_VISUALIZATION_TESTS "Build generated CUDA projection/display fixtures" OFF)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(YKCBCTVisualization LANGUAGES CXX)
+    if(BUILD_VTK_VISUALIZATION_TESTS)
+        enable_language(CUDA)
+        find_package(CUDAToolkit REQUIRED)
+    endif()
+endif()
+find_package(VTK 9.3 REQUIRED COMPONENTS
+    CommonCore CommonDataModel FiltersCore FiltersGeneral FiltersSources
+    InteractionStyle InteractionWidgets IOImage IOXML RenderingAnnotation
+    RenderingCore RenderingOpenGL2 RenderingVolumeOpenGL2)
+add_library(ykcbct_visualization STATIC LiveViewWindow.cpp ParameterInspector.cpp)
+target_compile_features(ykcbct_visualization PUBLIC cxx_std_17)
+target_include_directories(ykcbct_visualization PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(ykcbct_visualization PRIVATE ${VTK_LIBRARIES})
+if(MSVC)
+    target_compile_options(ykcbct_visualization PRIVATE /utf-8 /Zc:__cplusplus /W3)
+endif()
+vtk_module_autoinit(TARGETS ykcbct_visualization MODULES ${VTK_LIBRARIES})
+
+if(BUILD_VTK_VISUALIZATION_TESTS)
+    get_filename_component(SPECTRAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../example/multispectrum_sim" ABSOLUTE)
+    add_executable(spectral_live_test
+        "${SPECTRAL_ROOT}/tests/test_live_visualization.cpp"
+        "${SPECTRAL_ROOT}/src/primary/CudaProjectionBackend.cu"
+        "${SPECTRAL_ROOT}/src/LibraryGeometry.cpp"
+        "${SPECTRAL_ROOT}/src/SpectralProjectionPipeline.cpp"
+        "${SPECTRAL_ROOT}/src/SpectralModel.cpp"
+        "${SPECTRAL_ROOT}/src/SimLogger.cpp"
+        "${SPECTRAL_ROOT}/src/FasksRuntimeModel.cpp"
+        "${SPECTRAL_ROOT}/src/CudaFasksScatter.cu"
+        "${SPECTRAL_ROOT}/src/primary/ProjectionStages.cpp"
+        "${SPECTRAL_ROOT}/src/primary/ProjectionOutput.cpp"
+        "${SPECTRAL_ROOT}/src/primary/DetectorSignal.cpp")
+    target_include_directories(spectral_live_test PRIVATE "${SPECTRAL_ROOT}/include"
+        "${SPECTRAL_ROOT}/../../include" "${SPECTRAL_ROOT}/../../src"
+        "${SPECTRAL_ROOT}/../../src/util" "${SPECTRAL_ROOT}/../../thirdparty/nlohmann/include")
+    target_link_libraries(spectral_live_test PRIVATE ykcbct_visualization CUDA::cudart CUDA::cufft ${VTK_LIBRARIES})
+    target_compile_definitions(spectral_live_test PRIVATE YK_SPECTRAL_VTK=1)
+    if(MSVC)
+        target_compile_options(spectral_live_test PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/utf-8 /Zc:__cplusplus>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+    endif()
+    vtk_module_autoinit(TARGETS spectral_live_test MODULES ${VTK_LIBRARIES})
+    enable_testing()
+    add_test(NAME spectral_live_generated COMMAND spectral_live_test "${CMAKE_CURRENT_BINARY_DIR}/live-checks")
+endif()

@@ -1,4 +1,5 @@
 #pragma once
+#include "config/SpectrumSourceConfig.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -10,6 +11,16 @@ enum class GeometryKind {
 };
 enum class WorkflowMode { Project, Reconstruct, ProjectAndReconstruct };
 struct WorkflowConfig { WorkflowMode mode = WorkflowMode::Project; };
+struct VisualizationConfig {
+    bool enabled = false;
+    bool interactive = false;
+    int texture_max_size = 512;
+    double max_fps = 15;
+    std::string projection = "signal"; // signal, primary, log
+    bool hold_open = true;
+    bool offscreen = false;
+    std::filesystem::path snapshot_directory;
+};
 // 材料可以用 formula 表示单一化合物，也可以用 preset 引用内置的
 // 元素质量分数表。preset 适合人体组织等不能用单一化学式准确表达的材料。
 struct MaterialSpec { std::uint8_t label=0; std::string name; std::string formula; std::string preset; double density_g_cm3=1.0; };
@@ -157,6 +168,7 @@ struct GeometrySpec {
 };
 
 struct ProjectionConfig {
+    SpectrumSourceConfig spectrum;
     std::filesystem::path label_volume;
     std::filesystem::path spectrum_file;
     std::filesystem::path output_file;

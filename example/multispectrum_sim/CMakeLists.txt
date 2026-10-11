@@ -20,6 +20,13 @@ if(MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER)
     endif()
 endif()
 
+# Vendored native generator: no Python or runtime table lookup.
+if(NOT TARGET spek_spectrum::core)
+    set(SPEK_SPECTRUM_BUILD_TESTS OFF CACHE BOOL "Build upstream spectrum tests")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/spek_spectrum"
+        "${CMAKE_CURRENT_BINARY_DIR}/spek_spectrum")
+endif()
+
 # 该示例直接编译 XCOM 数值核心，不依赖 YKCBCT DLL 的混杂接口层。
 # 因此既可独立配置，也可由顶层 BUILD_MULTISPECTRUM_SIM 接入。
 set(SPECTRAL_SIM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -55,11 +62,16 @@ if(TARGET YKCBCT)
     target_link_libraries(multispectrum_sim PRIVATE CUDA::cufft)
     target_compile_definitions(multispectrum_sim PRIVATE
         YK_MULTISPECTRUM_CUDA_PRIMARY=1)
+    if(TARGET ykcbct_visualization)
+        target_sources(multispectrum_sim PRIVATE src/InteractiveProjection.cpp)
+        target_link_libraries(multispectrum_sim PRIVATE ykcbct_visualization)
+        target_compile_definitions(multispectrum_sim PRIVATE YK_SPECTRAL_VTK=1)
+    endif()
     add_custom_command(TARGET multispectrum_sim POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:multispectrum_sim>)
 else()
-    target_sources(multispectrum_sim PRIVATE src/LibraryReconstructorStub.cpp)
+    target_sources(multispectrum_sim PRIVATE src/LibraryReconstructorStub.cpp src/CudaPrimaryProjectorStub.cpp)
 endif()
 if(MSVC)
     target_compile_options(nist_xcom_core PRIVATE /utf-8)
@@ -184,4 +196,22 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME multispectrum_xcom_water COMMAND multispectrum_xcom_test)
 
+endif()
+
+foreach(spectrum_consumer IN ITEMS multispectrum_sim multispectrum_config_test multispectrum_preprocessing_test)
+    if(TARGET ${spectrum_consumer})
+        target_sources(${spectrum_consumer} PRIVATE src/config/SpectrumSource.cpp)
+        target_link_libraries(${spectrum_consumer} PRIVATE spek_spectrum::core)
+    endif()
+endforeach()
+if(BUILD_TESTING)
+    add_executable(multispectrum_spectrum_test tests/test_spectrum_source.cpp
+        src/config/SimConfig.cpp src/config/SpectrumSource.cpp src/XcomAttenuationProvider.cpp)
+    target_include_directories(multispectrum_spectrum_test PRIVATE include
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
+    target_link_libraries(multispectrum_spectrum_test PRIVATE nist_xcom_core spek_spectrum::core)
+    if(MSVC)
+        target_compile_options(multispectrum_spectrum_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_spectrum_source COMMAND multispectrum_spectrum_test)
 endif()
