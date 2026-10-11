@@ -36,6 +36,7 @@ cmake --install out/build/core --prefix install/core
 - [多能谱仿真](example/multispectrum_sim/README.zh-CN.md)：应用层物理模型、预处理、配置与输出。
 - [模体生成器](example/phantom_generator/README.zh-CN.md)。
 - [几何标定工具](tools/cbct_calibration/README.zh-CN.md)。
+- [VTK 几何与体数据查看器原型](tools/geometry_viewer/README.zh-CN.md)：可单独构建，默认关闭，支持六种几何、帧切换、RAW 体绘制与文件导出。
 
 这些目录各自维护使用说明；本体库文档不承诺其应用层 TOML 与 Yktest TOML 相同。第三方授权与来源保留在 `LICENSES/`、`thirdparty/` 及相关源码中。
 

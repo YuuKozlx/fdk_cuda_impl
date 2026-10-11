@@ -31,6 +31,7 @@ Windows 请从 VS x64 Developer PowerShell 执行，确保 `cl`、`link`、`rc` 
 | `BUILD_DLLTEST` | ON | `dlltest`、`dlltest_shepp_logan` 公共接口测试 |
 | `BUILD_MULTISPECTRUM_SIM` | ON | 独立多能谱应用；只构建本体库时显式关闭 |
 | `BUILD_MULTISPECTRUM_PLOT_TOOLS` | OFF | Matplot++ 分析工具 |
+| `BUILD_VTK_VIEWER` | OFF | 独立 VTK 几何/体数据查看器；仅打开时寻找 VTK，不向主库增加链接依赖 |
 
 `CMAKE_CUDA_ARCHITECTURES` 未指定时默认 `75;80;86`。仓库 Release 预设指定 `86`，不是运行时自动适配所有 GPU。Ninja 未指定构建类型时默认为 Release。MSVC Release 使用 AVX2；GNU/Clang Release 使用 `-march=native`，跨机器分发时需检查 CPU 兼容性。CUDA Release 使用 fast math，数值比较应保留浮点容差。
 
@@ -128,3 +129,9 @@ Windows 运行前，将安装 `bin/` 加入当前进程 `PATH`，或把所需 DL
 | CUDA device-link 失败 | 正式 CUDA 源码是否归属主目标；见 [架构](architecture-and-development.md) |
 
 不要通过修改开发机绝对路径到仓库源码来修复依赖发现问题。
+
+## 可选 VTK 查看器
+
+`tools/geometry_viewer` 提供独立 C++ 原型，直接使用本库几何 builder，不链接主 DLL 或 CUDA 算法。它也能作为 CXX-only 小工程单独配置；CUDA Toolkit 只提供几何头文件使用的向量类型。主库 BUILD_VTK_VIEWER 默认 OFF，普通构建不需要 VTK。
+
+准备 VTK C++ 包后，可在主工程添加 `-DBUILD_VTK_VIEWER=ON -DVTK_DIR=<包配置目录>` 并构建 geometry_viewer 目标。也可直接以 tools/geometry_viewer 为源码目录配置，跳过主库编译。运行需要 VTK 对应的 DLL/共享库，操作、RAW 布局、导出与验证见 [查看器说明](../tools/geometry_viewer/README.zh-CN.md)。
