@@ -5,7 +5,7 @@ The workflow is deliberately split into two layers:
 1. preprocessing: RAW -> circular target detection -> permanent-ID tracking;
 2. calibration: indexed tracks -> ellipse fits -> fixed CBCT geometry.
 
-See ``SINGLE_ROW_GUIDE.zh-CN.md`` and ``single_row_example.py``.
+See ``../docs/CALIBRATION_METHODS.zh-CN.md`` and ``single_row_example.py``.
 """
 from __future__ import annotations
 
