@@ -2,79 +2,44 @@
 
 #include <vector>
 
-#include "CylFpBp/Analytic/YkCylAnalyticGeometryCanonicalizer.hpp"
-#include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
-#include "global/YkCBCTParams.h"
-#include "global/YkMem3d.hpp"
+#include "CylFpBp/Analytic/YkCylAnalyticReconstruction.hpp"
 
 namespace YK::CylFpBp {
 
-// 柱面解析入口：内部完成柱面到平板的重采样，之后完全复用 Flat-FDK。
+// Legacy inferred-SDD facade; all reconstruction and streaming share the
+// explicit-SDD implementation used by the internal execution backend.
 class CylFdkPipeline {
 public:
     bool prepare(const SVolGeom& volume, int channels, int rows,
         const std::vector<SCylConeProjGeomVec>& geometry,
         const SFilterKernelDesc& filter = SFilterKernelDesc::RamLak(),
-        cudaStream_t stream = nullptr, int device_id = 0)
+        cudaStream_t stream = nullptr, int device_id = 0,
+        int max_chunk_views = kMaxChunkAng)
     {
         release();
         if (!stream || geometry.size() < 2) return false;
-        Analytic::GeometryCanonicalizer canonicalizer;
-        Analytic::CanonicalGeometry canonical{};
-        Analytic::GeometryCanonicalizationConfig config{};
+        Analytic::ReconstructionConfig config{};
         config.source_to_detector_mm = inferSdd_(geometry, channels, rows);
-        if (!(config.source_to_detector_mm > 0.f) ||
-            !canonicalizer.canonicalize(channels, rows, geometry, config, canonical))
-            return false;
-
-        SReconstructionParams params{};
-        params.scan.Nu = channels;
-        params.scan.Nv = rows;
-        params.scan.NAng = static_cast<int>(geometry.size());
-        params.scan.totalViews = params.scan.NAng;
-        params.scan.du_mm = canonical.projection_map.target_du_mm;
-        params.scan.dv_mm = canonical.projection_map.target_row_step_mm;
-        params.scan.sid_mm = config.source_to_detector_mm;
-        params.scan.sdd_mm = config.source_to_detector_mm;
-        params.scan.range_rad = 2.f * static_cast<float>(CUDA_PI);
-        params.volume.Nx = volume.Nx; params.volume.Ny = volume.Ny;
-        params.volume.Nz = volume.Nz;
-        params.volume.voxelX_mm = volume.vox_x;
-        params.volume.voxelY_mm = volume.vox_y;
-        params.volume.voxelZ_mm = volume.vox_z;
-        params.volume.centerX_mm = volume.center.x;
-        params.volume.centerY_mm = volume.center.y;
-        params.volume.centerZ_mm = volume.center.z;
-        params.reconstruction.filter = filter;
-        if (!mapper_.prepare(canonical.projection_map) ||
-            !fdk_.prepareWithGeometry(params, canonical.flat_geometry,
-                params.scan.totalViews, stream, device_id)) {
-            release();
-            return false;
-        }
-        mapped_ = memory_.allocateDevice3D<float>(channels, rows,
-            params.scan.totalViews, device_id, false);
-        if (!mapped_) { release(); return false; }
-        channels_ = channels; rows_ = rows; views_ = params.scan.totalViews;
-        stream_ = stream; prepared_ = true;
-        return true;
+        config.max_chunk_views = max_chunk_views;
+        return reconstruction_.prepare(volume, channels, rows, geometry,
+            config, filter, stream, device_id);
     }
 
     bool reconstruct(const float* physical_projection, float* volume,
         bool clear_output = true)
-    {
-        if (!prepared_ || !physical_projection || !volume) return false;
-        if (!mapper_.apply(physical_projection, mapped_.data(), stream_)) return false;
-        return fdk_.processBatchSync({mapped_.data(), nullptr, nullptr, views_},
-            volume, clear_output);
-    }
+    { return reconstruction_.reconstruct(physical_projection, volume, clear_output); }
 
-    void release()
-    {
-        fdk_.release(); mapper_.release(); mapped_ = {};
-        channels_ = rows_ = views_ = 0; stream_ = nullptr; prepared_ = false;
-    }
-    bool isPrepared() const { return prepared_; }
+    bool beginStreaming(float* d_volume, bool clear_output = true)
+    { return reconstruction_.beginStreaming(d_volume, clear_output); }
+    bool enqueueBatch(const Analytic::CylFdkProjectionBatch& batch)
+    { return reconstruction_.enqueueBatch(batch); }
+    bool completeStreaming() { return reconstruction_.completeStreaming(); }
+    bool cancelStreaming() { return reconstruction_.cancelStreaming(); }
+    bool streamingActive() const { return reconstruction_.streamingActive(); }
+    int receivedStreamingViews() const { return reconstruction_.receivedStreamingViews(); }
+    int projectionWorkspaceViews() const { return reconstruction_.projectionWorkspaceViews(); }
+    void release() { reconstruction_.release(); }
+    bool isPrepared() const { return reconstruction_.isPrepared(); }
 
 private:
     static float inferSdd_(const std::vector<SCylConeProjGeomVec>& geometry,
@@ -89,13 +54,7 @@ private:
         return d.x * frame.radialUnit.x + d.y * frame.radialUnit.y +
             d.z * frame.radialUnit.z;
     }
-    Analytic::ProjectionMapper mapper_{};
-    ::YK::FdkPipeline fdk_{};
-    Mem::MemoryController memory_{};
-    Mem::DeviceLinearBuffer3D<float> mapped_{};
-    int channels_ = 0, rows_ = 0, views_ = 0;
-    cudaStream_t stream_ = nullptr;
-    bool prepared_ = false;
+    Analytic::Reconstruction reconstruction_{};
 };
 
 using FdkPipeline = CylFdkPipeline;

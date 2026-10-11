@@ -22,8 +22,8 @@
 
 namespace YK {
 
-// 采集序列中的连续视图区间。当前公开 Session API 按 execute() 调用顺序
-// 追加批次，调用者不需要也不能指定 offset；pipeline 保存并校验该区间。
+// 采集序列中的连续视图区间。内部 pipeline 按提交顺序追加批次并校验
+// 在线位置；公共 Session 在边界另行验证调用方的 view_offset。
 struct FdkViewRange {
     int offset = 0;
     int count = 0;
@@ -56,11 +56,12 @@ struct FdkGeometryDiagnostics {
     bool approximate = false;
 };
 
-// 一个在线 FDK 批次的主机侧输入。投影内存布局为 [view][v][u]。
+// 一个在线 FDK 批次的输入，location 默认 Host，支持 Device。
+// 投影内存布局为 [view][v][u]。
 // geometry 是执行阶段唯一的几何和角度来源；如果没有外部 geometry，调用方
 // 可给出 circular_angles，仅用于构造同一份圆轨迹 geometry。
 //
-// projection 是异步 H2D 的源缓冲：调用 enqueueBatch()/processBatch()
+// projection 是异步 H2D/D2D 的源缓冲：调用 enqueueBatch()/processBatch()
 // 成功返回后，它仍必须保持有效且内容不变，直到对应 FdkBatchFence
 // 完成，或调用方同步 pipeline 使用的 CUDA stream。在线采集建议
 // 使用项目 pinned host buffer，并以双缓冲 + fence 轮换。
@@ -69,6 +70,7 @@ struct FdkProjectionBatch {
     const std::vector<SConeProjGeomVec>* geometry = nullptr;
     const float* circular_angles = nullptr;
     int count = 0;
+    EMemoryLocation location = EMemoryLocation::Host;
 };
 
 // 一次异步 FDK 批次的完成栅栏。它拥有一个禁用计时的 CUDA event，
@@ -381,7 +383,7 @@ public:
 
     // 高性能异步入口。返回 true 只表示本批 CUDA 工作已成功提交，
     // 不表示执行已结束。completion 非空时，在本批最后记录 event；
-    // 调用方可在复用 batch.projection 或消费本批输出前 wait()。
+    // 调用方可在复用 Host/Device batch.projection 或消费本批输出前 wait()。
     bool enqueueBatch(const FdkProjectionBatch& batch, float* d_volume,
         bool clear_output, FdkBatchFence* completion = nullptr)
     {
@@ -389,7 +391,9 @@ public:
             YK_LOGE("[FdkPipeline] processBatch 在 prepare 前调用。");
             return false;
         }
-        if (!batch.projection || !d_volume || batch.count <= 0) {
+        if (!batch.projection || !d_volume || batch.count <= 0 ||
+            (batch.location != EMemoryLocation::Host &&
+             batch.location != EMemoryLocation::Device)) {
             YK_LOGE("[FdkPipeline] 批次必须提供投影、输出体和正视图数。");
             return false;
         }
@@ -450,7 +454,9 @@ public:
                 count
             };
             gpu_.geo.uploadCoeffsChunk(gpu_.geo.d_coeffs() + global_offset, count, stream_);
-            gpu_.proj.uploadProjChunk(batch.projection + base * view_elements, count, stream_);
+            gpu_.proj.uploadProjChunk(batch.projection + base * view_elements, count, stream_,
+                batch.location == EMemoryLocation::Host ? cudaMemcpyHostToDevice :
+                    cudaMemcpyDeviceToDevice);
 
             if (!preweight_.apply(gpu_.proj.chunk_in.data(), gpu_.proj.chunk_pw.data(),
                 { chunk.d_geometry, chunk.d_derived_geometry, chunk.count }, stream_)) return false;

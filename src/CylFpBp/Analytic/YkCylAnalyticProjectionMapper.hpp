@@ -76,10 +76,20 @@ public:
     bool apply(const float* physical_projection, float* flat_projection,
         cudaStream_t stream) const
     {
+        return applyBatch(physical_projection, flat_projection, config_.views, stream);
+    }
+
+    // Mapping is identical for every prepared view; pointers start at this
+    // packet, so neither source nor target needs a full acquisition buffer.
+    bool applyBatch(const float* physical_projection, float* flat_projection,
+        int view_count, cudaStream_t stream) const
+    {
         if (!prepared_ || !physical_projection || !flat_projection ||
-            !stream) return false;
+            !stream || view_count <= 0 || view_count > config_.views) return false;
+        auto batch_config = config_;
+        batch_config.views = view_count;
         detail::launch_cylindrical_to_flat_map(physical_projection,
-            flat_projection, config_, stream);
+            flat_projection, batch_config, stream);
         return true;
     }
 

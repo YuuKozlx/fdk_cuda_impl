@@ -49,6 +49,8 @@ int main_operator_matrix_smoke(); int main_planar_geometry_operator_smoke();
 int main_source_orbit_tomography_smoke();
 int main_source_orbit_pcb_reconstruction();
 int main_nikon_tilted_pcb_reconstruction();
+int main_nonstandard_fdk_streaming();
+int main_cyl_fdk_streaming();
 int main_algebraic_ex_smoke();
 int main_iterative_convergence_smoke();
 int main_ossart_tv_smoke();
@@ -173,6 +175,10 @@ namespace {
         TEST_INT("geometry/planar-fp-bp", "geometry", false, main_planar_geometry_operator_smoke),
         TEST_INT("recon/source-orbit-tomography", "recon", false,
             main_source_orbit_tomography_smoke),
+        TEST_INT("recon/nonstandard-fdk-streaming", "recon", false,
+            main_nonstandard_fdk_streaming),
+        TEST_INT("recon/cyl-fdk-streaming", "recon", false,
+            main_cyl_fdk_streaming),
         TEST_INT("recon/source-orbit-pcb", "source-orbit", false,
             main_source_orbit_pcb_reconstruction),
         TEST_INT("recon/nikon-tilted-pcb-reconstruction", "recon", false,

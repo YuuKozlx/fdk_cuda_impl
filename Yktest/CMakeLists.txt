@@ -20,6 +20,8 @@ set(YKCBCT_MANUAL_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_operator_properties.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_nikon_tilted_ct.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_nonstandard_streaming.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_cyl_fdk_streaming.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reconstructors_smoke.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_water.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_large_arrow.cpp

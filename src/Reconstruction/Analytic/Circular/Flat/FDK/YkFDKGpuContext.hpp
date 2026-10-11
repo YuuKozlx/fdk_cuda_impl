@@ -64,13 +64,14 @@ namespace YK {
             dc.upload(tex_objs, h_tex_objs.data(), Kchunk);
         }
 
-        void uploadProjChunk(const float* h_src, int K, cudaStream_t stream) const
+        void uploadProjChunk(const float* source, int K, cudaStream_t stream,
+            cudaMemcpyKind copy_kind = cudaMemcpyHostToDevice) const
         {
             YK_CUDA_CHECK(cudaMemcpyAsync(
                 chunk_in.data(),
-                h_src,
+                source,
                 (size_t)K * Nu_ * Nv_ * sizeof(float),
-                cudaMemcpyHostToDevice, stream));
+                copy_kind, stream));
         }
 
         cudaTextureObject_t* d_texObjs() const { return tex_objs.data(); }

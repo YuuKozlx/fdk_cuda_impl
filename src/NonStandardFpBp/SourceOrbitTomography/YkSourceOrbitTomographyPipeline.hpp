@@ -7,6 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitTomography.hpp"
+#include "NonStandardFpBp/Geometry/YkNonStandardFdkStreaming.hpp"
 #include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitDerivedGeometry.hpp"
 #include "NonStandardFpBp/SourceOrbitTomography/kernels/YkSourceOrbitResampleKernels.cuh"
 #include "Reconstruction/Analytic/Circular/Flat/FDK/YkBackProjectProcessor.hpp"
@@ -18,8 +19,9 @@
 namespace YK::NonStandardFpBp {
 
 // Fixed-detector/source-orbit reconstruction scheduler.  The projection
-// buffer is [view][raw_v][raw_u] on device. Each fixed-detector view is mapped
-// to a common local grid before the existing analytic stages are invoked.
+// buffer is [view][raw_v][raw_u]. process takes a complete Device acquisition;
+// streaming takes contiguous Host/Device packets. Each view is mapped to a
+// common local grid before the existing analytic stages are invoked.
 class SourceOrbitTomographyPipeline {
 public:
     SourceOrbitTomographyPipeline() = default;
@@ -29,24 +31,27 @@ public:
     bool prepare(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& raw_geometry,
         const std::vector<ProjectionWindow>& windows,
-        int raw_u, int raw_v, cudaStream_t stream, int device_id = 0)
+        int raw_u, int raw_v, cudaStream_t stream, int device_id = 0,
+        int max_chunk_views = kMaxChunkAng)
     {
         return prepare(params, raw_geometry, windows, raw_u, raw_v,
-            SourceOrbitResampleMode::InPlaneRotated, stream, device_id);
+            SourceOrbitResampleMode::InPlaneRotated, stream, device_id,
+            max_chunk_views);
     }
 
     bool prepare(const SReconstructionParams& params,
         const std::vector<SConeProjGeomVec>& raw_geometry,
         const std::vector<ProjectionWindow>& windows,
         int raw_u, int raw_v, SourceOrbitResampleMode mode,
-        cudaStream_t stream, int device_id = 0)
+        cudaStream_t stream, int device_id = 0,
+        int max_chunk_views = kMaxChunkAng)
     {
         release();
         if (raw_u <= 0 || raw_v <= 0 || params.scan.Nu <= 0 ||
             params.scan.Nv <= 0 || params.scan.totalViews <= 0 ||
             static_cast<int>(raw_geometry.size()) != params.scan.totalViews ||
             static_cast<int>(windows.size()) != params.scan.totalViews ||
-            !stream) return false;
+            !stream || max_chunk_views <= 0) return false;
         for (const auto& window : windows) {
             if (window.width != params.scan.Nu || window.height != params.scan.Nv ||
                 window.origin_u < 0 || window.origin_v < 0 ||
@@ -219,10 +224,12 @@ public:
         }
 
         stream_ = stream;
+        device_id_ = device_id;
         mode_ = mode;
         raw_u_ = raw_u; raw_v_ = raw_v;
         params_ = params;
-        chunk_size_ = std::min(params.scan.totalViews, kMaxChunkAng);
+        chunk_size_ = std::min({params.scan.totalViews, kMaxChunkAng,
+            max_chunk_views});
         if (!buildSourceOrbitDerivedGeometry(params.scan.Nu, params.scan.Nv,
                 params.scan.range_rad, make_float3(params.volume.centerX_mm,
                     params.volume.centerY_mm, params.volume.centerZ_mm),
@@ -262,29 +269,96 @@ public:
         bool clear_output = true)
     {
         if (!prepared_ || !d_raw_projection || !d_volume) return false;
+        if (!beginStreaming(d_volume, clear_output)) return false;
+        const NonStandardFdkProjectionBatch batch{d_raw_projection, 0,
+            params_.scan.totalViews, EProjectionBatchLocation::Device,
+            static_cast<size_t>(raw_u_) * raw_v_ * params_.scan.totalViews};
+        return enqueueBatch(batch) && completeStreaming();
+    }
+
+    bool beginStreaming(float* d_volume, bool clear_output = true)
+    {
+        if (!prepared_ || !streaming_.begin(d_volume)) return false;
         if (clear_output) {
             const size_t bytes = static_cast<size_t>(params_.volume.Nx) *
                 params_.volume.Ny * params_.volume.Nz * sizeof(float);
-            if (cudaMemsetAsync(d_volume, 0, bytes, stream_) != cudaSuccess)
+            if (cudaMemsetAsync(d_volume, 0, bytes, stream_) != cudaSuccess) {
+                streaming_.reset();
                 return false;
+            }
         }
-        for (int base = 0; base < params_.scan.totalViews; base += chunk_size_) {
-            const int count = std::min(chunk_size_, params_.scan.totalViews - base);
-            if (!resample(d_raw_projection, gpu_.proj.chunk_in.data(),
-                    base, count)) return false;
+        return true;
+    }
+
+    // Synchronous consumption: Host (pageable or pinned) and Device inputs
+    // may be reused after return. Only one acquired-detector chunk is staged.
+    bool enqueueBatch(const NonStandardFdkProjectionBatch& batch)
+    {
+        const size_t view_elements = static_cast<size_t>(raw_u_) * raw_v_;
+        if (!prepared_ || !streaming_.accepts(batch, params_.scan.totalViews,
+                view_elements)) return false;
+        if (batch.location == EProjectionBatchLocation::Host && !raw_chunk_) {
+            Mem::MemoryController memory;
+            raw_chunk_ = memory.allocateDevice3D<float>(raw_u_, raw_v_,
+                chunk_size_, device_id_, false);
+            if (!raw_chunk_) return failStreaming_();
+        }
+        for (int local = 0; local < batch.view_count;) {
+            const int base = batch.first_view + local;
+            const int count = std::min(batch.view_count - local,
+                chunk_size_ - base % chunk_size_);
+            const float* source = batch.data + static_cast<size_t>(local) * view_elements;
+            if (batch.location == EProjectionBatchLocation::Host) {
+                if (cudaMemcpyAsync(raw_chunk_.data(), source,
+                        static_cast<size_t>(count) * view_elements * sizeof(float),
+                        cudaMemcpyHostToDevice, stream_) != cudaSuccess)
+                    return failStreaming_();
+                source = raw_chunk_.data();
+            }
+            // Raw indices are batch-local; maps and geometry remain global.
+            if (!launchSourceOrbitResample(source, gpu_.proj.chunk_in.data(),
+                    raw_u_, raw_v_, params_.scan.Nu, params_.scan.Nv, 0,
+                    count, d_maps_ + base, stream_)) return failStreaming_();
             const auto* d_geo = gpu_.geo.d_geo() + base;
             const auto* d_derived = gpu_.geo.d_gv() + base;
             if (!preweight_.apply(gpu_.proj.chunk_in.data(),
                     gpu_.proj.chunk_pw.data(), {d_geo, d_derived, count}, stream_))
-                return false;
+                return failStreaming_();
+            const auto* filter_geometry = nonStandardStreamingFilterGeometry(
+                derived_, base, count, chunk_size_, filter_derived_);
             if (!filter_.apply(gpu_.proj.chunk_pw.data(),
-                    gpu_.proj.chunk_flt.data(), {derived_.data() + base, count},
-                    stream_)) return false;
+                    gpu_.proj.chunk_flt.data(), {filter_geometry, count},
+                    stream_)) return failStreaming_();
             gpu_.geo.uploadCoeffsChunk(gpu_.geo.d_coeffs() + base, count, stream_);
-            if (!backproject_.apply(gpu_.proj.d_texObjs(), d_volume,
-                    {d_geo, d_derived, count}, stream_)) return false;
+            if (!backproject_.apply(gpu_.proj.d_texObjs(), streaming_.volume(),
+                    {d_geo, d_derived, count}, stream_)) return failStreaming_();
+            local += count;
         }
-        return cudaStreamSynchronize(stream_) == cudaSuccess;
+        if (cudaStreamSynchronize(stream_) != cudaSuccess) return failStreaming_();
+        streaming_.commit(batch.view_count);
+        return true;
+    }
+
+    bool completeStreaming()
+    {
+        if (!prepared_ || !streaming_.canComplete(params_.scan.totalViews)) return false;
+        if (cudaStreamSynchronize(stream_) != cudaSuccess) return failStreaming_();
+        streaming_.complete();
+        return true;
+    }
+
+    bool cancelStreaming()
+    {
+        if (stream_ && cudaStreamSynchronize(stream_) != cudaSuccess) return false;
+        streaming_.reset();
+        return true;
+    }
+
+    bool streamingActive() const { return streaming_.active(); }
+    int receivedStreamingViews() const { return streaming_.received(); }
+    int projectionWorkspaceViews() const { return chunk_size_; }
+    size_t hostProjectionStagingElements() const {
+        return raw_chunk_ ? static_cast<size_t>(raw_u_) * raw_v_ * chunk_size_ : 0;
     }
 
     // Resample one contiguous range into [view][local_v][local_u]. The source
@@ -315,16 +389,26 @@ public:
         filter_.release();
         backproject_.release();
         gpu_.release();
+        raw_chunk_ = {};
+        streaming_.reset();
+        filter_derived_.clear();
         if (d_maps_) cudaFree(d_maps_);
         d_maps_ = nullptr;
         geometry_.clear(); derived_.clear();
         params_ = {};
         raw_u_ = raw_v_ = chunk_size_ = 0;
+        device_id_ = 0;
         mode_ = SourceOrbitResampleMode::InPlaneRotated;
         prepared_ = false; stream_ = nullptr;
     }
 
 private:
+    bool failStreaming_() {
+        streaming_.fail();
+        cudaStreamSynchronize(stream_);
+        return false;
+    }
+
     FdkGpuContext gpu_{};
     Fdk::PreweightProcessor preweight_{};
     Fdk::FilterProcessor filter_{};
@@ -332,6 +416,10 @@ private:
     SReconstructionParams params_{};
     std::vector<SConeProjGeomVec> geometry_{};
     std::vector<SFDKGeoParamPerView> derived_{};
+    std::vector<SFDKGeoParamPerView> filter_derived_{};
+    NonStandardFdkStreamingState streaming_{};
+    Mem::DeviceLinearBuffer3D<float> raw_chunk_{};
+    int device_id_ = 0;
     int raw_u_ = 0, raw_v_ = 0, chunk_size_ = 0;
     cudaStream_t stream_ = nullptr;
     SourceOrbitResampleMap* d_maps_ = nullptr;
