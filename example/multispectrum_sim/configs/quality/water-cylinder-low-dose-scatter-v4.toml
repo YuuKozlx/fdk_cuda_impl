@@ -6,7 +6,6 @@ mode = "project_and_reconstruct"
 [projection]
 label_volume = "../../inputs/generated/water-cylinder-200mm-pmma5mm.raw"
 spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
-xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/tests/water-cylinder-low-dose-v4-1024x256x360-ox10-oy15-oz20-rx1-ry2-rz3.raw"
 energy_output_file = "../../outputs/tests/water-cylinder-low-dose-v4-energy-1024x256x360-ox10-oy15-oz20-rx1-ry2-rz3.raw"
 air_output_file = ""
@@ -21,6 +20,9 @@ seed = 20261009
 [projection.scatter]
 enabled = true
 model_file = "G:/Code/ggems/examples/10_ASKS_EndToEnd/runs/new-cbct-fasks-infinite-center-clean/runtime/fasks_runtime_model.json"
+
+[projection.scatter.kernel]
+mode = "all"
 
 [projection.sampling]
 samples_per_pixel = 5

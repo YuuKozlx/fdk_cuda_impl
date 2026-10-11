@@ -2,6 +2,23 @@ cmake_minimum_required(VERSION 3.24)
 project(multispectrum_sim LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER
+    "Build the optional experimental CUDA adaptive scatter solver plugin" OFF)
+if(MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER)
+    if(NOT TARGET YKCBCT)
+        message(FATAL_ERROR "Adaptive scatter plugin requires the CUDA-enabled parent build")
+    endif()
+    add_library(multispectrum_adaptive_scatter STATIC
+        plugins/adaptive_scatter/AdaptiveScatterSolver.cu)
+    target_include_directories(multispectrum_adaptive_scatter PUBLIC
+        include plugins/adaptive_scatter)
+    target_link_libraries(multispectrum_adaptive_scatter PUBLIC CUDA::cudart)
+    target_compile_definitions(multispectrum_adaptive_scatter INTERFACE YK_SPECTRAL_ADAPTIVE_SCATTER=1)
+    if(MSVC)
+        target_compile_options(multispectrum_adaptive_scatter PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+    endif()
+endif()
 
 # 该示例直接编译 XCOM 数值核心，不依赖 YKCBCT DLL 的混杂接口层。
 # 因此既可独立配置，也可由顶层 BUILD_MULTISPECTRUM_SIM 接入。
@@ -19,11 +36,14 @@ target_include_directories(multispectrum_sim PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
 target_link_libraries(multispectrum_sim PRIVATE nist_xcom_core)
+if(TARGET multispectrum_adaptive_scatter)
+    target_link_libraries(multispectrum_sim PRIVATE multispectrum_adaptive_scatter)
+endif()
 
 # 在线多能谱前投由示例自身的 CUDA kernel 完成；YKCBCT DLL 只提供重建后端。
 if(TARGET YKCBCT)
     target_sources(multispectrum_sim PRIVATE
-        src/LibraryGeometry.cpp src/LibraryReconstructor.cpp
+        src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/ReconstructionPreprocessor.cpp
         src/CudaPrimaryProjector.cu src/SpectralProjectionPipeline.cpp
         src/primary/CudaProjectionBackend.cu src/primary/DetectorSignal.cpp
         src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
@@ -106,6 +126,30 @@ if(BUILD_TESTING)
         target_link_libraries(multispectrum_scatter_test PRIVATE CUDA::cudart)
         target_link_libraries(multispectrum_scatter_test PRIVATE CUDA::cufft)
         add_test(NAME multispectrum_scatter COMMAND multispectrum_scatter_test)
+        add_executable(multispectrum_preprocessing_test tests/test_preprocessing.cpp
+            src/ReconstructionPreprocessor.cpp src/FasksRuntimeModel.cpp
+            src/config/SimConfig.cpp src/XcomAttenuationProvider.cpp
+            src/CudaFasksScatter.cu)
+        target_include_directories(multispectrum_preprocessing_test PRIVATE include
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+            "${SPECTRAL_XCOM_ROOT}")
+        target_link_libraries(multispectrum_preprocessing_test PRIVATE nist_xcom_core CUDA::cudart CUDA::cufft)
+        if(TARGET multispectrum_adaptive_scatter)
+            target_link_libraries(multispectrum_preprocessing_test PRIVATE multispectrum_adaptive_scatter)
+            add_executable(multispectrum_adaptive_scatter_test tests/test_adaptive_scatter.cpp)
+            if(MSVC)
+                target_compile_options(multispectrum_adaptive_scatter_test PRIVATE /utf-8)
+            endif()
+            target_link_libraries(multispectrum_adaptive_scatter_test PRIVATE multispectrum_adaptive_scatter)
+            add_test(NAME multispectrum_adaptive_scatter COMMAND multispectrum_adaptive_scatter_test)
+        endif()
+        if(MSVC)
+            target_compile_options(multispectrum_preprocessing_test PRIVATE
+                $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+                $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+        endif()
+        add_test(NAME multispectrum_preprocessing COMMAND multispectrum_preprocessing_test)
     endif()
     if(TARGET YKCBCT AND YKCBCT_BUILD_HELICAL)
         add_executable(multispectrum_wfbp_buffers_test tests/test_wfbp_buffers.cpp src/LibraryGeometry.cpp)

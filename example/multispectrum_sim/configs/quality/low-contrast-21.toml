@@ -6,7 +6,6 @@ mode = "project_and_reconstruct"
 [projection]
 label_volume = "../../inputs/generated/low-contrast-21.raw"
 spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
-xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/quality/low-contrast-21-projection.raw"
 energy_output_file = "../../outputs/quality/low-contrast-21-energy.raw"
 mAs_per_view = 1.0

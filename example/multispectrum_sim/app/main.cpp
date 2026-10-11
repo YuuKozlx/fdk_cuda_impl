@@ -98,7 +98,7 @@ int main(int argc, char** argv)
         }
         auto spectrum = yk::spectral::loadSpectrum(config.projection.spectrum_file);
         auto labels = yk::spectral::loadLabelVolume(config.projection.label_volume);
-        yk::spectral::XcomAttenuationProvider attenuation(config.projection.xcom_data_directory);
+        yk::spectral::XcomAttenuationProvider attenuation({});
         yk::spectral::SpectralTransmissionModel model(
             config.projection.materials, spectrum, attenuation, config.projection.detector_response);
         yk::spectral::ProjectionSimulator simulator(config, model);

@@ -145,6 +145,10 @@ struct SamplingConfig {
 struct ScatterConfig {
     bool enabled = false;
     std::filesystem::path model_file;
+    struct KernelConfig {
+        std::string mode = "all";
+        int segments = 3;
+    } kernel;
 };
 
 struct GeometrySpec {
@@ -155,7 +159,6 @@ struct GeometrySpec {
 struct ProjectionConfig {
     std::filesystem::path label_volume;
     std::filesystem::path spectrum_file;
-    std::filesystem::path xcom_data_directory;
     std::filesystem::path output_file;
     std::filesystem::path energy_output_file;
     std::filesystem::path air_output_file;
@@ -194,6 +197,60 @@ struct IterativeReconstructionConfig {
     bool non_negative = true;
 };
 
+struct BeamHardeningConfig {
+    bool enabled = false;
+    bool fit_from_water_plate = false;
+    std::filesystem::path spectrum_file;
+    int order = 1;
+    std::vector<double> coefficients{0.0, 1.0};
+    double clamp_min = 0.0;
+    double clamp_max = 20.0;
+    double water_plate_max_mm = 400.0;
+    int water_plate_samples = 81;
+    double reference_energy_keV = 0.0;
+};
+
+struct ScatterCorrectionConfig {
+    bool enabled = false;
+    std::filesystem::path air_projection_file;
+    std::filesystem::path model_file;
+    struct CorrectionConfig {
+        int iterations = 3;
+        double damping = 0.7;
+        double scatter_scale = 1.0;
+        double object_mask_threshold = 1.0e-6;
+    } correction;
+    struct GuideConfig {
+        bool enabled = false;
+        double sigma_u_pixels = 2.0;
+        double sigma_v_pixels = 2.0;
+    } guide;
+    struct SolverConfig {
+        std::string type = "fixed";
+        struct AdaptiveConfig {
+            int iterations = 10;
+            double initial_damping = 0.7;
+            double min_damping = 0.1;
+            double damping_decay = 1.0;
+            struct TransmissionGuardConfig {
+                double low_quantile = 0.01;
+                double risk_threshold = 0.02;
+                double positivity_margin = 0.9;
+            } transmission_guard;
+        } adaptive;
+    } solver;
+    struct KernelConfig {
+        std::string mode = "all";
+        int segments = 3;
+    } kernel;
+};
+
+struct ReconstructionPreprocessConfig {
+    bool enabled = false;
+    BeamHardeningConfig beam_hardening;
+    ScatterCorrectionConfig scatter;
+};
+
 struct ReconstructionConfig {
     std::filesystem::path input_projection_file;
     std::string type = "analytic";
@@ -202,5 +259,6 @@ struct ReconstructionConfig {
     std::filesystem::path output_volume_file;
     std::filesystem::path slice_prefix;
     bool save_slices = false;
+    ReconstructionPreprocessConfig preprocessing;
 };
 }

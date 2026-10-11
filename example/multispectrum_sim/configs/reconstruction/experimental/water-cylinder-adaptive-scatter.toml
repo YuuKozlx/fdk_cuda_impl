@@ -1,0 +1,91 @@
+schema_version = 2
+
+[workflow]
+mode = "reconstruct"
+
+[projection]
+spectrum_file = "../../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
+
+[projection.geometry_flux]
+enabled = true
+
+[projection.quantum_noise]
+enabled = false
+
+[projection.sampling]
+samples_per_pixel = 1
+
+[geometry]
+kind = "flat_cbct"
+views = 360
+views_per_turn = 360
+detector_u = 1024
+detector_v = 256
+pixel_u_mm = 0.795
+pixel_v_mm = 0.53
+sid_mm = 709.0
+sdd_mm = 1143.0
+volume_x = 401
+volume_y = 401
+volume_z = 256
+voxel_x_mm = 0.5
+voxel_y_mm = 0.5
+voxel_z_mm = 0.5
+reconstruction_volume_x = 1024
+reconstruction_volume_y = 1024
+reconstruction_volume_z = 30
+reconstruction_voxel_x_mm = 0.33
+reconstruction_voxel_y_mm = 0.33
+reconstruction_voxel_z_mm = 1.0
+
+[reconstruction]
+type = "analytic"
+input_projection_file = "../../../outputs/projections/water-cylinder-scatter-fixed64-projection.raw"
+output_volume_file = "../../../outputs/reconstructions/water-cylinder-adaptive-experimental-recon-1024x1024x30.raw"
+slice_prefix = "../../../outputs/images/water-cylinder-adaptive-experimental-bhc"
+
+[reconstruction.analytic]
+pipeline = "fdk"
+filter = "ramlak"
+chunk_views = 8
+
+[reconstruction.preprocessing]
+enabled = true
+
+[reconstruction.preprocessing.beam_hardening]
+enabled = true
+fit_from_water_plate = true
+order = 3
+water_plate_max_mm = 400.0
+water_plate_samples = 81
+clamp_min = 0.0
+clamp_max = 20.0
+
+[reconstruction.preprocessing.scatter]
+enabled = true
+air_projection_file = "../../../outputs/projections/water-cylinder-scatter-fixed64-air.raw"
+model_file = "../../../inputs/scatter/fasks_runtime_model_v4.json"
+
+[reconstruction.preprocessing.scatter.correction]
+scatter_scale = 1.0
+object_mask_threshold = 0.001
+
+[reconstruction.preprocessing.scatter.kernel]
+mode = "segmented"
+segments = 3
+
+
+# Requires MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER=ON.
+[reconstruction.preprocessing.scatter.solver]
+type = "adaptive_experimental"
+
+[reconstruction.preprocessing.scatter.solver.adaptive]
+iterations = 10
+initial_damping = 0.7
+min_damping = 0.1
+damping_decay = 1.0
+
+[reconstruction.preprocessing.scatter.guide]
+enabled = false
+sigma_u_pixels = 2.0
+sigma_v_pixels = 2.0

@@ -6,7 +6,6 @@ mode = "project"
 [projection]
 label_volume = "../../inputs/water-cylinder-128x128x64-u8.raw"
 spectrum_file = "../../spectra/120kVp_12deg_1000mm_2mmAl.spec"
-xcom_data_directory = "../../../../thirdparty/nist_xcom/data"
 output_file = "../../outputs/projections/water-cylinder-small.raw"
 energy_output_file = "../../outputs/projections/water-cylinder-small-energy.raw"
 air_output_file = "../../outputs/projections/water-cylinder-small-air.raw"

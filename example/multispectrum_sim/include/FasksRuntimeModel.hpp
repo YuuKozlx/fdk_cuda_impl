@@ -22,6 +22,8 @@ public:
         return discrete_attenuation_nodes_.at(static_cast<size_t>(index));
     }
     double amplitude(double transmission) const;
+    const std::vector<double>& amplitudeAttenuationNodes() const { return discrete_attenuation_nodes_; }
+    const std::vector<double>& amplitudeValues() const { return discrete_amplitude_nodes_; }
     double wetFromLogAttenuation(double log_attenuation) const;
 
     double transmissionMin() const { return transmission_min_; }
@@ -32,6 +34,13 @@ public:
     double wetSmoothSigmaMm() const { return wet_smooth_sigma_mm_; }
     double edgeBoundaryScale() const { return edge_boundary_scale_; }
     double edgeRampMm() const { return edge_ramp_mm_; }
+    const std::vector<double>& wetAttenuationNodes() const {
+        return wet_attenuation_nodes_;
+    }
+    const std::vector<double>& wetThicknessNodes() const {
+        return wet_thickness_nodes_;
+    }
+    const std::vector<double>& wetSlopes() const { return wet_slopes_; }
     int detectorKernelWidth() const { return detector_kernel_width_; }
     int detectorKernelHeight() const { return detector_kernel_height_; }
     const std::vector<float>& detectorKernel() const { return detector_kernel_; }
