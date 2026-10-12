@@ -81,6 +81,8 @@ namespace YK {
         struct Config {
             int   n_iter = 10;
             int   n_subset = 5;
+            int block_size = 0; // positive: exact views per block; zero: legacy subset count
+            float inverse_row_cap = 0.f; // 1/mm; zero preserves legacy normalization
             float lambda = 1.0f;
             float lambda_red = 1.0f;
             float eps = 1e-6f;
@@ -108,9 +110,9 @@ namespace YK {
                 YK_LOGE("[AlgebraicTigreBackend] geometry size mismatch");
                 return false;
             }
-            if(cfg.n_subset==1){
+            if(cfg.block_size>0?cfg.block_size>=params.scan.NAng:cfg.n_subset==1){
                 release();sirt_mode_=true;params_=params;cfg_=cfg;n_block_=1;
-                is_initialized_=sirt_.init(params,cfg,geometry,stream,deviceId,true);return is_initialized_;
+                is_initialized_=sirt_.init(params,cfg,geometry,stream,deviceId,true,cfg.inverse_row_cap);return is_initialized_;
             }
             sirt_mode_=false;
             params_ = params;
@@ -124,7 +126,7 @@ namespace YK {
             const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
 
             // ── 连续分块 (= TIGRE 'ordered'):blocksize = ceil(Na/n_subset) ──
-            const int blocksize = (Na + cfg.n_subset - 1) / cfg.n_subset;
+            const int blocksize = cfg.block_size>0?std::min(Na,cfg.block_size):(Na + cfg.n_subset - 1) / cfg.n_subset;
             n_block_ = (Na + blocksize - 1) / blocksize;
 
             block_start_.resize(n_block_);
@@ -223,7 +225,8 @@ namespace YK {
                     if(!fp_lo_.run(d_ones8_,row_params,out,stream))return false;
                     const float min_voxel=std::min({params.volume.voxelX_mm,params.volume.voxelY_mm,params.volume.voxelZ_mm});
                     YK::Iter::threshold_inf_launch(out,sino_n,min_voxel/2.f,stream);
-                    YK::Iter::rcp_launch(out,sino_n,stream);return true;
+                    YK::Iter::rcp_launch(out,sino_n,stream);
+                    if(cfg_.inverse_row_cap>0)YK::Iter::clamp_max_launch(out,sino_n,cfg_.inverse_row_cap,stream);return true;
                 });
                 const float* d_v_blk=weights_.get(size_t(b),d_col_w_,[&](float* out){
                     auto column_params=ps;
@@ -395,6 +398,8 @@ namespace YK {
         struct Config {
             int   n_iter = 10;
             int   n_subset = 5;
+            int block_size = 0; // positive: exact views per block; zero: legacy subset count
+            float inverse_row_cap = 0.f; // 1/mm; zero preserves legacy normalization
             float lambda = 1.0f;
             float lambda_red = 1.0f;
             float eps = 1e-6f;

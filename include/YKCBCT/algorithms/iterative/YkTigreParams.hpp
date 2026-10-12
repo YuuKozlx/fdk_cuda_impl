@@ -20,8 +20,8 @@ enum class ETigreGradientMethodSpec : int32_t {
 
 struct STigreGradientAlgoParams {
     ETigreGradientMethodSpec method = ETigreGradientMethodSpec::OsSart;
-    int block_size = 20;
-    float lambda_reduction = 1.f;
+    int block_size = 20; // angles per block; final block may be shorter
+    float lambda_reduction = 0.f; // zero selects ART=1 or POCS/PCSD=0.99; positive overrides
     bool nesterov_relaxation = false;
     bool fdk_initialization = false;
     bool non_negative = true;

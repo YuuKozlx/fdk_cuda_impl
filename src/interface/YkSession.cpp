@@ -213,19 +213,9 @@ public:
             Iter::TigreGradientConfig c{};
             c.algorithm = static_cast<Iter::ETigreGradientAlgorithm>(reconstruction_.tigre.method);
             c.iterations = reconstruction_.iterative.iterations;
-            // 配置层统一把 iterations 定义为完整数据轮数、subsets 定义为
-            // 每轮子集数量。TIGRE 后端内部需要每块视角数，因此按算法换算。
-            if (c.algorithm == Iter::ETigreGradientAlgorithm::Sart) {
-                c.block_size = 1;
-            }
-            else if (c.algorithm == Iter::ETigreGradientAlgorithm::Sirt) {
-                c.block_size = params_.scan.NAng;
-            }
-            else {
-                const int subset_count = std::max(1, reconstruction_.iterative.subsets);
-                c.block_size = std::max(1,
-                    (params_.scan.NAng + subset_count - 1) / subset_count);
-            }
+            // The solver fixes SART to one view and SIRT to all views.
+            // OS variants consume the SDK's exact angles-per-block value.
+            c.block_size = reconstruction_.tigre.block_size;
             c.lambda = reconstruction_.iterative.relaxation;
             c.lambda_reduction = reconstruction_.tigre.lambda_reduction;
             c.relaxation_mode = reconstruction_.tigre.nesterov_relaxation

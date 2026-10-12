@@ -10,7 +10,7 @@ namespace YK {
 // algorithm subsets: sum every BP contribution before normalization/update.
 class SirtBatchBackend {
     SReconstructionParams params_,low_;cudaStream_t stream_=nullptr;int device_=0,max_chunk_=0,cache_chunk_=0;
-    bool coarse_=false,prepared_=false,min_=false,max_=false;float lambda_=1,initial_lambda_=1,reduction_=1,eps_=1e-6f,lo_=0,hi_=0;
+    bool coarse_=false,prepared_=false,min_=false,max_=false;float lambda_=1,initial_lambda_=1,reduction_=1,eps_=1e-6f,lo_=0,hi_=0,row_cap_=0;
     int iterations_=0;unsigned updates_=0;size_t pixels_=0,voxels_=0,slice_=0;
     ForwardOperatorAdapter fp_,fp_low_;BackOperatorAdapter bp_;
     DeviceWorkspaceF32 forward_,residual_,row_,column_,bp_sum_,ones_;
@@ -21,8 +21,8 @@ class SirtBatchBackend {
     }
 public:
     template<class Config> bool init(const SReconstructionParams& params,const Config& cfg,
-        const std::vector<SConeProjGeomVec>& geometry,cudaStream_t stream,int device,bool coarse){
-        release();params_=params;low_=params;stream_=stream;device_=device;coarse_=coarse;
+        const std::vector<SConeProjGeomVec>& geometry,cudaStream_t stream,int device,bool coarse,float inverse_row_cap=0){
+        release();params_=params;low_=params;stream_=stream;device_=device;coarse_=coarse;row_cap_=inverse_row_cap;
         pixels_=size_t(params.scan.Nu)*params.scan.Nv;voxels_=size_t(params.volume.Nx)*params.volume.Ny*params.volume.Nz;
         slice_=size_t(params.volume.Nx)*params.volume.Ny;max_chunk_=detail::iterativeBatchViews(pixels_,params.scan.NAng);
         if(!detail::fitsReconstructionBudget((4*size_t(max_chunk_)*pixels_+(coarse?2:4)*voxels_+slice_)*sizeof(float)+size_t(32)*1024*1024,"SIRT batch workspaces"))return false;
@@ -71,7 +71,7 @@ public:
                     YK_CUDA_CHECK(cudaMemsetAsync(out,0,elements*sizeof(float),stream_));
                     if(!(coarse_?fp_low_.run(ones_,batch(first,count,true),out,stream_):fp_.run(ones_,p,out,stream_)))return false;
                     if(coarse_){const float threshold=std::min({params_.volume.voxelX_mm,params_.volume.voxelY_mm,params_.volume.voxelZ_mm})/2.f;
-                        Iter::threshold_inf_launch(out,elements,threshold,stream_);Iter::rcp_launch(out,elements,stream_);}
+                        Iter::threshold_inf_launch(out,elements,threshold,stream_);Iter::rcp_launch(out,elements,stream_);if(row_cap_>0)Iter::clamp_max_launch(out,elements,row_cap_,stream_);}
                     return true;
                 });
                 const float* measured=detail::contiguousProjection(resident,first,count,pixels_,stream_);if(!row||!measured)return false;

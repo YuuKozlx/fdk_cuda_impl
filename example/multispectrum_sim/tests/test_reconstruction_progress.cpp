@@ -14,6 +14,7 @@ int main(){try{
     auto system=makeLibrarySystem(c,YK::EPipeline::SIRT);
     auto* session=YK::ReconstructionSessionFactory::create();require(session&&session->initialize(system),"session init failed");
     std::vector<float> projection(12*32*24,.2f),baseline(16*16*16),observed(baseline.size());
+    for(size_t i=0;i<projection.size();++i)projection[i]+=.003f*float(i%17);
     float* dp=nullptr;float* dv=nullptr;
     require(cudaMalloc(reinterpret_cast<void**>(&dp),projection.size()*sizeof(float))==cudaSuccess,"projection alloc failed");
     require(cudaMalloc(reinterpret_cast<void**>(&dv),baseline.size()*sizeof(float))==cudaSuccess,"volume alloc failed");
@@ -33,6 +34,33 @@ int main(){try{
     require(progress.calls==4&&progress.last==4&&progress.total==4,"missing intermediate iteration progress");
     cudaMemcpy(observed.data(),dv,observed.size()*sizeof(float),cudaMemcpyDeviceToHost);
     for(size_t i=0;i<observed.size();++i)require(std::isfinite(observed[i])&&std::abs(observed[i]-baseline[i])<1e-6f,"progress changed reconstruction output");
+    YK::ReconstructionSessionFactory::destroy(session);
+    // SART has one update per view. Report inside its first sweep, while
+    // preserving the no-callback numerical result and monotonic total units.
+    c.reconstruction.iterative.algorithm="tigre_sart";
+    system=makeLibrarySystem(c,YK::EPipeline::TigreGradient);
+    session=YK::ReconstructionSessionFactory::create();require(session&&session->initialize(system),"TIGRE session init failed");
+    request.progress_callback=nullptr;request.progress_user_data=nullptr;
+    cudaMemset(dv,0,baseline.size()*sizeof(float));require(session->execute(request),"TIGRE baseline failed");
+    cudaMemcpy(baseline.data(),dv,baseline.size()*sizeof(float),cudaMemcpyDeviceToHost);
+    session->reset();progress={};request.progress_callback=callback;request.progress_user_data=&progress;
+    cudaMemset(dv,0,baseline.size()*sizeof(float));require(session->execute(request),"TIGRE progress failed");
+    require(progress.calls==48&&progress.last==48&&progress.total==48,"missing TIGRE within-sweep progress");
+    cudaMemcpy(observed.data(),dv,observed.size()*sizeof(float),cudaMemcpyDeviceToHost);
+    for(size_t i=0;i<observed.size();++i)require(std::isfinite(observed[i])&&std::abs(observed[i]-baseline[i])<1e-6f,"TIGRE progress changed output");
+    YK::ReconstructionSessionFactory::destroy(session);
+    // Ordinary SART keeps legacy coarse weights (no TIGRE reciprocal cap).
+    // Check its own callback invariance rather than equality to TIGRE.
+    system=makeLibrarySystem(c,YK::EPipeline::SART);
+    session=YK::ReconstructionSessionFactory::create();require(session&&session->initialize(system),"internal SART init failed");
+    request.progress_callback=nullptr;request.progress_user_data=nullptr;
+    cudaMemset(dv,0,baseline.size()*sizeof(float));require(session->execute(request),"internal SART execution failed");
+    cudaMemcpy(observed.data(),dv,observed.size()*sizeof(float),cudaMemcpyDeviceToHost);
+    baseline=observed;session->reset();progress={};request.progress_callback=callback;request.progress_user_data=&progress;
+    cudaMemset(dv,0,baseline.size()*sizeof(float));require(session->execute(request),"internal SART callback execution failed");
+    require(progress.calls==4&&progress.last==4&&progress.total==4,"missing internal SART outer-iteration progress");
+    cudaMemcpy(observed.data(),dv,observed.size()*sizeof(float),cudaMemcpyDeviceToHost);
+    for(size_t i=0;i<observed.size();++i)require(std::isfinite(observed[i])&&std::abs(observed[i]-baseline[i])<=1e-6f,"internal SART callback changed output");
     cudaFree(dp);cudaFree(dv);YK::ReconstructionSessionFactory::destroy(session);
     std::cout<<"Iteration callback, old ABI and numerical invariance passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

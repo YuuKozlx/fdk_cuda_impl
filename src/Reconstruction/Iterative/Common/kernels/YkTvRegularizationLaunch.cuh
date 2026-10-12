@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include "YKCBCT/global/YkExport.hpp"
 
 namespace YK::Iter {
 
@@ -8,6 +9,9 @@ void tv_gradient_launch(const float* volume, float* gradient,
     int nx, int ny, int nz,
     float spacing_x, float spacing_y, float spacing_z,
     float epsilon, int dimensionality, cudaStream_t stream);
+
+// Internal gradient entry for independent numerical regression.
+YK_API void tigre_tv_gradient_launch(const float*, float*, int, int, int, float, bool, float, cudaStream_t);
 
 // TIGRE POCS 系列使用的 TV/AwTV 下降步。每次内迭代都会把梯度归一化为
 // L2=1，再以绝对图像距离 step 更新，因此 step 对应 TIGRE 的 dtvg。

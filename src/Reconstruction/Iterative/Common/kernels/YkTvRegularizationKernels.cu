@@ -105,9 +105,10 @@ __global__ void tigre_tv_gradient_kernel(const float* volume, float* gradient,
     float dzj = 0.f, dyj = 0.f, dxj = 0.f;
     float dzk = 0.f, dyk = 0.f, dxk = 0.f;
     components(x, y, z, dz, dy, dx);
-    components(x + 1, y, z, dzi, dyi, dxi);
+    // Each outgoing flux must use its own spatial neighbor (Z, Y, X).
+    components(x, y, z + 1, dzi, dyi, dxi);
     components(x, y + 1, z, dzj, dyj, dxj);
-    components(x, y, z + 1, dzk, dyk, dxk);
+    components(x + 1, y, z, dzk, dyk, dxk);
 
     const auto weighted_norm = [=] __device__ (float gz, float gy, float gx) {
         const float wz = adaptive ? adaptive_weight(gz, delta) : 1.f;
@@ -147,20 +148,23 @@ void tv_gradient_launch(const float* volume, float* gradient,
     YK_CUDA_KERNEL_CHECK();
 }
 
+void tigre_tv_gradient_launch(const float* volume, float* gradient,
+    int nx, int ny, int nz, float epsilon, bool adaptive, float delta, cudaStream_t stream)
+{
+    const dim3 block(8, 8, 4);
+    const dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y, (nz + block.z - 1) / block.z);
+    tigre_tv_gradient_kernel<<<grid, block, 0, stream>>>(volume, gradient, nx, ny, nz, epsilon, adaptive, delta);
+    YK_CUDA_KERNEL_CHECK();
+}
+
 void tigre_tv_descent_launch(float* volume, float* gradient,
     int nx, int ny, int nz, float step, int iterations,
     float epsilon, bool adaptive_weighted, float delta,
     cudaStream_t stream)
 {
     const size_t count = static_cast<size_t>(nx) * ny * nz;
-    const dim3 block(8, 8, 4);
-    const dim3 grid((nx + block.x - 1) / block.x,
-        (ny + block.y - 1) / block.y,
-        (nz + block.z - 1) / block.z);
     for (int iteration = 0; iteration < iterations; ++iteration) {
-        tigre_tv_gradient_kernel<<<grid, block, 0, stream>>>(volume, gradient,
-            nx, ny, nz, epsilon, adaptive_weighted, delta);
-        YK_CUDA_KERNEL_CHECK();
+        tigre_tv_gradient_launch(volume, gradient, nx, ny, nz, epsilon, adaptive_weighted, delta, stream);
         float norm2 = 0.f;
         dot_launch(gradient, gradient, count, &norm2, stream);
         const float norm = sqrtf(norm2);

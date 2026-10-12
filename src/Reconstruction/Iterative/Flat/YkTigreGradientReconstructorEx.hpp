@@ -47,7 +47,7 @@ struct TigreGradientConfig {
     // TIGRE 的 blocksize 是每个块包含的视角数，而不是块数量。
     int block_size = 20;
     float lambda = 1.f;
-    float lambda_reduction = 1.f;
+    float lambda_reduction = 0.f; // zero: ART=1, POCS/PCSD=0.99
     ETigreRelaxationMode relaxation_mode = ETigreRelaxationMode::Scalar;
     ETigreInitialization initialization = ETigreInitialization::Zero;
     const float* d_initial_volume = nullptr;
@@ -108,6 +108,7 @@ public:
         params_ = params;
         geometry_ = geometry;
         config_ = config;
+        if(config_.lambda_reduction==0)config_.lambda_reduction=isBasicArt_(config.algorithm)?1.f:.99f;
         stream_ = stream;
         device_id_ = device_id;
         volume_count_ = static_cast<size_t>(params.volume.Nx) * params.volume.Ny * params.volume.Nz;
@@ -125,6 +126,8 @@ public:
         AlgebraicTigreBackend::Config data_config{};
         data_config.n_iter = config.iterations;
         data_config.n_subset = requested_subset_count_;
+        data_config.block_size=block_size;
+        data_config.inverse_row_cap=.1f; // geometry and path lengths are in mm
         data_config.lambda = config.relaxation_mode == ETigreRelaxationMode::Nesterov
             ? 1.f : config.lambda;
         data_config.lambda_red = 1.f;
@@ -547,7 +550,7 @@ private:
             params.volume.Nx <= 0 || params.volume.Ny <= 0 || params.volume.Nz <= 0 ||
             static_cast<int>(geometry.size()) != params.scan.NAng ||
             config.iterations <= 0 || config.block_size <= 0 ||
-            config.lambda <= 0.f || config.lambda_reduction <= 0.f ||
+            config.lambda <= 0.f || !std::isfinite(config.lambda_reduction) || config.lambda_reduction < 0.f ||
             config.tv_iterations <= 0 || config.alpha <= 0.f ||
             config.alpha_reduction <= 0.f || config.maximum_update_ratio <= 0.f ||
             config.minimum_beta <= 0.f || config.tv_epsilon <= 0.f ||
