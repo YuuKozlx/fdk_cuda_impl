@@ -31,6 +31,8 @@ public:
     {
         Iter::AlgebraicReconstructor::Config unified{};
         unified.method = Iter::EAlgebraicMethod::Sart;
+        // Public SART uses the coarse TIGRE normalization by default.
+        unified.weight_model = Iter::EAlgebraicWeightModel::TigreApprox;
         unified.iterations = cfg.n_iter;
         unified.relaxation = cfg.lambda;
         unified.relaxation_reduction = cfg.lambda_red;
@@ -49,6 +51,10 @@ public:
     bool run(const float* measured, float* volume,
         const SReconstructionParams&, cudaStream_t)
     { return implementation_.reconstruct(measured, volume); }
+
+    bool iterate(const float* measured, float* volume,
+        const SReconstructionParams&, cudaStream_t, unsigned int updates)
+    { return implementation_.iterateSubsetUpdates(measured, volume, updates); }
 
     void reset() { implementation_.reset(); }
     void release() { implementation_.release(); }

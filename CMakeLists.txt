@@ -171,6 +171,8 @@ add_subdirectory(src/DLTFpBp)
 add_subdirectory(src/CylFpBp)
 add_subdirectory(src/NonStandardFpBp)
 add_subdirectory(src/Reconstruction/Iterative/Common)
+add_subdirectory(src/Reconstruction/Iterative/Regularization)
+add_subdirectory(src/Reconstruction/Iterative/Statistical)
 
 if(YKCBCT_BUILD_HELICAL)
     add_subdirectory(src/Reconstruction/Analytic/Helical)

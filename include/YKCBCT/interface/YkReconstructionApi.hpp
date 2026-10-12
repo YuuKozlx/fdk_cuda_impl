@@ -8,6 +8,8 @@
 #include "YKCBCT/geometry/YkNonStandardGeometrySpec.hpp"
 #include "YKCBCT/interface/YkSystemReconstruction.hpp"
 #include "YKCBCT/interface/YkReconstructionTypes.hpp"
+#include "YKCBCT/algorithms/iterative/YkRegularizationParams.hpp"
+#include "YKCBCT/algorithms/iterative/YkStatisticalParams.hpp"
 
 namespace YK {
 
@@ -23,7 +25,15 @@ struct SSystemSpec {
     // struct_size and remain valid because this field is read only for a
     // non-standard trajectory.
     SNonStandardGeometrySpec nonstandard{};
+    // Optional tail: copied during initialize; older clients default to no plugin.
+    SAlgebraicRegularizationSpec regularization{};
+    // Optional statistical reconstruction tail.
+    SStatisticalReconstructionSpec statistical{};
 };
+
+// Queries implementations without preparing CUDA buffers. Counts exclude
+// caller-owned resident projections/weights and the separate render reserve.
+YK_API bool estimateStatisticalWorkspace(const SSystemSpec&,SStatisticalWorkspaceEstimate&);
 
 struct SExecutionRequest {
     uint32_t struct_size = sizeof(SExecutionRequest);
@@ -39,6 +49,18 @@ struct SExecutionRequest {
     // Callback must not throw; user data is borrowed only until execute returns.
     void (*progress_callback)(void*, int completed, int total) = nullptr;
     void* progress_user_data = nullptr;
+    // Optional ABI tail for flat SART/SIRT/OSSART and TIGRE SART/OS-SART/SIRT/TV.
+    // With a reader, projection.data may be null. Algorithm still executes a
+    // complete sequence; the DLL requests batches without changing updates.
+    ProjectionReadCallback projection_read = nullptr;
+    void* projection_read_user_data = nullptr;
+    int projection_batch_views = 64;
+    int projection_batch_mib = 256;
+    // Optional statistical W source; required only when use_projection_weights.
+    // Empty buffer/reader means W=I when weights are disabled in configuration.
+    Buffer projection_weights{};
+    ProjectionReadCallback projection_weights_read=nullptr;
+    void* projection_weights_read_user_data=nullptr;
 };
 
 // 公共接口的失败原因。算法后端仍可继续扩展，但调用方不必再从一个

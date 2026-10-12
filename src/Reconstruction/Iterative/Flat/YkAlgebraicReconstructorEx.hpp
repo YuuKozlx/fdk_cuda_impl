@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "Reconstruction/Iterative/Flat/YkAlgebraicBackends.hpp"
-#include "Reconstruction/Iterative/Flat/YkAlgebraicRegularizers.hpp"
+#include "Reconstruction/Iterative/Regularization/RegularizerPlugin.hpp"
 #include "Reconstruction/Iterative/Common/YkIterativeConvergence.hpp"
 #include "global/YkLog.h"
 #include "global/YkMem3d.hpp"
@@ -121,10 +121,9 @@ public:
             ex.bp_task = config.bp_task;
             ex.golden_subset_order =
                 config.subset_order == EAlgebraicSubsetOrder::GoldenRatio;
-            prepared_ = detailed_weights_.init(
-                params_, ex, geometry, stream_, device_id);
-            if (prepared_)
-                actual_subset_count_ = detailed_weights_.actualSubsetCount();
+            sirt_mode_=subset_count_==1;
+            prepared_=sirt_mode_?sirt_.init(params_,ex,geometry,stream_,device_id,false):detailed_weights_.init(params_,ex,geometry,stream_,device_id);
+            if(prepared_)actual_subset_count_=sirt_mode_?1:detailed_weights_.actualSubsetCount();
         }
         if (prepared_)
             prepared_ = regularizer_.prepare(params_, config.regularization,
@@ -137,7 +136,8 @@ public:
 
     bool reconstruct(const float* d_measured_projection, float* d_volume)
     {
-        if (!prepared_ || !d_measured_projection || !d_volume) return false;
+        if (!prepared_ || (!d_measured_projection&&!YK::detail::projection_input) || !d_volume) return false;
+        if(YK::detail::projection_input&&convergenceEnabled(config_.convergence))return false;
         convergence_statistics_ = {};
         convergence_patience_ = 0;
         previous_residual_ = std::numeric_limits<float>::quiet_NaN();
@@ -173,7 +173,7 @@ public:
     bool iterateSubsetUpdates(const float* d_measured_projection,
         float* d_volume, unsigned int iterations)
     {
-        if (!prepared_ || !d_measured_projection || !d_volume) return false;
+        if (!prepared_ || (!d_measured_projection&&!YK::detail::projection_input) || !d_volume) return false;
         // 增量接口保持“纯子集数据更新”语义，不隐式触发一次不完整的
         // 正则化周期。需要正则化时使用 reconstruct() 的完整外循环。
         return iterateDataSubsets_(d_measured_projection, d_volume, iterations);
@@ -182,7 +182,7 @@ public:
     void reset()
     {
         if (use_tigre_weights_) tigre_.reset();
-        else detailed_weights_.reset();
+        else if(sirt_mode_)sirt_.reset();else detailed_weights_.reset();
         regularizer_.reset();
     }
 
@@ -192,6 +192,7 @@ public:
         // 防止下方工作区在最后一批 kernel 尚未完成时被释放。
         if (stream_)
             YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        sirt_.release();sirt_mode_=false;
         detailed_weights_.release();
         tigre_.release();
         regularizer_.release();
@@ -216,7 +217,7 @@ public:
     {
         if (use_tigre_weights_)
             return tigre_.totalIterations();
-        return detailed_weights_.totalIterations();
+        return sirt_mode_?sirt_.totalIterations():detailed_weights_.totalIterations();
     }
     const IterativeConvergenceStatistics& convergenceStatistics() const
     { return convergence_statistics_; }
@@ -337,8 +338,8 @@ private:
         if (use_tigre_weights_)
             return tigre_.iterate(d_measured_projection, d_volume, params_,
                 stream_, iterations);
-        return detailed_weights_.iterate(
-            d_measured_projection, d_volume, stream_, iterations);
+        if(sirt_mode_)return sirt_.iterate(d_measured_projection,d_volume,iterations);
+        return detailed_weights_.iterate(d_measured_projection,d_volume,stream_,iterations);
     }
 
     void applyConstraints_(float* d_volume)
@@ -375,17 +376,7 @@ private:
             YK_LOGE("[AlgebraicReconstructorEx] 无效配置");
             return false;
         }
-        const auto& regularization = config.regularization;
-        if (regularization.type != EAlgebraicRegularizer::None &&
-            (regularization.strength <= 0.f ||
-             regularization.inner_iterations <= 0 ||
-             regularization.epsilon <= 0.f ||
-             regularization.strength_reduction <= 0.f ||
-             params.volume.voxelX_mm <= 0.f || params.volume.voxelY_mm <= 0.f ||
-             params.volume.voxelZ_mm <= 0.f)) {
-            YK_LOGE("[AlgebraicReconstructorEx] 无效正则化配置");
-            return false;
-        }
+        // Plugin-specific validation belongs to prepare(), including zero-strength prox.
         return true;
     }
 
@@ -397,6 +388,7 @@ private:
     int actual_subset_count_ = 0;
     bool prepared_ = false;
     bool use_tigre_weights_ = false;
+    SirtBatchBackend sirt_;bool sirt_mode_=false;
     AlgebraicDetailedWeightBackend detailed_weights_{};
     AlgebraicTigreBackend tigre_{};
     AlgebraicRegularizer regularizer_{};

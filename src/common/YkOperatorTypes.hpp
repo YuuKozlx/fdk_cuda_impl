@@ -24,5 +24,9 @@ struct ExecuteRequest {
     Buffer volume{};
     bool clear_output = true;
     int iteration_count = 0;
+    Buffer projection_weights{};
+    ProjectionReadCallback projection_weights_read=nullptr;
+    void* projection_weights_read_user_data=nullptr;
+    int projection_batch_views=64,projection_batch_mib=256;
 };
 }

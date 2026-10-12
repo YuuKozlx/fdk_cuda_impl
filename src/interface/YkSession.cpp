@@ -1,5 +1,7 @@
 #include "interface/YkExecutionBackend.hpp"
 #include "common/YkExecutionContext.hpp"
+#include "Reconstruction/Iterative/Common/YkProjectionInput.hpp"
+#include "Reconstruction/Iterative/Statistical/StatisticalReconstructor.hpp"
 
 #include <algorithm>
 
@@ -80,13 +82,16 @@ public:
 
     bool initialize(const SSystemConfig& system,
         const SReconstructionSpec& reconstruction,
-        const SNonStandardGeometrySpec* nonstandard, int device) override
+        const SNonStandardGeometrySpec* nonstandard, int device,
+        const SAlgebraicRegularizationSpec* regularization,
+        const SStatisticalReconstructionSpec* statistical) override
     {
         release();
         if (device < 0) {
             YK_LOGE("[Session] initialize: invalid GPU selection.");
             return false;
         }
+        statistical_.reset();
         reconstruction_ = reconstruction;
         device_ = device;
         if (!resources_.initialize(device_)) return false;
@@ -159,6 +164,12 @@ public:
             params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
             ok = cfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
             break;
+        case EPipeline::Statistical: {
+            if(!statistical||cylindrical_||!hasCompleteAngles_())break;
+            statistical_uses_weights_=statistical->data_fidelity.use_projection_weights;
+            ok=statistical_.prepare(params_,geometry_.allGeometry(),*statistical,forwardTask_(),backTask_(),resources_.stream(),device_,Iter::Statistical::defaultComposition(*statistical));
+            break;
+        }
         case EPipeline::PWLS: {
             if (!hasCompleteAngles_()) break;
             if (cylindrical_) {
@@ -341,10 +352,27 @@ public:
             release();
             return false;
         }
+        if (regularization && regularization->plugin_id && regularization->plugin_id[0]) {
+            Iter::AlgebraicRegularizationConfig c{};
+            c.plugin_id = regularization->plugin_id;
+            c.strength = regularization->strength;
+            c.inner_iterations = regularization->inner_iterations;
+            c.tv_dimensionality = static_cast<Iter::ETvDimensionality>(regularization->dimensions);
+            c.huber_delta = regularization->huber_delta;
+            c.step_size = regularization->step_size;
+            c.epsilon = regularization->epsilon;
+            c.strength_reduction = regularization->strength_reduction;
+            c.non_negative = regularization->non_negative;
+            if (!tv_plugin_.prepare(params_, c, resources_.stream(), device_)) {
+                YK_LOGE("[Session] Invalid TV plugin or regularization parameters.");
+                release(); return false;
+            }
+        }
         initialized_ = true;
         return true;
     }
 
+    const char* lastErrorMessage()const override{return statistical_.error().empty()?nullptr:statistical_.error().c_str();}
     bool execute(const ExecuteRequest& r) override
     {
         if (!initialized_) {
@@ -359,6 +387,7 @@ public:
         case EPipeline::XFDK: return executeXfdk_(r);
         case EPipeline::CFDK: return executeCfdk_(r);
         case EPipeline::ForwardProjection: return executeFp_(r);
+        case EPipeline::Statistical:
         case EPipeline::SART:
         case EPipeline::SIRT:
         case EPipeline::OSSART:
@@ -374,6 +403,8 @@ public:
     {
         // reset 只清除一次执行产生的瞬态状态，保留 initialize() 已准备的
         // 几何、纹理和工作区；release() 才负责销毁完整后端资源。
+        statistical_.reset();
+        tv_plugin_.reset();
         fdk_.reset();
         sart_.reset();
         sirt_.reset();
@@ -387,6 +418,9 @@ public:
 
     void release() override
     {
+        statistical_.release();
+        statistical_uses_weights_=false;
+        tv_plugin_.release();
         planar_pipeline_.release();
         tilted_pipeline_.release();
         fdk_.release();
@@ -881,10 +915,34 @@ private:
 
     bool executeIterative_(const ExecuteRequest& r)
     {
-        if (!r.projection.data || !r.volume.data || r.projection.location != EMemoryLocation::Device ||
+        if ((!detail::projection_input&&(!r.projection.data || r.projection.location != EMemoryLocation::Device)) || !r.volume.data ||
             r.volume.location != EMemoryLocation::Device) {
             YK_LOGE("[Session] iterative pipelines currently require device projection and volume buffers.");
             return false;
+        }
+        if(reconstruction_.pipeline==EPipeline::Statistical){
+            if(r.clear_output)YK_CUDA_CHECK(cudaMemsetAsync(r.volume.data,0,volumeBytes_(),resources_.stream()));
+            std::unique_ptr<detail::ProjectionInput> weights_source;
+            const float* weights=nullptr;
+            if(statistical_uses_weights_){
+                if(r.projection_weights_read||r.projection_weights.location==EMemoryLocation::Host)
+                    weights_source=std::make_unique<detail::ProjectionInput>(r.projection_weights_read,r.projection_weights_read_user_data,
+                        r.projection_weights.data,size_t(params_.scan.Nu)*params_.scan.Nv,params_.scan.NAng,
+                        r.projection_batch_views,r.projection_batch_mib,0);
+                else weights=r.projection_weights.data;
+            }
+            bool ok=statistical_.reconstruct(r.projection.data,r.volume.data,detail::projection_input,weights,weights_source.get());
+            if(!ok)return false;
+            YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));return true;
+        }
+        if(detail::projection_input){
+            const bool single=reconstruction_.pipeline==EPipeline::SART ||
+                (reconstruction_.pipeline==EPipeline::TigreGradient&&(reconstruction_.tigre.method==ETigreGradientMethodSpec::Sart||reconstruction_.tigre.method==ETigreGradientMethodSpec::AsdPocs));
+            const int block=single?1:(params_.scan.NAng+std::max(1,reconstruction_.iterative.subsets)-1)/std::max(1,reconstruction_.iterative.subsets);
+            const bool global=reconstruction_.pipeline==EPipeline::SIRT ||
+                (reconstruction_.pipeline==EPipeline::TigreGradient&&reconstruction_.tigre.method==ETigreGradientMethodSpec::Sirt) || (!single&&reconstruction_.iterative.subsets==1);
+            const int load=global?std::min(detail::iterativeBatchViews(size_t(params_.scan.Nu)*params_.scan.Nv,params_.scan.NAng),detail::projection_input->preferredViews()):block;
+            if(!detail::projection_input->prepare(load,resources_.stream()))return false;
         }
         if (cylindrical_) {
             if (r.K != params_.scan.NAng) {
@@ -895,6 +953,32 @@ private:
                 ? cyl_pwls_.reconstruct(r.projection.data, r.volume.data)
                 : cyl_iterative_.reconstruct(r.projection.data, r.volume.data);
             if (!ok) return false;
+            YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+            return true;
+        }
+        if (tv_plugin_.enabled()) {
+            const int rounds = reconstruction_.pipeline != EPipeline::SART && r.iteration_count > 0
+                ? r.iteration_count : reconstruction_.iterative.iterations;
+            const int updates = reconstruction_.pipeline == EPipeline::SART ? params_.scan.NAng :
+                reconstruction_.pipeline == EPipeline::SIRT ? 1 :
+                std::min(params_.scan.NAng, std::max(1,reconstruction_.iterative.subsets));
+            for (int outer=0; outer<rounds; ++outer) {
+                bool data_ok=false;
+                { detail::SuppressExecutionProgress nested;
+                  if (reconstruction_.pipeline == EPipeline::SART)
+                      data_ok=sart_.iterate(r.projection.data,r.volume.data,params_,resources_.stream(),updates);
+                  else if (reconstruction_.pipeline == EPipeline::SIRT)
+                      data_ok=sirt_.iterate(r.projection.data,r.volume.data,params_,resources_.stream(),updates);
+                  else data_ok=ossart_.iterate(r.projection.data,r.volume.data,params_,resources_.stream(),updates);
+                }
+                Iter::AlgebraicRegularizationContext context{};
+                context.outer_iteration=outer; context.completed_subset_updates=updates;
+                context.data_relaxation=reconstruction_.iterative.relaxation;
+                if (!data_ok || !tv_plugin_.apply(r.volume.data,context)) return false;
+                if (reconstruction_.tigre.non_negative)
+                    Iter::clamp_min_launch(r.volume.data,volumeBytes_()/sizeof(float),0.f,resources_.stream());
+                if (!detail::reportExecutionProgress(outer+1,rounds,resources_.stream())) return false;
+            }
             YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
             return true;
         }
@@ -989,6 +1073,9 @@ private:
 #if YKCBCT_HAS_HELICAL
     Helical::Wfbp::Pipeline wfbp_{};
 #endif
+    Iter::Statistical::StatisticalReconstructor statistical_;
+    bool statistical_uses_weights_=false;
+    Iter::AlgebraicRegularizer tv_plugin_;
     SART sart_;
     SIRT sirt_;
     OSSART ossart_;

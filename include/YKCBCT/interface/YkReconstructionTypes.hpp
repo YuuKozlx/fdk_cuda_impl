@@ -10,6 +10,9 @@
 #include "YKCBCT/algorithms/iterative/YkTigreParams.hpp"
 
 namespace YK {
+    // Fill Host destination in the requested view-index order, [view][v][u].
+    // Borrowed only during execute; false means an input read failure.
+    using ProjectionReadCallback=bool(*)(void*,const int*,int,float*,size_t);
 
     enum class EPipeline : int32_t {
         FDK,
@@ -23,6 +26,7 @@ namespace YK {
         WFBP,
         TigreGradient,
         SART,
+        Statistical,
     };
 
     enum class EMemoryLocation : int32_t {

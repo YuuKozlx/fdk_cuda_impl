@@ -114,6 +114,13 @@ public:
         projection_count_ = static_cast<size_t>(params.scan.NAng) * params.scan.Nu * params.scan.Nv;
 
         const int block_size = resolvedBlockSize_(config, params.scan.NAng);
+        const bool nesterov=config.relaxation_mode==ETigreRelaxationMode::Nesterov;
+        norm_chunk_=YK::detail::iterativeBatchViews(size_t(params.scan.Nu)*params.scan.Nv,params.scan.NAng);
+        const size_t model=isBregman_(config.algorithm)?projection_count_:size_t(norm_chunk_)*params.scan.Nu*params.scan.Nv;
+        const size_t scratch=(isPocs_(config.algorithm)?5*volume_count_:0)+(isBregman_(config.algorithm)?projection_count_:0)
+            +((isPocs_(config.algorithm)||nesterov)?model:0)+(nesterov?2*volume_count_:0);
+        const size_t block_projection=size_t(block_size>=params.scan.NAng?norm_chunk_:block_size)*params.scan.Nu*params.scan.Nv;
+        if(!YK::detail::fitsReconstructionBudget((scratch+4*block_projection+2*volume_count_+size_t(params.volume.Nx)*params.volume.Ny)*sizeof(float)+size_t(32)*1024*1024,"TIGRE solver workspaces"))return false;
         requested_subset_count_ = (params.scan.NAng + block_size - 1) / block_size;
         AlgebraicTigreBackend::Config data_config{};
         data_config.n_iter = config.iterations;
@@ -134,13 +141,15 @@ public:
             release();
             return false;
         }
-        d_projection_model_.allocate(projection_count_, device_id_);
-        d_working_projection_.allocate(projection_count_, device_id_);
-        d_outer_start_.allocate(volume_count_, device_id_);
-        d_regularization_start_.allocate(volume_count_, device_id_);
-        d_data_update_.allocate(volume_count_, device_id_);
-        d_regularization_update_.allocate(volume_count_, device_id_);
-        d_tv_gradient_.allocate(volume_count_, device_id_);
+        if(isPocs_(config.algorithm)||nesterov)d_projection_model_.allocate(model,device_id_);
+        if(isBregman_(config.algorithm))d_working_projection_.allocate(projection_count_,device_id_);
+        if(isPocs_(config.algorithm)){
+            d_outer_start_.allocate(volume_count_,device_id_);
+            d_regularization_start_.allocate(volume_count_,device_id_);
+            d_data_update_.allocate(volume_count_,device_id_);
+            d_regularization_update_.allocate(volume_count_,device_id_);
+            d_tv_gradient_.allocate(volume_count_,device_id_);
+        }
         if (config.relaxation_mode == ETigreRelaxationMode::Nesterov) {
             d_nesterov_previous_.allocate(volume_count_, device_id_);
             d_nesterov_candidate_.allocate(volume_count_, device_id_);
@@ -152,18 +161,19 @@ public:
 
     bool reconstruct(const float* d_measured_projection, float* d_volume)
     {
-        if (!prepared_ || !d_measured_projection || !d_volume) return false;
+        if (!prepared_ || (!d_measured_projection&&!YK::detail::projection_input) || !d_volume) return false;
         resetState_();
-        YK_CUDA_CHECK(cudaMemcpyAsync(d_working_projection_, d_measured_projection,
-            projection_count_ * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
+        if(d_working_projection_)
+            YK_CUDA_CHECK(cudaMemcpyAsync(d_working_projection_,d_measured_projection,projection_count_*sizeof(float),cudaMemcpyDeviceToDevice,stream_));
         if (!initializeVolume_(d_measured_projection, d_volume)) return false;
         if (isPocs_(config_.algorithm) && config_.max_l2_error < 0.f)
             maximum_l2_error_ = estimateMaximumL2Error_(d_measured_projection);
         else
             maximum_l2_error_ = config_.max_l2_error;
+        if(isPocs_(config_.algorithm)&&!std::isfinite(maximum_l2_error_))return false;
 
         if (isBasicArt_(config_.algorithm))
-            return runBasicArt_(d_working_projection_, d_volume);
+            return runBasicArt_(d_measured_projection, d_volume);
         return runPocs_(d_measured_projection, d_volume);
     }
 
@@ -261,6 +271,22 @@ private:
 
     bool reconstructFdk_(const float* d_projection, float* d_volume)
     {
+        if(YK::detail::projection_input){
+            const int chunk=std::min(norm_chunk_,YK::detail::projection_input->capacityViews());
+            FdkPipeline fdk;if(!fdk.prepareWithGeometry(params_,geometry_,chunk,stream_,device_id_))return false;
+            const size_t pixels=size_t(params_.scan.Nu)*params_.scan.Nv;std::vector<float> host(size_t(chunk)*pixels);
+            bool ok=true;
+            for(int first=0;first<params_.scan.NAng&&ok;first+=chunk){
+                const int count=std::min(chunk,params_.scan.NAng-first);
+                const float* measured=YK::detail::contiguousProjection(d_projection,first,count,pixels,stream_);
+                if(!measured){ok=false;break;}
+                YK_CUDA_CHECK(cudaMemcpyAsync(host.data(),measured,size_t(count)*pixels*sizeof(float),cudaMemcpyDeviceToHost,stream_));
+                YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+                FdkProjectionBatch batch{};batch.projection=host.data();batch.count=count;batch.geometry=&geometry_;
+                ok=fdk.processBatch(batch,d_volume,first==0);YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+            }
+            fdk.release();if(ok&&config_.non_negative)clamp_min_launch(d_volume,volume_count_,0.f,stream_);return ok;
+        }
         std::vector<float> host_projection(projection_count_);
         YK_CUDA_CHECK(cudaMemcpyAsync(host_projection.data(), d_projection,
             projection_count_ * sizeof(float), cudaMemcpyDeviceToHost, stream_));
@@ -293,9 +319,8 @@ private:
             estimate = 0.2f * projectionResidualNorm_(d_projection, d_fdk);
         }
         else {
-            float norm2 = 0.f;
-            dot_launch(d_projection, d_projection, projection_count_, &norm2, stream_);
-            estimate = 0.2f * std::sqrt(norm2);
+            if(YK::detail::projection_input&&!YK::detail::projection_input->error().empty())return std::numeric_limits<float>::quiet_NaN();
+            estimate=0.2f*projectionResidualNorm_(d_projection,nullptr);
             YK_LOGW("[TigreGradient] 当前 geometry 无法使用 FDK 自动估计 max_l2_error，"
                 "退回 0.2*||b||_2={:.6e}", estimate);
         }
@@ -303,17 +328,26 @@ private:
         return estimate;
     }
 
-    float projectionResidualNorm_(const float* d_projection, const float* d_volume)
+    float projectionResidualNorm_(const float* input,const float* volume)
     {
-        YK_CUDA_CHECK(cudaMemsetAsync(d_projection_model_, 0,
-            projection_count_ * sizeof(float), stream_));
-        fp_.run(d_volume, params_, d_projection_model_, stream_);
-        residual_launch(d_projection, d_projection_model_, d_projection_model_,
-            projection_count_, stream_);
-        float norm2 = 0.f;
-        dot_launch(d_projection_model_, d_projection_model_, projection_count_,
-            &norm2, stream_);
-        return std::sqrt(norm2);
+        const size_t pixels=size_t(params_.scan.Nu)*params_.scan.Nv;
+        const int chunk=YK::detail::projection_input?std::min(norm_chunk_,YK::detail::projection_input->capacityViews()):norm_chunk_;
+        double sum=0;
+        for(int first=0;first<params_.scan.NAng;first+=chunk){
+            const int count=std::min(chunk,params_.scan.NAng-first);auto p=params_;p.scan.NAng=count;
+            p.scan.angles.assign(params_.scan.angles.begin()+first,params_.scan.angles.begin()+first+count);
+            const size_t elements=size_t(count)*pixels;
+            const float* measured=YK::detail::contiguousProjection(input,first,count,pixels,stream_);
+            if(!measured)return std::numeric_limits<float>::quiet_NaN();
+            const float* values=measured;
+            if(volume){
+                YK_CUDA_CHECK(cudaMemsetAsync(d_projection_model_,0,elements*sizeof(float),stream_));
+                if(!fp_.run(volume,p,d_projection_model_,stream_))return std::numeric_limits<float>::quiet_NaN();
+                residual_launch(measured,d_projection_model_,d_projection_model_,elements,stream_);values=d_projection_model_.data();
+            }
+            float norm2=0;dot_launch(values,values,elements,&norm2,stream_);sum+=norm2;
+        }
+        return float(std::sqrt(sum));
     }
 
     float vectorNorm_(const float* vector)
@@ -331,17 +365,26 @@ private:
         return dot / std::max(norm_a * norm_b, 1e-6f);
     }
 
-    bool runDataOuter_(const float* d_projection, float* d_volume, float beta)
+    bool runDataOuter_(const float* d_projection, float* d_volume, float beta, int outer)
     {
-        YK::detail::SuppressExecutionProgress nested;
+        // Translate backend subset completion into whole-run progress. SART may
+        // spend minutes in one sweep, so reporting only outer loops hides work.
+        const auto parent=YK::detail::execution_progress;
+        struct Mapping {YK::detail::ProgressContext parent;int offset,total;};
+        Mapping mapping{parent,outer*actual_subset_count_,config_.iterations*actual_subset_count_};
+        const auto callback=+[](void* data,int completed,int){
+            const auto& m=*static_cast<Mapping*>(data);
+            m.parent.callback(m.parent.user,m.offset+completed,m.total);
+        };
+        YK::detail::ScopedExecutionProgress mapped(parent.callback&&!parent.suppressed?callback:nullptr,&mapping);
         data_backend_.setRelaxation(beta);
         if (config_.relaxation_mode != ETigreRelaxationMode::Nesterov)
             return data_backend_.iterate(d_projection, d_volume, params_, stream_,
                 static_cast<unsigned int>(actual_subset_count_));
 
         for (int subset = 0; subset < actual_subset_count_; ++subset) {
-            if (!data_backend_.iterate(d_projection, d_volume, params_, stream_, 1))
-                return false;
+            {YK::detail::SuppressExecutionProgress nested;
+                if (!data_backend_.iterate(d_projection, d_volume, params_, stream_, 1))return false;}
             YK_CUDA_CHECK(cudaMemcpyAsync(d_nesterov_candidate_, d_volume,
                 volume_count_ * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
             scale_launch(d_volume, 1.f - nesterov_gamma_, volume_count_, stream_);
@@ -351,6 +394,7 @@ private:
                 volume_count_ * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
             if (config_.non_negative)
                 clamp_min_launch(d_volume, volume_count_, 0.f, stream_);
+            if(!YK::detail::reportExecutionProgress(subset+1,actual_subset_count_,stream_))return false;
         }
         return true;
     }
@@ -361,10 +405,9 @@ private:
         float previous_residual = std::numeric_limits<float>::infinity();
         for (int outer = 0; outer < config_.iterations; ++outer) {
             if (!runDataOuter_(d_projection, d_volume,
-                    config_.relaxation_mode == ETigreRelaxationMode::Nesterov ? 1.f : beta))
+                    config_.relaxation_mode == ETigreRelaxationMode::Nesterov ? 1.f : beta,outer))
                 return false;
             statistics_.completed_iterations = outer + 1;
-            if(!YK::detail::reportExecutionProgress(outer+1,config_.iterations,stream_))return false;
             statistics_.subset_updates = data_backend_.totalIterations();
             if (config_.relaxation_mode == ETigreRelaxationMode::Nesterov) {
                 const float residual = projectionResidualNorm_(d_projection, d_volume);
@@ -389,6 +432,7 @@ private:
 
     bool runPocs_(const float* d_original_projection, float* d_volume)
     {
+        const float* working=d_working_projection_?d_working_projection_.data():d_original_projection;
         float beta = config_.lambda;
         float dtvg = 0.f;
         float first_projection_distance = 1.f;
@@ -399,17 +443,17 @@ private:
                 volume_count_ * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
 
             const float projection_distance_before = isPcsd_(config_.algorithm)
-                ? projectionResidualNorm_(d_working_projection_, d_volume) : 0.f;
+                ? projectionResidualNorm_(working, d_volume) : 0.f;
             // TIGRE PCSD/AwPCSD 的公开实现使用 d_p^2 > maxl2err。
             // 虽然参数名容易让人理解为直接比较 L2 范数，这里仍保留其
             // 历史数值语义，以便同一组参数可与 TIGRE 对照。
             const bool execute_data = !isPcsd_(config_.algorithm) ||
                 projection_distance_before * projection_distance_before > maximum_l2_error_;
-            if (execute_data && !runDataOuter_(d_working_projection_, d_volume, beta))
+            if (execute_data && !runDataOuter_(working, d_volume, beta,outer))
                 return false;
 
-            statistics_.projection_l2 = projectionResidualNorm_(
-                d_working_projection_, d_volume);
+            statistics_.projection_l2 = projectionResidualNorm_(working,d_volume);
+            if(!std::isfinite(statistics_.projection_l2))return false;
             subtract_launch(d_data_update_, d_volume, d_outer_start_,
                 volume_count_, stream_);
             const float dp = vectorNorm_(d_data_update_);
@@ -420,7 +464,7 @@ private:
                     projection_distance_before / std::max(first_projection_distance, 1e-6f);
                 if (outer == 0)
                     first_projection_distance = projectionResidualNorm_(
-                        d_working_projection_, d_volume);
+                        working, d_volume);
             }
             else {
                 if (outer == 0) dtvg = config_.alpha * dp;
@@ -448,7 +492,7 @@ private:
             beta *= config_.lambda_reduction;
 
             statistics_.completed_iterations = outer + 1;
-            if(!YK::detail::reportExecutionProgress(outer+1,config_.iterations,stream_))return false;
+            if(!YK::detail::reportExecutionProgress((outer+1)*actual_subset_count_,config_.iterations*actual_subset_count_,stream_))return false;
             statistics_.subset_updates = data_backend_.totalIterations();
             statistics_.data_update_l2 = dp;
             statistics_.regularization_update_l2 = dg;
@@ -527,6 +571,7 @@ private:
     int device_id_ = 0;
     size_t volume_count_ = 0;
     size_t projection_count_ = 0;
+    int norm_chunk_=0;
     int requested_subset_count_ = 0;
     int actual_subset_count_ = 0;
     float maximum_l2_error_ = -1.f;

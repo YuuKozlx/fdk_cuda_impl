@@ -3,6 +3,10 @@
 #include "common/YkExecutionProgress.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "common/YkDeviceWorkspace.hpp"
+#include "Reconstruction/Iterative/Common/YkIterationWeightCache.hpp"
+#include "Reconstruction/Iterative/Common/YkReconstructionMemoryBudget.hpp"
+#include "Reconstruction/Iterative/Common/YkProjectionInput.hpp"
+#include "Reconstruction/Iterative/Flat/YkSirtBatchBackend.hpp"
 #include "Reconstruction/Iterative/Common/kernels/YkIterLaunch.cuh"
 #include "global/YkGlobals.h"
 #include "global/YkMacro.hpp"
@@ -104,6 +108,11 @@ namespace YK {
                 YK_LOGE("[AlgebraicTigreBackend] geometry size mismatch");
                 return false;
             }
+            if(cfg.n_subset==1){
+                release();sirt_mode_=true;params_=params;cfg_=cfg;n_block_=1;
+                is_initialized_=sirt_.init(params,cfg,geometry,stream,deviceId,true);return is_initialized_;
+            }
+            sirt_mode_=false;
             params_ = params;
             cfg_ = cfg;
             iteration_ = 0;
@@ -139,6 +148,10 @@ namespace YK {
 
             const size_t max_sino = max_K * view_n;
 
+            // Include the lazy FP volume and BP projection textures, not just
+            // the linear workspaces. Caller input/output buffers are separate.
+            if(!detail::fitsReconstructionBudget((4*max_sino+2*vol_n+slice_n)*sizeof(float)+size_t(32)*1024*1024,"TIGRE block workspaces"))return false;
+
             // ── 常驻缓冲(块连续 → 无需 d_sino_meas_sub_)────────────────
             d_sino_fwd_.allocate(max_sino, deviceId);
             d_residual_.allocate(max_sino, deviceId);
@@ -160,72 +173,15 @@ namespace YK {
             params_lo_.volume.voxelZ_mm = std::max(sDetZ, sVolZ) / 2.f;
             fp_lo_.init(params_lo_, geometry, cfg.fp_task, deviceId, stream);
 
-            // ── W:全角度一次预计算 (= TIGRE set_w) ─────────────────────
-            // 粗网格 2x2x2;x/y 扩 1.1;z = max(探测器高, 体积高),不扩
-            {
-                const float sVolX = params.volume.Nx * params.volume.voxelX_mm;
-                const float sVolY = params.volume.Ny * params.volume.voxelY_mm;
-                const float sVolZ = params.volume.Nz * params.volume.voxelZ_mm;
-                const float sDetZ = params.scan.Nv * params.scan.dv_mm;
-
-                SReconstructionParams ps_w = params_lo_;        // 全角度列表
-
-                const size_t w_n = (size_t)Na * view_n;
-                d_row_w_full_.allocate(w_n, deviceId);
-                YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_full_, 0,
-                    w_n * sizeof(float), stream));
-
-                DeviceWorkspaceF32 d_ones8;
-                d_ones8.allocate(8, deviceId);
-                YK::Iter::fill_ones_launch(d_ones8, 8, stream);
-
-                fp_lo_.run(d_ones8, ps_w, d_row_w_full_, stream);
-                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
-
-                // W[W <= min(真实体素)/2] = inf; W = 1/W (inf → 0)
-                const float real_min_vox = std::min({
-                    params.volume.voxelX_mm, params.volume.voxelY_mm, params.volume.voxelZ_mm });
-                YK::Iter::threshold_inf_launch(
-                    d_row_w_full_, w_n, real_min_vox / 2.f, stream);
-                YK::Iter::rcp_launch(d_row_w_full_, w_n, stream);
-                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
-            }
-
-            // ── V:每块预计算 2D 图 (= TIGRE set_v) ─────────────────────
-            // 体积三轴统一缩 max(sx,sy)/hypot(sx,sy)*0.9,BP 全 1,
-            // 沿 Z 取平均 → 2D,零值 → inf
-            d_col_w_all_.resize(n_block_);
-            {
-                const float sVolX = params.volume.Nx * params.volume.voxelX_mm;
-                const float sVolY = params.volume.Ny * params.volume.voxelY_mm;
-                const float norm_xy = std::sqrt(sVolX * sVolX + sVolY * sVolY);
-                const float scale = (norm_xy > 1e-8f)
-                    ? std::max(sVolX, sVolY) / norm_xy * 0.9f
-                    : 0.9f;
-
-                for (int b = 0; b < n_block_; ++b) {
-                    const int    K = block_size_[b];
-                    const size_t sino_n = (size_t)K * view_n;
-
-                    SReconstructionParams ps_c = block_params_[b];
-                    ps_c.volume.voxelX_mm *= scale;
-                    ps_c.volume.voxelY_mm *= scale;
-                    ps_c.volume.voxelZ_mm *= scale;
-
-                    YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
-                    bp_.run(d_residual_, ps_c, d_bp_, stream, /*clear_vol=*/true);
-
-                    d_col_w_all_[b].allocate(slice_n, deviceId);
-                    YK::Iter::mean_z_to_2d_launch(
-                        d_bp_, d_col_w_all_[b],
-                        params.volume.Nx, params.volume.Ny, params.volume.Nz, stream);
-
-                    // V[V == 0] = inf
-                    YK::Iter::threshold_inf_launch(
-                        d_col_w_all_[b], slice_n, 0.f, stream);
-                }
-                YK_CUDA_CHECK(cudaStreamSynchronize(stream));
-            }
+            // Fixed one-block workspaces, shared by every view/subset. Column
+            // weights are small 2D maps; give them cache priority over rows.
+            d_row_w_.allocate(max_sino, deviceId);
+            d_col_w_.allocate(slice_n, deviceId);
+            d_ones8_.allocate(8, deviceId);
+            YK::Iter::fill_ones_launch(d_ones8_, 8, stream);
+            std::vector<size_t> weight_counts(n_block_,slice_n);
+            for(int K:block_size_)weight_counts.push_back(size_t(K)*view_n);
+            weights_.configure(weight_counts,deviceId,stream);
 
             is_initialized_ = true;
             YK_LOGI("[OSSART-TIGRE] init OK: {} angles, {} blocks (blocksize={})",
@@ -242,9 +198,11 @@ namespace YK {
             unsigned int       iterations)
         {
             if (!is_initialized_) return false;
+            if(sirt_mode_)return sirt_.iterate(d_sino_meas,d_vol,iterations);
 
             const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
             const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
+            const size_t slice_n = size_t(params.volume.Nx)*params.volume.Ny;
 
             for (unsigned int iter = 0; iter < iterations; ++iter)
             {
@@ -257,8 +215,28 @@ namespace YK {
                 const SReconstructionParams& ps = block_params_[b];
 
                 // 连续切片:测量与 W 直接指针偏移,零拷贝
-                const float* d_meas_blk = d_sino_meas + (size_t)start * view_n;
-                const float* d_w_blk = d_row_w_full_.data() + (size_t)start * view_n;
+                const float* d_meas_blk = detail::contiguousProjection(d_sino_meas,start,K,view_n,stream);
+                if(!d_meas_blk)return false;
+                const float* d_w_blk=weights_.get(size_t(n_block_+b),d_row_w_,[&](float* out){
+                    auto row_params=params_lo_;row_params.scan=ps.scan;
+                    YK_CUDA_CHECK(cudaMemsetAsync(out,0,sino_n*sizeof(float),stream));
+                    if(!fp_lo_.run(d_ones8_,row_params,out,stream))return false;
+                    const float min_voxel=std::min({params.volume.voxelX_mm,params.volume.voxelY_mm,params.volume.voxelZ_mm});
+                    YK::Iter::threshold_inf_launch(out,sino_n,min_voxel/2.f,stream);
+                    YK::Iter::rcp_launch(out,sino_n,stream);return true;
+                });
+                const float* d_v_blk=weights_.get(size_t(b),d_col_w_,[&](float* out){
+                    auto column_params=ps;
+                    const float sx=params.volume.Nx*params.volume.voxelX_mm,sy=params.volume.Ny*params.volume.voxelY_mm;
+                    const float norm=std::sqrt(sx*sx+sy*sy);
+                    const float scale=norm>1e-8f?std::max(sx,sy)/norm*.9f:.9f;
+                    column_params.volume.voxelX_mm*=scale;column_params.volume.voxelY_mm*=scale;column_params.volume.voxelZ_mm*=scale;
+                    YK::Iter::fill_ones_launch(d_residual_,sino_n,stream);
+                    if(!bp_.run(d_residual_,column_params,d_bp_,stream,true))return false;
+                    YK::Iter::mean_z_to_2d_launch(d_bp_,out,params.volume.Nx,params.volume.Ny,params.volume.Nz,stream);
+                    YK::Iter::threshold_inf_launch(out,slice_n,0.f,stream);return true;
+                });
+                if(!d_w_blk||!d_v_blk)return false;
 
                 // Step1: A_b x
                 YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd_, 0,
@@ -278,7 +256,7 @@ namespace YK {
 
                 // Step4: x += lambda * bp / (V_b + eps)  (V 为 2D,沿 Z 广播)
                 YK::Iter::update_v2d_launch(
-                    d_vol, d_bp_, d_col_w_all_[b],
+                    d_vol, d_bp_, d_v_blk,
                     lambda_cur_, cfg_.eps,
                     params.volume.Nx, params.volume.Ny, params.volume.Nz, stream);
 
@@ -288,6 +266,8 @@ namespace YK {
                 if (cfg_.use_max)
                     YK::Iter::clamp_max_launch(d_vol, vol_n, cfg_.max_constraint, stream);
 
+                weights_.planGpu();
+                weights_.retain(size_t(n_block_+b),d_w_blk);weights_.retain(size_t(b),d_v_blk);
                 iteration_++;
                 if(!YK::detail::reportExecutionProgress(int(iter+1),int(iterations),stream))return false;
 
@@ -313,17 +293,18 @@ namespace YK {
                 cfg_.n_iter * n_block_);
         }
 
-        unsigned int totalIterations() const { return iteration_; }
+        unsigned int totalIterations() const { return sirt_mode_?sirt_.totalIterations():iteration_; }
         int actualSubsetCount() const { return n_block_; }
-        void setRelaxation(float value) { lambda_cur_ = value; }
+        void setRelaxation(float value) { lambda_cur_ = value;if(sirt_mode_)sirt_.setRelaxation(value); }
 
-        void reset() { iteration_ = 0; lambda_cur_ = cfg_.lambda; }
+        void reset() { iteration_ = 0; lambda_cur_ = cfg_.lambda;if(sirt_mode_)sirt_.reset(); }
 
         void release()
         {
+            sirt_.release();sirt_mode_=false;
+            weights_.clear();
             d_sino_fwd_.reset(); d_residual_.reset(); d_bp_.reset();
-            d_row_w_full_.reset();
-            d_col_w_all_.clear();
+            d_row_w_.reset();d_col_w_.reset();d_ones8_.reset();
 
             block_start_.clear();
             block_size_.clear();
@@ -340,6 +321,7 @@ namespace YK {
         ~AlgebraicTigreBackend() { release(); }
 
     private:
+        SirtBatchBackend sirt_;bool sirt_mode_=false;
         bool         is_initialized_ = false;
         unsigned int iteration_ = 0;
         float        lambda_cur_ = 1.0f;
@@ -359,9 +341,8 @@ namespace YK {
         DeviceWorkspaceF32 d_sino_fwd_;
         DeviceWorkspaceF32 d_residual_;
         DeviceWorkspaceF32 d_bp_;
-        DeviceWorkspaceF32 d_row_w_full_;   // 全角度 W,块用连续切片
-
-        std::vector<DeviceWorkspaceF32> d_col_w_all_; // 每块一张 2D V 图 (iVX*iVY)
+        DeviceWorkspaceF32 d_row_w_,d_col_w_,d_ones8_;
+        detail::IterationWeightCache weights_;
     };
 
 
@@ -830,13 +811,14 @@ namespace YK {
                     }
                 }
 
-                // 收集子集正弦图
-                for (int i = 0; i < K; ++i)
-                    YK_CUDA_CHECK(cudaMemcpyAsync(
-                        d_sino_meas_sub_.data() + i * view_n,
-                        d_sino_meas + idx[i] * view_n,
-                        view_n * sizeof(float),
-                        cudaMemcpyDeviceToDevice, stream));
+                const float* measured=d_sino_meas_sub_.data();
+                if(detail::projection_input){
+                    measured=detail::projection_input->fetch(idx,stream);if(!measured)return false;
+                }else{
+                    for(int i=0;i<K;++i)
+                        YK_CUDA_CHECK(cudaMemcpyAsync(d_sino_meas_sub_.data()+i*view_n,
+                            d_sino_meas+idx[i]*view_n,view_n*sizeof(float),cudaMemcpyDeviceToDevice,stream));
+                }
 
                 // 正投影
                 YK_CUDA_CHECK(cudaMemsetAsync(d_sino_fwd_, 0, sino_n * sizeof(float), stream));
@@ -844,7 +826,7 @@ namespace YK {
 
                 // 残差
                 YK::Iter::residual_launch(
-                    d_sino_meas_sub_, d_sino_fwd_, d_residual_, sino_n, stream);
+                    measured, d_sino_fwd_, d_residual_, sino_n, stream);
 
                 // R行归一化
                 YK::Iter::divide_launch(d_residual_, row, cfg_.eps, sino_n, stream);
