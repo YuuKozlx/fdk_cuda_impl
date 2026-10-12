@@ -1,5 +1,7 @@
 #pragma once
+#include "FloatVolume.hpp"
 #include <array>
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -51,6 +53,16 @@ public:
     LiveView& operator=(const LiveView&) = delete;
     void setVolume(const LabelVolume&);
     void invalidateResults();
+    void setGeometryPreview(const FrameGeometry&);
+    void setVolumeOpacityScale(double);
+    void setReconstruction(FloatVolume);
+    bool hasReconstruction() const;
+    void setReconstructionCtReference(double mu_water_mm_inv);
+    void showReconstruction(bool);
+    void setImageDrawer(bool open);
+    void setReconstructionSlices(const std::array<int,3>&);
+    void setReconstructionWindow(double low,double high);
+    std::array<double,2> reconstructionWindow() const;
     void setTrajectory(const std::vector<Point>& sources, const std::vector<Point>& detector_centers);
     void setParameters(const std::vector<EditableParameter>&);
     std::vector<double> parameterValues() const;
@@ -70,6 +82,10 @@ public:
     int displayedFrame() const;
     std::size_t cachedFrameCount() const;
     void finish();
+    // Optional native ImGui overlay, rendered in VTK's current OpenGL context.
+    bool installGui(std::function<void(int, int, bool, const std::string&)>);
+    void pollGui();
+    void saveSnapshot();
 
 private:
     struct Impl;

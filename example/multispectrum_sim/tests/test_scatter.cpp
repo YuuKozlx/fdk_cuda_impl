@@ -1,3 +1,4 @@
+#include "../src/primary/ScatterEdgeWindow.hpp"
 #include "CudaFasksScatter.hpp"
 #include "FasksRuntimeModel.hpp"
 #include <cuda_runtime.h>
@@ -47,7 +48,7 @@ nlohmann::json makeModel() {
         {"detector_response", {{"model", "air-pencil-beam-scatter-per-primary"},
                                 {"scatter_kernel_per_primary", {{0.0}}}}},
         {"edge_amplitude_window", {{"model", "paper-linear-distance-to-boundary"},
-                                    {"boundary_scale", 1.0},
+                                    {"boundary_scale", 0.4},
                                     {"ramp_mm", 80.0}}},
         {"water_equivalent_thickness", {{"interpolation", "pchip"},
                                           {"log_attenuation_nodes", {0.0, 0.1, 0.5, 1.7}},
@@ -229,8 +230,20 @@ int main() {
                 require(std::abs(device_result[i] - (reference[i] - device_input[i])) < 2e-5,
                         "device scatter output differs from host output");
         }
-        cudaFree(device_primary); cudaFree(device_air); cudaFree(device_scatter);
 
+
+        unsigned char* device_mask=nullptr;
+        require(cudaMalloc(&device_mask,pixels)==cudaSuccess,"allocate resident mask");
+        // The CPU distance transform must match a direct nearest-background search.
+        for(int scenario=0;scenario<12;++scenario){const int ew=9,eh=7;std::vector<unsigned char> mask(ew*eh);
+            for(int i=0;i<ew*eh;++i)mask[i]=((i*37+scenario*17)%11)>2;
+            const auto window=scatter_detail::edgeWindow(mask,ew,eh,.7,1.3,model);
+            for(int y=0;y<eh;++y)for(int x=0;x<ew;++x){int p=y*ew+x;double distance=std::numeric_limits<double>::infinity();
+                for(int yy=0;yy<eh;++yy)for(int xx=0;xx<ew;++xx)if(!mask[yy*ew+xx])distance=std::min(distance,.7*.7*(x-xx)*(x-xx)+1.3*1.3*(y-yy)*(y-yy));
+                float expected=mask[p]?float(model.edgeBoundaryScale()+(1-model.edgeBoundaryScale())*std::min(distance/model.edgeRampMm(),1.)):0;
+                require(std::abs(window[p]-expected)<1e-7,"CPU edge-window distance envelope is incorrect");
+            }
+        }
         // Compare resident fixed iterations with the former host update,
         // including gamma, reduced bases, floor clipping and repeated frames.
         CudaFasksScatter segmented_scatter(width, height, du, dv, model, 3);
@@ -259,6 +272,17 @@ int main() {
                 // Exercise input/output aliasing as well as workspace reuse.
                 auto actual = measurement;
                 solver->correctFixed(actual, flat, mask, iterations, damping, scale, actual);
+                require(cudaMemcpy(device_primary,measurement.data(),pixels*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload fixed device signal");
+                require(cudaMemcpy(device_air,flat.data(),pixels*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload fixed device air");
+                solver->correctFixedDevice(device_primary,device_air,mask,iterations,damping,scale,device_primary);
+                require(cudaMemcpy(device_result.data(),device_primary,pixels*sizeof(float),cudaMemcpyDeviceToHost)==cudaSuccess,"download fixed device result");
+                for(size_t p=0;p<pixels;++p)require(std::abs(device_result[p]-actual[p])<=2e-5f*flat[p],"borrowed device fixed correction disagrees with host interface");
+                require(cudaMemcpy(device_primary,measurement.data(),pixels*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"reset device fixed signal");
+                require(cudaMemcpy(device_mask,mask.data(),pixels,cudaMemcpyHostToDevice)==cudaSuccess,"upload fixed mask");
+                solver->correctFixedDeviceMask(device_primary,device_air,device_mask,iterations,damping,scale,device_primary);
+                require(cudaMemcpy(device_result.data(),device_primary,pixels*sizeof(float),cudaMemcpyDeviceToHost)==cudaSuccess,"download fixed device mask result");
+                for(size_t p=0;p<pixels;++p)require(std::abs(device_result[p]-actual[p])<=2e-5f*flat[p],"GPU-mask fixed correction differs from CPU-mask reference");
+
                 for (size_t p = 0; p < pixels; ++p) {
                     require(std::isfinite(actual[p]) && actual[p] >= flat[p]*1.0e-8f,
                             "fixed GPU correction violates positive floor");
@@ -276,6 +300,23 @@ int main() {
         require(guide_output[center] > 7 && guide_output[center] < 100,
                 "guide does not smooth an impulse");
         require(guide_input[center] == 100, "guide changes original data");
+        require(cudaMemcpy(device_primary,guide_input.data(),pixels*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload guide device input");
+        scatter.smoothGuideDevice(device_primary,2.0,1.5,device_scatter);
+        require(cudaMemcpy(device_result.data(),device_scatter,pixels*sizeof(float),cudaMemcpyDeviceToHost)==cudaSuccess,"download guide device output");
+        for(size_t p=0;p<pixels;++p)require(std::abs(device_result[p]-guide_output[p])<2e-6f,"borrowed device guide disagrees with host interface");
+        require(cudaMemcpy(device_primary,device_input.data(),pixels*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload resident test primary");
+        require(cudaMemcpy(device_air,air.data(),pixels*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload resident test air");
+        for(auto* projector:{&scatter,&gamma_scatter,&segmented_scatter})for(int mode=0;mode<3;++mode){
+            std::vector<unsigned char> mask(pixels,mode==0?0:1);if(mode==2)for(size_t p=0;p<pixels;++p)mask[p]=(p%7!=0);
+            std::vector<float> expected;projector->predict(device_input,air,mask,expected);
+            require(cudaMemcpy(device_mask,mask.data(),pixels,cudaMemcpyHostToDevice)==cudaSuccess,"upload resident mask");
+            projector->predictDeviceMask(device_primary,device_air,device_mask,device_scatter);
+            require(cudaMemcpy(device_result.data(),device_scatter,pixels*sizeof(float),cudaMemcpyDeviceToHost)==cudaSuccess,"download resident scatter");
+            for(size_t p=0;p<pixels;++p)require(std::abs(device_result[p]-expected[p])<=2e-5f*std::max(1.f,std::abs(expected[p])),"GPU EDT scatter differs from CPU-mask path");
+        }
+        cudaFree(device_mask);
+        cudaFree(device_primary);cudaFree(device_air);cudaFree(device_scatter);
+
         try {
             std::vector<float> result;
             scatter.correctFixed(air, air, object_mask, 0, 0.7, 1.0, result);

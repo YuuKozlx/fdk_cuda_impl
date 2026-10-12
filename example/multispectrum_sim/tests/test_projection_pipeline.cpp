@@ -1,12 +1,14 @@
 #include "SpectralProjectionPipeline.hpp"
 #include "../src/primary/CudaProjectionBackend.hpp"
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 
 using namespace yk::spectral;
+void testDeviceSignalStages();
 namespace {
 void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
@@ -169,6 +171,43 @@ int main(int argc, char** argv) {
         require(bool(logsFile)&&bool(airFile),"GPU per-view output incomplete");
         for(float value:logs)require(std::abs(value)<1e-6,"GPU vacuum nonzero attenuation");
         require(std::abs(airFrames[0]-airFrames[pixels])>1.f,"GPU fixture did not vary air fluence");
+        // Batch boundaries must not change geometry, ray sampling, quantum RNG or afterglow.
+        gpuConfig.projection.quantum_noise.enabled=true;
+        gpuConfig.projection.detector_postprocess.afterglow.enabled=true;
+        gpuConfig.projection.detector_postprocess.afterglow.p=.2;
+        gpuConfig.projection.detector_postprocess.afterglow.weights={1};
+        gpuConfig.projection.detector_postprocess.afterglow.time_constants_ms={2};
+        const std::vector<std::uint8_t> phantom(512,1);
+        auto readBytes=[](const std::filesystem::path& path){std::ifstream input(path,std::ios::binary);return std::vector<char>(std::istreambuf_iterator<char>(input),{});};
+        gpuConfig.projection.batching.views=1;
+        require(gpu.run(gpuConfig,phantom,gpuModel,directory/"single.raw",error),error.c_str());
+        const auto single=readBytes(directory/"single.raw");
+        const auto singleAir=readBytes(gpuConfig.projection.air_output_file);
+        gpuConfig.projection.batching.views=2;
+        require(gpu.run(gpuConfig,phantom,gpuModel,directory/"batch.raw",error),error.c_str());
+        require(readBytes(directory/"batch.raw")==single,"batched noisy/afterglow projection differs from single-frame calculation");
+        require(readBytes(gpuConfig.projection.air_output_file)==singleAir,"batch boundaries changed afterglow air reference");
+        primary_detail::CudaProjectionBackend backend;
+        gpuConfig.projection.batching.views=3;backend.prepare(gpuConfig,phantom,gpuModel);
+        require(backend.batchCapacity()==3,"CUDA backend did not reserve requested small batch");
+        std::vector<ProjectionFrame> batched;backend.projectBatch(0,3,batched);backend.ensureLocation(batched,ProjectionMemoryLocation::Host);
+        for(int view=0;view<3;++view){ProjectionFrame frame;frame.resize(16,16);backend.project(view,frame);
+            require(frame.expected_primary_energy==batched[view].expected_primary_energy&&
+                frame.sampled_primary_energy==batched[view].sampled_primary_energy&&
+                frame.air_energy==batched[view].air_energy&&frame.object_mask==batched[view].object_mask,
+                "CUDA batch raw outputs differ from single-frame outputs");}
+        bool invalid=false;try{backend.projectBatch(2,2,batched);}catch(const std::exception&){invalid=true;}
+        require(invalid,"CUDA batch accepted views beyond trajectory");backend.reset();
+        // A CPU extension is an explicit batch boundary, then GPU log normalization resumes.
+        gpuConfig.projection.energy_output_file=directory/"plugin-energy.raw";
+        require(gpu.run(gpuConfig,phantom,gpuModel,directory/"plugin-base.raw",error),error.c_str());
+        auto readFloats=[&](const auto& path){auto bytes=readBytes(path);std::vector<float> values(bytes.size()/sizeof(float));std::memcpy(values.data(),bytes.data(),bytes.size());return values;};
+        const auto baseEnergy=readFloats(gpuConfig.projection.energy_output_file),baseAir=readFloats(gpuConfig.projection.air_output_file);
+        State plugin;gpu.addStage(std::make_unique<ArithmeticStage>(ProjectionStagePhase::Readout,false,plugin));
+        require(gpu.run(gpuConfig,phantom,gpuModel,directory/"plugin.raw",error),error.c_str());
+        const auto pluginEnergy=readFloats(gpuConfig.projection.energy_output_file),pluginAir=readFloats(gpuConfig.projection.air_output_file),pluginLog=readFloats(directory/"plugin.raw");
+        for(size_t p=0;p<baseEnergy.size();++p){require(pluginEnergy[p]==baseEnergy[p]+2&&pluginAir[p]==baseAir[p]+2,"CPU plugin modifications did not reach the resumed GPU pipeline");
+            const float expected=-std::log(std::max(pluginEnergy[p]/std::max(pluginAir[p],1e-30f),1e-30f));require(std::abs(pluginLog[p]-expected)<1e-6,"CUDA final normalization used stale CPU plugin data");}
 #ifndef YK_SPECTRAL_VTK
         gpuConfig.visualization.enabled=true;
         require(!gpu.run(gpuConfig,std::vector<std::uint8_t>(512,0),gpuModel,directory/"unavailable-display.raw",error),
@@ -177,6 +216,7 @@ int main(int argc, char** argv) {
         gpuConfig.visualization.enabled=false;
 #endif
 
+        testDeviceSignalStages();
         State counts;
         SpectralProjectionPipeline counting(
             std::make_unique<Backend>(counts, ProjectionSignalDomain::PhotonCounts));

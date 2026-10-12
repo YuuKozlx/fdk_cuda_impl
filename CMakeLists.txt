@@ -47,6 +47,10 @@ option(BUILD_MULTISPECTRUM_SIM "构建独立多能谱 CBCT 仿真示例" ON)
 option(BUILD_MULTISPECTRUM_PLOT_TOOLS "构建基于 Matplot++ 的重建结果分析工具" OFF)
 option(BUILD_VTK_VIEWER "构建独立 VTK 几何与体数据查看器" OFF)
 option(BUILD_VTK_VISUALIZATION "构建多能前投实时 VTK 显示层" OFF)
+option(BUILD_IMGUI_GUI "构建 Windows ImGui/VTK 多能前投界面" OFF)
+if(BUILD_IMGUI_GUI AND NOT BUILD_VTK_VISUALIZATION)
+    message(FATAL_ERROR "BUILD_IMGUI_GUI requires BUILD_VTK_VISUALIZATION=ON")
+endif()
 
 # ============================================================================
 # 工具链和全局默认值

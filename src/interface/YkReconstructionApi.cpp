@@ -1,5 +1,6 @@
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
 #include "interface/YkExecutionBackend.hpp"
+#include "common/YkExecutionProgress.hpp"
 #include "global/YkLog.h"
 
 #include <cmath>
@@ -201,6 +202,9 @@ public:
             return fail_(EApiErrorCode::StreamingStateError, "Session 尚未初始化");
         if (!hasBytes(request.struct_size, offsetof(SExecutionRequest, iteration_count) + sizeof(request.iteration_count)))
             return fail_(EApiErrorCode::InvalidConfig, "SExecutionRequest 结构体版本过旧或被截断");
+        if(request.struct_size>offsetof(SExecutionRequest,progress_callback) &&
+            request.struct_size<offsetof(SExecutionRequest,progress_user_data)+sizeof(request.progress_user_data))
+            return fail_(EApiErrorCode::InvalidConfig,"SExecutionRequest progress tail is truncated");
         if (request.api_version != 2)
             return fail_(EApiErrorCode::InvalidConfig, "不支持的 SExecutionRequest api_version");
         if (!request.projection.data || !request.volume.data ||
@@ -236,6 +240,8 @@ public:
         backend_request.volume = request.volume;
         backend_request.clear_output = request.clear_output;
         backend_request.iteration_count = request.iteration_count;
+        const bool has_progress=hasBytes(request.struct_size,offsetof(SExecutionRequest,progress_user_data)+sizeof(request.progress_user_data));
+        detail::ScopedExecutionProgress progress(has_progress?request.progress_callback:nullptr,has_progress?request.progress_user_data:nullptr);
         if (!session_->execute(backend_request))
             return fail_(EApiErrorCode::CudaError, "后端执行失败，请检查 CUDA 状态和输入尺寸");
         if (streaming_fdk) received_views_ += count;

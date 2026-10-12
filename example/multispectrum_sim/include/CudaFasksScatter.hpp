@@ -29,6 +29,8 @@ public:
 
     // Device buffers use the current CUDA device and default stream. The mask
     // stays on the host and its edge window is reused while its contents match.
+    void prepareDeviceMask();
+    void predictDeviceMask(const float* primary,const float* air,const unsigned char* mask,float* scatter);
     void predictDevice(const float* primary, const float* air_primary,
                        const std::vector<unsigned char>& object_mask, float* scatter);
 
@@ -39,6 +41,15 @@ public:
                       const std::vector<unsigned char>& object_mask,
                       int iterations, double damping, double scatter_scale,
                       std::vector<float>& primary);
+
+    // Borrowed device images; caller owns storage on the current device/default stream.
+    void prepareCorrectionWorkspace(bool guidance);
+    void correctFixedDeviceMask(const float* measured,const float* air,const unsigned char* mask,
+        int iterations,double damping,double scale,float* output);
+    void correctFixedDevice(const float* measured, const float* air,
+        const std::vector<unsigned char>& mask, int iterations, double damping,
+        double scale, float* output);
+    void smoothGuideDevice(const float* input, double su, double sv, float* output);
 
     // Gaussian guidance in the energy domain; normalized, nearest boundary.
     void smoothGuide(const std::vector<float>& input, double sigma_u_pixels,

@@ -11,14 +11,13 @@
 namespace yk::spectral {
 using ProjectionViewGeometry = yk::visualization::FrameGeometry;
 
-// Architecture:
-//   backend.prepare/project -> ordered signal stages -> domain-specific sink
-// The backend owns CUDA resources; stages own temporal/random state; the sink
-// owns normalization and file I/O. Pipeline resets all three after each run.
-// Extensions are registered in C++, not reordered through TOML. Stages in the
-// same physical phase execute in registration order after the built-in stage.
-// Current execution uses host frames at the backend boundary. Device stages
-// need a device-frame contract before they can be registered here.
+// Backend supplies borrowed Host/Device batch frames. Stages declare location;
+// pipeline inserts whole-batch transfers only at actual CPU/Device boundaries.
+// Built-ins run on CUDA for device backends, CPU for host backends. Extensions
+// register with addStage(), ordered by physical phase and registration order.
+// Stages execute over the batch in view order; temporal state persists across
+// batches and is reset after each run. Device pointers belong to the backend,
+// use the current device/default stream, and must not be retained across batches.
 // A photon-counting implementation supplies a count backend, count-domain
 // stages (threshold response, dead time/pile-up), and a count output sink.
 
@@ -41,6 +40,10 @@ struct PhotonCountFrame {
     std::vector<float> reference_channel_counts;
 };
 
+struct DeviceProjectionFrame {
+    float *expected=nullptr,*sampled=nullptr,*air=nullptr,*signal=nullptr,*reference=nullptr,*logarithm=nullptr;
+    unsigned char* mask=nullptr;
+};
 struct ProjectionFrame {
     int view = 0, width = 0, height = 0;
     ProjectionSignalDomain domain = ProjectionSignalDomain::EnergyKeV;
@@ -49,6 +52,9 @@ struct ProjectionFrame {
     std::vector<float> air_energy, signal_energy, reference_energy;
     std::vector<unsigned char> object_mask;
     PhotonCountFrame photon_counts;
+    DeviceProjectionFrame device;
+    std::vector<float> logarithm;
+    bool logarithm_valid=false;
     void resize(int columns, int rows);
 };
 
@@ -61,6 +67,12 @@ public:
     virtual void prepare(const SimulationConfig&, const std::vector<std::uint8_t>&,
         const SpectralTransmissionModel&) = 0;
     virtual void project(int view, ProjectionFrame&) = 0;
+    virtual bool supportsDeviceFrames()const{return false;}
+    virtual void ensureLocation(std::vector<ProjectionFrame>&,ProjectionMemoryLocation);
+    virtual void finalizeBatch(std::vector<ProjectionFrame>&){}
+    virtual void synchronize(){}
+    virtual int batchCapacity() const {return 1;}
+    virtual void projectBatch(int first_view,int count,std::vector<ProjectionFrame>&);
     virtual ProjectionViewGeometry geometryForDisplay(int view) const;
     virtual void sampleScatterNoise(ProjectionFrame&) = 0;
     virtual void reset() noexcept = 0;

@@ -34,6 +34,11 @@ struct SExecutionRequest {
     int view_count = 0;
     bool clear_output = true;
     int iteration_count = 0;
+    // Optional ABI tail. Called synchronously on execute's thread after GPU work.
+    // Counts are outer iterations or subset updates, depending on the algorithm.
+    // Callback must not throw; user data is borrowed only until execute returns.
+    void (*progress_callback)(void*, int completed, int total) = nullptr;
+    void* progress_user_data = nullptr;
 };
 
 // 公共接口的失败原因。算法后端仍可继续扩展，但调用方不必再从一个

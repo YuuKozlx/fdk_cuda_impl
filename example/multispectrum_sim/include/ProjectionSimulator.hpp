@@ -4,11 +4,7 @@
 #include <vector>
 #include <filesystem>
 #include <string>
-namespace yk::spectral {
-bool reconstructWithLibraryFdk(const SimulationConfig&, const std::filesystem::path&,
-                               const std::filesystem::path&, const std::filesystem::path&,
-                               std::string& diagnostic);
-}
+#include "LibraryReconstructor.hpp"
 namespace yk::spectral {
 class ProjectionSimulator {
 public:

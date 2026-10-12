@@ -4,6 +4,7 @@
 namespace yk::spectral {
     struct SimulationConfig {
         int schema_version = 2;
+        std::filesystem::path source_config_file;
         WorkflowConfig workflow;
         VisualizationConfig visualization;
         GeometrySpec geometry;
@@ -19,7 +20,8 @@ namespace yk::spectral {
                 workflow.mode == WorkflowMode::ProjectAndReconstruct;
         }
     };
-    SimulationConfig loadConfig(const std::filesystem::path&);
+    // GUI setup can defer missing runtime files; execution keeps strict validation.
+    SimulationConfig loadConfig(const std::filesystem::path&, bool check_runtime_files = true);
     std::vector<SpectrumPoint> loadSpectrum(const std::filesystem::path&);
     void validateSpectrumSource(const SpectrumSourceConfig&);
     std::vector<SpectrumPoint> loadProjectionSpectrum(const ProjectionConfig&);

@@ -1,4 +1,5 @@
 #pragma once
+#include "common/YkExecutionProgress.hpp"
 
 #include "Reconstruction/Analytic/Circular/Flat/FDK/YkFdkPipeline.hpp"
 #include "Reconstruction/Iterative/Flat/YkAlgebraicBackends.hpp"
@@ -332,6 +333,7 @@ private:
 
     bool runDataOuter_(const float* d_projection, float* d_volume, float beta)
     {
+        YK::detail::SuppressExecutionProgress nested;
         data_backend_.setRelaxation(beta);
         if (config_.relaxation_mode != ETigreRelaxationMode::Nesterov)
             return data_backend_.iterate(d_projection, d_volume, params_, stream_,
@@ -362,6 +364,7 @@ private:
                     config_.relaxation_mode == ETigreRelaxationMode::Nesterov ? 1.f : beta))
                 return false;
             statistics_.completed_iterations = outer + 1;
+            if(!YK::detail::reportExecutionProgress(outer+1,config_.iterations,stream_))return false;
             statistics_.subset_updates = data_backend_.totalIterations();
             if (config_.relaxation_mode == ETigreRelaxationMode::Nesterov) {
                 const float residual = projectionResidualNorm_(d_projection, d_volume);
@@ -445,6 +448,7 @@ private:
             beta *= config_.lambda_reduction;
 
             statistics_.completed_iterations = outer + 1;
+            if(!YK::detail::reportExecutionProgress(outer+1,config_.iterations,stream_))return false;
             statistics_.subset_updates = data_backend_.totalIterations();
             statistics_.data_update_l2 = dp;
             statistics_.regularization_update_l2 = dg;

@@ -1,5 +1,9 @@
+#include "recon/preprocess/DeviceMemoryPool.hpp"
 #include "AdaptiveScatterSolver.hpp"
 #include <cuda_runtime.h>
+#include <thrust/device_ptr.h>
+#include <thrust/sort.h>
+#include <thrust/system/cuda/execution_policy.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -9,12 +13,24 @@
 
 namespace yk::spectral::experimental {
 namespace {
+struct SortAllocator {
+    using value_type=char;
+    char* allocate(std::ptrdiff_t bytes){char* p=nullptr;auto status=preprocess::poolAllocate(&p,size_t(bytes));if(status!=cudaSuccess)throw std::runtime_error(cudaGetErrorString(status));return p;}
+    void deallocate(char* p,size_t){preprocess::poolRelease(p);}
+};
 constexpr int threads = 256;
 void check(cudaError_t error) {
     if (error != cudaSuccess) throw std::runtime_error(
         std::string("adaptive scatter CUDA: ") + cudaGetErrorString(error));
 }
 
+__global__ void transmission(const float* measured,const float* air,const float* primary,
+    const unsigned char* mask,double* output,size_t n,int* invalid) {
+    size_t p=size_t(blockIdx.x)*blockDim.x+threadIdx.x;if(p>=n)return;
+    if(!isfinite(measured[p])||measured[p]<0||!isfinite(air[p])||air[p]<=0||
+        !isfinite(primary[p])||primary[p]<air[p]*1e-8)atomicExch(invalid,1);
+    output[p]=(!mask||mask[p])?double(measured[p])/air[p]:INFINITY;
+}
 __global__ void update(const float* current, float* candidate,
                         const float* measured, const float* air,
                         const float* scatter, size_t count, double scale, double damping) {
@@ -70,33 +86,52 @@ AdaptiveScatterSolver::AdaptiveScatterSolver(size_t pixels) : pixels_(pixels) {
     if (!pixels || pixels > static_cast<size_t>(std::numeric_limits<int>::max()))
         throw std::runtime_error("invalid adaptive scatter image size");
     try {
-        check(cudaMalloc(&current_, pixels * sizeof(float)));
-        check(cudaMalloc(&candidate_, pixels * sizeof(float)));
-        check(cudaMalloc(&measured_, pixels * sizeof(float)));
-        check(cudaMalloc(&air_, pixels * sizeof(float)));
-        check(cudaMalloc(&scatter_, pixels * sizeof(float)));
-        check(cudaMalloc(&accepted_scatter_, pixels * sizeof(float)));
-        check(cudaMalloc(&statistics_, ((pixels + threads - 1) / threads) * 5 * sizeof(double)));
+        check(yk::spectral::preprocess::poolAllocate(&transmissions_,pixels*sizeof(double)));
+        check(yk::spectral::preprocess::poolAllocate(&mask_,pixels));
+        check(yk::spectral::preprocess::poolAllocate(&current_, pixels * sizeof(float)));
+        check(yk::spectral::preprocess::poolAllocate(&candidate_, pixels * sizeof(float)));
+        check(yk::spectral::preprocess::poolAllocate(&measured_, pixels * sizeof(float)));
+        check(yk::spectral::preprocess::poolAllocate(&air_, pixels * sizeof(float)));
+        check(yk::spectral::preprocess::poolAllocate(&scatter_, pixels * sizeof(float)));
+        check(yk::spectral::preprocess::poolAllocate(&accepted_scatter_, pixels * sizeof(float)));
+        check(yk::spectral::preprocess::poolAllocate(&statistics_, ((pixels + threads - 1) / threads) * 5 * sizeof(double)));
     } catch (...) {
-        cudaFree(current_); cudaFree(candidate_); cudaFree(measured_);
-        cudaFree(air_); cudaFree(scatter_); cudaFree(statistics_);
-        cudaFree(accepted_scatter_);
+        yk::spectral::preprocess::poolRelease(transmissions_);yk::spectral::preprocess::poolRelease(mask_);
+        yk::spectral::preprocess::poolRelease(current_); yk::spectral::preprocess::poolRelease(candidate_); yk::spectral::preprocess::poolRelease(measured_);
+        yk::spectral::preprocess::poolRelease(air_); yk::spectral::preprocess::poolRelease(scatter_); yk::spectral::preprocess::poolRelease(statistics_);
+        yk::spectral::preprocess::poolRelease(accepted_scatter_);
         throw;
     }
 }
 
 AdaptiveScatterSolver::~AdaptiveScatterSolver() {
-    cudaFree(current_); cudaFree(candidate_); cudaFree(measured_);
-    cudaFree(air_); cudaFree(scatter_); cudaFree(statistics_);
-    cudaFree(accepted_scatter_);
+    yk::spectral::preprocess::poolRelease(transmissions_);yk::spectral::preprocess::poolRelease(mask_);
+    yk::spectral::preprocess::poolRelease(current_); yk::spectral::preprocess::poolRelease(candidate_); yk::spectral::preprocess::poolRelease(measured_);
+    yk::spectral::preprocess::poolRelease(air_); yk::spectral::preprocess::poolRelease(scatter_); yk::spectral::preprocess::poolRelease(statistics_);
+    yk::spectral::preprocess::poolRelease(accepted_scatter_);
 }
 
-AdaptiveScatterReport AdaptiveScatterSolver::solve(const std::vector<float>& measured,
+AdaptiveScatterReport AdaptiveScatterSolver::solve(const std::vector<float>& m,
+    const std::vector<float>& a,std::vector<float>& p,
+    const ScatterCorrectionConfig::SolverConfig::AdaptiveConfig& o,double scale,
+    const ScatterPredictor& predict,const std::vector<unsigned char>* mask,
+    const DeviceScatterPredictor& device_predict) {
+    return solveImpl(m,a,p,o,scale,predict,mask,device_predict);
+}
+AdaptiveScatterReport AdaptiveScatterSolver::solveDevice(const float* m,const float* a,float* p,
+    const ScatterCorrectionConfig::SolverConfig::AdaptiveConfig& o,double scale,
+    const DeviceScatterPredictor& predict,const std::vector<unsigned char>* mask) {
+    if(!m||!a||!p||!predict)throw std::runtime_error("invalid adaptive scatter device buffers");
+    std::vector<float> empty;
+    return solveImpl(empty,empty,empty,o,scale,{},mask,predict,m,a,p);
+}
+AdaptiveScatterReport AdaptiveScatterSolver::solveImpl(const std::vector<float>& measured,
     const std::vector<float>& air, std::vector<float>& primary,
     const ScatterCorrectionConfig::SolverConfig::AdaptiveConfig& options,
     double scale, const ScatterPredictor& predict, const std::vector<unsigned char>* object_mask,
-    const DeviceScatterPredictor& device_predict) {
-    if (measured.size() != pixels_ || air.size() != pixels_ || primary.size() != pixels_)
+    const DeviceScatterPredictor& device_predict,
+    const float* device_measured,const float* device_air,float* device_primary) {
+    if (!device_primary && (measured.size() != pixels_ || air.size() != pixels_ || primary.size() != pixels_))
         throw std::runtime_error("adaptive scatter image size mismatch");
     if (object_mask && object_mask->size() != pixels_)
         throw std::runtime_error("adaptive scatter mask size mismatch");
@@ -111,22 +146,38 @@ AdaptiveScatterReport AdaptiveScatterSolver::solve(const std::vector<float>& mea
         !std::isfinite(options.min_damping) || options.min_damping <= 0 ||
         options.min_damping > options.initial_damping || !std::isfinite(scale) || scale < 0)
         throw std::runtime_error("invalid adaptive scatter solver options");
-    for (size_t p = 0; p < pixels_; ++p)
+    if (!device_primary) for (size_t p = 0; p < pixels_; ++p)
         if (!std::isfinite(measured[p]) || measured[p] < 0 ||
             !std::isfinite(air[p]) || air[p] <= 0 || !std::isfinite(primary[p]) || primary[p] < air[p] * 1e-8)
             throw std::runtime_error("invalid adaptive scatter input signal");
     const size_t bytes = pixels_ * sizeof(float);
     const int blocks = static_cast<int>((pixels_ + threads - 1) / threads);
-    check(cudaMemcpy(current_, primary.data(), bytes, cudaMemcpyHostToDevice));
-    check(cudaMemcpy(measured_, measured.data(), bytes, cudaMemcpyHostToDevice));
-    check(cudaMemcpy(air_, air.data(), bytes, cudaMemcpyHostToDevice));
-    std::vector<float> prediction, candidate(pixels_);
+    check(cudaMemcpy(current_, device_primary?device_primary:primary.data(), bytes, device_primary?cudaMemcpyDeviceToDevice:cudaMemcpyHostToDevice));
+    check(cudaMemcpy(measured_, device_measured?device_measured:measured.data(), bytes, device_primary?cudaMemcpyDeviceToDevice:cudaMemcpyHostToDevice));
+    check(cudaMemcpy(air_, device_air?device_air:air.data(), bytes, device_primary?cudaMemcpyDeviceToDevice:cudaMemcpyHostToDevice));
+    std::vector<float> prediction, candidate(device_predict?0:pixels_);
     std::vector<double> sums(static_cast<size_t>(blocks) * 5);
     AdaptiveScatterReport report;
     report.damping = options.initial_damping;
+    if(device_primary) {
+        if(object_mask)check(cudaMemcpy(mask_,object_mask->data(),pixels_,cudaMemcpyHostToDevice));
+        check(cudaMemset(statistics_,0,sizeof(int)));
+        transmission<<<blocks,threads>>>(measured_,air_,current_,object_mask?mask_:nullptr,
+            transmissions_,pixels_,reinterpret_cast<int*>(statistics_));
+        check(cudaGetLastError());int invalid=0;
+        check(cudaMemcpy(&invalid,statistics_,sizeof(int),cudaMemcpyDeviceToHost));
+        if(invalid)throw std::runtime_error("invalid adaptive scatter input signal");
+        size_t count=object_mask?size_t(std::count_if(object_mask->begin(),object_mask->end(),[](auto v){return v!=0;})):pixels_;
+        if(count){
+            thrust::device_ptr<double> first(transmissions_);SortAllocator allocator;thrust::sort(thrust::cuda::par(allocator),first,first+pixels_);
+            size_t index=size_t(guard.low_quantile*(count-1));
+            check(cudaMemcpy(&report.low_transmission,transmissions_+index,sizeof(double),cudaMemcpyDeviceToHost));
+            report.low_transmission_risk=report.low_transmission<guard.risk_threshold;
+        }
+    }
     std::vector<double> transmissions;
     transmissions.reserve(pixels_);
-    for (size_t p = 0; p < pixels_; ++p)
+    if(!device_primary) for (size_t p = 0; p < pixels_; ++p)
         if (!object_mask || (*object_mask)[p])
             transmissions.push_back(static_cast<double>(measured[p]) / air[p]);
     if (!transmissions.empty()) {
@@ -169,7 +220,7 @@ AdaptiveScatterReport AdaptiveScatterSolver::solve(const std::vector<float>& mea
     check(cudaMemcpy(accepted_scatter_, scatter_, bytes, cudaMemcpyDeviceToDevice));
     const auto finish = [&]() {
         if (device_predict)
-            check(cudaMemcpy(primary.data(), current_, bytes, cudaMemcpyDeviceToHost));
+            check(cudaMemcpy(device_primary?device_primary:primary.data(), current_, bytes, device_primary?cudaMemcpyDeviceToDevice:cudaMemcpyDeviceToHost));
         return report;
     };
     for (int iteration = 0; iteration < options.iterations; ++iteration) {

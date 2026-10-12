@@ -12,6 +12,28 @@ find_package(VTK 9.3 REQUIRED COMPONENTS
     InteractionStyle InteractionWidgets IOImage IOXML RenderingAnnotation
     RenderingCore RenderingOpenGL2 RenderingVolumeOpenGL2)
 add_library(ykcbct_visualization STATIC LiveViewWindow.cpp ParameterInspector.cpp)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    option(BUILD_IMGUI_GUI "Build the Windows ImGui/VTK projection interface" OFF)
+endif()
+if(BUILD_IMGUI_GUI)
+    if(NOT WIN32)
+        message(FATAL_ERROR "The initial ImGui/VTK input bridge supports Windows only")
+    endif()
+    set(IMGUI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/imgui")
+    add_library(yk_imgui STATIC
+        "${IMGUI_ROOT}/imgui.cpp" "${IMGUI_ROOT}/imgui_draw.cpp"
+        "${IMGUI_ROOT}/imgui_tables.cpp" "${IMGUI_ROOT}/imgui_widgets.cpp"
+        "${IMGUI_ROOT}/backends/imgui_impl_win32.cpp"
+        "${IMGUI_ROOT}/backends/imgui_impl_opengl3.cpp")
+    target_include_directories(yk_imgui PUBLIC "${IMGUI_ROOT}")
+    target_compile_features(yk_imgui PUBLIC cxx_std_17)
+    target_compile_definitions(yk_imgui PRIVATE NOMINMAX)
+    target_link_libraries(yk_imgui PUBLIC opengl32 imm32 dwmapi)
+    target_sources(ykcbct_visualization PRIVATE ImGuiOverlay.cpp)
+    target_compile_definitions(ykcbct_visualization PRIVATE YK_VTK_IMGUI=1 NOMINMAX)
+    target_link_libraries(ykcbct_visualization PRIVATE yk_imgui comctl32)
+endif()
+
 target_compile_features(ykcbct_visualization PUBLIC cxx_std_17)
 target_include_directories(ykcbct_visualization PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ykcbct_visualization PRIVATE ${VTK_LIBRARIES})
@@ -31,12 +53,15 @@ if(BUILD_VTK_VISUALIZATION_TESTS)
         "${SPECTRAL_ROOT}/src/SimLogger.cpp"
         "${SPECTRAL_ROOT}/src/FasksRuntimeModel.cpp"
         "${SPECTRAL_ROOT}/src/CudaFasksScatter.cu"
+        "${SPECTRAL_ROOT}/src/primary/CudaSignalStages.cu"
+        "${SPECTRAL_ROOT}/src/recon/preprocess/DeviceMemoryPool.cpp"
         "${SPECTRAL_ROOT}/src/primary/ProjectionStages.cpp"
         "${SPECTRAL_ROOT}/src/primary/ProjectionOutput.cpp"
         "${SPECTRAL_ROOT}/src/primary/DetectorSignal.cpp")
     target_include_directories(spectral_live_test PRIVATE "${SPECTRAL_ROOT}/include"
         "${SPECTRAL_ROOT}/../../include" "${SPECTRAL_ROOT}/../../src"
         "${SPECTRAL_ROOT}/../../src/util" "${SPECTRAL_ROOT}/../../thirdparty/nlohmann/include")
+    set_property(TARGET spectral_live_test PROPERTY CUDA_RUNTIME_LIBRARY Shared)
     target_link_libraries(spectral_live_test PRIVATE ykcbct_visualization CUDA::cudart CUDA::cufft ${VTK_LIBRARIES})
     target_compile_definitions(spectral_live_test PRIVATE YK_SPECTRAL_VTK=1)
     if(MSVC)

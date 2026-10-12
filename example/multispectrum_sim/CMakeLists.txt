@@ -66,6 +66,11 @@ if(TARGET YKCBCT)
         target_sources(multispectrum_sim PRIVATE src/InteractiveProjection.cpp)
         target_link_libraries(multispectrum_sim PRIVATE ykcbct_visualization)
         target_compile_definitions(multispectrum_sim PRIVATE YK_SPECTRAL_VTK=1)
+        if(TARGET yk_imgui)
+            target_sources(multispectrum_sim PRIVATE src/ImGuiProjection.cpp src/ProjectionUiConfig.cpp src/DisplayGeometry.cpp src/ReconstructionDisplay.cpp)
+            target_link_libraries(multispectrum_sim PRIVATE yk_imgui comdlg32)
+            target_compile_definitions(multispectrum_sim PRIVATE YK_SPECTRAL_IMGUI=1 NOMINMAX)
+        endif()
     endif()
     add_custom_command(TARGET multispectrum_sim POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -114,7 +119,7 @@ if(BUILD_TESTING)
             add_test(NAME multispectrum_unit_${module} COMMAND multispectrum_cuda_unit_test ${module})
             set_tests_properties(multispectrum_unit_${module} PROPERTIES LABELS "unit;gpu;multispectrum")
         endforeach()
-        add_executable(multispectrum_pipeline_test tests/test_projection_pipeline.cpp
+        add_executable(multispectrum_pipeline_test tests/test_projection_pipeline.cpp tests/test_device_signal_stages.cpp
             src/primary/CudaProjectionBackend.cu src/LibraryGeometry.cpp
             src/SpectralProjectionPipeline.cpp src/SpectralModel.cpp src/SimLogger.cpp
             src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
@@ -138,7 +143,7 @@ if(BUILD_TESTING)
         target_link_libraries(multispectrum_scatter_test PRIVATE CUDA::cudart)
         target_link_libraries(multispectrum_scatter_test PRIVATE CUDA::cufft)
         add_test(NAME multispectrum_scatter COMMAND multispectrum_scatter_test)
-        add_executable(multispectrum_preprocessing_test tests/test_preprocessing.cpp
+        add_executable(multispectrum_preprocessing_test tests/test_preprocessing.cpp tests/test_preprocess_state.cpp
             src/ReconstructionPreprocessor.cpp src/FasksRuntimeModel.cpp
             src/config/SimConfig.cpp src/XcomAttenuationProvider.cpp
             src/CudaFasksScatter.cu)
@@ -215,3 +220,88 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME multispectrum_spectrum_source COMMAND multispectrum_spectrum_test)
 endif()
+
+if(BUILD_TESTING AND TARGET yk_imgui)
+    add_executable(multispectrum_ui_config_test tests/test_ui_config.cpp
+        src/ProjectionUiConfig.cpp src/config/SimConfig.cpp src/config/SpectrumSource.cpp src/XcomAttenuationProvider.cpp)
+    target_include_directories(multispectrum_ui_config_test PRIVATE include
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
+    target_link_libraries(multispectrum_ui_config_test PRIVATE nist_xcom_core spek_spectrum::core)
+    if(MSVC)
+        target_compile_options(multispectrum_ui_config_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_ui_config COMMAND multispectrum_ui_config_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_reconstruction_display_test tests/test_reconstruction_display.cpp src/ReconstructionDisplay.cpp)
+    target_include_directories(multispectrum_reconstruction_display_test PRIVATE include)
+    if(MSVC)
+        target_compile_options(multispectrum_reconstruction_display_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_reconstruction_display COMMAND multispectrum_reconstruction_display_test)
+endif()
+
+foreach(water_consumer IN ITEMS multispectrum_sim multispectrum_preprocessing_test)
+    if(TARGET ${water_consumer})
+        target_sources(${water_consumer} PRIVATE src/WaterReference.cpp)
+    endif()
+endforeach()
+if(BUILD_TESTING)
+    add_executable(multispectrum_water_reference_test tests/test_water_reference.cpp
+        src/WaterReference.cpp src/config/SimConfig.cpp src/config/SpectrumSource.cpp src/XcomAttenuationProvider.cpp)
+    target_include_directories(multispectrum_water_reference_test PRIVATE include
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
+    target_link_libraries(multispectrum_water_reference_test PRIVATE nist_xcom_core spek_spectrum::core)
+    if(MSVC)
+        target_compile_options(multispectrum_water_reference_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_water_reference COMMAND multispectrum_water_reference_test)
+endif()
+
+if(BUILD_TESTING AND TARGET YKCBCT)
+    add_executable(multispectrum_reconstruction_progress_test tests/test_reconstruction_progress.cpp src/LibraryGeometry.cpp)
+    target_include_directories(multispectrum_reconstruction_progress_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+    target_link_libraries(multispectrum_reconstruction_progress_test PRIVATE YKCBCT CUDA::cudart)
+    if(MSVC)
+        target_compile_options(multispectrum_reconstruction_progress_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_reconstruction_progress COMMAND multispectrum_reconstruction_progress_test)
+endif()
+
+foreach(preprocess_consumer IN ITEMS multispectrum_sim multispectrum_preprocessing_test)
+    if(TARGET ${preprocess_consumer} AND TARGET YKCBCT)
+        target_sources(${preprocess_consumer} PRIVATE
+            src/recon/preprocess/PreprocessPipeline.cpp src/recon/preprocess/Stages.cpp
+            src/recon/preprocess/BeamHardeningFit.cpp src/recon/preprocess/CudaPixelOps.cu)
+    endif()
+endforeach()
+
+foreach(cuda_consumer IN ITEMS multispectrum_sim multispectrum_preprocessing_test multispectrum_adaptive_scatter)
+    if(TARGET ${cuda_consumer})
+        set_property(TARGET ${cuda_consumer} PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    endif()
+endforeach()
+
+if(TARGET YKCBCT)
+    add_library(multispectrum_device_pool STATIC src/recon/preprocess/DeviceMemoryPool.cpp)
+    target_include_directories(multispectrum_device_pool PUBLIC include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+    target_link_libraries(multispectrum_device_pool PUBLIC CUDA::cudart)
+    if(MSVC)
+        target_compile_options(multispectrum_device_pool PRIVATE /utf-8)
+    endif()
+    foreach(pool_consumer IN ITEMS multispectrum_sim multispectrum_preprocessing_test
+            multispectrum_scatter_test multispectrum_pipeline_test multispectrum_adaptive_scatter)
+        if(TARGET ${pool_consumer})
+            target_link_libraries(${pool_consumer} PUBLIC multispectrum_device_pool)
+            set_property(TARGET ${pool_consumer} PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+        endif()
+    endforeach()
+endif()
+
+foreach(device_stage_consumer IN ITEMS multispectrum_sim multispectrum_pipeline_test)
+    if(TARGET ${device_stage_consumer} AND TARGET YKCBCT)
+        target_sources(${device_stage_consumer} PRIVATE src/primary/CudaSignalStages.cu)
+    endif()
+endforeach()
+set_source_files_properties(src/primary/CudaSignalStages.cu PROPERTIES COMPILE_OPTIONS "--fmad=false")

@@ -1,7 +1,9 @@
+#include "common/YkTimingWatchdog.hpp"
 #include "LibraryReconstructor.hpp"
 
 #include "LibraryGeometry.hpp"
 #include "ReconstructionPreprocessor.hpp"
+#include "recon/preprocess/DeviceMemoryPool.hpp"
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
 
 #include <algorithm>
@@ -23,6 +25,12 @@ void check(bool condition, const std::string& message)
     if (!condition) throw std::runtime_error(message);
 }
 
+void timedRead(std::ifstream& input,char* data,std::streamsize bytes){
+    YK::diagnostics::TimingSpan watch("reconstruction.read","bytes="+std::to_string(bytes));input.read(data,bytes);
+}
+void timedWrite(std::ofstream& output,const char* data,std::streamsize bytes){
+    YK::diagnostics::TimingSpan watch("reconstruction.write","bytes="+std::to_string(bytes));output.write(data,bytes);
+}
 struct TemporaryProjection {
     std::filesystem::path directory;
     ~TemporaryProjection() {
@@ -141,16 +149,22 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
     const std::filesystem::path& projection_file,
     const std::filesystem::path& volume_file,
     const std::filesystem::path& slice_prefix,
-    std::string& diagnostic)
+    std::string& diagnostic,TaskProgressCallback progress)
 {
+    YK::diagnostics::TimingSpan total_watch("reconstruction.run",config.reconstruction.iterative.algorithm);
     YK::IReconstructionSession* session = nullptr;
     std::filesystem::path reconstruction_input = projection_file;
     TemporaryProjection temporary;
     try {
         if (config.reconstruction.preprocessing.enabled) {
+            auto temporary_base=config.reconstruction.output_volume_file.parent_path();
+            if(temporary_base.empty())temporary_base=projection_file.parent_path();
+            if(temporary_base.empty())temporary_base=std::filesystem::temp_directory_path();
+            temporary_base/=".preprocess";
+            std::filesystem::create_directories(temporary_base);
             std::random_device random;
             for (int attempt = 0; attempt < 16 && temporary.directory.empty(); ++attempt) {
-                const auto candidate = std::filesystem::temp_directory_path() /
+                const auto candidate = temporary_base /
                     ("multispectrum-preprocessing-" + std::to_string(random()));
                 if (std::filesystem::create_directory(candidate)) temporary.directory = candidate;
             }
@@ -158,10 +172,13 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             reconstruction_input = temporary.directory / "projection.raw";
             std::string preprocessing_diagnostic;
             const bool prepared = prepareReconstructionProjection(config, projection_file,
-                reconstruction_input, preprocessing_diagnostic);
+                reconstruction_input, preprocessing_diagnostic,progress);
             check(prepared, preprocessing_diagnostic);
             std::cout << preprocessing_diagnostic << std::endl;
         }
+        const auto pool_before=preprocess::devicePoolStatistics();
+        {YK::diagnostics::TimingSpan watch("reconstruction.trim_pool");preprocess::trimDevicePool();}
+        std::cout<<"reconstruction_pool released_cached_bytes="<<pool_before.cached_bytes<<std::endl;
         const auto& g = config.geometry.parameters;
         const std::size_t pixels = static_cast<std::size_t>(g.detector_u) * g.detector_v;
     const std::size_t volume_elements = static_cast<std::size_t>(g.reconstruction_volume_x) *
@@ -211,9 +228,10 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             << " full_input_bytes=" << projection_elements * sizeof(float)
             << " chunk_views=not-applicable";
         std::cout << std::endl;
+        if(progress)progress({"Initializing reconstruction",0,0});
         session = YK::ReconstructionSessionFactory::create();
         check(session != nullptr, "无法创建 YKCBCT DLL Session");
-        const bool initialized = session->initialize(system);
+        bool initialized=false;{YK::diagnostics::TimingSpan watch("reconstruction.initialize",pipeline_name);initialized=session->initialize(system);}
         check(initialized, std::string("YKCBCT 初始化失败: ") + session->lastErrorMessage());
 
         std::vector<float> volume(volume_elements, 0.f);
@@ -221,10 +239,11 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             std::vector<float> chunk;
             const int chunk_views = std::min(g.views,
                 std::max(1, config.reconstruction.analytic.chunk_views));
+            if(progress)progress({"FDK views",0,g.views});
             for (int offset = 0; offset < g.views; offset += chunk_views) {
                 const int count = std::min(chunk_views, g.views - offset);
                 chunk.resize(static_cast<std::size_t>(count) * pixels);
-                input.read(reinterpret_cast<char*>(chunk.data()),
+                timedRead(input,reinterpret_cast<char*>(chunk.data()),
                     static_cast<std::streamsize>(chunk.size() * sizeof(float)));
                 check(static_cast<bool>(input), "读取投影分块失败");
                 YK::SExecutionRequest request{};
@@ -235,13 +254,16 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 request.view_offset = offset;
                 request.view_count = count;
                 request.clear_output = offset == 0;
-                check(session->execute(request), std::string(
-                    "YKCBCT FDK 执行失败: ") + session->lastErrorMessage());
+                {YK::diagnostics::TimingSpan watch("reconstruction.execute",pipeline_name);
+                check(session->execute(request), std::string("YKCBCT FDK 执行失败: ") + session->lastErrorMessage());
+                if(YK::diagnostics::timingEnabled()&&cudaDeviceSynchronize()!=cudaSuccess)throw std::runtime_error("reconstruction profiling synchronization failed");
+                }
+                if(progress)progress({"FDK views",offset+count,g.views});
             }
         } else if (wfbp || cyl_fdk || nonstandard_fdk) {
             // 全量 Host 输入交给 DLL；显存由 Session 的统一分配器管理。
             std::vector<float> projection(projection_elements);
-            input.read(reinterpret_cast<char*>(projection.data()),
+            timedRead(input,reinterpret_cast<char*>(projection.data()),
                 static_cast<std::streamsize>(projection.size() * sizeof(float)));
             check(static_cast<bool>(input), "读取完整 wFBP 投影失败");
             YK::SExecutionRequest request{};
@@ -250,12 +272,14 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             request.volume = {volume.data(), YK::EMemoryLocation::Host,
                 volume.size()};
             request.view_count = g.views;
+            if(progress)progress({"Full-volume reconstruction",0,1});
             const bool reconstructed = session->execute(request);
+            if(reconstructed && progress)progress({"Full-volume reconstruction",1,1});
             check(reconstructed, std::string("YKCBCT " + pipeline_name + " 执行失败: ") + session->lastErrorMessage());
         } else {
             // DLL 迭代后端要求 Device 上的完整投影和体缓冲，且一次提交全部视图。
             std::vector<float> projection(projection_elements);
-            input.read(reinterpret_cast<char*>(projection.data()),
+            timedRead(input,reinterpret_cast<char*>(projection.data()),
                 static_cast<std::streamsize>(projection.size() * sizeof(float)));
             check(static_cast<bool>(input), "读取完整迭代重建投影失败");
             float* d_projection = nullptr;
@@ -273,7 +297,15 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 request.volume = {d_volume, YK::EMemoryLocation::Device, volume.size()};
                 request.view_count = g.views;
                 request.iteration_count = config.reconstruction.iterative.iterations;
+                if(progress){
+                    progress({"Iterative updates",0,request.iteration_count});
+                    request.progress_callback=[](void* data,int complete,int total){auto& callback=*static_cast<TaskProgressCallback*>(data);callback({"Iterative updates",complete,total});};
+                    request.progress_user_data=&progress;
+                }
+                {YK::diagnostics::TimingSpan watch("reconstruction.execute",pipeline_name);
                 check(session->execute(request), std::string("YKCBCT 迭代重建执行失败: ") + session->lastErrorMessage());
+                if(YK::diagnostics::timingEnabled()&&cudaDeviceSynchronize()!=cudaSuccess)throw std::runtime_error("reconstruction profiling synchronization failed");
+                }
                 cudaCheck(cudaMemcpy(volume.data(), d_volume, volume.size() * sizeof(float), cudaMemcpyDeviceToHost), "下载迭代重建体失败");
             } catch (...) {
                 if (d_projection) cudaFree(d_projection);
@@ -283,11 +315,12 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             cudaFree(d_projection);
             cudaFree(d_volume);
         }
+        if(progress)progress({"Saving reconstruction",0,1});
         if (const auto parent = volume_file.parent_path(); !parent.empty())
             std::filesystem::create_directories(parent);
         std::ofstream output(volume_file, std::ios::binary);
         check(static_cast<bool>(output), "无法创建重建体输出: " + volume_file.string());
-        output.write(reinterpret_cast<const char*>(volume.data()),
+        timedWrite(output,reinterpret_cast<const char*>(volume.data()),
             static_cast<std::streamsize>(volume.size() * sizeof(float)));
         check(static_cast<bool>(output), "写入重建体失败");
         if (config.reconstruction.save_slices)
@@ -295,6 +328,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 g.reconstruction_volume_y, g.reconstruction_volume_z);
         YK::ReconstructionSessionFactory::destroy(session);
         session = nullptr;
+        if(progress)progress({"Completed",1,1});
         diagnostic = pipeline_name +
             " 重建完成，输出体素=" + std::to_string(volume.size());
         return true;

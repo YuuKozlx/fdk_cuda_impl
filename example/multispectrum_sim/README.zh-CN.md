@@ -95,7 +95,7 @@ filters = [
 无该标记的旧两列文件继续按中心能量读取并推导分箱宽度。
 
 水板硬化校正未单独指定能谱文件时，使用同一前投能谱来源，支持本地生成。
-`loadProjectionSpectrum()` 可供后续界面直接调用；当前尚未增加能谱导入按钮、生成面板和曲线预览。
+`loadProjectionSpectrum()` 供界面和命令行共用；开启 `BUILD_IMGUI_GUI` 后可在 Spectrum 页签导入、生成、预览和导出能谱。
 
 验证：`ctest --test-dir <build-dir> -R multispectrum_spectrum_source --output-on-failure`。
 覆盖两个模型的平均能量、过滤层效果、曝光归一化、中心格式读写、MCGPU 边界转换及配置校验。
@@ -393,3 +393,94 @@ ctest --test-dir out/docker-test/example/multispectrum_sim -R multispectrum_proj
 ## 可选实时显示
 
 主工程启用 `BUILD_VTK_VISUALIZATION=ON` 并提供 VTK C++ 包后，在 TOML 增加 `[visualization] enabled=true`，即可边前投边显示实际材料标签体、源/探测器姿态与偏移和当前帧投影贴图。体数据保留原分辨率，仅显示贴图可降采样；关闭显示时计算和输出不变。显示模块独立位于 `visualization/`，不依赖 geometry_viewer 工具源码。构建、配置及自生成验证见 [实时显示层说明](../../visualization/README.zh-CN.md)。
+
+## 可选 ImGui 前投界面
+
+顶层开启 `BUILD_VTK_VISUALIZATION=ON`、`BUILD_IMGUI_GUI=ON`，配置中设置
+`[visualization] enabled=true, interactive=true`（project 工作流）。界面与 VTK 共用窗口，
+第一版支持 Flat 圆扫描、Flat 螺旋扫描、Planar CT、Tilted CT。
+可在界面导入 Raw uint8 标签体、编辑尺寸/间距/材料映射、导入或生成能谱、修改几何和效果开关，
+保存/加载 TOML。按计算按钮后先计算全批，完成后再通过底部滑条浏览。
+计算使用界面/TOML 设置的每像素射线数；体积不降采样。更多说明见 `visualization/README.zh-CN.md`。
+
+启动界面：`multispectrum_sim --gui [config.toml]`。不传配置路径时先弹出 TOML 文件选择窗口。
+加载后参数自动填充，同时读取标签体、材料和能谱并显示三维场景；点击 Calculate all views 后才开始计算投影。
+
+### BrainWeb 界面与全链路示例
+
+`configs/ui/brainweb-fullchain.toml` 使用完整 `181 x 217 x 181`、1 mm、uint8 标签体；
+`configs/ui/brainweb-center33-fullchain.toml` 使用中心 33 层，适合快速试用。
+两者都配置 60 帧平板圆扫描、SID=709 mm、SDD=1143.699951 mm，
+本地生成 120 kVp / 12° / 2 mm Al 能谱、10 个标签材料映射、量子噪声、可选探测器处理参数。
+散射关闭，无需外部散射标定文件。输入数据不随源码提交，可复用已有 BrainWeb 数据或按前述脚本准备。
+
+在界面 Load TOML 后，体积、材料、能谱和几何会一起加载；Calculate 执行前投，勾选 Recon 页的 Reconstruct after projection 时继续校正和重建。
+完整投影、生成谱、空场和重建结果写入 `outputs/brainweb-full-ui/`（中心版为 `outputs/brainweb-ui/`）。
+直接运行 `multispectrum_sim configs/ui/brainweb-fullchain.toml` 可执行
+前投、水板硬化校正、FDK 重建，并导出三张正交切片。
+60 帧是流程试用设置；水板校正为示例，并非骨材料专项标定。Recon 页也可单独运行重建；界面锁定期间仍刷新状态。
+
+界面加载允许先填充缺少可选运行文件的配置，并显示缺失散射模型等提示；
+点击计算仍执行完整文件校验，不会静默关闭效果。
+
+顶部 Volume opacity 可实时控制标签体显示透明度，默认比例 0.03；不会改变计算输入。
+Recon 页支持 FDK 与现有迭代入口、输出网格和文件路径、切片导出、硬化/散射校正开关。
+底部 Run reconstruction 可直接运行当前输入投影的重建。
+
+Volume 页内置材料无需手填 ID：选择 Builtin list 后，可用名称/ID/别名搜索及分类筛选。
+选中自动填入名称、规范 preset 与默认密度，密度可自行覆盖或恢复默认。已有 TOML 的密度覆盖值保留。
+
+重建完成后右侧直接显示三幅重建切片，Results 页可切换层号和前投图，并调整 HU 窗宽、窗位。
+CT 值水基准与 BHC 拟合参考能量共用：`HU=1000*(mu/mu_water-1)`，水衰减先换算为 mm^-1。
+显示变换不修改原始重建数据。材料下拉列表固定宽度，长名称省略并通过悬停完整显示。
+
+Effects 现可编辑余晖时间/权重及每像素采样射线数；Recon 可编辑 BHC 多项式/截断、散射引导和自适应求解参数。
+自适应后端是可选构建项 `MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER=ON`。
+
+
+### 重建前处理流水线与显存池
+
+前处理现在集中在 `src/recon/preprocess/`，由 `IStage` 声明输入/输出的数据域和 Host/Device 位置。连续 CUDA 阶段保持数据驻留显存，内置顺序为能量恢复 → 散射校正 → 转对数/BHC；最后两步融合执行。固定、自适应、引导散射均接受设备缓冲。新增插件通过 `Pipeline::append()` 注册，CPU 插件需要明确声明 Host。
+
+显存池按设备管理，初始化帧工作缓冲，散射及 FFT 工作区在准备阶段借用，结束后归还供下次任务复用。不会按总显存预分配：新分配默认保留 `max(512 MiB, 20% 总显存)`（小显卡上限为总显存的一半），池总量最多 60%，归还后的空闲缓存最多 256 MiB。空间不足时先清理空闲缓存；活动缓冲和 VTK 对象不会被释放。详细接口、插件约定及传输边界见 [前处理开发说明](src/recon/preprocess/README.md)。
+
+
+### 批量 CUDA 正投
+
+正投按批次启动 CUDA kernel，以 `[角度][像素]` 并行计算，共用体积、能谱及材料表。整批的期望能量、采样能量、air、处理信号、处理参考、对数投影及物体掩码放在连续显存中，先在 CUDA 执行后处理，再每批一次下载到 pinned host memory 供写盘和显示缓存。随机种子仍使用全局角度，因此调整批大小不会改变采样和噪声结果。末批只下载实际帧数。
+
+```toml
+[projection.batching]
+views = 64             # 每批最多 1..64 帧；1 可用于逐帧对照
+max_buffer_mib = 256   # GPU 打包缓冲的预算，1..256 MiB
+```
+
+旧配置不填即采用上述默认值。UI 的 Effects 页提供 `Batch views` 和 `Batch buffer MiB`，Load/Save TOML 保留参数。实际批大小还受可用显存和 VTK 预留约束，分配不足时缩小批次；单帧超过预算时会报错，不会突破缓冲预算。线性正投缓冲接入显存池；标签纹理单独持有整轮使用。内置后处理和前向散射保持设备驻留；CPU 自定义插件会形成明确的整批传输边界。写盘和显示缓存仍在 CPU，批量传输减少的是调用/同步次数，并不减少结果本身的字节数。日志 `projection_batch` 给出实际批容量、下载次数和 GPU kernel/下载计时。
+
+
+### 仿真阶段的设备状态和插件管理
+
+`SpectralProjectionPipeline` 通过 `IProjectionBackend / IProjectionStage / IProjectionOutputSink` 管理后端、阶段和输出。CUDA 后端返回借用设备帧，内置阶段声明 Device；CPU 后端保留原来的 Host 阶段实现。自定义插件用 `addStage()` 注册、声明 `domain()/location()/phase()`，流水线按物理阶段及注册顺序执行。阶段逐批按角度顺序处理，状态跨批保留，每轮初始化及异常退出时统一清理。
+
+CUDA 内置链路：多能正投/一次射线噪声 → fASKS 散射（含 GPU 边缘距离变换）→ 散射量子噪声 → 光学串扰 → 余晖 → 电子串扰 → DAS → air 归一化及负对数。参数/离散核等在 CPU 准备一次后上传，整幅图像不会在内置阶段间往返。fASKS 仍会回读少量有效性标志；内置链路最后每批一次完整下载，CPU 插件额外产生整批下载/上传。物体与 air 的余晖状态独立，air 不加入随机噪声或 DAS，保持原有定义。
+
+CUDA 电子噪声使用全局角度/像素/配置 seed 的确定性 Gaussian 序列，调整批大小不改变结果；与旧 CPU `mt19937 + normal_distribution` 的样本序列不同。无电子噪声的探测器处理与 CPU 基准进行数值对照；CUDA 对数函数可能产生少量浮点末位差异。设备帧指针仅在当前批次有效，插件不得更换或跨批保存它们，其他 CUDA 流需要在返回前与默认流建立依赖。
+
+256 MiB 限制包含批缓冲的全部设备图像（6 个 float32 平面及 uint8 掩码，共 25 字节/像素/帧）。例如 1536×1024 默认最多容纳 6 帧，另有散射、余晖和 FFT 工作区从受预算约束的显存池借用。阶段耗时先同步计算，避免把正投等待时间误归入下一阶段；日志单独记录正投、传输边界、各阶段及归一化。
+
+进入重建 DLL 前，应用会调用 `trimDevicePool()` 释放当前设备的空闲缓存，并打印释放字节数。活动借用、VTK 和 DLL 自己的缓冲不在清理范围内。纯正投任务之间继续保留池缓存；跨到重建时优先让出空间，之后再次正投需要按需分配。
+
+
+前向散射核选择在 UI 的 `Effects → Scatter kernel evaluation` 中设置：`All bins` 使用全部模型核节点，`Segmented` 显示 `Scatter kernel segments`（至少 2 段）。该项控制 `projection.scatter.kernel`，与 Recon 页的散射校正核参数独立。分段模式在模型的对数衰减区间等分取代表节点，并从原模型插值得到核形状，不是直接截取原文件中的前几个核。
+
+
+### 时间看门狗与分段诊断
+
+`YK_TIMING_WATCHDOG=1` 启用可选诊断，`YK_TIMING_LOG` 指定日志文件；`YK_TIMING_DETAIL=1` 记录每次阶段完成，默认只记录首次及超过 `YK_TIMING_SLOW_MS`（默认 200 ms）的调用。后台线程每 `YK_TIMING_HEARTBEAT_MS`（默认 5000 ms）报告长任务及该线程当前最内层阶段，每 10 秒和退出时输出次数、总耗时、平均与最大耗时。看门狗不终止计算；诊断模式的散射 CUDA 子步骤会同步以获得实际执行时间，正常运行不增加这些同步。
+
+覆盖正投批计算/分配/传输、各处理阶段、散射核生成与 FFT 子步骤、输出读写、VTK 下采样与渲染，以及重建初始化/执行/读写和前处理校验/引导/边缘窗口。启动本地诊断 UI 可运行 `out/run-imgui-profile.cmd <config.toml>`，日志写入 `out/performance/manual-timing.log`。只测校正可运行 `multispectrum_sim --profile-preprocess <config.toml>`，生成输入投影同目录的 `.profile-preprocessed.raw`，不调用重建。
+
+前处理校验已避免在每个像素上构造错误消息字符串。正式 fixed 校正的掩码和边缘距离变换在 GPU 执行；实验 adaptive 仍保留 CPU 掩码/边缘路径。修复了原 CPU 距离变换在弹出包络节点后未重新计算交点的问题，并使用暴力最近背景点距离验证；GPU 结果与修正后的 CPU 基准对照。旧错误路径的少量像素可能改变。校正临时文件现在放在重建输出目录下的 `.preprocess` 子目录，避免占用系统盘临时空间。
+
+
+`YK_PRIMARY_PROFILE=1` 进一步启用正投 kernel 内的稀疏采样计时（独立于阶段看门狗）。按全局角度/像素哈希选择约 1/1024 像素，报告射线几何、体积遍历、逐射线谱衰减/计数累计、最终量子采样/能量求和的周期及射线/体素访问数，并输出普通与采样 kernel 的寄存器和 local-memory 分配。周期比例不是墙钟时间的精确分账，采样版本的寄存器占用可能不同；正常运行不启用该版本。

@@ -1,4 +1,5 @@
 #pragma once
+#include "common/YkExecutionProgress.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "common/YkDeviceWorkspace.hpp"
 #include "Reconstruction/Iterative/Common/kernels/YkIterLaunch.cuh"
@@ -143,6 +144,7 @@ namespace YK {
                     YK::Iter::clamp_max_launch(
                         d_vol, vol_n, cfg_.max_constraint, stream);
 
+                if(!YK::detail::reportExecutionProgress(iter+1,cfg_.n_iter,stream))return false;
                 YK_LOGI("[CGLSAstra] iter {}/{} gamma={:.6e}",
                     iter + 1, cfg_.n_iter, gamma1);
             }
@@ -397,6 +399,7 @@ namespace YK {
                         d_vol, vol_n, cfg_.max_constraint, stream);
 
                 statistics_.completed_iterations = iter + 1;
+                if(!YK::detail::reportExecutionProgress(iter+1,cfg_.n_iter,stream))return false;
                 if (checkConvergence_(d_vol, l2_cur, measured_norm,
                         previous_checked_residual, convergence_patience,
                         vol_n, stream)) break;

@@ -1,4 +1,8 @@
+#include "ReconstructionPreprocessor.hpp"
 #include "config/SimConfig.hpp"
+#ifdef YK_SPECTRAL_IMGUI
+#include "ImGuiProjection.hpp"
+#endif
 #include "SimLogger.hpp"
 #include "SpectralModel.hpp"
 #include "XcomAttenuationProvider.hpp"
@@ -70,23 +74,52 @@ int main(int argc, char** argv)
             std::cout << "spectrum_bins=" << spectrum.size() << " output=" << argv[3] << '\n';
             return 0;
         }
+#ifdef YK_SPECTRAL_IMGUI
+        if ((argc==2 || argc==3) && std::string_view(argv[1])=="--gui") {
+            std::string error;
+            if(!yk::spectral::launchImGuiProjection(argc==3?std::filesystem::path(argv[2]):std::filesystem::path{},error))
+                throw std::runtime_error(error);
+            return 0;
+        }
+#endif
         const bool validate_config = argc == 3 &&
             std::string(argv[1]) == "--validate-config";
-        if (argc != 2 && !validate_config) {
+        const bool profile_preprocess=argc==3&&std::string(argv[1])=="--profile-preprocess";
+        if (argc != 2 && !validate_config && !profile_preprocess) {
             std::cerr << "用法: multispectrum_sim <config.toml>\n"
                 << "   或: multispectrum_sim --validate-config <config.toml>\n"
+                << "   或: multispectrum_sim --profile-preprocess <config.toml>\n"
                 << "   或: multispectrum_sim --export-spectrum <config.toml> <output.spec>\n"
+                << "   或: multispectrum_sim --gui [config.toml] (ImGui build)\n"
                 << "   或: multispectrum_sim --list-materials\n"
                 << "   或: multispectrum_sim --material-info <id-or-alias>\n";
             return 2;
         }
         const std::filesystem::path config_path =
-            validate_config ? argv[2] : argv[1];
+            (validate_config||profile_preprocess) ? argv[2] : argv[1];
         auto config = yk::spectral::loadConfig(config_path);
         if (validate_config) {
             std::cout << "valid_config=" << config_path.string() << '\n';
             return 0;
         }
+        if(profile_preprocess){
+#ifdef YK_MULTISPECTRUM_CUDA_PRIMARY
+            std::string diagnostic;
+            const auto output=std::filesystem::path(config.reconstruction.input_projection_file.string()+".profile-preprocessed.raw");
+            if(!yk::spectral::prepareReconstructionProjection(config,config.reconstruction.input_projection_file,output,diagnostic))throw std::runtime_error(diagnostic);
+            std::cout<<diagnostic<<std::endl;return 0;
+#else
+            throw std::runtime_error("preprocessing profiling requires CUDA build");
+#endif
+        }
+#ifdef YK_SPECTRAL_IMGUI
+        if(config.visualization.enabled && config.visualization.interactive) {
+            std::string error;
+            if(!yk::spectral::runImGuiProjection(config,config.projection.output_file,error))
+                throw std::runtime_error(error);
+            return 0;
+        }
+#endif
         if (!config.runsProjection()) {
             if (!config.reconstruction.output_volume_file.parent_path().empty())
                 std::filesystem::create_directories(

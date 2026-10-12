@@ -1,4 +1,7 @@
 #include "InteractiveProjection.hpp"
+#ifdef YK_SPECTRAL_IMGUI
+#include "ImGuiProjection.hpp"
+#endif
 #include "SpectralProjectionPipeline.hpp"
 #include "primary/CudaProjectionBackend.hpp"
 #include <cmath>
@@ -50,6 +53,9 @@ namespace {
 bool runInteractiveProjection(const SimulationConfig& initial, const std::vector<std::uint8_t>& labels,
     const SpectralTransmissionModel& model, const std::filesystem::path& output, std::string& error)
 {
+#ifdef YK_SPECTRAL_IMGUI
+    return runImGuiProjection(initial,output,error);
+#else
     try {
         auto current = initial;
         current.projection.sampling.samples_per_pixel = 1;
@@ -99,5 +105,6 @@ bool runInteractiveProjection(const SimulationConfig& initial, const std::vector
         error = e.what();
         return false;
     }
+#endif
 }
 }

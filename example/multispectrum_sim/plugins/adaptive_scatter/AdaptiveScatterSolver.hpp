@@ -46,12 +46,24 @@ public:
         const std::vector<unsigned char>* object_mask = nullptr,
         const DeviceScatterPredictor& device_predict = {});
 
+    AdaptiveScatterReport solveDevice(const float* measured, const float* air, float* primary,
+        const ScatterCorrectionConfig::SolverConfig::AdaptiveConfig& options,
+        double scale, const DeviceScatterPredictor& predict,
+        const std::vector<unsigned char>* mask=nullptr);
 private:
+    AdaptiveScatterReport solveImpl(const std::vector<float>& measured,
+        const std::vector<float>& air, std::vector<float>& primary,
+        const ScatterCorrectionConfig::SolverConfig::AdaptiveConfig& options,
+        double scale, const ScatterPredictor& predict, const std::vector<unsigned char>* mask,
+        const DeviceScatterPredictor& device_predict,
+        const float* device_measured=nullptr, const float* device_air=nullptr, float* device_primary=nullptr);
     size_t pixels_;
     float *current_ = nullptr, *candidate_ = nullptr, *measured_ = nullptr;
     float *air_ = nullptr, *scatter_ = nullptr;
     float* accepted_scatter_ = nullptr;
     double* statistics_ = nullptr;
+    double* transmissions_ = nullptr;
+    unsigned char* mask_ = nullptr;
 };
 
 }

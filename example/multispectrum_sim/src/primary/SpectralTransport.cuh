@@ -5,6 +5,7 @@
 
 #include "ProjectionGeometry.cuh"
 #include "QuantumSampling.cuh"
+#include <iostream>
 
 namespace yk::spectral::primary_detail {
 
@@ -42,7 +43,7 @@ __device__ bool boxHit(float3 s, float3 d, float3 lo, float3 hi, float& a, float
 template <int MaterialCount>
 __device__ bool accumulatePaths(DeviceGeometry g, const unsigned char* labels,
     const int* label_to_material, float3 source, float3 d, float3 lo, float3 hi,
-    float* paths) {
+    float* paths,unsigned* visited=nullptr) {
     float entry, exit;
     if (!boxHit(source, d, lo, hi, entry, exit)) return false;
     const float3 entry_point = make_float3(source.x + d.x * entry,
@@ -64,6 +65,7 @@ __device__ bool accumulatePaths(DeviceGeometry g, const unsigned char* labels,
     bool hit_material = false;
     const float length = exit - entry;
     while (s < length && ix >= 0 && ix < g.nx && iy >= 0 && iy < g.ny && iz >= 0 && iz < g.nz) {
+        if(visited)++*visited;
         const float next = fminf(tx, fminf(ty, tz));
         const float segment = fminf(next, length) - s;
         const int label = g.use_label_texture
@@ -83,16 +85,20 @@ __device__ bool accumulatePaths(DeviceGeometry g, const unsigned char* labels,
     return hit_material;
 }
 
-template <int MaterialCount>
+template <int MaterialCount,bool Instrument=false>
 __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     const int* label_to_material, const float* mu, const float* spectrum,
     const float* energies, float incident, int quantum_noise,
     int view, unsigned seed, unsigned quantum_seed,
     float* expected_energy_out, float* sampled_energy_out, float* air_out,
-    unsigned char* object_mask_out) {
+    unsigned char* object_mask_out,unsigned long long* timing=nullptr) {
+    view += int(blockIdx.y);
     const int pixel = blockIdx.x * blockDim.x + threadIdx.x;
     const int pixels = g.nu * g.nv; if (pixel >= pixels) return;
     const int u0 = pixel % g.nu, v0 = pixel / g.nu;
+    const bool profile=Instrument&&((hash32(unsigned(pixel)^unsigned(view)*0x85ebca6bU)&1023U)==0);
+    unsigned long long geometry_cycles=0,path_cycles=0,spectrum_cycles=0,noise_cycles=0;
+    unsigned ray_count=0,hit_count=0,visited=0;
     if (g.ne > 256) return;
     float expected_counts[256] = {};
     float expected_air_energy = 0.f;
@@ -106,7 +112,8 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         const float exposure_fraction = defocused ? g.focal_epsilon : 1.f-g.focal_epsilon;
         if (exposure_fraction <= 0.f) continue;
         for (int sample=0; sample<g.samples; ++sample) {
-        unsigned base = seed ^ (unsigned)(view*pixels + pixel)*0x9e3779b9U ^ (unsigned)sample*0x85ebca6bU;
+        const auto geometry_start=profile?clock64():0ULL;
+        unsigned base = seed ^ (unsigned(view)*unsigned(pixels)+unsigned(pixel))*0x9e3779b9U ^ (unsigned)sample*0x85ebca6bU;
         const float fu = defocused ? g.defocus_fu : g.normal_fu;
         const float fv = defocused ? g.defocus_fv : g.normal_fv;
         float fsu = (uniform(base+1)-.5f)*fu;
@@ -119,16 +126,24 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         float3 d = make_float3(det.x-source.x, det.y-source.y, det.z-source.z);
         float length = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z); d.x/=length; d.y/=length; d.z/=length;
         float paths[MaterialCount] = {};
-        object_hit = accumulatePaths<MaterialCount>(g, labels, label_to_material,
-            phantomInverse(g, source, false), phantomInverse(g, d, true),
-            lo, hi, paths) || object_hit;
+        const auto local_source=phantomInverse(g,source,false),local_direction=phantomInverse(g,d,true);
+        if(profile)geometry_cycles+=clock64()-geometry_start;
+        const auto path_start=profile?clock64():0ULL;
+        const bool hit=accumulatePaths<MaterialCount>(g,labels,label_to_material,local_source,local_direction,lo,hi,paths,profile?&visited:nullptr);
+        object_hit=hit||object_hit;
+        if(profile){path_cycles+=clock64()-path_start;++ray_count;if(hit)++hit_count;}
+        const auto spectrum_start=profile?clock64():0ULL;
         float r2=length*length; float flux=g.geometry_flux ? 1000000.f/fmaxf(r2,1e-6f) : 1.f;
         // Geometry samples share one pixel exposure. They are not separate
         // exposures; each sample carries 1/g.samples of the pixel photons.
         const float photons_per_sample = exposure_fraction / static_cast<float>(g.samples);
         for(int e=0;e<g.ne;++e){float exponent=0.f;
-            #pragma unroll
-            for(int m=0;m<MaterialCount;++m) exponent+=paths[m]*readMu(g, mu, m*g.ne+e);
+            if constexpr(MaterialCount==32){
+                for(int m=0;m<g.nm;++m)exponent+=paths[m]*readMu(g,mu,m*g.ne+e);
+            }else{
+                #pragma unroll
+                for(int m=0;m<MaterialCount;++m) exponent+=paths[m]*readMu(g, mu, m*g.ne+e);
+            }
             const float transmission=expf(-exponent);
             const float response=g.detector_response ? __ldg(g.detector_efficiency + (v0*g.nu+u0)*g.ne+e) : 1.f;
             const float weight=photons_per_sample*readSpectrum(g, spectrum, e)*flux*response;
@@ -136,18 +151,26 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
             expected_counts[e] += lambda;
             expected_air_energy += weight * energies[e];
         }
+        if(profile)spectrum_cycles+=clock64()-spectrum_start;
         }
     }
+    const auto noise_start=profile?clock64():0ULL;
     float expected_energy = 0.f;
     float sampled_energy = 0.f;
     for (int e=0; e<g.ne; ++e) {
         const unsigned noise_seed = quantum_seed
-            ^ (unsigned)(view * pixels + pixel) * 0x9e3779b9U
+            ^ (unsigned(view)*unsigned(pixels)+unsigned(pixel)) * 0x9e3779b9U
             ^ (unsigned)e * 0x27d4eb2dU;
         const float sampled_count = quantum_noise ? poissonSample(expected_counts[e], noise_seed)
                                                   : expected_counts[e];
         expected_energy += expected_counts[e] * readEnergy(g, energies, e);
         sampled_energy += sampled_count * readEnergy(g, energies, e);
+    }
+    if(profile){noise_cycles=clock64()-noise_start;
+        atomicAdd(timing+0,geometry_cycles);atomicAdd(timing+1,path_cycles);
+        atomicAdd(timing+2,spectrum_cycles);atomicAdd(timing+3,noise_cycles);
+        atomicAdd(timing+4,1ULL);atomicAdd(timing+5,(unsigned long long)ray_count);
+        atomicAdd(timing+6,(unsigned long long)hit_count);atomicAdd(timing+7,(unsigned long long)visited);
     }
     const float sum_air_energy = expected_air_energy;
     // Actual transmitted counts fluctuate; normalize only by the configured
@@ -156,10 +179,11 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     // only inside the sample weights above, so increasing g.samples does not
     // increase dose.
     const float avg_air_energy = sum_air_energy;
-    expected_energy_out[pixel]=expected_energy;
-    sampled_energy_out[pixel]=sampled_energy;
-    air_out[pixel]=avg_air_energy;
-    object_mask_out[pixel] = object_hit ? 1 : 0;
+    const size_t output=size_t(blockIdx.y)*pixels+pixel;
+    expected_energy_out[output]=expected_energy;
+    sampled_energy_out[output]=sampled_energy;
+    air_out[output]=avg_air_energy;
+    object_mask_out[output] = object_hit ? 1 : 0;
 }
 
 template <int MaterialCount>
@@ -168,12 +192,21 @@ void launchPrimaryKernel(const DeviceGeometry& geometry,
     const float* mu, const float* spectrum, const float* energies,
     float incident, int quantum_noise, int view, unsigned seed,
     unsigned quantum_seed, float* expected_energy_out,
-    float* sampled_energy_out, float* air_out, unsigned char* object_mask_out) {
+    float* sampled_energy_out, float* air_out, unsigned char* object_mask_out, int views=1,unsigned long long* timing=nullptr) {
     const int pixels = geometry.nu * geometry.nv;
-    primaryKernel<MaterialCount><<< (pixels + 255) / 256, 256 >>>(
+    if(timing){
+        static bool reported=false;
+        if(!reported){cudaFuncAttributes normal{},instrumented{};
+            cudaFuncGetAttributes(&normal,primaryKernel<MaterialCount,false>);cudaFuncGetAttributes(&instrumented,primaryKernel<MaterialCount,true>);
+            std::cout<<"primary_resources materials="<<MaterialCount<<" normal_registers="<<normal.numRegs<<" normal_local_bytes="<<normal.localSizeBytes
+                <<" profiled_registers="<<instrumented.numRegs<<" profiled_local_bytes="<<instrumented.localSizeBytes<<std::endl;reported=true;}
+        primaryKernel<MaterialCount,true><<<dim3((pixels+255)/256,views),256>>>(geometry,labels,label_to_material,mu,spectrum,energies,incident,quantum_noise,view,seed,quantum_seed,expected_energy_out,sampled_energy_out,air_out,object_mask_out,timing);
+    }else{
+    primaryKernel<MaterialCount><<< dim3((pixels + 255) / 256,views), 256 >>>(
         geometry, labels, label_to_material, mu, spectrum, energies,
         incident, quantum_noise, view, seed, quantum_seed,
         expected_energy_out, sampled_energy_out, air_out, object_mask_out);
+    }
 }
 
 

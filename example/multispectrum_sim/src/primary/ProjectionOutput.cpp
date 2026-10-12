@@ -37,7 +37,8 @@ void EnergyProjectionOutput::write(const ProjectionFrame& frame) {
         frame.signal_energy.size() != attenuation_buffer_.size() ||
         frame.reference_energy.size() != attenuation_buffer_.size())
         throw std::runtime_error("invalid energy projection output frame");
-    for (size_t p = 0; p < attenuation_buffer_.size(); ++p)
+    if(frame.logarithm_valid&&frame.logarithm.size()==attenuation_buffer_.size())attenuation_buffer_=frame.logarithm;
+    else for (size_t p = 0; p < attenuation_buffer_.size(); ++p)
         attenuation_buffer_[p] = -std::log(std::max(frame.signal_energy[p] /
             std::max(frame.reference_energy[p], 1e-30f), 1e-30f));
     if (air_.is_open()) writeBuffer(air_, frame.reference_energy);

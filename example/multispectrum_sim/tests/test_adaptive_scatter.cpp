@@ -102,6 +102,22 @@ int main() {
         report = solver.solve(measured, air, primary, options, 1, no_scatter, &mask);
         require(report.low_transmission_risk && std::abs(report.low_transmission - 0.01) < 1e-12,
                 "object-only transmission risk was not detected");
+        struct DeviceFrames {
+            float *m=nullptr,*a=nullptr,*p=nullptr;
+            ~DeviceFrames(){cudaFree(m);cudaFree(a);cudaFree(p);}
+        } device;
+        require(cudaMalloc(&device.m,count*sizeof(float))==cudaSuccess,"allocate device measurement");
+        require(cudaMalloc(&device.a,count*sizeof(float))==cudaSuccess,"allocate device air");
+        require(cudaMalloc(&device.p,count*sizeof(float))==cudaSuccess,"allocate device primary");
+        require(cudaMemcpy(device.m,measured.data(),count*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload device measurement");
+        require(cudaMemcpy(device.a,air.data(),count*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload device air");
+        require(cudaMemcpy(device.p,measured.data(),count*sizeof(float),cudaMemcpyHostToDevice)==cudaSuccess,"upload device primary");
+        const auto device_report=solver.solveDevice(device.m,device.a,device.p,options,1,
+            [&](const float*,const float*,float* prediction){require(cudaMemset(prediction,0,count*sizeof(float))==cudaSuccess,"zero device prediction");},&mask);
+        require(std::abs(device_report.low_transmission-report.low_transmission)<1e-12&&device_report.low_transmission_risk,"device quantile differs from object-only CPU quantile");
+        std::vector<float> device_result(count);
+        require(cudaMemcpy(device_result.data(),device.p,count*sizeof(float),cudaMemcpyDeviceToHost)==cudaSuccess,"download device primary");
+        require(device_result==measured,"device zero scatter changed measurement");
         for (size_t p = 0; p < count; ++p) { measured[p] *= 1000; air[p] *= 1000; }
         primary = measured;
         const auto dose_report = solver.solve(measured, air, primary, options, 1, no_scatter, &mask);

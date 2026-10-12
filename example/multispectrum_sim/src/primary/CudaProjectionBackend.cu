@@ -1,10 +1,16 @@
+#include "common/YkTimingWatchdog.hpp"
 #include "CudaProjectionBackend.hpp"
+#include "DisplayGeometry.hpp"
 #include "LibraryGeometry.hpp"
 #include "SpectralTransport.cuh"
 #include "DetectorResponse.cuh"
 #include "DetectorSignal.hpp"
 #include <algorithm>
 #include <stdexcept>
+#include <cstring>
+#include <iostream>
+#include <limits>
+#include "recon/preprocess/DeviceMemoryPool.hpp"
 
 namespace yk::spectral::primary_detail {
 namespace {
@@ -13,11 +19,27 @@ void checkCuda(cudaError_t error, const char* operation) {
         throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(error));
 }
 }
+__global__ void initializeSignals(float* expected,float* air,float* signal,float* reference,float* logarithm,size_t n){
+    size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;if(i<n){signal[i]=expected[i];reference[i]=air[i];logarithm[i]=0;}}
+__global__ void logarithmKernel(const float* signal,const float* reference,float* output,size_t n){
+    size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;if(i<n)output[i]=-logf(fmaxf(signal[i]/fmaxf(reference[i],1e-30f),1e-30f));}
+__global__ void scatterNoiseDevice(float* signal,const float* primary,const float* sampled,size_t n,float energy,unsigned seed,int view){
+    size_t p=size_t(blockIdx.x)*blockDim.x+threadIdx.x;if(p>=n)return;
+    float scatter=fmaxf(signal[p]-primary[p],0);if(scatter>0&&energy>0){unsigned noise_seed=seed^(unsigned(view)*unsigned(n)+unsigned(p))*0x9e3779b9U;scatter=poissonSample(scatter/energy,noise_seed)*energy;}
+    signal[p]=sampled[p]+scatter;
+}
 struct CudaProjectionBackend::Impl {
     SimulationConfig config;
     DeviceGeometry dg{};
     std::vector<DeviceConeView> host_cone_views;
-    int pixels = 0;
+    int pixels = 0, batch_capacity = 1;
+    void* batch_device=nullptr;
+    void* batch_host=nullptr;
+    size_t batch_downloads=0,batch_uploads=0;
+    cudaEvent_t kernel_start=nullptr,kernel_done=nullptr,transfer_done=nullptr,transfer_start=nullptr;
+    bool kernel_timing_recorded=false;
+    double kernel_ms=0,download_ms=0;
+    unsigned long long* primary_profile=nullptr;
     float incident = 0.f, mean_photon_energy = 0.f;
         unsigned char* dl=nullptr; unsigned char* dmask=nullptr; int* dm=nullptr; float *dmu=nullptr,*ds=nullptr,*de=nullptr,*dresponse=nullptr,*do1=nullptr,*do2=nullptr,*do3=nullptr;
         DeviceConeView* d_cone_views=nullptr;
@@ -32,14 +54,19 @@ struct CudaProjectionBackend::Impl {
     ~Impl() {
         if (label_texture) cudaDestroyTextureObject(label_texture);
         if (label_array) cudaFreeArray(label_array);
-        for (auto it = allocations.rbegin(); it != allocations.rend(); ++it) cudaFree(*it);
+        if(kernel_start)cudaEventDestroy(kernel_start);
+        if(kernel_done)cudaEventDestroy(kernel_done);
+        if(transfer_done)cudaEventDestroy(transfer_done);
+        if(transfer_start)cudaEventDestroy(transfer_start);
+        if(batch_host)cudaFreeHost(batch_host);
+        for (auto it = allocations.rbegin(); it != allocations.rend(); ++it) preprocess::poolRelease(*it);
     }
     template<class T> cudaError_t allocate(T** pointer, size_t bytes) {
         void* allocated = nullptr;
-        const auto error = cudaMalloc(&allocated, bytes);
+        const auto error = preprocess::poolAllocate(&allocated, bytes);
         if (error != cudaSuccess) return error;
         try { allocations.push_back(allocated); }
-        catch (...) { cudaFree(allocated); throw; }
+        catch (...) { preprocess::poolRelease(allocated); throw; }
         *pointer = static_cast<T*>(allocated);
         return cudaSuccess;
     }
@@ -47,7 +74,9 @@ struct CudaProjectionBackend::Impl {
         const SpectralTransmissionModel& model) {
         config = c;
         const auto& g = c.geometry.parameters;
-        pixels = g.detector_u * g.detector_v;
+        const auto count=size_t(g.detector_u)*g.detector_v;
+        if(g.detector_u<=0||g.detector_v<=0||count>size_t(std::numeric_limits<int>::max()))throw std::runtime_error("invalid CUDA detector size");
+        pixels=int(count);
         const int nm = static_cast<int>(c.projection.materials.size());
         const int ne = static_cast<int>(model.spectrum().size());
         if (pixels <= 0 || g.views <= 0 || nm <= 0 || nm > 32 || ne <= 0 || ne > 256)
@@ -94,7 +123,7 @@ struct CudaProjectionBackend::Impl {
                 ? loadLayerThickness(impurity, pixels) : std::vector<float>(static_cast<size_t>(pixels), 0.f);
         }
         auto ck=[](cudaError_t x,const char* w){ checkCuda(x, w); return true; };
-        if(!ck(allocate(&dl,labels.size()),"cudaMalloc labels")||!ck(allocate(&dmask,pixels),"cudaMalloc object mask")||!ck(allocate(&dm,256*sizeof(int)),"cudaMalloc map")||!ck(allocate(&dmu,mu.size()*sizeof(float)),"cudaMalloc mu")||!ck(allocate(&ds,sw.size()*sizeof(float)),"cudaMalloc spectrum")||!ck(allocate(&de,en.size()*sizeof(float)),"cudaMalloc energies")||!ck(allocate(&do1,pixels*sizeof(float)),"cudaMalloc expected primary")||!ck(allocate(&do2,pixels*sizeof(float)),"cudaMalloc air energy")||!ck(allocate(&do3,pixels*sizeof(float)),"cudaMalloc sampled primary")) throw std::runtime_error("CUDA preparation failed");
+        if(!ck(allocate(&dl,labels.size()),"cudaMalloc labels")||!ck(allocate(&dm,256*sizeof(int)),"cudaMalloc map")||!ck(allocate(&dmu,mu.size()*sizeof(float)),"cudaMalloc mu")||!ck(allocate(&ds,sw.size()*sizeof(float)),"cudaMalloc spectrum")||!ck(allocate(&de,en.size()*sizeof(float)),"cudaMalloc energies")) throw std::runtime_error("CUDA preparation failed");
         checkCuda(cudaMemcpy(dl,labels.data(),labels.size(),cudaMemcpyHostToDevice), "Memcpy");checkCuda(cudaMemcpy(dm,map.data(),256*sizeof(int),cudaMemcpyHostToDevice), "Memcpy");checkCuda(cudaMemcpy(dmu,mu.data(),mu.size()*sizeof(float),cudaMemcpyHostToDevice), "Memcpy");checkCuda(cudaMemcpy(ds,sw.data(),sw.size()*sizeof(float),cudaMemcpyHostToDevice), "Memcpy");checkCuda(cudaMemcpy(de,en.data(),en.size()*sizeof(float),cudaMemcpyHostToDevice), "Memcpy");
         if (!cone_views.empty()) {
             if (!ck(allocate(&d_cone_views, cone_views.size() * sizeof(DeviceConeView)),
@@ -155,33 +184,102 @@ struct CudaProjectionBackend::Impl {
             dg.detector_response=1; dg.detector_efficiency=dresponse;
         }
 
+        prepareBatch();
     }
-    void project(int view, ProjectionFrame& frame) {
-        const int quantum_noise = config.projection.quantum_noise.enabled ? 1 : 0;
-        auto ck=[](cudaError_t error, const char* operation) {
-            checkCuda(error, operation); return true;
-        };
+    void prepareBatch() {
+        YK::diagnostics::TimingSpan watch("projection.batch.allocate");
+        if(config.projection.batching.views<1||config.projection.batching.views>64||config.projection.batching.max_buffer_mib<1||config.projection.batching.max_buffer_mib>256)throw std::runtime_error("invalid projection batch limits");
+        size_t free_bytes=0,total=0;checkCuda(cudaMemGetInfo(&free_bytes,&total),"inspect batch memory");
+        const size_t reserve=std::min(total/2,std::max(size_t(512ull*1024*1024),total/5));
+        const size_t frame_bytes=size_t(pixels)*(6*sizeof(float)+sizeof(unsigned char));
+        const size_t available=free_bytes>reserve?free_bytes-reserve:0;
+        const size_t limit=size_t(config.projection.batching.max_buffer_mib)*1024*1024;
+        if(frame_bytes>limit)throw std::runtime_error("one projection frame exceeds the batch memory budget");
+        batch_capacity=int(std::min({size_t(config.projection.batching.views),size_t(dg.views),available/frame_bytes,limit/frame_bytes}));
+        if(batch_capacity<1)throw std::runtime_error("insufficient GPU memory for a projection frame with VTK reservation");
+        // Retry a smaller batch if other active workspaces consume the pool budget.
+        while(true){
+            auto status=allocate(&batch_device,size_t(batch_capacity)*frame_bytes);
+            if(status==cudaSuccess)break;
+            if(status!=cudaErrorMemoryAllocation||batch_capacity==1)checkCuda(status,"allocate projection batch with VTK reservation");
+            batch_capacity=std::max(1,batch_capacity/2);
+        }
+        checkCuda(cudaHostAlloc(&batch_host,size_t(batch_capacity)*frame_bytes,cudaHostAllocDefault),"allocate pinned projection batch");
+        do1=static_cast<float*>(batch_device);
+        if(const char* flag=std::getenv("YK_PRIMARY_PROFILE")){if(std::string(flag)!="0")checkCuda(allocate(&primary_profile,8*sizeof(unsigned long long)),"allocate primary profile counters");}
+        checkCuda(cudaEventCreate(&kernel_start),"create batch timing");
+        checkCuda(cudaEventCreate(&kernel_done),"create batch timing");
+        checkCuda(cudaEventCreate(&transfer_done),"create batch timing");
+        checkCuda(cudaEventCreate(&transfer_start),"create batch timing");
+        std::cout<<"projection_batch capacity="<<batch_capacity<<" buffer_bytes="<<size_t(batch_capacity)*frame_bytes<<" VTK_reserve_bytes="<<reserve<<'\n';
+    }
+    void projectBatch(int view,int count,std::vector<ProjectionFrame>& frames) {
+        const size_t elements=size_t(pixels)*count;
+        do1=static_cast<float*>(batch_device);do3=do1+elements;do2=do3+elements;
+        dmask=reinterpret_cast<unsigned char*>(do1+6*elements);
+        const int quantum_noise=config.projection.quantum_noise.enabled?1:0;
+        if(primary_profile)checkCuda(cudaMemset(primary_profile,0,8*sizeof(unsigned long long)),"clear primary profile");
+        kernel_timing_recorded=false;
+        checkCuda(cudaEventRecord(kernel_start),"record batch kernel start");
             switch (dg.nm) {
-            case 1: launchPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 2: launchPrimaryKernel<2>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 3: launchPrimaryKernel<3>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 4: launchPrimaryKernel<4>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 5: launchPrimaryKernel<5>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 6: launchPrimaryKernel<6>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 7: launchPrimaryKernel<7>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 8: launchPrimaryKernel<8>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 9: launchPrimaryKernel<9>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            case 10: launchPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
-            default: launchPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask); break;
+            case 1: launchPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 2: launchPrimaryKernel<2>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 3: launchPrimaryKernel<3>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 4: launchPrimaryKernel<4>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 5: launchPrimaryKernel<5>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 6: launchPrimaryKernel<6>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 7: launchPrimaryKernel<7>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 8: launchPrimaryKernel<8>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 9: launchPrimaryKernel<9>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            case 10: launchPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            default: launchPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
             }
-            if(!ck(cudaGetLastError(),"primary kernel")||!ck(cudaDeviceSynchronize(),"primary synchronize"))throw std::runtime_error("CUDA primary launch failed");
-            checkCuda(cudaMemcpy(frame.expected_primary_energy.data(),do1,pixels*sizeof(float),cudaMemcpyDeviceToHost), "download projection frame");
-            checkCuda(cudaMemcpy(frame.air_energy.data(),do2,pixels*sizeof(float),cudaMemcpyDeviceToHost), "download projection frame");
-            checkCuda(cudaMemcpy(frame.sampled_primary_energy.data(),do3,pixels*sizeof(float),cudaMemcpyDeviceToHost), "download projection frame");
-            checkCuda(cudaMemcpy(frame.object_mask.data(),dmask,pixels,cudaMemcpyDeviceToHost), "download projection frame");
-
+        checkCuda(cudaGetLastError(),"batched primary kernel");
+        checkCuda(cudaEventRecord(kernel_done),"record batch kernel end");
+        if(primary_profile){unsigned long long c[8]{};checkCuda(cudaMemcpy(c,primary_profile,sizeof(c),cudaMemcpyDeviceToHost),"read primary profile counters");
+            std::cout<<"primary_sample first="<<view<<" count="<<count<<" geometry_cycles="<<c[0]<<" path_cycles="<<c[1]<<" spectrum_cycles="<<c[2]<<" noise_cycles="<<c[3]
+                <<" pixels="<<c[4]<<" rays="<<c[5]<<" hits="<<c[6]<<" voxels="<<c[7]<<std::endl;
+        }
+        initializeSignals<<<int((elements+255)/256),256>>>(do1,do2,do1+3*elements,do1+4*elements,do1+5*elements,elements);
+        checkCuda(cudaGetLastError(),"initialize device signal frames");
+        frames.resize(count);
+        for(int slot=0;slot<count;++slot){auto& f=frames[slot];f.resize(dg.nu,dg.nv);f.view=view+slot;
+            f.domain=ProjectionSignalDomain::EnergyKeV;f.location=ProjectionMemoryLocation::Device;f.logarithm_valid=false;
+            const size_t offset=size_t(slot)*pixels;
+            f.device={do1+offset,do3+offset,do2+offset,do1+3*elements+offset,do1+4*elements+offset,do1+5*elements+offset,dmask+offset};
+        }
+    }
+    void ensureLocation(std::vector<ProjectionFrame>& frames,ProjectionMemoryLocation location){
+        if(frames.empty())return;const auto current=frames.front().location;
+        for(auto& f:frames)if(f.location!=current)throw std::runtime_error("inconsistent batch memory location");
+        if(current==location)return;
+        YK::diagnostics::TimingSpan transfer_watch(location==ProjectionMemoryLocation::Host?"projection.batch.download_unpack":"projection.batch.pack_upload","count="+std::to_string(frames.size()));
+        const size_t elements=size_t(pixels)*frames.size(),bytes=elements*(6*sizeof(float)+1);
+        auto* host=static_cast<float*>(batch_host);auto* masks=reinterpret_cast<unsigned char*>(host+6*elements);
+        if(location==ProjectionMemoryLocation::Host){
+            checkCuda(cudaEventRecord(transfer_start),"record download start");
+            {YK::diagnostics::TimingSpan watch("projection.batch.download","bytes="+std::to_string(bytes));checkCuda(cudaMemcpy(batch_host,batch_device,bytes,cudaMemcpyDeviceToHost),"download final projection batch");}++batch_downloads;
+            checkCuda(cudaEventRecord(transfer_done),"record batch completion");checkCuda(cudaEventSynchronize(transfer_done),"finish batch timing");
+            float elapsed=0;
+            if(!kernel_timing_recorded){checkCuda(cudaEventElapsedTime(&elapsed,kernel_start,kernel_done),"time primary kernel");kernel_ms+=elapsed;kernel_timing_recorded=true;}
+            checkCuda(cudaEventElapsedTime(&elapsed,transfer_start,transfer_done),"time final download");download_ms+=elapsed;
+        }
+        for(size_t slot=0;slot<frames.size();++slot){auto& f=frames[slot];const size_t offset=slot*pixels;
+            std::vector<float>* arrays[]={&f.expected_primary_energy,&f.sampled_primary_energy,&f.air_energy,&f.signal_energy,&f.reference_energy,&f.logarithm};
+            for(size_t plane=0;plane<6;++plane){arrays[plane]->resize(pixels);
+                if(location==ProjectionMemoryLocation::Host)std::memcpy(arrays[plane]->data(),host+plane*elements+offset,size_t(pixels)*sizeof(float));
+                else std::memcpy(host+plane*elements+offset,arrays[plane]->data(),size_t(pixels)*sizeof(float));}
+            if(location==ProjectionMemoryLocation::Host)std::memcpy(f.object_mask.data(),masks+offset,pixels);
+            else std::memcpy(masks+offset,f.object_mask.data(),pixels);
+            f.location=location;
+        }
+        if(location==ProjectionMemoryLocation::Device){checkCuda(cudaMemcpy(batch_device,batch_host,bytes,cudaMemcpyHostToDevice),"upload CPU plugin batch");++batch_uploads;}
     }
     void sampleScatterNoise(ProjectionFrame& frame) {
+        if(frame.location==ProjectionMemoryLocation::Device){
+            scatterNoiseDevice<<<(pixels+255)/256,256>>>(frame.device.signal,frame.device.expected,frame.device.sampled,pixels,mean_photon_energy,config.projection.quantum_noise.seed^0xa511e9b3U,frame.view);
+            checkCuda(cudaGetLastError(),"resident scatter noise");return;
+        }
         std::vector<float> scatter(static_cast<size_t>(pixels));
         for (int p = 0; p < pixels; ++p)
             scatter[p] = std::max(frame.signal_energy[p] - frame.expected_primary_energy[p], 0.f);
@@ -210,7 +308,22 @@ void CudaProjectionBackend::project(int view, ProjectionFrame& frame) {
     if (!impl_ || view < 0 || view >= impl_->dg.views ||
         frame.width != impl_->dg.nu || frame.height != impl_->dg.nv)
         throw std::runtime_error("invalid CUDA backend projection request");
-    impl_->project(view, frame);
+    std::vector<ProjectionFrame> frames;
+    impl_->projectBatch(view,1,frames);impl_->ensureLocation(frames,ProjectionMemoryLocation::Host);frame=std::move(frames.front());
+}
+void CudaProjectionBackend::ensureLocation(std::vector<ProjectionFrame>& frames,ProjectionMemoryLocation location){
+    if(!impl_)throw std::runtime_error("CUDA backend is not prepared");impl_->ensureLocation(frames,location);}
+void CudaProjectionBackend::finalizeBatch(std::vector<ProjectionFrame>& frames){
+    if(frames.empty())return;ensureLocation(frames,ProjectionMemoryLocation::Device);
+    for(auto& f:frames){logarithmKernel<<<(impl_->pixels+255)/256,256>>>(f.device.signal,f.device.reference,f.device.logarithm,impl_->pixels);f.logarithm_valid=true;}
+    checkCuda(cudaGetLastError(),"device log normalization");
+}
+void CudaProjectionBackend::synchronize(){checkCuda(cudaStreamSynchronize(nullptr),"synchronize projection stage");}
+int CudaProjectionBackend::batchCapacity()const{return impl_?impl_->batch_capacity:1;}
+void CudaProjectionBackend::projectBatch(int first,int count,std::vector<ProjectionFrame>& frames){
+    if(!impl_||first<0||count<=0||count>impl_->batch_capacity||first>impl_->dg.views-count)
+        throw std::runtime_error("invalid CUDA projection batch request");
+    impl_->projectBatch(first,count,frames);
 }
 void CudaProjectionBackend::sampleScatterNoise(ProjectionFrame& frame) {
     if (!impl_) throw std::runtime_error("CUDA backend is not prepared");
@@ -221,29 +334,10 @@ ProjectionViewGeometry CudaProjectionBackend::geometryForDisplay(int view) const
     auto g=impl_->dg;
     // dg points at device storage; display uses the identical resolved host views.
     if(g.use_cone_views)g.cone_views=impl_->host_cone_views.data();
-    auto point=[](float3 p)->yk::visualization::Point{return {p.x,p.y,p.z};};
-    auto unit=[](float3 p){return scale3(p,1.f/sqrtf(p.x*p.x+p.y*p.y+p.z*p.z));};
-    ProjectionViewGeometry out;out.view=view;
-    const float cu=.5f*(g.nu-1),cv=.5f*(g.nv-1);
-    auto center=scannerRay(g,view,cu,cv);out.source=point(center.source);out.detector_center=point(center.detector);
-    float3 u,v,n;
-    if(g.use_cone_views){u=unit(g.cone_views[view].detector_u);v=unit(g.cone_views[view].detector_v);}
-    else {
-        const float pi=3.14159265358979323846f;
-        const float angle=g.start+g.rotation_direction*2.f*pi*view/g.views_per_turn-.5f*pi;
-        detectorFrame(g,angle,u,v,n);
-        if(g.cylindrical){const float gamma=g.offset_u/g.sdd;u=add3(scale3(u,cosf(gamma)),scale3(n,sinf(gamma)));}
-        u=unit(u);v=unit(v);
-    }
-    out.detector_axes={point(u),point(v),point(unit(cross3(u,v)))};
-    const int segments=g.cylindrical?128:1;
-    for(int row=0;row<2;++row)for(int col=0;col<=segments;++col)
-        out.detector.push_back(point(scannerRay(g,view,-.5f+g.nu*float(col)/segments,row?g.nv-.5f:-.5f).detector));
-    const auto origin=phantomForward(g,make_float3(0,0,0),false);
-    const float3 basis[]={make_float3(1,0,0),make_float3(0,1,0),make_float3(0,0,1)};
-    const auto t=point(origin);for(int r=0;r<3;++r)out.object_pose[r*4+3]=t[r];
-    for(int c=0;c<3;++c){const auto b=point(phantomForward(g,basis[c],true));for(int r=0;r<3;++r)out.object_pose[r*4+c]=b[r];}
-    return out;
+    return resolveDisplayGeometry(g,view);
 }
-void CudaProjectionBackend::reset() noexcept { impl_.reset(); }
+void CudaProjectionBackend::reset() noexcept {
+    if(impl_&&impl_->batch_downloads)std::cout<<"projection_batch downloads="<<impl_->batch_downloads<<" capacity="<<impl_->batch_capacity<<" CPU_plugin_uploads="<<impl_->batch_uploads<<" kernel_ms="<<impl_->kernel_ms<<" download_ms="<<impl_->download_ms<<std::endl;
+    impl_.reset();
+}
 } // namespace yk::spectral::primary_detail

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config/SimConfig.hpp"
+#include "TaskProgress.hpp"
 
 #include <filesystem>
 #include <string>
@@ -13,6 +14,6 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
     const std::filesystem::path& projection_file,
     const std::filesystem::path& volume_file,
     const std::filesystem::path& slice_prefix,
-    std::string& diagnostic);
+    std::string& diagnostic, TaskProgressCallback progress={});
 
 }

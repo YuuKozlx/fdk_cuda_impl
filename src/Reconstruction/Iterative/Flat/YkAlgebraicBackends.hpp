@@ -1,5 +1,6 @@
 // YkOSSART.hpp
 #pragma once
+#include "common/YkExecutionProgress.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "common/YkDeviceWorkspace.hpp"
 #include "Reconstruction/Iterative/Common/kernels/YkIterLaunch.cuh"
@@ -285,6 +286,7 @@ namespace YK {
                     YK::Iter::clamp_max_launch(d_vol, vol_n, cfg_.max_constraint, stream);
 
                 iteration_++;
+                if(!YK::detail::reportExecutionProgress(int(iter+1),int(iterations),stream))return false;
 
                 // lambda 衰减:每扫完一整轮所有块执行一次(TIGRE MATLAB 语义)
                 if (iteration_ % n_block_ == 0)
@@ -574,6 +576,7 @@ namespace YK {
                     YK::Iter::clamp_max_launch(d_vol, vol_n, cfg_.max_constraint, stream);
 
                 iteration_++;
+                if(!YK::detail::reportExecutionProgress(int(iter+1),int(iterations),stream))return false;
                 YK_LOGD("[OSSART] iter={} order_pos={} subset={} K={} lambda={:.4e}",
                     iteration_, order_pos, subset_idx, K, lambda_cur_);
             }
@@ -834,6 +837,7 @@ namespace YK {
                     YK::Iter::clamp_max_launch(d_vol, vol_n, cfg_.max_constraint, stream);
 
                 iteration_++;
+                if(!YK::detail::reportExecutionProgress(int(iter+1),int(iterations),stream))return false;
                 YK_LOGD("[AlgebraicDetailedWeightBackend] update={} subset={}/{} "
                     "K={} lambda={:.4e}",
                     iteration_, subset_idx + 1, cfg_.n_subset, K, lambda_cur_);

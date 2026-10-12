@@ -19,10 +19,14 @@ namespace yk::spectral {
     }
 }
 namespace yk::spectral {
-    SimulationConfig loadConfig(const std::filesystem::path& path) {
+    SimulationConfig loadConfig(const std::filesystem::path& path, bool check_runtime_files) {
+        const auto available = [check_runtime_files](const std::filesystem::path& p) {
+            return !check_runtime_files || std::filesystem::is_regular_file(p);
+        };
         auto t = toml::parse_file(path.string());
-        const auto config_directory = path.parent_path();
+        const auto config_directory = std::filesystem::absolute(path).parent_path();
         SimulationConfig c;
+        c.source_config_file = std::filesystem::absolute(path);
         c.schema_version = t["schema_version"].value_or(0);
         if (c.schema_version != 2)
             throw std::runtime_error("配置必须声明 schema_version=2");
@@ -35,6 +39,10 @@ namespace yk::spectral {
         c.workflow.mode = workflow((*w)["mode"].value_or<std::string>("project"));
         if(auto* display=t["visualization"].as_table()) {
             auto& v=c.visualization;
+            v.auto_load_reconstruction=(*display)["auto_load_reconstruction"].value_or(false);
+            v.volume_opacity_scale=(*display)["volume_opacity_scale"].value_or(0.03);
+            if(!std::isfinite(v.volume_opacity_scale)||v.volume_opacity_scale<0||v.volume_opacity_scale>1)
+                throw std::runtime_error("visualization.volume_opacity_scale must be 0..1");
             v.enabled=(*display)["enabled"].value_or(false);
             v.interactive=(*display)["interactive"].value_or(false);
             v.texture_max_size=(*display)["texture_max_size"].value_or(512);
@@ -138,7 +146,7 @@ namespace yk::spectral {
                     throw std::runtime_error(
                         "projection.scatter.kernel.segments is only valid for segmented mode");
                 if (c.projection.scatter.enabled) {
-                    if (!std::filesystem::is_regular_file(c.projection.scatter.model_file))
+                    if (!available(c.projection.scatter.model_file))
                         throw std::runtime_error("scatter.model_file must point to an existing kernel model");
                     if (c.geometry.kind == GeometryKind::CylCbct || c.geometry.kind == GeometryKind::CylHelical)
                         throw std::runtime_error("kernel scatter currently supports flat detectors only");
@@ -344,7 +352,7 @@ namespace yk::spectral {
                     !std::isfinite(rc.maximum_update_ratio) || rc.maximum_update_ratio <= 0)
                     throw std::runtime_error("iterative 参数必须为正数");
             }
-            const auto& pp = c.reconstruction.preprocessing;
+            auto& pp = c.reconstruction.preprocessing;
             if (pp.enabled) {
                 if (!pp.beam_hardening.enabled && !pp.scatter.enabled)
                     throw std::runtime_error("reconstruction.preprocessing must enable beam_hardening or scatter");
@@ -357,26 +365,31 @@ namespace yk::spectral {
                     throw std::runtime_error("invalid beam hardening polynomial configuration");
                 if (bh.enabled && bh.fit_from_water_plate &&
                     ((!(bh.spectrum_file.empty() && c.projection.spectrum.source == "generated") &&
-                     !std::filesystem::is_regular_file(bh.spectrum_file.empty()
+                     !available(bh.spectrum_file.empty()
                         ? c.projection.spectrum_file : bh.spectrum_file)) ||
                      !std::isfinite(bh.water_plate_max_mm) || bh.water_plate_max_mm <= 0.0 ||
                      bh.water_plate_samples < bh.order + 2 ||
                      !std::isfinite(bh.reference_energy_keV) || bh.reference_energy_keV < 0.0))
                     throw std::runtime_error("invalid water-plate beam hardening calibration configuration");
-                const auto& sc = pp.scatter;
-                if (sc.enabled && (sc.air_projection_file.empty() || sc.model_file.empty() ||
-                    (!std::filesystem::is_regular_file(sc.air_projection_file) &&
-                     !(c.runsProjection() && sc.air_projection_file.lexically_normal() ==
-                       c.projection.air_output_file.lexically_normal())) ||
-                    !std::filesystem::is_regular_file(sc.model_file) || sc.correction.iterations <= 0 ||
-                    !std::isfinite(sc.correction.damping) || sc.correction.damping <= 0.0 ||
-                    sc.correction.damping > 1.0 ||
-                    !std::isfinite(sc.correction.scatter_scale) || sc.correction.scatter_scale < 0.0 ||
-                    (sc.kernel.mode != "all" && sc.kernel.mode != "segmented") ||
-                    (sc.kernel.mode == "segmented" && sc.kernel.segments < 2) ||
-                    !std::isfinite(sc.correction.object_mask_threshold) ||
-                    sc.correction.object_mask_threshold < 0.0))
-                    throw std::runtime_error("invalid reconstruction scatter correction configuration");
+                auto& sc = pp.scatter;
+                // GUI setup can carry defaults from the forward model, but execution remains strict.
+                if(!check_runtime_files && sc.enabled){
+                    if(sc.air_projection_file.empty())sc.air_projection_file=c.projection.air_output_file;
+                    if(sc.model_file.empty())sc.model_file=c.projection.scatter.model_file;
+                }
+                if(sc.enabled){
+                    if(sc.air_projection_file.empty())throw std::runtime_error("scatter correction requires an air projection file (set Correction air or projection.air_output_file)");
+                    if(sc.model_file.empty())throw std::runtime_error("scatter correction requires a model file (set Correction model)");
+                    const bool planned_air=c.runsProjection() && sc.air_projection_file.lexically_normal()==c.projection.air_output_file.lexically_normal();
+                    if(!available(sc.air_projection_file) && !planned_air)throw std::runtime_error("scatter correction air projection file does not exist: "+sc.air_projection_file.string());
+                    if(!available(sc.model_file))throw std::runtime_error("scatter correction model file does not exist: "+sc.model_file.string());
+                    if(sc.correction.iterations<=0)throw std::runtime_error("scatter correction iterations must be positive");
+                    if(!std::isfinite(sc.correction.damping)||sc.correction.damping<=0||sc.correction.damping>1)throw std::runtime_error("scatter correction damping must be in (0,1]");
+                    if(!std::isfinite(sc.correction.scatter_scale)||sc.correction.scatter_scale<0)throw std::runtime_error("scatter correction scale must be finite and nonnegative");
+                    if(sc.kernel.mode!="all" && sc.kernel.mode!="segmented")throw std::runtime_error("scatter correction kernel mode must be all or segmented");
+                    if(sc.kernel.mode=="segmented" && sc.kernel.segments<2)throw std::runtime_error("scatter correction kernel segments must be at least 2");
+                    if(!std::isfinite(sc.correction.object_mask_threshold)||sc.correction.object_mask_threshold<0)throw std::runtime_error("scatter correction object mask threshold must be finite and nonnegative");
+                }
             }
             const auto output_tag = c.reconstruction.type == "iterative"
                 ? c.reconstruction.iterative.algorithm : c.reconstruction.analytic.pipeline;
@@ -424,6 +437,10 @@ namespace yk::spectral {
         }
         if (p) {
             {
+                if(auto* batch=(*p)["batching"].as_table()) {
+                    c.projection.batching.views=(*batch)["views"].value_or(64);
+                    c.projection.batching.max_buffer_mib=(*batch)["max_buffer_mib"].value_or(256);
+                }
                 auto* s = (*p)["sampling"].as_table();
                 if (!s) throw std::runtime_error("缺少 [projection.sampling]");
                 for (const char* removed : { "photons_per_pixel", "photon_count_mode", "photon_seed" })
@@ -587,6 +604,9 @@ namespace yk::spectral {
                  (spot.epsilon > 0.0 && (spot.defocus_size_u_mm <= 0 || spot.defocus_size_v_mm <= 0))))
                 throw std::runtime_error("矩形焦点尺寸必须为正");
         }
+        if(c.projection.batching.views<1||c.projection.batching.views>64||
+            c.projection.batching.max_buffer_mib<1||c.projection.batching.max_buffer_mib>256)
+            throw std::runtime_error("projection.batching: views must be 1..64, max_buffer_mib must be 1..256");
         if (c.projection.sampling.samples_per_pixel <= 0 || c.projection.sampling.samples_per_pixel > 4096)
             throw std::runtime_error("projection.sampling.samples_per_pixel must be in 1..4096");
         const bool planar = c.geometry.kind == GeometryKind::PlanarSourceOrbit;

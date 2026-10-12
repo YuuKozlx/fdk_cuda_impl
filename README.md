@@ -44,3 +44,6 @@ cmake --install out/build/core --prefix install/core
 ## 文档维护
 
 公共 API、几何、算法开放状态、构建或测试入口发生变化时，同一变更必须更新对应文档。一个事实只在一份详细文档中定义，其他位置链接引用。测试结果必须注明代码版本、构建配置、硬件、输入和指标；历史结果不能作为当前版本通过验证的证据。
+
+可选多能前投界面：同时开启 `BUILD_MULTISPECTRUM_SIM`、`BUILD_VTK_VISUALIZATION` 和 `BUILD_IMGUI_GUI`，
+提供 Windows 原生 ImGui + VTK 界面，支持四种平板扫描、标签体/材料与能谱设置；详见 `visualization/README.zh-CN.md`。

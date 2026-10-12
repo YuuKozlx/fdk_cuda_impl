@@ -1,5 +1,9 @@
+#include "../src/common/YkTimingWatchdog.hpp"
 #include "LiveView.hpp"
 #include "ParameterPanel.hpp"
+#ifdef YK_VTK_IMGUI
+#include "ImGuiOverlay.hpp"
+#endif
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -61,13 +65,14 @@ namespace {
         static SceneStyle* New();
         vtkTypeMacro(SceneStyle, vtkInteractorStyleTrackballCamera);
         vtkRenderer* scene = nullptr;
+        double obstruction_left=1;
         bool inScene()
         {
             auto* pos = Interactor->GetEventPosition();
             auto* size = Interactor->GetRenderWindow()->GetSize();
             auto* v = scene->GetViewport();
             double x = double(pos[0]) / std::max(size[0], 1), y = double(pos[1]) / std::max(size[1], 1);
-            return x >= v[0] && x <= v[2] && y >= v[1] && y <= v[3];
+            return x >= v[0] && x < std::min(v[2],obstruction_left) && y >= v[1] && y <= v[3];
         }
         void OnLeftButtonDown() override
         {
@@ -195,10 +200,30 @@ struct LiveView::Impl {
     vtkNew<vtkRenderer> renderer;
     vtkNew<vtkRenderer> slider_renderer;
     vtkNew<vtkRenderer> energy_renderer, attenuation_renderer, parameter_renderer;
+    vtkNew<vtkRenderer> axial_renderer,coronal_renderer;
+    vtkNew<vtkImageActor> axial_actor,coronal_actor;
+    vtkNew<vtkImageData> axial_image,coronal_image;
+    vtkNew<vtkTextActor> axial_title,coronal_title;
+    vtkNew<vtkRenderer> sagittal_renderer;
+    vtkNew<vtkImageActor> sagittal_actor;
+    vtkNew<vtkImageData> sagittal_image;
+    vtkNew<vtkTextActor> sagittal_title;
+    FloatVolume reconstruction;
+    std::array<int,3> reconstruction_slices{};
+    std::array<double,2> reconstruction_window{};
+    bool reconstruction_shown=false;
+    double water_reference_mm_inv=0;
     vtkNew<vtkImageActor> energy_actor, attenuation_actor;
     vtkNew<vtkImageData> energy_image, attenuation_image;
     vtkNew<vtkTextActor> energy_title, attenuation_title;
     std::unique_ptr<ParameterPanel> parameters;
+    bool gui_active = false;
+    bool image_drawer_open=false;
+    std::string status_text;
+    std::chrono::steady_clock::time_point last_gui_render {};
+#ifdef YK_VTK_IMGUI
+    std::unique_ptr<ImGuiOverlay> gui;
+#endif
     vtkNew<vtkRenderWindow> window;
     vtkNew<vtkRenderWindowInteractor> interactor;
     vtkNew<vtkImageData> labels;
@@ -222,12 +247,15 @@ struct LiveView::Impl {
     FrameGeometry last_frame;
     std::chrono::steady_clock::time_point last_render {};
     double axis_length = 10;
+    double opacity_scale=1;
+    std::array<double,256> material_opacity{};
     explicit Impl(const LiveViewOptions& o)
         : options(o)
     {
         if (o.texture_max_size < 1 || o.texture_max_size > 8192 || !std::isfinite(o.max_fps) || o.max_fps <= 0 || o.max_fps > 120)
             throw std::invalid_argument("invalid live display options");
-        renderer->SetBackground(.04, .06, .1);
+        renderer->SetBackground(.065,.085,.12);
+        renderer->SetBackground2(.13,.18,.245);renderer->GradientBackgroundOn();
         window->AddRenderer(renderer);
         window->SetSize(1600, 1000);
         window->SetMultiSamples(0);
@@ -239,12 +267,27 @@ struct LiveView::Impl {
         parameter_renderer->SetViewport(0, 0, .18, 1);
         energy_renderer->SetViewport(.72, .5, 1, 1);
         attenuation_renderer->SetViewport(.72, 0, 1, .5);
-        parameter_renderer->SetBackground(.075, .095, .12);
-        energy_renderer->SetBackground(.025, .035, .05);
-        attenuation_renderer->SetBackground(.04, .05, .065);
+        parameter_renderer->SetBackground(.065,.09,.135);
+        energy_renderer->SetBackground(.075,.10,.145);
+        attenuation_renderer->SetBackground(.075,.10,.145);
         window->AddRenderer(parameter_renderer);
         window->AddRenderer(energy_renderer);
         window->AddRenderer(attenuation_renderer);
+        window->AddRenderer(sagittal_renderer);
+        window->AddRenderer(axial_renderer);window->AddRenderer(coronal_renderer);
+        axial_renderer->SetBackground(.075,.10,.145);coronal_renderer->SetBackground(.075,.10,.145);
+        axial_renderer->AddActor(axial_actor);coronal_renderer->AddActor(coronal_actor);
+        axial_renderer->AddViewProp(axial_title);coronal_renderer->AddViewProp(coronal_title);
+        for(auto* r:{axial_renderer.GetPointer(),coronal_renderer.GetPointer()}){r->SetInteractive(false);r->DrawOff();r->GetActiveCamera()->ParallelProjectionOn();}
+        for(auto* title:{axial_title.GetPointer(),coronal_title.GetPointer()}){title->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();title->SetPosition(.03,.83);title->GetTextProperty()->SetFontSize(19);}
+        axial_title->SetInput("Axial XY: run reconstruction");coronal_title->SetInput("Coronal XZ: run reconstruction");
+        sagittal_renderer->SetBackground(.075,.10,.145);
+        sagittal_renderer->SetInteractive(false);sagittal_renderer->DrawOff();
+        sagittal_renderer->AddActor(sagittal_actor);sagittal_renderer->AddViewProp(sagittal_title);
+        sagittal_title->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        sagittal_title->SetPosition(.03,.83);sagittal_title->GetTextProperty()->SetFontSize(19);
+        sagittal_title->SetInput("Sagittal YZ: run reconstruction");
+        sagittal_renderer->GetActiveCamera()->ParallelProjectionOn();
         window->SetAlphaBitPlanes(1);
         renderer->UseDepthPeelingOn();
         renderer->UseDepthPeelingForVolumesOn();
@@ -382,13 +425,13 @@ struct LiveView::Impl {
                 const bool show = !p.source_trail->GetVisibility();
                 p.source_trail->SetVisibility(show);
                 p.detector_trail->SetVisibility(show);
-                p.window->Render();
+                p.renderMeasured("scene/UI");
             }
         });
         interactor->AddObserver(vtkCommand::KeyPressEvent, keys);
         vtkNew<vtkCallbackCommand> beam_key;
         beam_key->SetClientData(this);
-        beam_key->SetCallback([](vtkObject*, unsigned long, void* data, void*) {auto& p=*static_cast<Impl*>(data);std::string k=p.interactor->GetKeySym();if(k=="b"||k=="B"){p.beam_visible=!p.beam_visible;p.beam_actor->SetVisibility(p.beam_visible);p.window->Render();} });
+        beam_key->SetCallback([](vtkObject*, unsigned long, void* data, void*) {auto& p=*static_cast<Impl*>(data);std::string k=p.interactor->GetKeySym();if(k=="b"||k=="B"){p.beam_visible=!p.beam_visible;p.beam_actor->SetVisibility(p.beam_visible);p.renderMeasured("scene/UI");} });
         interactor->AddObserver(vtkCommand::KeyPressEvent, beam_key);
     }
     bool navigate(int view)
@@ -402,12 +445,13 @@ struct LiveView::Impl {
         return true;
     }
     void renderFrame(int view);
+    void renderMeasured(const char* reason){YK::diagnostics::TimingSpan watch("vtk.render",reason);window->Render();}
     void events()
     {
         if (initialized && !options.offscreen && !closed)
             interactor->ProcessEvents();
     }
-    void panel(vtkRenderer* r, vtkImageActor* actor, vtkImageData* image, vtkTextActor* title, const std::vector<float>& values, int w, int h, const char* name, int view)
+    void panel(vtkRenderer* r, vtkImageActor* actor, vtkImageData* image, vtkTextActor* title, const std::vector<float>& values, int w, int h, const char* name, int view, const char* item="frame", std::array<double,2> spacing={1,1}, double black=0,double white=0)
     {
         if (values.empty()) {
             actor->VisibilityOff();
@@ -415,6 +459,9 @@ struct LiveView::Impl {
             return;
         }
         auto rgb = gray(values);
+        if(white>black){for(size_t i=0;i<values.size();++i){const auto value=static_cast<unsigned char>(std::clamp((double(values[i])-black)/(white-black),0.,1.)*255.);
+            rgb[i*3]=rgb[i*3+1]=rgb[i*3+2]=value;}}
+        image->SetSpacing(spacing[0],spacing[1],1);
         image->SetDimensions(w, h, 1);
         image->AllocateScalars(VTK_UNSIGNED_CHAR, 3);
         std::memcpy(image->GetScalarPointer(), rgb.data(), rgb.size());
@@ -423,14 +470,43 @@ struct LiveView::Impl {
         actor->InterpolateOff();
         actor->VisibilityOn();
         auto* c = r->GetActiveCamera();
-        c->SetPosition((w - 1) * .5, (h - 1) * .5, 1000);
-        c->SetFocalPoint((w - 1) * .5, (h - 1) * .5, 0);
+        c->SetPosition((w - 1) * spacing[0] * .5, (h - 1) * spacing[1] * .5, 1000);
+        c->SetFocalPoint((w - 1) * spacing[0] * .5, (h - 1) * spacing[1] * .5, 0);
         c->SetViewUp(0, 1, 0);
         r->ResetCamera();
         auto range = std::minmax_element(values.begin(), values.end());
         std::ostringstream label;
-        label << name << " | frame " << view << "\nrange " << *range.first << " .. " << *range.second;
+        label << name << " | " << item << " " << view << "\nrange " << *range.first << " .. " << *range.second;
         title->SetInput(label.str().c_str());
+    }
+    void layoutResults() {
+        if(gui_active)renderer->GetActiveCamera()->SetWindowCenter(image_drawer_open?.5:0,0);
+        if(auto* style=SceneStyle::SafeDownCast(interactor->GetInteractorStyle()))style->obstruction_left=gui_active && image_drawer_open?.65:1.;
+        if(gui_active && !image_drawer_open){
+            for(auto* r:{energy_renderer.GetPointer(),attenuation_renderer.GetPointer(),axial_renderer.GetPointer(),coronal_renderer.GetPointer(),sagittal_renderer.GetPointer()})r->DrawOff();
+            return;
+        }
+        const double right=gui_active?.65:.72;
+        const auto* size=window->GetSize();
+        const double top=gui_active?std::max(.5,1.-56./std::max(1,size[1])):1.;
+        energy_renderer->SetViewport(right,top/2,1,top);attenuation_renderer->SetViewport(right,0,1,top/2);
+        const double bottom=gui_active?std::min(.3,166./std::max(1,size[1])):0;
+        const double row=(top-bottom)/3;
+        axial_renderer->SetViewport(right,bottom+2*row,1,top);coronal_renderer->SetViewport(right,bottom+row,1,bottom+2*row);sagittal_renderer->SetViewport(right,bottom,1,bottom+row);
+        energy_renderer->SetDraw(!reconstruction_shown);attenuation_renderer->SetDraw(!reconstruction_shown);
+        axial_renderer->SetDraw(reconstruction_shown);coronal_renderer->SetDraw(reconstruction_shown);sagittal_renderer->SetDraw(reconstruction_shown);
+        for(auto* title:{energy_title.GetPointer(),attenuation_title.GetPointer()}){title->SetPosition(.03,.88);title->GetTextProperty()->SetFontSize(20);}
+    }
+    void reconstructionPanels() {
+        if(reconstruction.values.empty() || !reconstruction_shown)return;
+        auto draw=[&](int axis,vtkRenderer* r,vtkImageActor* actor,vtkImageData* image,vtkTextActor* title,const char* name){
+            auto slice=extractFloatSlice(reconstruction,axis,reconstruction_slices[axis]);
+            if(water_reference_mm_inv>0)for(auto& value:slice.values)value=float(attenuationToHu(value,water_reference_mm_inv));
+            const auto caption=std::string(name)+(water_reference_mm_inv>0?" (HU)":" (mm^-1)");
+            panel(r,actor,image,title,slice.values,slice.width,slice.height,caption.c_str(),reconstruction_slices[axis],"slice",slice.spacing,reconstruction_window[0],reconstruction_window[1]);};
+        draw(2,axial_renderer,axial_actor,axial_image,axial_title,"Axial XY");
+        draw(1,coronal_renderer,coronal_actor,coronal_image,coronal_title,"Coronal XZ");
+        draw(0,sagittal_renderer,sagittal_actor,sagittal_image,sagittal_title,"Sagittal YZ");
     }
     void save()
     {
@@ -477,7 +553,8 @@ struct LiveView::Impl {
             mesh->SetInputData(world->GetOutput());
             mesh->Write();
         }
-        const auto& saved = frames.at(last_frame.view);
+        if (const auto frame=frames.find(last_frame.view);frame!=frames.end()) {
+        const auto& saved = frame->second;
         for (int i = 0; i < 2; ++i) {
             const auto& values = i ? saved.attenuation : saved.energy;
             if (values.empty())
@@ -489,6 +566,7 @@ struct LiveView::Impl {
             image->SetFileName(path(i ? "attenuation.vti" : "energy.vti").c_str());
             image->SetInputData(raw);
             image->Write();
+        }
         }
         if (source_path) {
             mesh->SetFileName(path("source-trajectory.vtp").c_str());
@@ -522,7 +600,11 @@ LiveView::LiveView(const LiveViewOptions& o)
     : impl_(std::make_unique<Impl>(o))
 {
 }
-LiveView::~LiveView() = default;
+LiveView::~LiveView() {
+#ifdef YK_VTK_IMGUI
+    impl_->gui.reset();
+#endif
+}
 void LiveView::setVolume(const LabelVolume& input)
 {
     auto& p = *impl_;
@@ -557,7 +639,8 @@ void LiveView::setVolume(const LabelVolume& input)
     for (int i = 0; i < 256; ++i) {
         const auto& c = palette[i];
         colors->AddRGBPoint(i, c[0], c[1], c[2]);
-        opacity->AddPoint(i, c[3]);
+        p.material_opacity[i]=c[3];
+        opacity->AddPoint(i, c[3]*p.opacity_scale);
     }
     vtkNew<vtkVolumeProperty> property;
     property->SetColor(colors);
@@ -588,6 +671,10 @@ void LiveView::invalidateResults()
 {
     auto& p = *impl_;
     p.frames.clear();
+    p.reconstruction.values.clear();p.reconstruction_shown=false;
+    p.axial_actor->VisibilityOff();p.coronal_actor->VisibilityOff();p.sagittal_actor->VisibilityOff();
+    p.axial_title->SetInput("Axial XY: run reconstruction");p.coronal_title->SetInput("Coronal XZ: run reconstruction");p.sagittal_title->SetInput("Sagittal YZ: run reconstruction");
+    p.layoutResults();
     p.following = true;
     p.has_frame = false;
     p.slider->SetEnabled(0);
@@ -599,7 +686,61 @@ void LiveView::invalidateResults()
     p.energy_title->SetInput("Energy: computing");
     p.attenuation_title->SetInput("Attenuation: computing");
     if (p.initialized)
-        p.window->Render();
+        p.renderMeasured("scene/UI");
+}
+void LiveView::setReconstruction(FloatVolume volume) {
+    validateFloatVolume(volume);
+    auto& p=*impl_;p.water_reference_mm_inv=0;p.reconstruction_window=automaticFloatWindow(volume);
+    for(int i=0;i<3;++i)p.reconstruction_slices[i]=volume.dimensions[i]/2;
+    p.reconstruction=std::move(volume);showReconstruction(true);
+}
+void LiveView::setReconstructionCtReference(double water) {
+    if(!std::isfinite(water)||water<=0)throw std::invalid_argument("invalid CT water reference");
+    auto& p=*impl_;const auto window=automaticFloatWindow(p.reconstruction);
+    p.water_reference_mm_inv=water;
+    p.reconstruction_window={attenuationToHu(window[0],water),attenuationToHu(window[1],water)};
+    p.reconstructionPanels();
+}
+bool LiveView::hasReconstruction()const{return !impl_->reconstruction.values.empty();}
+void LiveView::showReconstruction(bool show) {
+    auto& p=*impl_;p.reconstruction_shown=show;
+    p.layoutResults();
+    if(show)p.reconstructionPanels();
+    else{p.axial_actor->VisibilityOff();p.coronal_actor->VisibilityOff();p.sagittal_actor->VisibilityOff();}
+
+}
+void LiveView::setImageDrawer(bool open){impl_->image_drawer_open=open;impl_->layoutResults();}
+void LiveView::setReconstructionSlices(const std::array<int,3>& indices) {
+    auto& p=*impl_;if(p.reconstruction.values.empty())return;
+    for(int i=0;i<3;++i)p.reconstruction_slices[i]=std::clamp(indices[i],0,p.reconstruction.dimensions[i]-1);
+    p.reconstructionPanels();
+}
+void LiveView::setReconstructionWindow(double low,double high) {
+    if(!std::isfinite(low)||!std::isfinite(high)||high<=low)throw std::invalid_argument("window high must exceed window low");
+    impl_->reconstruction_window={low,high};impl_->reconstructionPanels();
+}
+std::array<double,2> LiveView::reconstructionWindow()const{return impl_->reconstruction_window;}
+void LiveView::setVolumeOpacityScale(double scale) {
+    if(!std::isfinite(scale)||scale<0||scale>1)throw std::invalid_argument("opacity scale must be 0..1");
+    auto& p=*impl_;p.opacity_scale=scale;
+    if(p.has_volume){auto* opacity=p.volume->GetProperty()->GetScalarOpacity();opacity->RemoveAllPoints();
+        for(int i=0;i<256;++i)opacity->AddPoint(i,p.material_opacity[i]*scale);
+        opacity->Modified();}
+}
+void LiveView::setGeometryPreview(const FrameGeometry& geometry) {
+    auto& p=*impl_;
+    if(geometry.detector.size()<4 || geometry.detector.size()%2) throw std::invalid_argument("invalid preview detector");
+    invalidateResults();
+    Impl::CachedFrame preview;
+    preview.geometry=geometry;preview.geometry.view=0;
+    preview.width=preview.height=1;preview.rgb={150,165,185};
+    preview.description="Loaded geometry; projections not calculated";
+    p.frames.emplace(0,std::move(preview));
+    p.renderFrame(0);
+    p.frames.clear();p.slider->SetEnabled(0);
+    p.energy_title->SetInput("Energy: press Calculate");
+    p.attenuation_title->SetInput("Attenuation: press Calculate");
+    p.renderMeasured("scene/UI");
 }
 void LiveView::setParameters(const std::vector<EditableParameter>& values) { impl_->parameters->configure(values); }
 std::vector<double> LiveView::parameterValues() const { return impl_->parameters->values(); }
@@ -609,21 +750,22 @@ void LiveView::setEditingEnabled(bool enabled)
     auto& p = *impl_;
     p.editing = enabled;
     p.browsing = enabled;
-    p.parameters->enable(enabled);
+    p.parameters->enable(enabled && !p.gui_active);
     if (p.initialized) {
-        p.slider->SetEnabled(enabled && p.frames.size() > 1);
+        p.slider->SetEnabled(enabled && !p.gui_active && p.frames.size() > 1);
         if (!p.closed)
-            p.window->Render();
+            p.renderMeasured("scene/UI");
     }
 }
 void LiveView::setStatus(const std::string& text)
 {
     auto& p = *impl_;
+    p.status_text = text;
     p.parameters->status(text);
     if (p.initialized && !p.closed) {
         const auto now = std::chrono::steady_clock::now();
         if (p.browsing || std::chrono::duration<double>(now - p.last_status_render).count() >= .25) {
-            p.window->Render();
+            p.renderMeasured("scene/UI");
             p.last_status_render = now;
         }
         p.events();
@@ -674,6 +816,7 @@ void LiveView::update(const FrameGeometry& frame, int width, int height, const s
 }
 void LiveView::updateProjections(const FrameGeometry& frame, int width, int height, const std::vector<float>& pixels, const std::vector<float>& energy, const std::vector<float>& attenuation, const std::string& description, bool force_render)
 {
+    YK::diagnostics::TimingSpan update_watch("vtk.projection.update","view="+std::to_string(frame.view));
     auto& p = *impl_;
     p.events();
     if (p.closed)
@@ -708,6 +851,7 @@ void LiveView::updateProjections(const FrameGeometry& frame, int width, int heig
     const bool attenuation_is_texture = !attenuation.empty() && attenuation.data() == pixels.data();
     std::vector<double> means(size_t(tw) * th);
     double lo = std::numeric_limits<double>::infinity(), hi = -lo;
+    {YK::diagnostics::TimingSpan cache_watch("vtk.projection.downsample",std::to_string(width)+"x"+std::to_string(height));
     // One pass reads all source pixels and downsamples the three display channels.
     for (int y = 0; y < th; ++y)
         for (int x = 0; x < tw; ++x) {
@@ -754,6 +898,7 @@ void LiveView::updateProjections(const FrameGeometry& frame, int width, int heig
         const auto gray = static_cast<unsigned char>(hi > lo ? std::clamp((v - lo) / (hi - lo), 0., 1.) * 255. : 128);
         for (int c = 0; c < 3; ++c)
             saved.rgb[i * 3 + c] = gray;
+    }
     }
     p.frames[frame.view] = std::move(saved);
     p.slider_rep->SetMinimumValue(p.frames.begin()->first);
@@ -841,13 +986,15 @@ void LiveView::Impl::renderFrame(int view)
     p.source_actor->VisibilityOn();
     p.detector_actor->VisibilityOn();
     p.beam_actor->SetVisibility(p.beam_visible);
-    p.panel(p.energy_renderer, p.energy_actor, p.energy_image, p.energy_title, saved.energy, tw, th, "Energy signal", frame.view);
-    p.panel(p.attenuation_renderer, p.attenuation_actor, p.attenuation_image, p.attenuation_title, saved.attenuation, tw, th, "Attenuation -log(I/Iair)", frame.view);
+    {
+    p.panel(p.energy_renderer, p.energy_actor, p.energy_image, p.energy_title, saved.energy, tw, th, "Energy", frame.view);
+    p.panel(p.attenuation_renderer, p.attenuation_actor, p.attenuation_image, p.attenuation_title, saved.attenuation, tw, th, "Attenuation", frame.view);
+    }
     std::ostringstream caption;
     caption << saved.description << "\nframe " << frame.view << " | computed " << p.frames.size() << " | source " << frame.source[0] << ", " << frame.source[1] << ", " << frame.source[2] << " mm\ntexture " << tw << " x " << th << " | volume full resolution"
             << "\nSlider / Left / Right: scan frame | End: latest | T: trajectories\nOrange: source path | Cyan: detector center path";
     p.text->SetInput(caption.str().c_str());
-    if (!p.initialized) {
+    if (!p.initialized || !p.has_frame) {
         auto* camera = p.renderer->GetActiveCamera();
         camera->SetPosition(1, -1, .8);
         camera->SetFocalPoint(0, 0, 0);
@@ -855,15 +1002,15 @@ void LiveView::Impl::renderFrame(int view)
         p.renderer->ResetCamera();
         p.interactor->Initialize();
         p.initialized = true;
-        p.parameters->enable(p.editing);
+        p.parameters->enable(p.editing && !p.gui_active);
     }
     p.slider_rep->SetValue(frame.view);
-    if (p.browsing && p.frames.size() > 1)
+    if (!p.gui_active && p.browsing && p.frames.size() > 1)
         p.slider->SetEnabled(1);
     p.last_frame = frame;
     p.has_frame = true;
     p.renderer->ResetCameraClippingRange();
-    p.window->Render();
+    p.renderMeasured("scene/UI");
     p.last_render = std::chrono::steady_clock::now();
 }
 void LiveView::finish()
@@ -881,4 +1028,39 @@ void LiveView::finish()
         p.interactive = false;
     }
 }
+bool LiveView::installGui(std::function<void(int,int,bool,const std::string&)> draw) {
+#ifdef YK_VTK_IMGUI
+    auto& p=*impl_;
+    if(p.options.offscreen) return false;
+    p.gui_active=true;
+    p.parameters->enable(false);
+    p.parameter_renderer->RemoveAllViewProps();
+    p.text->VisibilityOff();
+    p.slider->SetEnabled(0);
+    p.renderer->SetViewport(.30,.10,1,1);
+    p.parameter_renderer->SetViewport(0,0,.30,1);
+    p.layoutResults();
+    p.gui=std::make_unique<ImGuiOverlay>(p.window,[&p, draw=std::move(draw)] {
+        auto* size=p.window->GetSize();
+        draw(size[0],size[1],p.editing,p.status_text);
+    });
+    p.slider_renderer->AddViewProp(p.gui->prop());
+    p.window->SetWindowName("YKCBCT - ImGui spectral projection");
+    p.interactor->Initialize();p.initialized=true;
+    p.renderMeasured("scene/UI");
+    return true;
+#else
+    (void)draw;return false;
+#endif
+}
+void LiveView::pollGui() {
+    auto& p=*impl_;
+    p.events();
+    if(!p.closed)p.layoutResults();
+    const auto now=std::chrono::steady_clock::now();
+    if(!p.closed && p.initialized && std::chrono::duration<double>(now-p.last_gui_render).count()>=1.0/30) {
+        p.renderMeasured("scene/UI");p.last_gui_render=now;
+    }
+}
+void LiveView::saveSnapshot(){impl_->save();}
 } // namespace yk::visualization

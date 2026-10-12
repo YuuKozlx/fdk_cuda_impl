@@ -12,6 +12,8 @@ enum class GeometryKind {
 enum class WorkflowMode { Project, Reconstruct, ProjectAndReconstruct };
 struct WorkflowConfig { WorkflowMode mode = WorkflowMode::Project; };
 struct VisualizationConfig {
+    double volume_opacity_scale = 0.03;
+    bool auto_load_reconstruction = false;
     bool enabled = false;
     bool interactive = false;
     int texture_max_size = 512;
@@ -167,6 +169,11 @@ struct GeometrySpec {
     GeometryConfig parameters;
 };
 
+struct ProjectionBatchingConfig {
+    int views = 64;
+    int max_buffer_mib = 256;
+};
+
 struct ProjectionConfig {
     SpectrumSourceConfig spectrum;
     std::filesystem::path label_volume;
@@ -184,6 +191,7 @@ struct ProjectionConfig {
     FocalSpotConfig focal_spot;
     SamplingConfig sampling;
     ScatterConfig scatter;
+    ProjectionBatchingConfig batching;
 };
 
 // 仿真结束后的可选重建设置。投影仍按文件流式读取；FDK 使用 chunk_views

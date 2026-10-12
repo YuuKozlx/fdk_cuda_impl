@@ -1,4 +1,5 @@
 #pragma once
+#include "common/YkExecutionProgress.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -145,9 +146,11 @@ public:
                 volumeCount_() * sizeof(float), cudaMemcpyDeviceToDevice, stream_));
         }
         for (int outer = 0; outer < config_.iterations; ++outer) {
+            {YK::detail::SuppressExecutionProgress nested;
             if (!iterateDataSubsets_(d_measured_projection, d_volume,
                     static_cast<unsigned int>(actual_subset_count_)))
                 return false;
+            }
 
             AlgebraicRegularizationContext context{};
             context.outer_iteration = outer;
@@ -158,6 +161,7 @@ public:
             if (!regularizer_.apply(d_volume, context)) return false;
             applyConstraints_(d_volume);
             convergence_statistics_.completed_iterations = outer + 1;
+            if(!YK::detail::reportExecutionProgress(outer+1,config_.iterations,stream_))return false;
             if (shouldCheckConvergence_(outer + 1) &&
                 checkConvergence_(d_measured_projection, d_volume))
                 break;

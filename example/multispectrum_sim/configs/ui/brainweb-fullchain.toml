@@ -1,0 +1,221 @@
+# BrainWeb end-to-end example: labels -> polychromatic projection -> water BHC -> FDK.
+# UI: Load TOML loads all resources; Recon controls select standalone or chained reconstruction.
+# CLI: multispectrum_sim this-file.toml executes the entire project_and_reconstruct workflow.
+# Existing full-volume uint8 labels are required; see the repository's BrainWeb data preparation instructions.
+schema_version = 2
+
+[workflow]
+mode = "project_and_reconstruct"
+
+[projection]
+label_volume = "../../inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw"
+output_file = "../../outputs/brainweb-full-ui/projection.raw"
+energy_output_file = "../../outputs/brainweb-full-ui/energy.raw"
+air_output_file = "../../outputs/brainweb-full-ui/air.raw"
+mAs_per_view = 1.0
+save_metadata = true
+
+[projection.spectrum]
+source = "generated"
+model = "spekpy-v1"
+kvp = 120.0
+anode_angle_deg = 12.0
+bin_width_keV = 1.0
+filters = [{ material = "Al", thickness_mm = 2.0 }]
+export_file = "../../outputs/brainweb-full-ui/spectrum.spec"
+
+[projection.geometry_flux]
+enabled = true
+[projection.quantum_noise]
+enabled = true
+seed = 67890
+[projection.sampling]
+samples_per_pixel = 1
+spatial_seed = 12345
+
+# Disabled deliberately: no calibrated scatter model is required to try this example.
+[projection.scatter]
+enabled = false
+
+[projection.focal_spot]
+enabled = false
+normal_size_u_mm = 0.4
+normal_size_v_mm = 0.4
+defocus_size_u_mm = 2.0
+defocus_size_v_mm = 2.0
+epsilon = 0.01
+
+[projection.detector_response]
+enabled = false
+oblique_path_correction = true
+
+# Optional demonstration settings, not detector calibration measurements.
+[projection.detector_postprocess.optical_crosstalk]
+enabled = false
+kernel_u = [0.05, 0.90, 0.05]
+kernel_v = [0.05, 0.90, 0.05]
+[projection.detector_postprocess.electronic_crosstalk]
+enabled = false
+kernel_u = [0.02, 0.96, 0.02]
+kernel_v = [0.02, 0.96, 0.02]
+[projection.detector_postprocess.afterglow]
+enabled = false
+p = 0.02
+initialization = "zero"
+frame_time_ms = 10.0
+exposure_time_ms = 8.0
+weights = [1.0]
+time_constants_ms = [2.0]
+[projection.detector_postprocess.das]
+enabled = false
+gain_electrons_per_keV = 100.0
+offset_electrons = 0.0
+electronic_noise_std_electrons = 10.0
+saturation_electrons = 0.0
+adc_lsb_electrons = 1.0
+noise_seed = 24680
+
+[geometry]
+kind = "flat_cbct"
+views = 60
+views_per_turn = 60
+rotation_direction = 1
+start_angle_rad = 0.0
+scan_range_rad = 6.283185307179586
+detector_u = 384
+detector_v = 256
+pixel_u_mm = 1.26
+pixel_v_mm = 1.26
+sid_mm = 709.0
+sdd_mm = 1143.699951
+offset_u_mm = 0.0
+offset_n_mm = 0.0
+offset_v_mm = 0.0
+tilt_u_rad = 0.0
+tilt_v_rad = 0.0
+tilt_n_rad = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+pitch_mm_per_turn = 0.0
+start_z_mm = 0.0
+volume_x = 181
+volume_y = 217
+volume_z = 181
+voxel_x_mm = 1.0
+voxel_y_mm = 1.0
+voxel_z_mm = 1.0
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+phantom_rotation_x_rad = 0.0
+phantom_rotation_y_rad = 0.0
+phantom_rotation_z_rad = 0.0
+reconstruction_volume_x = 181
+reconstruction_volume_y = 217
+reconstruction_volume_z = 181
+reconstruction_voxel_x_mm = 1.0
+reconstruction_voxel_y_mm = 1.0
+reconstruction_voxel_z_mm = 1.0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+
+[[projection.materials]]
+label = 0
+name = "background-air"
+preset = "mixture.air"
+density_g_cm3 = 0.001205
+
+[[projection.materials]]
+label = 1
+name = "csf"
+preset = "compound.water"
+density_g_cm3 = 1.007
+
+[[projection.materials]]
+label = 2
+name = "grey-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.045
+
+[[projection.materials]]
+label = 3
+name = "white-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.041
+
+[[projection.materials]]
+label = 4
+name = "fat"
+preset = "tissue.icru_adipose_adult2"
+density_g_cm3 = 0.95
+
+[[projection.materials]]
+label = 5
+name = "muscle-skin"
+preset = "tissue.icru_muscle_adult"
+density_g_cm3 = 1.05
+
+[[projection.materials]]
+label = 6
+name = "skin"
+preset = "tissue.icru_skin_adult"
+density_g_cm3 = 1.09
+
+[[projection.materials]]
+label = 7
+name = "skull"
+preset = "tissue.ncat_skull"
+density_g_cm3 = 1.61
+
+[[projection.materials]]
+label = 8
+name = "glial-matter"
+preset = "tissue.icru_brain_adult"
+density_g_cm3 = 1.04
+
+[[projection.materials]]
+label = 9
+name = "connective"
+preset = "tissue.icru_muscle_adult"
+density_g_cm3 = 1.12
+
+[reconstruction]
+type = "analytic"
+input_projection_file = "../../outputs/brainweb-full-ui/projection.raw"
+output_volume_file = "../../outputs/brainweb-full-ui/reconstruction.raw"
+save_slices = true
+slice_prefix = "../../outputs/brainweb-full-ui/reconstruction"
+
+[reconstruction.analytic]
+pipeline = "fdk"
+filter = "ramlak"
+chunk_views = 8
+
+# Water-only BHC is an illustrative correction, not a bone-specific calibration.
+[reconstruction.preprocessing]
+enabled = true
+[reconstruction.preprocessing.beam_hardening]
+enabled = true
+fit_from_water_plate = true
+order = 3
+water_plate_max_mm = 300.0
+water_plate_samples = 81
+reference_energy_keV = 70.0
+clamp_min = 0.0
+clamp_max = 20.0
+[reconstruction.preprocessing.scatter]
+enabled = false
+
+# The CLI runs without a viewer. --gui overrides these flags for interactive use.
+[visualization]
+enabled = false
+interactive = false
+volume_opacity_scale = 0.03
+texture_max_size = 384
+max_fps = 15.0
+projection = "log"
+hold_open = false
+offscreen = false
+snapshot_directory = "../../outputs/brainweb-full-ui/display"

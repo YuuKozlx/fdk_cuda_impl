@@ -1,3 +1,4 @@
+#include "../../..//src/common/YkTimingWatchdog.hpp"
 #include "FasksRuntimeModel.hpp"
 
 #include <nlohmann/json.hpp>
@@ -235,6 +236,7 @@ double FasksRuntimeModel::amplitude(double transmission) const {
 std::vector<float> FasksRuntimeModel::makeDiscreteKernel(
     double transmission, double pixel_u_mm, double pixel_v_mm,
     double support_u_mm, double support_v_mm) const {
+    YK::diagnostics::TimingSpan watch("scatter.kernel.generate");
     const int radius_u = std::max(1, static_cast<int>(std::ceil(support_u_mm / pixel_u_mm)));
     const int radius_v = std::max(1, static_cast<int>(std::ceil(support_v_mm / pixel_v_mm)));
     const int width = 2 * radius_u + 1;

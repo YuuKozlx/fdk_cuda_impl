@@ -11,6 +11,8 @@
 
 using namespace yk::spectral;
 
+void testPreprocessState(const std::filesystem::path&);
+
 int main()
 {
     const auto root = std::filesystem::temp_directory_path() /
@@ -54,6 +56,7 @@ int main()
                 throw std::runtime_error("beam hardening polynomial result mismatch");
         }
         file.close();
+        testPreprocessState(root);
         // Verify the fitted EID water curve with two separated energy bins.
         // Photon-count weighting produces a different attenuation curve.
         const auto spectrum_path = root / "eid-spectrum.csv";

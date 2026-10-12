@@ -1,3 +1,4 @@
+#include "../../../..//src/common/YkTimingWatchdog.hpp"
 #include "config/SimConfig.hpp"
 #include "spek_spectrum/spectrum.h"
 #include <algorithm>
@@ -5,6 +6,9 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <mutex>
+#include <deque>
+#include <sstream>
 #include <stdexcept>
 
 namespace yk::spectral {
@@ -52,6 +56,7 @@ void saveSpectrum(const std::vector<SpectrumPoint>& points, const std::filesyste
 
 std::vector<SpectrumPoint> loadProjectionSpectrum(const ProjectionConfig& c)
 {
+    YK::diagnostics::TimingSpan watch("resources.spectrum",c.spectrum.source);
     validateSpectrumSource(c.spectrum);
     std::vector<SpectrumPoint> points;
     if (c.spectrum.source == "file") {
@@ -59,6 +64,19 @@ std::vector<SpectrumPoint> loadProjectionSpectrum(const ProjectionConfig& c)
     } else {
         if (!c.spectrum_file.empty())
             throw std::runtime_error("generated spectrum conflicts with spectrum_file");
+        // Cache only immutable generated spectra, with exact floating-point keys.
+        // File sources remain fresh; export still runs on a cache hit.
+        static std::mutex cache_mutex;
+        static std::deque<std::pair<std::string,std::vector<SpectrumPoint>>> cache;
+        std::ostringstream key;
+        key << std::hexfloat << c.spectrum.model << ' ' << c.spectrum.kvp << ' '
+            << c.spectrum.anode_angle_deg << ' ' << c.spectrum.bin_width_keV;
+        for(const auto& f:c.spectrum.filters)key << ' ' << std::quoted(f.material) << ' '
+            << f.thickness_mm << ' ' << f.atomic_number << ' ' << f.density_g_cm3;
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        auto cached=std::find_if(cache.begin(),cache.end(),[&](const auto& entry){return entry.first==key.str();});
+        if(cached!=cache.end())points=cached->second;
+        else {
         spek_spectrum::Config generator;
         generator.model = c.spectrum.model == "spekcalc" ? spek_spectrum::Model::spekcalc : spek_spectrum::Model::spekpy_v1;
         generator.kvp = c.spectrum.kvp;
@@ -79,6 +97,9 @@ std::vector<SpectrumPoint> loadProjectionSpectrum(const ProjectionConfig& c)
         }
         if (!std::isfinite(total) || total <= 0)
             throw std::runtime_error("generated spectrum has no photon fluence");
+        if(cache.size()>=8)cache.pop_front();
+        cache.emplace_back(key.str(),points);
+        }
     }
     if (!c.spectrum.export_file.empty())
         saveSpectrum(points, c.spectrum.export_file);
