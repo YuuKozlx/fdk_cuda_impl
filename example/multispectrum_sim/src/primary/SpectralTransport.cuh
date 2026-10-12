@@ -85,7 +85,7 @@ __device__ bool accumulatePaths(DeviceGeometry g, const unsigned char* labels,
     return hit_material;
 }
 
-template <int MaterialCount,bool Instrument=false>
+template <int MaterialCount,bool Instrument=false,int EnergyCapacity=256>
 __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     const int* label_to_material, const float* mu, const float* spectrum,
     const float* energies, float incident, int quantum_noise,
@@ -99,8 +99,8 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     const bool profile=Instrument&&((hash32(unsigned(pixel)^unsigned(view)*0x85ebca6bU)&1023U)==0);
     unsigned long long geometry_cycles=0,path_cycles=0,spectrum_cycles=0,noise_cycles=0;
     unsigned ray_count=0,hit_count=0,visited=0;
-    if (g.ne > 256) return;
-    float expected_counts[256] = {};
+    if (g.ne > EnergyCapacity) return;
+    float expected_counts[EnergyCapacity] = {};
     float expected_air_energy = 0.f;
     bool object_hit = false;
     float3 lo = make_float3(-0.5f*g.nx*g.vx, -0.5f*g.ny*g.vy, -0.5f*g.nz*g.vz);
@@ -138,18 +138,22 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
         // exposures; each sample carries 1/g.samples of the pixel photons.
         const float photons_per_sample = exposure_fraction / static_cast<float>(g.samples);
         for(int e=0;e<g.ne;++e){float exponent=0.f;
-            if constexpr(MaterialCount==32){
-                for(int m=0;m<g.nm;++m)exponent+=paths[m]*readMu(g,mu,m*g.ne+e);
-            }else{
-                #pragma unroll
-                for(int m=0;m<MaterialCount;++m) exponent+=paths[m]*readMu(g, mu, m*g.ne+e);
+            // A ray through vacuum has exactly unit transmission. Keep its
+            // original weights and accumulation order, but skip attenuation.
+            if(hit){
+                if constexpr(MaterialCount==32){
+                    for(int m=0;m<g.nm;++m)exponent+=paths[m]*readMu(g,mu,m*g.ne+e);
+                }else{
+                    #pragma unroll
+                    for(int m=0;m<MaterialCount;++m) exponent+=paths[m]*readMu(g, mu, m*g.ne+e);
+                }
             }
-            const float transmission=expf(-exponent);
+            const float transmission=hit ? expf(-exponent) : 1.f;
             const float response=g.detector_response ? __ldg(g.detector_efficiency + (v0*g.nu+u0)*g.ne+e) : 1.f;
             const float weight=photons_per_sample*readSpectrum(g, spectrum, e)*flux*response;
             const float lambda = weight * transmission;
             expected_counts[e] += lambda;
-            expected_air_energy += weight * energies[e];
+            expected_air_energy += weight * readEnergy(g, energies, e);
         }
         if(profile)spectrum_cycles+=clock64()-spectrum_start;
         }
@@ -186,8 +190,8 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     object_mask_out[output] = object_hit ? 1 : 0;
 }
 
-template <int MaterialCount>
-void launchPrimaryKernel(const DeviceGeometry& geometry,
+template <int MaterialCount,int EnergyCapacity>
+void launchPrimaryKernelSized(const DeviceGeometry& geometry,
     const unsigned char* labels, const int* label_to_material,
     const float* mu, const float* spectrum, const float* energies,
     float incident, int quantum_noise, int view, unsigned seed,
@@ -197,17 +201,36 @@ void launchPrimaryKernel(const DeviceGeometry& geometry,
     if(timing){
         static bool reported=false;
         if(!reported){cudaFuncAttributes normal{},instrumented{};
-            cudaFuncGetAttributes(&normal,primaryKernel<MaterialCount,false>);cudaFuncGetAttributes(&instrumented,primaryKernel<MaterialCount,true>);
-            std::cout<<"primary_resources materials="<<MaterialCount<<" normal_registers="<<normal.numRegs<<" normal_local_bytes="<<normal.localSizeBytes
+            cudaFuncGetAttributes(&normal,primaryKernel<MaterialCount,false,EnergyCapacity>);cudaFuncGetAttributes(&instrumented,primaryKernel<MaterialCount,true,EnergyCapacity>);
+            std::cout<<"primary_resources energy_capacity="<<EnergyCapacity<<" materials="<<MaterialCount<<" normal_registers="<<normal.numRegs<<" normal_local_bytes="<<normal.localSizeBytes
                 <<" profiled_registers="<<instrumented.numRegs<<" profiled_local_bytes="<<instrumented.localSizeBytes<<std::endl;reported=true;}
-        primaryKernel<MaterialCount,true><<<dim3((pixels+255)/256,views),256>>>(geometry,labels,label_to_material,mu,spectrum,energies,incident,quantum_noise,view,seed,quantum_seed,expected_energy_out,sampled_energy_out,air_out,object_mask_out,timing);
+        primaryKernel<MaterialCount,true,EnergyCapacity><<<dim3((pixels+255)/256,views),256>>>(geometry,labels,label_to_material,mu,spectrum,energies,incident,quantum_noise,view,seed,quantum_seed,expected_energy_out,sampled_energy_out,air_out,object_mask_out,timing);
     }else{
-    primaryKernel<MaterialCount><<< dim3((pixels + 255) / 256,views), 256 >>>(
+    primaryKernel<MaterialCount,false,EnergyCapacity><<< dim3((pixels + 255) / 256,views), 256 >>>(
         geometry, labels, label_to_material, mu, spectrum, energies,
         incident, quantum_noise, view, seed, quantum_seed,
         expected_energy_out, sampled_energy_out, air_out, object_mask_out);
     }
 }
 
+// The path and photon accumulation order is unchanged. The common <=128-bin
+// spectra need half the dynamically indexed per-thread counter storage.
+template <int MaterialCount>
+void launchPrimaryKernel(const DeviceGeometry& geometry,
+    const unsigned char* labels, const int* label_to_material,
+    const float* mu, const float* spectrum, const float* energies,
+    float incident, int quantum_noise, int view, unsigned seed,
+    unsigned quantum_seed, float* expected_energy_out,
+    float* sampled_energy_out, float* air_out, unsigned char* object_mask_out,
+    int views=1,unsigned long long* timing=nullptr) {
+    if(geometry.ne<=128)
+        launchPrimaryKernelSized<MaterialCount,128>(geometry,labels,label_to_material,
+            mu,spectrum,energies,incident,quantum_noise,view,seed,quantum_seed,
+            expected_energy_out,sampled_energy_out,air_out,object_mask_out,views,timing);
+    else
+        launchPrimaryKernelSized<MaterialCount,256>(geometry,labels,label_to_material,
+            mu,spectrum,energies,incident,quantum_noise,view,seed,quantum_seed,
+            expected_energy_out,sampled_energy_out,air_out,object_mask_out,views,timing);
+}
 
 } // namespace yk::spectral::primary_detail

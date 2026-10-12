@@ -2,7 +2,7 @@
 #include "CudaProjectionBackend.hpp"
 #include "DisplayGeometry.hpp"
 #include "LibraryGeometry.hpp"
-#include "SpectralTransport.cuh"
+#include "WarpSpectralTransport.cuh"
 #include "DetectorResponse.cuh"
 #include "DetectorSignal.hpp"
 #include <algorithm>
@@ -40,6 +40,7 @@ struct CudaProjectionBackend::Impl {
     bool kernel_timing_recorded=false;
     double kernel_ms=0,download_ms=0;
     unsigned long long* primary_profile=nullptr;
+    bool warp_primary=true;
     float incident = 0.f, mean_photon_energy = 0.f;
         unsigned char* dl=nullptr; unsigned char* dmask=nullptr; int* dm=nullptr; float *dmu=nullptr,*ds=nullptr,*de=nullptr,*dresponse=nullptr,*do1=nullptr,*do2=nullptr,*do3=nullptr;
         DeviceConeView* d_cone_views=nullptr;
@@ -79,6 +80,12 @@ struct CudaProjectionBackend::Impl {
         pixels=int(count);
         const int nm = static_cast<int>(c.projection.materials.size());
         const int ne = static_cast<int>(model.spectrum().size());
+        const char* kernel_choice=std::getenv("YK_PRIMARY_KERNEL");
+        const std::string selected_kernel=kernel_choice?kernel_choice:"";
+        if(!selected_kernel.empty()&&selected_kernel!="warp"&&selected_kernel!="scalar")
+            throw std::runtime_error("YK_PRIMARY_KERNEL must be warp or scalar");
+        warp_primary=selected_kernel!="scalar";
+        std::cout<<"primary_kernel="<<(warp_primary?"warp":"scalar")<<'\n';
         if (pixels <= 0 || g.views <= 0 || nm <= 0 || nm > 32 || ne <= 0 || ne > 256)
             throw std::runtime_error("invalid CUDA projection dimensions, materials or spectrum");
         if(g.volume_x<=0||g.volume_y<=0||g.volume_z<=0||labels.size()!=(size_t)g.volume_x*g.volume_y*g.volume_z) throw std::runtime_error("CUDA前投标签体尺寸不匹配");
@@ -221,6 +228,21 @@ struct CudaProjectionBackend::Impl {
         if(primary_profile)checkCuda(cudaMemset(primary_profile,0,8*sizeof(unsigned long long)),"clear primary profile");
         kernel_timing_recorded=false;
         checkCuda(cudaEventRecord(kernel_start),"record batch kernel start");
+        if(warp_primary){
+            switch(dg.nm){
+            case 1: launchWarpPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 2: launchWarpPrimaryKernel<2>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 3: launchWarpPrimaryKernel<3>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 4: launchWarpPrimaryKernel<4>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 5: launchWarpPrimaryKernel<5>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 6: launchWarpPrimaryKernel<6>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 7: launchWarpPrimaryKernel<7>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 8: launchWarpPrimaryKernel<8>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 9: launchWarpPrimaryKernel<9>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            case 10: launchWarpPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            default: launchWarpPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
+            }
+        }else{
             switch (dg.nm) {
             case 1: launchPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
             case 2: launchPrimaryKernel<2>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
@@ -234,9 +256,10 @@ struct CudaProjectionBackend::Impl {
             case 10: launchPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
             default: launchPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
             }
+        }
         checkCuda(cudaGetLastError(),"batched primary kernel");
         checkCuda(cudaEventRecord(kernel_done),"record batch kernel end");
-        if(primary_profile){unsigned long long c[8]{};checkCuda(cudaMemcpy(c,primary_profile,sizeof(c),cudaMemcpyDeviceToHost),"read primary profile counters");
+        if(primary_profile&&!warp_primary){unsigned long long c[8]{};checkCuda(cudaMemcpy(c,primary_profile,sizeof(c),cudaMemcpyDeviceToHost),"read primary profile counters");
             std::cout<<"primary_sample first="<<view<<" count="<<count<<" geometry_cycles="<<c[0]<<" path_cycles="<<c[1]<<" spectrum_cycles="<<c[2]<<" noise_cycles="<<c[3]
                 <<" pixels="<<c[4]<<" rays="<<c[5]<<" hits="<<c[6]<<" voxels="<<c[7]<<std::endl;
         }
