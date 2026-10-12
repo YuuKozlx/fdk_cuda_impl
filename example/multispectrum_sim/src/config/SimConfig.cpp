@@ -281,12 +281,63 @@ namespace yk::spectral {
             }
             auto* a = (*r)["analytic"].as_table();
             auto* i = (*r)["iterative"].as_table();
-            if (c.reconstruction.type != "analytic" && c.reconstruction.type != "iterative")
-                throw std::runtime_error("reconstruction.type 仅支持 analytic/iterative");
+            if (c.reconstruction.type != "analytic" && c.reconstruction.type != "iterative" && c.reconstruction.type != "statistical")
+                throw std::runtime_error("reconstruction.type 仅支持 analytic/iterative/statistical");
             if (c.reconstruction.type == "analytic" && !a)
                 throw std::runtime_error("analytic 重建需要 [reconstruction.analytic]");
             if (c.reconstruction.type == "iterative" && !i)
                 throw std::runtime_error("迭代重建需要 [reconstruction.iterative]");
+            if(c.reconstruction.type=="statistical"){
+                const auto* s=(*r)["statistical"].as_table();
+                if(!s)throw std::runtime_error("Statistical reconstruction requires [reconstruction.statistical]");
+                if(c.geometry.kind!=GeometryKind::FlatCbct&&c.geometry.kind!=GeometryKind::FlatHelical)
+                    throw std::runtime_error("Statistical reconstruction currently requires flat circular/helical geometry");
+                auto& cfg=c.reconstruction.statistical;
+                cfg.projection_model=(*s)["projection_model"].value_or(std::string("joseph"));
+                cfg.non_negative=(*s)["non_negative"].value_or(true);
+                if(cfg.projection_model!="joseph"&&cfg.projection_model!="siddon")throw std::runtime_error("Statistical projection_model requires joseph/siddon");
+                if(auto* d=(*s)["data_fidelity"].as_table()){
+                    cfg.data_fidelity.type=(*d)["type"].value_or(std::string("weighted_least_squares"));
+                    cfg.data_fidelity.scale=(*d)["scale"].value_or(1.0);
+                    cfg.data_fidelity.normalize_by_ray_count=(*d)["normalize_by_ray_count"].value_or(false);
+                    cfg.data_fidelity.require_verified_adjoint=(*d)["require_verified_adjoint"].value_or(false);
+                    if(auto file=(*d)["weights_file"].value<std::string>())if(!file->empty())cfg.data_fidelity.weights_file=resolve(config_directory,*file);
+                }
+                if(auto* reg=(*s)["regularization"].as_table()){
+                    cfg.regularization.plugin=(*reg)["plugin"].value_or(std::string("huber_tv"));
+                    cfg.regularization.strength=(*reg)["strength"].value_or(0.0);
+                    cfg.regularization.shape=(*reg)["shape"].value_or(0.001);
+                    cfg.regularization.dimensions=(*reg)["dimensions"].value_or(3);
+                }
+                if(auto* opt=(*s)["optimizer"].as_table()){
+                    cfg.optimizer.type=(*opt)["type"].value_or(std::string("regularized_algebraic"));
+                    cfg.optimizer.iterations=(*opt)["iterations"].value_or(10);
+                    cfg.optimizer.step_size=(*opt)["step_size"].value_or(0.0);
+                    cfg.optimizer.backtracking=(*opt)["backtracking"].value_or(true);
+                    cfg.optimizer.max_backtracking=(*opt)["max_backtracking"].value_or(20);
+                    cfg.optimizer.step_shrink=(*opt)["step_shrink"].value_or(0.5);
+                    cfg.optimizer.relative_tolerance=(*opt)["relative_tolerance"].value_or(0.0);
+                    cfg.optimizer.minimum_iterations=(*opt)["minimum_iterations"].value_or(1);
+                }
+                // Experimental composition tables in older files are ignored.
+                // Integration strategy and inner solver settings are internal policy.
+                const auto& d=cfg.data_fidelity;const auto& reg=cfg.regularization;const auto& opt=cfg.optimizer;
+                if(d.type!="weighted_least_squares"||d.require_verified_adjoint)throw std::runtime_error("Statistical data fidelity unavailable or adjoint not verified");
+                if(opt.type!="regularized_algebraic"&&opt.type!="gradient_descent"&&opt.type!="algebraic_gradient"&&opt.type!="raw_gradient_descent")throw std::runtime_error("Statistical optimizer not implemented: FISTA is reserved");
+                if(reg.plugin!="none"&&reg.plugin!="smoothed_tv"&&reg.plugin!="huber_tv"&&reg.plugin!="huber_tv_prox"&&reg.plugin!="tikhonov"&&!(reg.plugin=="tv"&&(opt.type=="regularized_algebraic"||opt.type=="algebraic_gradient")))
+                    throw std::runtime_error("Gradient Descent requires a differentiable regularizer; standard TV requires Prox");
+                if(!std::isfinite(d.scale)||d.scale<=0||!std::isfinite(reg.strength)||reg.strength<0||
+                    ((reg.plugin!="none"&&reg.plugin!="tikhonov"&&!(reg.plugin=="tv"&&(opt.type=="regularized_algebraic"||opt.type=="algebraic_gradient")))&&(!std::isfinite(reg.shape)||reg.shape<=0))||(reg.dimensions!=2&&reg.dimensions!=3)||
+                    (reg.plugin=="none"&&reg.strength>0)||opt.iterations<=0||!std::isfinite(opt.step_size)||opt.step_size<0||
+                    opt.max_backtracking<0||!std::isfinite(opt.step_shrink)||opt.step_shrink<=0||opt.step_shrink>=1||
+                    !std::isfinite(opt.relative_tolerance)||opt.relative_tolerance<0||opt.minimum_iterations<=0)
+                    throw std::runtime_error("Invalid statistical reconstruction parameters");
+                if(check_runtime_files&&!d.weights_file.empty()){
+                    const auto& g=c.geometry.parameters;const uintmax_t expected=uintmax_t(g.views)*g.detector_u*g.detector_v*sizeof(float);
+                    if(!std::filesystem::exists(d.weights_file)||std::filesystem::file_size(d.weights_file)!=expected)
+                        throw std::runtime_error("Statistical weights_file must be float32 with the projection shape");
+                }
+            }
             if (a) {
                 for (const char* key : { "pipeline", "filter" })
                     if (a->contains(key) && !(*a)[key].is_string())
@@ -331,6 +382,30 @@ namespace yk::spectral {
                 rc.tv_alpha_reduction = (*i)["tv_alpha_reduction"].value_or(0.95);
                 rc.maximum_update_ratio = (*i)["maximum_update_ratio"].value_or(0.95);
                 rc.non_negative = (*i)["non_negative"].value_or(true);
+                if (auto* t=(*i)["regularization"].as_table()) {
+                    auto& tv=rc.regularization;
+                    tv.plugin=(*t)["plugin"].value_or(std::string("none"));
+                    tv.strength=(*t)["strength"].value_or(0.0);
+                    tv.huber_delta=(*t)["huber_delta"].value_or(0.001);
+                    tv.step_size=(*t)["step_size"].value_or(0.0);
+                    tv.inner_iterations=(*t)["inner_iterations"].value_or(5);
+                    tv.dimensions=(*t)["dimensions"].value_or(3);
+                    tv.epsilon=(*t)["epsilon"].value_or(1e-6);
+                    tv.strength_reduction=(*t)["strength_reduction"].value_or(1.0);
+                    if (tv.plugin!="none" && tv.plugin!="huber_tv_prox" && tv.plugin!="smoothed_tv")
+                        throw std::runtime_error("Unknown regularization plugin");
+                    if (tv.plugin!="none") {
+                        if (rc.algorithm!="sart" && rc.algorithm!="sirt" && rc.algorithm!="ossart")
+                            throw std::runtime_error("TV plugins require internal sart/sirt/ossart");
+                        if (c.geometry.kind==GeometryKind::CylCbct || c.geometry.kind==GeometryKind::CylHelical)
+                            throw std::runtime_error("TV plugins require flat detector");
+                        if (!std::isfinite(tv.strength)||tv.strength<0||tv.inner_iterations<=0||
+                            (tv.dimensions!=2&&tv.dimensions!=3)||!std::isfinite(tv.huber_delta)||tv.huber_delta<=0||
+                            !std::isfinite(tv.step_size)||tv.step_size<0||!std::isfinite(tv.epsilon)||tv.epsilon<=0||
+                            !std::isfinite(tv.strength_reduction)||tv.strength_reduction<=0)
+                            throw std::runtime_error("Invalid TV plugin parameters");
+                    }
+                }
                 if (rc.algorithm != "tigre_sart" && rc.algorithm != "tigre_sirt" &&
                     rc.algorithm != "tigre_os_sart" && rc.algorithm != "tigre_sart_tv" &&
                     rc.algorithm != "tigre_os_sart_tv" && rc.algorithm != "sart" &&
@@ -392,7 +467,7 @@ namespace yk::spectral {
                 }
             }
             const auto output_tag = c.reconstruction.type == "iterative"
-                ? c.reconstruction.iterative.algorithm : c.reconstruction.analytic.pipeline;
+                ? c.reconstruction.iterative.algorithm : c.reconstruction.type=="statistical" ? std::string("statistical-gd") : c.reconstruction.analytic.pipeline;
             const auto& source_file = c.reconstruction.input_projection_file.empty()
                 ? c.projection.output_file : c.reconstruction.input_projection_file;
             const auto default_volume = source_file.parent_path() /

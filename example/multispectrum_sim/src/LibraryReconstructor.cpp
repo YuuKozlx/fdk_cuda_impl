@@ -4,7 +4,10 @@
 #include "LibraryGeometry.hpp"
 #include "ReconstructionPreprocessor.hpp"
 #include "cuda/DeviceMemoryPool.hpp"
+#include "recon/preprocess/ProjectionCache.hpp"
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
+#include "Reconstruction/Iterative/Common/YkReconstructionMemoryBudget.hpp"
+#include "Reconstruction/Iterative/Common/YkProjectionInput.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +17,6 @@
 #include <stdexcept>
 #include <vector>
 #include <iostream>
-#include <random>
 #include <cuda_runtime_api.h>
 
 namespace yk::spectral {
@@ -31,16 +33,6 @@ void timedRead(std::ifstream& input,char* data,std::streamsize bytes){
 void timedWrite(std::ofstream& output,const char* data,std::streamsize bytes){
     YK::diagnostics::TimingSpan watch("reconstruction.write","bytes="+std::to_string(bytes));output.write(data,bytes);
 }
-struct TemporaryProjection {
-    std::filesystem::path directory;
-    ~TemporaryProjection() {
-        if (!directory.empty()) {
-            std::error_code error;
-            std::filesystem::remove(directory / "projection.raw", error);
-            std::filesystem::remove(directory, error);
-        }
-    }
-};
 
 void writeLe16(std::ofstream& out, std::uint16_t value)
 {
@@ -114,6 +106,7 @@ YK::EPipeline parsePipeline(const std::string& name)
         name == "tigre_os_sart" || name == "tigre_sart_tv" ||
         name == "tigre_os_sart_tv")
         return YK::EPipeline::TigreGradient;
+    if (name == "statistical") return YK::EPipeline::Statistical;
     if (name == "sart") return YK::EPipeline::SART;
     if (name == "sirt") return YK::EPipeline::SIRT;
     if (name == "ossart") return YK::EPipeline::OSSART;
@@ -154,30 +147,17 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
     YK::diagnostics::TimingSpan total_watch("reconstruction.run",config.reconstruction.iterative.algorithm);
     YK::IReconstructionSession* session = nullptr;
     std::filesystem::path reconstruction_input = projection_file;
-    TemporaryProjection temporary;
     try {
         if (config.reconstruction.preprocessing.enabled) {
-            auto temporary_base=config.reconstruction.output_volume_file.parent_path();
-            if(temporary_base.empty())temporary_base=projection_file.parent_path();
-            if(temporary_base.empty())temporary_base=std::filesystem::temp_directory_path();
-            temporary_base/=".preprocess";
-            std::filesystem::create_directories(temporary_base);
-            std::random_device random;
-            for (int attempt = 0; attempt < 16 && temporary.directory.empty(); ++attempt) {
-                const auto candidate = temporary_base /
-                    ("multispectrum-preprocessing-" + std::to_string(random()));
-                if (std::filesystem::create_directory(candidate)) temporary.directory = candidate;
-            }
-            check(!temporary.directory.empty(), "cannot create preprocessing temporary directory");
-            reconstruction_input = temporary.directory / "projection.raw";
             std::string preprocessing_diagnostic;
-            const bool prepared = prepareReconstructionProjection(config, projection_file,
-                reconstruction_input, preprocessing_diagnostic,progress);
-            check(prepared, preprocessing_diagnostic);
+            reconstruction_input=preprocess::cachedProjection(config,projection_file,
+                [&](const std::filesystem::path& output,std::string& details){
+                    return prepareReconstructionProjection(config,projection_file,output,details,progress);
+                },preprocessing_diagnostic,progress);
             std::cout << preprocessing_diagnostic << std::endl;
         }
-        const auto pool_before=preprocess::devicePoolStatistics();
-        {YK::diagnostics::TimingSpan watch("reconstruction.trim_pool");preprocess::trimDevicePool();}
+        const auto pool_before=yk::spectral::cuda_resources::devicePoolStatistics();
+        {YK::diagnostics::TimingSpan watch("reconstruction.trim_pool");yk::spectral::cuda_resources::trimDevicePool();}
         std::cout<<"reconstruction_pool released_cached_bytes="<<pool_before.cached_bytes<<std::endl;
         const auto& g = config.geometry.parameters;
         const std::size_t pixels = static_cast<std::size_t>(g.detector_u) * g.detector_v;
@@ -192,7 +172,8 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         input.seekg(0, std::ios::beg);
 
         const bool analytic = config.reconstruction.type == "analytic";
-        const std::string& pipeline_name = analytic ? config.reconstruction.analytic.pipeline : config.reconstruction.iterative.algorithm;
+        const bool statistical=config.reconstruction.type=="statistical";
+        const std::string pipeline_name = statistical?"statistical":analytic ? config.reconstruction.analytic.pipeline : config.reconstruction.iterative.algorithm;
         const bool fdk = pipeline_name == "fdk";
         const bool wfbp = pipeline_name == "wfbp";
         const bool cyl_fdk = fdk && config.geometry.kind == GeometryKind::CylCbct;
@@ -200,7 +181,11 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             (config.geometry.kind == GeometryKind::PlanarSourceOrbit ||
              config.geometry.kind == GeometryKind::NikonTilted);
         const bool iterative = !analytic;
+        bool batched_projection=false;
+        size_t planned_block=0,planned_batch_bytes=0;
+        std::string projection_input_mode="auto";
         const auto pipeline = parsePipeline(pipeline_name);
+        YK::SStatisticalWorkspaceEstimate statistical_workspace;
         check(fdk || wfbp || iterative, "不支持的 DLL 重建管线");
         check(!fdk || config.geometry.kind == GeometryKind::FlatCbct ||
             cyl_fdk || nonstandard_fdk,
@@ -212,11 +197,15 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         auto system = makeLibrarySystem(config, pipeline,
             YK::EProjectionModel::Joseph, parseFilter(config.reconstruction.analytic.filter),
             GeometryUse::Reconstruction);
+        if(statistical)check(YK::estimateStatisticalWorkspace(system,statistical_workspace),"Cannot estimate statistical workspace for requested modules");
         if (wfbp) {
             system.reconstruction.wfbp.filter_cutoff = static_cast<float>(config.reconstruction.analytic.wfbp_cutoff);
             system.reconstruction.wfbp.filter_apodization = static_cast<float>(config.reconstruction.analytic.wfbp_apodization);
         }
-        if (iterative) {
+        if(statistical){const auto& s=config.reconstruction.statistical;
+            std::cout<<" optimizer="<<s.optimizer.type<<" iterations="<<s.optimizer.iterations<<" regularization="<<s.regularization.plugin
+                <<" strength="<<s.regularization.strength<<" shape="<<s.regularization.shape<<" adjoint=approximate";
+        }else if (iterative) {
             std::cout << " iterations=" << config.reconstruction.iterative.iterations
                 << " relaxation=" << config.reconstruction.iterative.relaxation
                 << " subsets=" << config.reconstruction.iterative.subsets;
@@ -229,10 +218,56 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             << " chunk_views=not-applicable";
         std::cout << std::endl;
         if(progress)progress({"Initializing reconstruction",0,0});
+        const bool batch_capable=iterative && config.geometry.kind!=GeometryKind::CylCbct && config.geometry.kind!=GeometryKind::CylHelical &&
+            (statistical||pipeline_name=="sart"||pipeline_name=="sirt"||pipeline_name=="ossart"||pipeline_name=="tigre_sart"||pipeline_name=="tigre_os_sart"||pipeline_name=="tigre_sirt"||pipeline_name=="tigre_sart_tv"||pipeline_name=="tigre_os_sart_tv");
+        if(iterative && (statistical || pipeline==YK::EPipeline::TigreGradient || pipeline==YK::EPipeline::SART || pipeline==YK::EPipeline::SIRT || pipeline==YK::EPipeline::OSSART)){
+            const bool single=pipeline_name=="sart"||pipeline_name=="tigre_sart"||pipeline_name=="tigre_sart_tv";
+            const bool tigre_os=pipeline_name=="tigre_os_sart"||pipeline_name=="tigre_os_sart_tv";
+            const int exact_block=tigre_os?std::min(g.views,system.reconstruction.tigre.block_size):0;
+            const bool all=statistical||pipeline_name=="tigre_sirt"||pipeline_name=="sirt"||(tigre_os?exact_block>=g.views:(!single&&config.reconstruction.iterative.subsets==1));
+            const size_t block=single?1:all?size_t(YK::detail::iterativeBatchViews(pixels,g.views)):tigre_os?size_t(exact_block):size_t((g.views+std::max(1,config.reconstruction.iterative.subsets)-1)/std::max(1,config.reconstruction.iterative.subsets));
+            const bool tv=pipeline_name=="tigre_sart_tv"||pipeline_name=="tigre_os_sart_tv";
+            const auto& regularization=config.reconstruction.iterative.regularization;
+            const size_t tv_buffers=regularization.plugin=="smoothed_tv"?1:
+                regularization.plugin=="huber_tv_prox"&&regularization.strength>0?2:0;
+            const size_t workspace=statistical?statistical_workspace.solverBytes()+statistical_workspace.caller_volume_bytes+statistical_workspace.weight_staging_bytes:
+                ((size_t((pipeline_name=="ossart"||pipeline_name=="sirt")?5:3)+tv_buffers)*volume_elements+4*block*pixels+
+                size_t(g.reconstruction_volume_x)*g.reconstruction_volume_y+
+                (tv?6*volume_elements+7*size_t(YK::detail::iterativeBatchViews(pixels,g.views))*pixels:0))*sizeof(float)+size_t(32)*1024*1024;
+            const size_t resident=workspace+projection_elements*sizeof(float);
+            size_t free=0,total=0;check(cudaMemGetInfo(&free,&total)==cudaSuccess,"Cannot query reconstruction memory");
+            const size_t reserve=std::max(size_t(512)*1024*1024,total/5);
+            const size_t available=free>reserve?free-reserve:0;
+            std::string mode="auto";if(const char* requested=std::getenv("YK_RECON_PROJECTION_INPUT"))mode=requested;
+            check(mode=="auto"||mode=="resident"||mode=="batched","Invalid YK_RECON_PROJECTION_INPUT");
+            projection_input_mode=mode;planned_block=block;
+            batched_projection=batch_capable&&(mode=="batched"||(mode=="auto"&&resident>available));
+            check(mode!="batched"||batch_capable,"This algorithm does not support batched projection input");
+            const size_t frame_bytes=pixels*sizeof(float);
+            const size_t batch_views=std::min(size_t(g.views),std::min(std::max(size_t(64),block),size_t(256)*1024*1024/frame_bytes));
+            check(!batched_projection||batch_views>=block,"投影批缓冲无法容纳一个算法子集，请增加 OS-SART 子集数量");
+            planned_batch_bytes=batch_views*frame_bytes;
+            const size_t required=batched_projection?workspace+planned_batch_bytes:resident;
+            check(YK::detail::fitsReconstructionBudget(required,"projection input and reconstruction"),
+                "重建显存预算不足（已预留显示空间），请降低投影尺寸、重建网格或子集大小");
+        }
         session = YK::ReconstructionSessionFactory::create();
         check(session != nullptr, "无法创建 YKCBCT DLL Session");
         bool initialized=false;{YK::diagnostics::TimingSpan watch("reconstruction.initialize",pipeline_name);initialized=session->initialize(system);}
         check(initialized, std::string("YKCBCT 初始化失败: ") + session->lastErrorMessage());
+        if(batch_capable){
+            size_t free=0,total=0;check(cudaMemGetInfo(&free,&total)==cudaSuccess,"Cannot query initialized reconstruction memory");
+            const size_t reserve=std::max(size_t(512)*1024*1024,total/5);
+            const size_t remaining=(2*volume_elements+planned_block*pixels+((pipeline_name=="tigre_sart_tv"||pipeline_name=="tigre_os_sart_tv")?volume_elements+6*size_t(YK::detail::iterativeBatchViews(pixels,g.views))*pixels:0))*sizeof(float)+size_t(32)*1024*1024;
+            const size_t available=free>reserve?free-reserve:0;
+            if(projection_input_mode=="auto"&&!batched_projection&&projection_elements*sizeof(float)+remaining>available)
+                batched_projection=true;
+            const size_t input_bytes=batched_projection?planned_batch_bytes:projection_elements*sizeof(float);
+            check(input_bytes+remaining<=available,"初始化后显存余量不足，请降低重建网格或子集大小");
+            std::cout<<"reconstruction_projection mode="<<(batched_projection?"batched":"resident")<<" input_buffer_bytes="<<input_bytes
+                <<" free_bytes="<<free<<" reserve_bytes="<<reserve<<std::endl;
+        }
+
 
         std::vector<float> volume(volume_elements, 0.f);
         if (fdk && !cyl_fdk && !nonstandard_fdk) {
@@ -277,26 +312,62 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             if(reconstructed && progress)progress({"Full-volume reconstruction",1,1});
             check(reconstructed, std::string("YKCBCT " + pipeline_name + " 执行失败: ") + session->lastErrorMessage());
         } else {
-            // DLL 迭代后端要求 Device 上的完整投影和体缓冲，且一次提交全部视图。
-            std::vector<float> projection(projection_elements);
-            timedRead(input,reinterpret_cast<char*>(projection.data()),
-                static_cast<std::streamsize>(projection.size() * sizeof(float)));
-            check(static_cast<bool>(input), "读取完整迭代重建投影失败");
+            std::vector<float> projection;
+            if(!batched_projection){
+                projection.resize(projection_elements);
+                timedRead(input,reinterpret_cast<char*>(projection.data()),static_cast<std::streamsize>(projection.size()*sizeof(float)));
+                check(static_cast<bool>(input),"读取完整迭代重建投影失败");
+            }
+            struct FileProjectionReader {
+                std::ifstream& input;std::filesystem::path path;size_t pixels;int views;
+                std::filesystem::file_time_type modified;uintmax_t bytes;
+                static bool read(void* data,const int* indices,int count,float* output,size_t elements){
+                    auto& self=*static_cast<FileProjectionReader*>(data);
+                    check(elements==size_t(count)*self.pixels,"Projection reader element mismatch");
+                    check(std::filesystem::file_size(self.path)==self.bytes&&std::filesystem::last_write_time(self.path)==self.modified,"Projection file changed during batched reconstruction");
+                    for(int i=0;i<count;++i){
+                        check(indices[i]>=0&&indices[i]<self.views,"Projection reader index out of range");
+                        self.input.clear();self.input.seekg(std::streamoff(size_t(indices[i])*self.pixels*sizeof(float)));
+                        timedRead(self.input,reinterpret_cast<char*>(output+size_t(i)*self.pixels),std::streamsize(self.pixels*sizeof(float)));
+                        check(bool(self.input),"读取投影批次失败，view="+std::to_string(indices[i]));
+                    }return true;
+                }
+            } reader{input,reconstruction_input,pixels,g.views,std::filesystem::last_write_time(reconstruction_input),std::filesystem::file_size(reconstruction_input)};
             float* d_projection = nullptr;
             float* d_volume = nullptr;
             auto cudaCheck = [](cudaError_t e, const char* what) {
                 if (e != cudaSuccess) throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(e));
             };
             try {
-                cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_projection), projection.size() * sizeof(float)), "分配迭代投影显存失败");
+                if(!batched_projection)cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_projection), projection.size()*sizeof(float)),"分配迭代投影显存失败");
                 cudaCheck(cudaMalloc(reinterpret_cast<void**>(&d_volume), volume.size() * sizeof(float)), "分配迭代体显存失败");
-                cudaCheck(cudaMemcpy(d_projection, projection.data(), projection.size() * sizeof(float), cudaMemcpyHostToDevice), "上传迭代投影失败");
+                if(!batched_projection)cudaCheck(cudaMemcpy(d_projection,projection.data(),projection.size()*sizeof(float),cudaMemcpyHostToDevice),"上传迭代投影失败");
                 cudaCheck(cudaMemset(d_volume, 0, volume.size() * sizeof(float)), "清零迭代体失败");
                 YK::SExecutionRequest request{};
                 request.projection = {d_projection, YK::EMemoryLocation::Device, projection.size()};
                 request.volume = {d_volume, YK::EMemoryLocation::Device, volume.size()};
+                if(batched_projection){request.projection_read=&FileProjectionReader::read;request.projection_read_user_data=&reader;}
                 request.view_count = g.views;
-                request.iteration_count = config.reconstruction.iterative.iterations;
+                request.iteration_count = statistical?config.reconstruction.statistical.optimizer.iterations:config.reconstruction.iterative.iterations;
+                struct WeightReader {
+                    std::ifstream input;std::filesystem::path path;size_t pixels;int views;
+                    uintmax_t bytes;std::filesystem::file_time_type modified;
+                    static bool read(void* data,const int* ids,int count,float* out,size_t elements){
+                        auto& r=*static_cast<WeightReader*>(data);
+                        check(elements==size_t(count)*r.pixels,"Weight reader shape mismatch");
+                        check(std::filesystem::file_size(r.path)==r.bytes&&std::filesystem::last_write_time(r.path)==r.modified,"Weight file changed during reconstruction");
+                        for(int i=0;i<count;++i){check(ids[i]>=0&&ids[i]<r.views,"Weight reader index");r.input.clear();
+                            r.input.seekg(std::streamoff(size_t(ids[i])*r.pixels*sizeof(float)));timedRead(r.input,reinterpret_cast<char*>(out+size_t(i)*r.pixels),std::streamsize(r.pixels*sizeof(float)));
+                            check(bool(r.input),"Cannot read statistical weight batch");}return true;
+                    }
+                } weights;
+                if(statistical&&!config.reconstruction.statistical.data_fidelity.weights_file.empty()){
+                    weights.path=config.reconstruction.statistical.data_fidelity.weights_file;weights.pixels=pixels;weights.views=g.views;
+                    weights.bytes=std::filesystem::file_size(weights.path);weights.modified=std::filesystem::last_write_time(weights.path);
+                    check(weights.bytes==projection_elements*sizeof(float),"Statistical weight file has incorrect shape");
+                    weights.input.open(weights.path,std::ios::binary);check(bool(weights.input),"Cannot open statistical weight file");
+                    request.projection_weights_read=&WeightReader::read;request.projection_weights_read_user_data=&weights;
+                }
                 if(progress){
                     progress({"Iterative updates",0,request.iteration_count});
                     request.progress_callback=[](void* data,int complete,int total){auto& callback=*static_cast<TaskProgressCallback*>(data);callback({"Iterative updates",complete,total});};

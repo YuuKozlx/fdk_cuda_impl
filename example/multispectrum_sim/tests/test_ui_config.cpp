@@ -58,6 +58,43 @@ int main(){try{
     for(size_t i=0;i<energies.size();++i)require(std::abs(preset_mu[i]-formula_mu[i])/formula_mu[i]<2e-4,"selected water attenuation mismatch");
     c.geometry.kind=GeometryKind::FlatCbct;
     c.reconstruction.type="iterative";c.reconstruction.iterative.algorithm="sirt";c.reconstruction.iterative.iterations=2;
+    c.reconstruction.iterative.regularization.plugin="huber_tv_prox";
+    c.reconstruction.iterative.regularization.strength=.004;
+    c.reconstruction.iterative.regularization.huber_delta=.002;
+    c.reconstruction.iterative.regularization.dimensions=2;
+    saveProjectionUiConfig(c,dir/"tv-plugin.toml");
+    const auto tv_config=loadConfig(dir/"tv-plugin.toml");
+    require(tv_config.reconstruction.iterative.regularization.plugin=="huber_tv_prox" &&
+        tv_config.reconstruction.iterative.regularization.strength==.004 &&
+        tv_config.reconstruction.iterative.regularization.huber_delta==.002 &&
+        tv_config.reconstruction.iterative.regularization.dimensions==2,"TV plugin roundtrip");
+    c.reconstruction.iterative.regularization.plugin="none";
+    c.reconstruction.type="iterative";c.reconstruction.iterative.algorithm="tigre_os_sart";
+    c.reconstruction.iterative.subsets=3;
+    saveProjectionUiConfig(c,dir/"tigre-subsets.toml");
+    const auto subset_config=loadConfig(dir/"tigre-subsets.toml");
+    require(subset_config.reconstruction.iterative.subsets==3,"TIGRE subset-count roundtrip");
+    c.reconstruction.iterative.algorithm="sirt";c.reconstruction.iterative.subsets=1;
+    c.reconstruction.type="statistical";
+    c.reconstruction.statistical.regularization.plugin="smoothed_tv";
+    c.reconstruction.statistical.regularization.strength=.4;c.reconstruction.statistical.regularization.shape=.002;
+    c.reconstruction.statistical.optimizer.iterations=7;c.reconstruction.statistical.optimizer.step_size=.0001;
+    c.reconstruction.statistical.data_fidelity.normalize_by_ray_count=true;
+    saveProjectionUiConfig(c,dir/"statistical.toml");
+    const auto statistical=loadConfig(dir/"statistical.toml");
+    // Old experimental settings must neither select a solver nor survive saving.
+    {std::ofstream old(dir/"statistical.toml",std::ios::app);old<<"\n[reconstruction.statistical.composition]\nstrategy = \"invalid-experimental-strategy\"\nprox_iterations = -3\n";}
+    const auto migrated=loadConfig(dir/"statistical.toml");
+    saveProjectionUiConfig(migrated,dir/"statistical-clean.toml");
+    {std::ifstream input(dir/"statistical-clean.toml");std::string saved((std::istreambuf_iterator<char>(input)),{});
+     require(saved.find("composition")==std::string::npos&&saved.find("prox_iterations")==std::string::npos,"internal solver controls leaked to TOML");}
+
+    require(statistical.reconstruction.type=="statistical"&&
+        statistical.reconstruction.statistical.regularization.plugin=="smoothed_tv"&&
+        statistical.reconstruction.statistical.regularization.strength==.4&&statistical.reconstruction.statistical.regularization.shape==.002&&
+        statistical.reconstruction.statistical.optimizer.iterations==7&&statistical.reconstruction.statistical.optimizer.step_size==.0001&&
+        statistical.reconstruction.statistical.data_fidelity.normalize_by_ray_count,"Statistical configuration roundtrip");
+    c.reconstruction.type="iterative";
     c.reconstruction.input_projection_file=c.projection.output_file;c.reconstruction.output_volume_file=dir/"reconstruction.raw";
     c.geometry.parameters.reconstruction_volume_x=2;c.geometry.parameters.reconstruction_volume_y=2;c.geometry.parameters.reconstruction_volume_z=2;
     c.visualization.volume_opacity_scale=.02;

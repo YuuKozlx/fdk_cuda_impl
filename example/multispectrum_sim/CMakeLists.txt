@@ -51,6 +51,7 @@ endif()
 if(TARGET YKCBCT)
     target_sources(multispectrum_sim PRIVATE
         src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/ReconstructionPreprocessor.cpp
+        src/recon/preprocess/ProjectionCache.cpp
         src/CudaPrimaryProjector.cu src/SpectralProjectionPipeline.cpp
         src/primary/CudaProjectionBackend.cu src/primary/DetectorSignal.cpp
         src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
@@ -94,6 +95,12 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(multispectrum_projection_cache_test tests/test_projection_cache.cpp src/recon/preprocess/ProjectionCache.cpp)
+    target_include_directories(multispectrum_projection_cache_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include")
+    if(MSVC)
+        target_compile_options(multispectrum_projection_cache_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_projection_cache COMMAND multispectrum_projection_cache_test "${CMAKE_CURRENT_BINARY_DIR}/projection-cache-tests")
     add_executable(multispectrum_signal_unit_test tests/primary/test_detector_signal.cpp
         src/primary/DetectorSignal.cpp src/primary/ProjectionOutput.cpp)
     target_include_directories(multispectrum_signal_unit_test PRIVATE include src)
@@ -321,9 +328,6 @@ if(BUILD_TESTING AND TARGET YKCBCT)
         target_compile_options(multispectrum_ossart_weight_cache_test PRIVATE /utf-8)
     endif()
     add_test(NAME multispectrum_ossart_weight_cache COMMAND multispectrum_ossart_weight_cache_test)
-endif()
-
-if(BUILD_TESTING AND TARGET YKCBCT)
     add_executable(multispectrum_tigre_weight_cache_test tests/test_tigre_weight_cache.cpp src/LibraryGeometry.cpp)
     target_include_directories(multispectrum_tigre_weight_cache_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
     target_link_libraries(multispectrum_tigre_weight_cache_test PRIVATE YKCBCT CUDA::cudart)
@@ -331,6 +335,16 @@ if(BUILD_TESTING AND TARGET YKCBCT)
         target_compile_options(multispectrum_tigre_weight_cache_test PRIVATE /utf-8)
     endif()
     add_test(NAME multispectrum_tigre_weight_cache COMMAND multispectrum_tigre_weight_cache_test)
+    add_executable(multispectrum_batched_reconstruction_test tests/test_batched_reconstruction.cpp src/LibraryGeometry.cpp)
+    target_include_directories(multispectrum_batched_reconstruction_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+    target_link_libraries(multispectrum_batched_reconstruction_test PRIVATE YKCBCT CUDA::cudart)
+    if(MSVC)
+        target_compile_options(multispectrum_batched_reconstruction_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_batched_reconstruction COMMAND multispectrum_batched_reconstruction_test)
+endif()
+
+if(BUILD_TESTING AND TARGET YKCBCT)
     add_executable(multispectrum_tv_plugin_test tests/test_tv_plugin.cpp
         ../../src/Reconstruction/Iterative/Regularization/HuberTvKernels.cu)
     target_include_directories(multispectrum_tv_plugin_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
@@ -340,4 +354,14 @@ if(BUILD_TESTING AND TARGET YKCBCT)
         target_compile_options(multispectrum_tv_plugin_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
     endif()
     add_test(NAME multispectrum_tv_plugin COMMAND multispectrum_tv_plugin_test)
+endif()
+
+if(BUILD_TESTING AND TARGET YKCBCT)
+    add_executable(multispectrum_statistical_test tests/test_statistical_reconstruction.cpp src/LibraryGeometry.cpp)
+    target_include_directories(multispectrum_statistical_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+    target_link_libraries(multispectrum_statistical_test PRIVATE YKCBCT CUDA::cudart)
+    if(MSVC)
+        target_compile_options(multispectrum_statistical_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_statistical COMMAND multispectrum_statistical_test)
 endif()

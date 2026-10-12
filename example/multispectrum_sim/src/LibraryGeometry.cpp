@@ -1,4 +1,5 @@
 #include "LibraryGeometry.hpp"
+#include <limits>
 #include "NonStandardFpBp/Geometry/YkTrajectorySampling.hpp"
 #include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtGeometry.hpp"
 #include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitTomography.hpp"
@@ -173,6 +174,36 @@ namespace yk::spectral {
         system.reconstruction.iterative.iterations = iterative.iterations;
         system.reconstruction.iterative.relaxation = static_cast<float>(iterative.relaxation);
         system.reconstruction.iterative.subsets = iterative.subsets;
+        if(pipeline==YK::EPipeline::TigreGradient)
+            system.reconstruction.tigre.block_size=std::max(1,(g.views+std::max(1,iterative.subsets)-1)/std::max(1,iterative.subsets));
+        if(use==GeometryUse::Reconstruction&&config.reconstruction.type=="statistical"){
+            const auto& s=config.reconstruction.statistical;auto& out=system.statistical;
+            system.reconstruction.projection_model=s.projection_model=="siddon"?YK::EProjectionModel::Siddon:YK::EProjectionModel::Joseph;
+            out.data_fidelity.scale=float(s.data_fidelity.scale);
+            out.data_fidelity.normalize_by_ray_count=s.data_fidelity.normalize_by_ray_count;
+            out.data_fidelity.require_verified_adjoint=s.data_fidelity.require_verified_adjoint;
+            out.data_fidelity.use_projection_weights=!s.data_fidelity.weights_file.empty();
+            out.regularization.plugin_id=s.regularization.plugin.c_str();out.regularization.strength=float(s.regularization.strength);
+            out.regularization.shape=float(s.regularization.shape);out.regularization.dimensions=s.regularization.dimensions;
+            out.optimizer.kind=s.optimizer.type=="fista"?YK::EStatisticalOptimizer::Fista:(s.optimizer.type=="raw_gradient_descent"||s.optimizer.type=="gradient_descent")?YK::EStatisticalOptimizer::GradientDescent:YK::EStatisticalOptimizer::RegularizedAlgebraic;
+            out.optimizer.iterations=s.optimizer.iterations;out.optimizer.step_size=float(s.optimizer.step_size);
+            out.optimizer.backtracking=s.optimizer.backtracking;out.optimizer.max_backtracking=s.optimizer.max_backtracking;
+            out.optimizer.step_shrink=float(s.optimizer.step_shrink);out.optimizer.relative_tolerance=float(s.optimizer.relative_tolerance);
+            out.optimizer.minimum_iterations=s.optimizer.minimum_iterations;
+            out.constraints.lower_bound=s.non_negative?0.f:-std::numeric_limits<float>::max();
+        }
+        if (use == GeometryUse::Reconstruction && config.reconstruction.type == "iterative") {
+            const auto& tv=iterative.regularization;
+            system.regularization.plugin_id=tv.plugin.c_str();
+            system.regularization.strength=float(tv.strength);
+            system.regularization.huber_delta=float(tv.huber_delta);
+            system.regularization.step_size=float(tv.step_size);
+            system.regularization.inner_iterations=tv.inner_iterations;
+            system.regularization.dimensions=tv.dimensions;
+            system.regularization.epsilon=float(tv.epsilon);
+            system.regularization.strength_reduction=float(tv.strength_reduction);
+            system.regularization.non_negative=iterative.non_negative;
+        }
         if (iterative.algorithm == "tigre_sart")
             system.reconstruction.tigre.method = YK::ETigreGradientMethodSpec::Sart;
         else if (iterative.algorithm == "tigre_sirt")

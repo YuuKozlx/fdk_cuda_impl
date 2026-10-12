@@ -400,22 +400,69 @@ void number(const char* label, double& value)
         void reconstruction() {
             auto& r=draft.reconstruction;auto& g=draft.geometry.parameters;
             ImGui::Checkbox("Reconstruct after projection",&auto_reconstruct);
-            int method=r.type=="iterative"?1:0;
-            if(ImGui::Combo("Method",&method,"FDK\0Iterative\0")){r.type=method?"iterative":"analytic";r.analytic.pipeline="fdk";}
+            int method=r.type=="statistical"?2:r.type=="iterative"?1:0;
+            if(ImGui::Combo("Method",&method,"FDK\0Algebraic iterative\0Statistical\0")){r.type=method==2?"statistical":method?"iterative":"analytic";r.analytic.pipeline="fdk";}
             if(!method){
                 ImGui::TextWrapped("FDK: Flat circular / Planar / Tilted. Flat helical requires another reconstruction method.");
                 int filter=r.analytic.filter=="ramlak"?0:r.analytic.filter=="shepp-logan"?1:2;
                 if(ImGui::Combo("Filter",&filter,"ramlak\0shepp-logan\0hann\0"))r.analytic.filter=filter==0?"ramlak":filter==1?"shepp-logan":"hann";
                 integer("Chunk views",r.analytic.chunk_views);
-            }else{
-                const char* algorithms[]={"sirt","ossart","cgls","tigre_sart","tigre_os_sart","tigre_sart_tv","tigre_os_sart_tv"};
-                int index=0;for(int i=0;i<7;++i)if(r.iterative.algorithm==algorithms[i])index=i;
-                if(ImGui::Combo("Algorithm",&index,"sirt\0ossart\0cgls\0tigre_sart\0tigre_os_sart\0tigre_sart_tv\0tigre_os_sart_tv\0")){
-                    r.iterative.algorithm=algorithms[index];if(index!=1&&index!=4&&index!=6)r.iterative.subsets=1;}
+            }else if(method==1){
+                const char* algorithms[]={"sirt","ossart","cgls","tigre_sart","tigre_os_sart","tigre_sart_tv","tigre_os_sart_tv","sart","tigre_sirt"};
+                int index=0;for(int i=0;i<9;++i)if(r.iterative.algorithm==algorithms[i])index=i;
+                if(ImGui::Combo("Algorithm",&index,"sirt\0ossart\0cgls\0tigre_sart\0tigre_os_sart\0tigre_sart_tv\0tigre_os_sart_tv\0sart\0tigre_sirt\0")){
+                    r.iterative.algorithm=algorithms[index];if(index!=1&&index!=4&&index!=6)r.iterative.subsets=1;
+                    if(index!=0&&index!=1&&index!=7)r.iterative.regularization.plugin="none";}
                 integer("Iterations",r.iterative.iterations);number("Relaxation",r.iterative.relaxation);
                 if(index==1||index==4||index==6)integer("Subsets",r.iterative.subsets);
                 ImGui::Checkbox("Non negative",&r.iterative.non_negative);
                 if(index==5||index==6){integer("TV iterations",r.iterative.tv_iterations);number("TV alpha",r.iterative.tv_alpha);}
+                if(index==0||index==1||index==7){
+                    auto& tv=r.iterative.regularization;
+                    int plugin=tv.plugin=="huber_tv_prox"?2:tv.plugin=="smoothed_tv"?1:0;
+                    if(ImGui::Combo("Regularization",&plugin,"None\0Smoothed TV\0Huber TV Prox\0")){
+                        tv.plugin=plugin==2?"huber_tv_prox":plugin==1?"smoothed_tv":"none";
+                        if(plugin&&tv.strength==0)tv.strength=.002;
+                    }
+                    if(plugin){
+                        number("TV strength",tv.strength);integer("TV inner steps",tv.inner_iterations);
+                        int dims=tv.dimensions==2?0:1;
+                        if(ImGui::Combo("TV dimensions",&dims,"2D slices\0Full 3D\0"))tv.dimensions=dims?3:2;
+                        number("TV strength reduction",tv.strength_reduction);
+                        if(plugin==2){number("Huber delta",tv.huber_delta);number("Prox step (0 = auto)",tv.step_size);}
+                        else number("TV epsilon",tv.epsilon);
+                        ImGui::TextWrapped("Applied after every full angle sweep. Uses GPU volume buffers.");
+                    }
+                }
+            }else{
+                auto& s=r.statistical;
+                ImGui::SeparatorText("Data fidelity");
+                ImGui::TextUnformatted("Weighted least squares");
+                int model=s.projection_model=="siddon"?1:0;
+                if(ImGui::Combo("Projector",&model,"Joseph\0Siddon\0"))s.projection_model=model?"siddon":"joseph";
+                number("Data scale",s.data_fidelity.scale);
+                ImGui::Checkbox("Mean data term",&s.data_fidelity.normalize_by_ray_count);
+                pathInput("Weights (optional)",s.data_fidelity.weights_file,L"Weights\0*.raw\0All files\0*.*\0\0");
+                ImGui::TextWrapped("Empty weights file uses W=I. Weight RAW must match projection dimensions and contain nonnegative float32 values.");
+                ImGui::SeparatorText("Regularization");
+                auto& reg=s.regularization;
+                int plugin=reg.plugin=="smoothed_tv"?1:(reg.plugin=="huber_tv"||reg.plugin=="huber_tv_prox")?2:reg.plugin=="tikhonov"?3:reg.plugin=="tv"?4:0;
+                if(ImGui::Combo("Penalty",&plugin,"None\0Smoothed TV\0Huber TV\0Tikhonov\0Standard TV\0"))reg.plugin=plugin==1?"smoothed_tv":plugin==2?"huber_tv":plugin==3?"tikhonov":plugin==4?"tv":"none";
+                if(plugin){number("Penalty weight",reg.strength);
+                    if(plugin==1||plugin==2)number(plugin==1?"TV smooth scale":"Huber threshold",reg.shape);
+                    if(plugin!=3){int dims=reg.dimensions==2?0:1;if(ImGui::Combo("Penalty dimensions",&dims,"2D slices\0Full 3D\0"))reg.dimensions=dims?3:2;}}
+                else reg.strength=0;
+                ImGui::SeparatorText("Optimizer");
+                int update=(s.optimizer.type=="raw_gradient_descent"||s.optimizer.type=="gradient_descent")?1:0;
+                if(ImGui::Combo("Data update",&update,"Regularized algebraic (SIRT)\0Gradient descent\0")){s.optimizer.type=update?"gradient_descent":"regularized_algebraic";}
+                ImGui::TextWrapped(update?"One full-batch gradient update per iteration.":"One normalized full-view SIRT update per sweep. Zero penalty matches internal SIRT.");
+                integer(update?"GD iterations":"Algebraic sweeps",s.optimizer.iterations);number(update?"GD step (0 = auto)":"Penalty step (0 = auto)",s.optimizer.step_size);
+                if(update||(plugin!=2&&plugin!=4))ImGui::Checkbox(update?"Objective backtracking":"Penalty backtracking",&s.optimizer.backtracking);
+                if(s.optimizer.backtracking&&(update||(plugin!=2&&plugin!=4))){integer("Maximum backtracking",s.optimizer.max_backtracking);number("Step shrink",s.optimizer.step_shrink);}
+                number("Relative update tolerance",s.optimizer.relative_tolerance);integer("Minimum iterations",s.optimizer.minimum_iterations);
+                ImGui::Checkbox("Non negative volume",&s.non_negative);
+                ImGui::TextWrapped("Regularization integration is selected internally. FISTA is not yet available.");
+                if(update&&plugin==4)ImGui::TextWrapped("Standard TV is available with Regularized algebraic.");
             }
             ImGui::SeparatorText("Output grid");
             integer("Recon X",g.reconstruction_volume_x);integer("Recon Y",g.reconstruction_volume_y);integer("Recon Z",g.reconstruction_volume_z);
@@ -425,6 +472,9 @@ void number(const char* label, double& value)
             ImGui::Checkbox("Save orthogonal slices",&r.save_slices);path=r.slice_prefix.generic_string();stringInput("Slice prefix",path);r.slice_prefix=path;
             ImGui::SeparatorText("Corrections");
             auto& pp=r.preprocessing;ImGui::Checkbox("Enable preprocessing",&pp.enabled);
+            if(pp.enabled)ImGui::TextWrapped("Corrected projections are saved beside the input and reused when correction inputs and settings match.");
+            if(r.type=="iterative" && r.iterative.algorithm=="tigre_sart")
+                ImGui::TextWrapped("SART updates one view at a time. One iteration is a complete sweep over all views; large volumes can take several minutes per sweep.");
             if(pp.enabled){auto& bh=pp.beam_hardening;ImGui::Checkbox("Beam hardening correction",&bh.enabled);
                 if(bh.enabled){ImGui::Checkbox("Fit water plate",&bh.fit_from_water_plate);integer("Polynomial order",bh.order);
                     number("Clamp min",bh.clamp_min);number("Clamp max",bh.clamp_max);

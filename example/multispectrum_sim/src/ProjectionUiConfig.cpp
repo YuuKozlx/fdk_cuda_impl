@@ -178,11 +178,27 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
     toml::table recon=t["reconstruction"].is_table()?*t["reconstruction"].as_table():toml::table{};
     recon.insert_or_assign("type",r.type);recon.insert_or_assign("input_projection_file",r.input_projection_file.generic_string());
     recon.insert_or_assign("output_volume_file",r.output_volume_file.generic_string());recon.insert_or_assign("slice_prefix",r.slice_prefix.generic_string());recon.insert_or_assign("save_slices",r.save_slices);
-    recon.erase("analytic");recon.erase("iterative");
+    recon.erase("analytic");recon.erase("iterative");recon.erase("statistical");
     if(r.type=="analytic")recon.insert("analytic",toml::table{{"pipeline",r.analytic.pipeline},{"filter",r.analytic.filter},{"chunk_views",r.analytic.chunk_views}});
-    else recon.insert("iterative",toml::table{{"algorithm",r.iterative.algorithm},{"iterations",r.iterative.iterations},{"relaxation",r.iterative.relaxation},{"subsets",r.iterative.subsets},
+    else if(r.type=="iterative") recon.insert("iterative",toml::table{{"algorithm",r.iterative.algorithm},{"iterations",r.iterative.iterations},{"relaxation",r.iterative.relaxation},{"subsets",r.iterative.subsets},
         {"projection_model",r.iterative.projection_model},{"tv_iterations",r.iterative.tv_iterations},{"tv_alpha",r.iterative.tv_alpha},{"tv_alpha_reduction",r.iterative.tv_alpha_reduction},
-        {"maximum_update_ratio",r.iterative.maximum_update_ratio},{"non_negative",r.iterative.non_negative}});
+        {"maximum_update_ratio",r.iterative.maximum_update_ratio},{"non_negative",r.iterative.non_negative},
+        {"regularization",toml::table{{"plugin",r.iterative.regularization.plugin},{"strength",r.iterative.regularization.strength},
+          {"huber_delta",r.iterative.regularization.huber_delta},{"step_size",r.iterative.regularization.step_size},
+          {"inner_iterations",r.iterative.regularization.inner_iterations},{"dimensions",r.iterative.regularization.dimensions},
+          {"epsilon",r.iterative.regularization.epsilon},{"strength_reduction",r.iterative.regularization.strength_reduction}}}});
+    if(r.type=="statistical"){
+        const auto& s=r.statistical;
+        recon.insert("statistical",toml::table{{"projection_model",s.projection_model},{"non_negative",s.non_negative},
+            {"data_fidelity",toml::table{{"type",s.data_fidelity.type},{"scale",s.data_fidelity.scale},
+                {"normalize_by_ray_count",s.data_fidelity.normalize_by_ray_count},{"require_verified_adjoint",s.data_fidelity.require_verified_adjoint},
+                {"weights_file",s.data_fidelity.weights_file.generic_string()}}},
+            {"regularization",toml::table{{"plugin",s.regularization.plugin},{"strength",s.regularization.strength},
+                {"shape",s.regularization.shape},{"dimensions",s.regularization.dimensions}}},
+            {"optimizer",toml::table{{"type",s.optimizer.type},{"iterations",s.optimizer.iterations},{"step_size",s.optimizer.step_size},
+                {"backtracking",s.optimizer.backtracking},{"max_backtracking",s.optimizer.max_backtracking},{"step_shrink",s.optimizer.step_shrink},
+                {"relative_tolerance",s.optimizer.relative_tolerance},{"minimum_iterations",s.optimizer.minimum_iterations}}}});
+    }
     auto* pp=recon["preprocessing"].as_table();if(!pp){recon.insert("preprocessing",toml::table{});pp=recon["preprocessing"].as_table();}
     pp->insert_or_assign("enabled",r.preprocessing.enabled);
     const auto& bh=r.preprocessing.beam_hardening;

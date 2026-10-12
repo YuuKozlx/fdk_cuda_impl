@@ -206,7 +206,15 @@ struct AnalyticReconstructionConfig {
     int chunk_views = 32;
 };
 
+struct RegularizationConfig {
+    std::string plugin = "none";
+    double strength = 0.0, huber_delta = 0.001, step_size = 0.0;
+    int inner_iterations = 5, dimensions = 3;
+    double epsilon = 1e-6, strength_reduction = 1.0;
+};
+
 struct IterativeReconstructionConfig {
+    RegularizationConfig regularization;
     std::string algorithm = "os_sart_tv";
     int iterations = 10;
     double relaxation = 1.0;
@@ -273,6 +281,28 @@ struct ReconstructionPreprocessConfig {
     ScatterCorrectionConfig scatter;
 };
 
+struct StatisticalReconstructionConfig {
+    struct DataFidelity {
+        std::string type="weighted_least_squares";
+        std::filesystem::path weights_file;
+        double scale=1.0;
+        bool normalize_by_ray_count=false,require_verified_adjoint=false;
+    } data_fidelity;
+    struct Regularization {
+        std::string plugin="huber_tv";
+        double strength=0.0,shape=0.001;
+        int dimensions=3;
+    } regularization;
+    struct Optimizer {
+        std::string type="regularized_algebraic";
+        int iterations=10,max_backtracking=20,minimum_iterations=1;
+        double step_size=0.0,step_shrink=0.5,relative_tolerance=0.0;
+        bool backtracking=true;
+    } optimizer;
+    std::string projection_model="joseph";
+    bool non_negative=true;
+};
+
 struct ReconstructionConfig {
     std::filesystem::path input_projection_file;
     std::string type = "analytic";
@@ -282,5 +312,6 @@ struct ReconstructionConfig {
     std::filesystem::path slice_prefix;
     bool save_slices = false;
     ReconstructionPreprocessConfig preprocessing;
+    StatisticalReconstructionConfig statistical;
 };
 }
