@@ -72,6 +72,13 @@ if(TARGET YKCBCT)
             target_compile_definitions(multispectrum_sim PRIVATE YK_SPECTRAL_IMGUI=1 NOMINMAX)
         endif()
     endif()
+    # Refresh the runtime even when DLL exports/import-library contents do not
+    # change and Ninja correctly leaves the executable itself untouched.
+    add_custom_target(multispectrum_runtime_sync
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:multispectrum_sim>
+        DEPENDS YKCBCT)
+    add_dependencies(multispectrum_sim multispectrum_runtime_sync)
     add_custom_command(TARGET multispectrum_sim POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:multispectrum_sim>)
@@ -305,3 +312,13 @@ foreach(device_stage_consumer IN ITEMS multispectrum_sim multispectrum_pipeline_
     endif()
 endforeach()
 set_source_files_properties(src/primary/CudaSignalStages.cu PROPERTIES COMPILE_OPTIONS "--fmad=false")
+
+if(BUILD_TESTING AND TARGET YKCBCT)
+    add_executable(multispectrum_ossart_weight_cache_test tests/test_ossart_weight_cache.cpp src/LibraryGeometry.cpp)
+    target_include_directories(multispectrum_ossart_weight_cache_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+    target_link_libraries(multispectrum_ossart_weight_cache_test PRIVATE YKCBCT CUDA::cudart)
+    if(MSVC)
+        target_compile_options(multispectrum_ossart_weight_cache_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_ossart_weight_cache COMMAND multispectrum_ossart_weight_cache_test)
+endif()

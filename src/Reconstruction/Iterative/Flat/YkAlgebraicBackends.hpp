@@ -14,6 +14,9 @@
 #include <global/YkCBCTParams.h>
 #include <vector>
 #include <numeric>
+#include <cstdlib>
+#include <limits>
+#include <string>
 
 
 
@@ -684,6 +687,7 @@ namespace YK {
             cudaStream_t stream,
             int deviceId = 0)
         {
+            clearWeightCache_();
             params_ = params;
             cfg_ = cfg;
             h_views_ = h_views;
@@ -764,6 +768,8 @@ namespace YK {
 
             YK::Iter::fill_ones_launch(d_ones_vol_, vol_n, stream);
             YK_CUDA_CHECK(cudaStreamSynchronize(stream));
+            row_offsets_.assign(cfg_.n_subset,no_weight_slot_);col_offsets_=row_offsets_;
+            row_ready_.assign(cfg_.n_subset,false);col_ready_=row_ready_;
 
             is_initialized_ = true;
             YK_LOGI("[AlgebraicDetailedWeightBackend] init OK: {} angles, "
@@ -794,13 +800,35 @@ namespace YK {
                 const SReconstructionParams& ps = subset_params_[subset_idx];
                 const std::vector<SConeProjGeomVec>& sv = subset_views_[subset_idx];
 
-                // 行权重：A_s · 1_vol
-                YK_CUDA_CHECK(cudaMemsetAsync(d_row_w_, 0, sino_n * sizeof(float), stream));
-                fp_.run(d_ones_vol_, ps, d_row_w_, stream);
-
-                // 列权重：A_s^T · 1_proj
-                YK::Iter::fill_ones_launch(d_residual_, sino_n, stream);
-                bp_.run(d_residual_, ps, d_col_w_, stream, true);
+                float* row=weightSlot_(row_offsets_,subset_idx,d_row_w_.data());
+                float* column=weightSlot_(col_offsets_,subset_idx,d_col_w_.data());
+                // Geometry and grids are immutable within init/release. Cached
+                // weights remain exact float32 results of the same operators.
+                if(!row_ready_[subset_idx]){
+                    YK_CUDA_CHECK(cudaMemsetAsync(row,0,sino_n*sizeof(float),stream));
+                    if(!fp_.run(d_ones_vol_,ps,row,stream))return false;
+                    if(row!=d_row_w_.data())row_ready_[subset_idx]=true;
+                }else ++row_cache_hits_;
+                if(!col_ready_[subset_idx]){
+                    YK::Iter::fill_ones_launch(d_residual_,sino_n,stream);
+                    if(!bp_.run(d_residual_,ps,column,stream,true))return false;
+                    if(column!=d_col_w_.data())col_ready_[subset_idx]=true;
+                }else ++col_cache_hits_;
+                if(!weight_cache_planned_){
+                    // First FP/BP materialize lazy operator textures. Budget
+                    // optional storage only after those required allocations.
+                    prepareWeightCache_(view_n,vol_n);weight_cache_planned_=true;
+                    float* cached_row=weightSlot_(row_offsets_,subset_idx,row);
+                    float* cached_column=weightSlot_(col_offsets_,subset_idx,column);
+                    if(cached_row!=row){
+                        YK_CUDA_CHECK(cudaMemcpyAsync(cached_row,row,sino_n*sizeof(float),cudaMemcpyDeviceToDevice,stream));
+                        row_ready_[subset_idx]=true;row=cached_row;
+                    }
+                    if(cached_column!=column){
+                        YK_CUDA_CHECK(cudaMemcpyAsync(cached_column,column,vol_n*sizeof(float),cudaMemcpyDeviceToDevice,stream));
+                        col_ready_[subset_idx]=true;column=cached_column;
+                    }
+                }
 
                 // 收集子集正弦图
                 for (int i = 0; i < K; ++i)
@@ -819,14 +847,14 @@ namespace YK {
                     d_sino_meas_sub_, d_sino_fwd_, d_residual_, sino_n, stream);
 
                 // R行归一化
-                YK::Iter::divide_launch(d_residual_, d_row_w_, cfg_.eps, sino_n, stream);
+                YK::Iter::divide_launch(d_residual_, row, cfg_.eps, sino_n, stream);
 
                 // 反投影
                 bp_.run(d_residual_, ps, d_bp_, stream, true);
 
                 // 更新
                 YK::Iter::update_launch(
-                    d_vol, d_bp_, d_col_w_,
+                    d_vol, d_bp_, column,
                     lambda_cur_, cfg_.eps, vol_n, stream);
 
                 lambda_cur_ *= cfg_.lambda_red;
@@ -861,6 +889,7 @@ namespace YK {
 
         void release()
         {
+            clearWeightCache_();
             d_sino_meas_sub_.reset();
             d_sino_fwd_.reset();
             d_residual_.reset();
@@ -884,6 +913,49 @@ namespace YK {
         ~AlgebraicDetailedWeightBackend() { release(); }
 
     private:
+        static constexpr size_t no_weight_slot_=std::numeric_limits<size_t>::max();
+        DeviceWorkspaceF32 weight_cache_;
+        bool weight_cache_planned_=false;
+        std::vector<size_t> row_offsets_,col_offsets_;
+        std::vector<bool> row_ready_,col_ready_;
+        size_t row_cache_hits_=0,col_cache_hits_=0,weight_cache_bytes_=0;
+        float* weightSlot_(const std::vector<size_t>& slots,int subset,float* fallback){
+            return slots[subset]==no_weight_slot_?fallback:weight_cache_.data()+slots[subset];
+        }
+        void clearWeightCache_(){
+            if(weight_cache_bytes_)YK_LOGI("[OSSART weight cache] bytes={} row_hits={} col_hits={}",weight_cache_bytes_,row_cache_hits_,col_cache_hits_);
+            weight_cache_.reset();row_offsets_.clear();col_offsets_.clear();row_ready_.clear();col_ready_.clear();
+            weight_cache_bytes_=row_cache_hits_=col_cache_hits_=0;weight_cache_planned_=false;
+        }
+        void prepareWeightCache_(size_t view_n,size_t vol_n){
+            row_offsets_.assign(cfg_.n_subset,no_weight_slot_);col_offsets_=row_offsets_;
+            row_ready_.assign(cfg_.n_subset,false);col_ready_=row_ready_;
+            size_t budget_mib=256;
+            if(const char* value=std::getenv("YK_OSSART_WEIGHT_CACHE_MIB")){
+                try{size_t consumed=0;const auto n=std::stoull(value,&consumed);if(consumed==std::string(value).size()&&n<=512)budget_mib=size_t(n);}catch(...){}
+            }
+            if(!budget_mib)return;
+            size_t free_bytes=0,total_bytes=0;
+            if(cudaMemGetInfo(&free_bytes,&total_bytes)!=cudaSuccess)return;
+            const size_t reserve=std::max(size_t(512)*1024*1024,total_bytes/5);
+            const size_t budget=std::min(budget_mib*1024*1024,free_bytes>reserve?free_bytes-reserve:0);
+            size_t used=0;int rows=0,cols=0;
+            // Prioritize small row buffers; retain selected subsets across all
+            // sweeps rather than an LRU that misses on every cyclic traversal.
+            for(int subset=0;subset<cfg_.n_subset;++subset){
+                const size_t elements=subsets_[subset].size()*view_n,bytes=elements*sizeof(float);
+                if(elements&&bytes<=budget-used){row_offsets_[subset]=used/sizeof(float);used+=bytes;++rows;}
+            }
+            for(int subset=0;subset<cfg_.n_subset;++subset){
+                const size_t bytes=vol_n*sizeof(float);
+                if(!subsets_[subset].empty()&&bytes<=budget-used){col_offsets_[subset]=used/sizeof(float);used+=bytes;++cols;}
+            }
+            if(!used)return;
+            try{weight_cache_.allocate(used/sizeof(float),deviceId_);}
+            catch(...){weight_cache_.reset();row_offsets_.assign(cfg_.n_subset,no_weight_slot_);col_offsets_=row_offsets_;cudaGetLastError();return;}
+            weight_cache_bytes_=used;
+            YK_LOGI("[OSSART weight cache] bytes={} row_subsets={} col_subsets={} reserve_bytes={}",used,rows,cols,reserve);
+        }
         bool         is_initialized_ = false;
         unsigned int iteration_ = 0;
         float        lambda_cur_ = 1.0f;
