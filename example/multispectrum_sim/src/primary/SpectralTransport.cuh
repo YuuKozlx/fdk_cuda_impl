@@ -5,6 +5,7 @@
 
 #include "ProjectionGeometry.cuh"
 #include "QuantumSampling.cuh"
+#include "FocalSampling.cuh"
 #include <iostream>
 
 namespace yk::spectral::primary_detail {
@@ -105,19 +106,18 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
     bool object_hit = false;
     float3 lo = make_float3(-0.5f*g.nx*g.vx, -0.5f*g.ny*g.vy, -0.5f*g.nz*g.vz);
     float3 hi = make_float3(-lo.x, -lo.y, -lo.z);
-    // Integrate each component separately so a small defocus dose cannot be
-    // lost through random component selection with few spatial samples.
+    const auto focal_partition=makeFocalPartition(g);
+    // N inner rays serve both normal and broad-focus inner exposure; N outer
+    // rays complete the area-weighted broad focus without increasing dose.
     for (int component=0; component<2; ++component) {
         const bool defocused = component == 1;
-        const float exposure_fraction = defocused ? g.focal_epsilon : 1.f-g.focal_epsilon;
+        const float exposure_fraction = focalPartitionWeight(focal_partition,defocused);
         if (exposure_fraction <= 0.f) continue;
         for (int sample=0; sample<g.samples; ++sample) {
         const auto geometry_start=profile?clock64():0ULL;
         unsigned base = seed ^ (unsigned(view)*unsigned(pixels)+unsigned(pixel))*0x9e3779b9U ^ (unsigned)sample*0x85ebca6bU;
-        const float fu = defocused ? g.defocus_fu : g.normal_fu;
-        const float fv = defocused ? g.defocus_fv : g.normal_fv;
-        float fsu = (uniform(base+1)-.5f)*fu;
-        float fsv = (uniform(base+2)-.5f)*fv;
+        const auto focal=sampleFocalPoint(g,focal_partition,defocused,base);
+        const float fsu=focal.x,fsv=focal.y;
         const float jitter_u = uniform(base+3)-.5f;
         const float jitter_v = uniform(base+4)-.5f;
         const auto ray = scannerRay(g, view, static_cast<float>(u0),

@@ -132,7 +132,9 @@ struct GeometryConfig {
     double reconstruction_offset_z_mm = 0.0;
 };
 struct FocalSpotConfig {
+    // Finite normal focus; when false its emission is a point source.
     bool enabled = false;
+    bool defocus_enabled = false;
     double normal_size_u_mm = 0.0;
     double normal_size_v_mm = 0.0;
     double defocus_size_u_mm = 0.0;

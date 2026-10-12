@@ -6,7 +6,7 @@
 
 namespace yk::spectral::primary_detail {
 
-template<int MaterialCount, int EnergyCapacity=128, int Warps=4>
+template<int MaterialCount, int EnergyCapacity=128, int Warps=4, bool CacheCoefficients=false>
 __global__ void warpPrimaryKernel(DeviceGeometry g, const unsigned char* labels,
     const int* label_to_material, const float* mu, const float* spectrum,
     const float* energies, int quantum_noise, int first_view,
@@ -32,12 +32,24 @@ __global__ void warpPrimaryKernel(DeviceGeometry g, const unsigned char* labels,
         sw[k]=e<g.ne?__ldg(spectrum+e):0.f;
         response[k]=(e<g.ne&&g.detector_response)?__ldg(g.detector_efficiency+size_t(pixel)*g.ne+e):1.f;
     }
+    // Only the cached specialization allocates these statically indexed slots.
+    // No coefficient reads remain inside its per-ray spectral loop.
+    float coefficients[CacheCoefficients?Slots:1][CacheCoefficients?MaterialCount:1];
+    if constexpr(CacheCoefficients){
+        #pragma unroll
+        for(int k=0;k<Slots;++k){
+            #pragma unroll
+            for(int m=0;m<MaterialCount;++m)
+                coefficients[k][m]=(lane+k*32<g.ne&&m<g.nm)?__ldg(mu+m*g.ne+lane+k*32):0.f;
+        }
+    }
+    const auto focal_partition=makeFocalPartition(g);
     bool object_hit=false;
     const float3 lo=make_float3(-.5f*g.nx*g.vx,-.5f*g.ny*g.vy,-.5f*g.nz*g.vz);
     const float3 hi=make_float3(-lo.x,-lo.y,-lo.z);
     for(int component=0;component<2;++component){
         const bool defocused=component==1;
-        const float fraction=defocused?g.focal_epsilon:1.f-g.focal_epsilon;
+        const float fraction=focalPartitionWeight(focal_partition,defocused);
         if(fraction<=0.f)continue;
         const float photons=fraction/static_cast<float>(g.samples);
         for(int start=0;start<g.samples;start+=32){
@@ -45,9 +57,9 @@ __global__ void warpPrimaryKernel(DeviceGeometry g, const unsigned char* labels,
             float paths[MaterialCount]={};float flux=0.f;bool hit=false;
             if(sample<g.samples){
                 const unsigned base=seed^(unsigned(view)*unsigned(pixels)+unsigned(pixel))*0x9e3779b9U^unsigned(sample)*0x85ebca6bU;
-                const float fu=defocused?g.defocus_fu:g.normal_fu,fv=defocused?g.defocus_fv:g.normal_fv;
+                const auto focal=sampleFocalPoint(g,focal_partition,defocused,base);
                 const auto ray=scannerRay(g,view,float(pixel%g.nu),float(pixel/g.nu),
-                    (uniform(base+1)-.5f)*fu,(uniform(base+2)-.5f)*fv,uniform(base+3)-.5f,uniform(base+4)-.5f);
+                    focal.x,focal.y,uniform(base+3)-.5f,uniform(base+4)-.5f);
                 float3 d=make_float3(ray.detector.x-ray.source.x,ray.detector.y-ray.source.y,ray.detector.z-ray.source.z);
                 const float length=sqrtf(d.x*d.x+d.y*d.y+d.z*d.z);d.x/=length;d.y/=length;d.z/=length;
                 hit=accumulatePaths<MaterialCount>(g,labels,label_to_material,
@@ -71,10 +83,10 @@ __global__ void warpPrimaryKernel(DeviceGeometry g, const unsigned char* labels,
                         float exponent=0.f;
                         if(material){
                             if constexpr(MaterialCount==32){
-                                for(int m=0;m<g.nm;++m)exponent+=paths_tile[warp][m][j]*__ldg(mu+m*g.ne+e);
+                                for(int m=0;m<g.nm;++m)exponent+=paths_tile[warp][m][j]*(CacheCoefficients?coefficients[k][m]:__ldg(mu+m*g.ne+e));
                             }else{
                                 #pragma unroll
-                                for(int m=0;m<MaterialCount;++m)exponent+=paths_tile[warp][m][j]*__ldg(mu+m*g.ne+e);
+                                for(int m=0;m<MaterialCount;++m)exponent+=paths_tile[warp][m][j]*(CacheCoefficients?coefficients[k][m]:__ldg(mu+m*g.ne+e));
                             }
                         }
                         const float transmission=material?expf(-exponent):1.f;
@@ -109,18 +121,18 @@ __global__ void warpPrimaryKernel(DeviceGeometry g, const unsigned char* labels,
         expected_out[out]=expected;sampled_out[out]=sampled;air_out[out]=air;mask_out[out]=object_hit?1:0;}
 }
 
-template<int MaterialCount,int EnergyCapacity>
+template<int MaterialCount,int EnergyCapacity,bool CacheCoefficients=false>
 void launchWarpPrimarySized(const DeviceGeometry& g,const unsigned char* labels,
     const int* map,const float* mu,const float* spectrum,const float* energies,
     int quantum_noise,int view,unsigned seed,unsigned quantum_seed,float* expected,
     float* sampled,float* air,unsigned char* mask,int views,bool report){
     constexpr int Warps=4;
     if(report){static bool reported=false;if(!reported){cudaFuncAttributes a{};
-        cudaFuncGetAttributes(&a,warpPrimaryKernel<MaterialCount,EnergyCapacity,Warps>);
+        cudaFuncGetAttributes(&a,warpPrimaryKernel<MaterialCount,EnergyCapacity,Warps,CacheCoefficients>);
         std::cout<<"warp_primary_resources materials="<<MaterialCount<<" energy_capacity="<<EnergyCapacity
-            <<" registers="<<a.numRegs<<" local_bytes="<<a.localSizeBytes<<" shared_bytes="<<a.sharedSizeBytes<<std::endl;
+            <<" coefficient_cache="<<CacheCoefficients<<" registers="<<a.numRegs<<" local_bytes="<<a.localSizeBytes<<" shared_bytes="<<a.sharedSizeBytes<<std::endl;
         reported=true;}}
-    warpPrimaryKernel<MaterialCount,EnergyCapacity,Warps><<<dim3((g.nu*g.nv+Warps-1)/Warps,views),32*Warps>>>(
+    warpPrimaryKernel<MaterialCount,EnergyCapacity,Warps,CacheCoefficients><<<dim3((g.nu*g.nv+Warps-1)/Warps,views),32*Warps>>>(
         g,labels,map,mu,spectrum,energies,quantum_noise,view,seed,quantum_seed,expected,sampled,air,mask);
 }
 
@@ -128,7 +140,16 @@ template<int MaterialCount>
 void launchWarpPrimaryKernel(const DeviceGeometry& g,const unsigned char* labels,
     const int* map,const float* mu,const float* spectrum,const float* energies,
     int quantum_noise,int view,unsigned seed,unsigned quantum_seed,float* expected,
-    float* sampled,float* air,unsigned char* mask,int views=1,bool report=false){
+    float* sampled,float* air,unsigned char* mask,int views=1,bool report=false,bool cache_coefficients=false){
+    // Enable only the production shape measured in the BrainWeb experiment;
+    // other material counts and >128-bin spectra retain the existing kernel.
+    if constexpr(MaterialCount==10){
+        if(cache_coefficients&&g.ne<=128){
+            launchWarpPrimarySized<MaterialCount,128,true>(g,labels,map,mu,spectrum,energies,
+                quantum_noise,view,seed,quantum_seed,expected,sampled,air,mask,views,report);
+            return;
+        }
+    }
     if(g.ne<=128)launchWarpPrimarySized<MaterialCount,128>(g,labels,map,mu,spectrum,energies,
         quantum_noise,view,seed,quantum_seed,expected,sampled,air,mask,views,report);
     else launchWarpPrimarySized<MaterialCount,256>(g,labels,map,mu,spectrum,energies,

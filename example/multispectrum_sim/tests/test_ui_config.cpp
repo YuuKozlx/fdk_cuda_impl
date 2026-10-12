@@ -32,6 +32,15 @@ int main(){try{
         require(loaded.projection.sampling.samples_per_pixel==1,"preview sampling");
         require(loaded.projection.batching.views==3&&loaded.projection.batching.max_buffer_mib==32,"batch limits roundtrip");
         require(loaded.workflow.mode==WorkflowMode::Project&&loaded.visualization.interactive,"workflow roundtrip");}
+    c.projection.focal_spot.normal_size_u_mm=.4;c.projection.focal_spot.normal_size_v_mm=.3;
+    c.projection.focal_spot.defocus_size_u_mm=1;c.projection.focal_spot.defocus_size_v_mm=1.2;
+    c.projection.focal_spot.epsilon=.01;
+    for(bool normal:{false,true})for(bool defocus:{false,true}){
+        c.projection.focal_spot.enabled=normal;c.projection.focal_spot.defocus_enabled=defocus;
+        const auto path=dir/"independent-focus.toml";saveProjectionUiConfig(c,path);const auto restored=loadConfig(path);
+        require(restored.projection.focal_spot.enabled==normal&&restored.projection.focal_spot.defocus_enabled==defocus,"independent focus switches roundtrip");
+        require(restored.projection.focal_spot.epsilon==.01&&restored.projection.focal_spot.normal_size_u_mm==.4,"disabled focus erased parameters");
+    }
     MaterialSpec picked{7,"old-name","Al","",2.7};
     selectBuiltinMaterial(picked,"water");
     const auto* water=findBuiltinMaterial("water");

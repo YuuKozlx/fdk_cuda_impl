@@ -585,6 +585,8 @@ namespace yk::spectral {
         if (auto* f = p ? (*p)["focal_spot"].as_table() : nullptr) {
             auto& spot = c.projection.focal_spot;
             spot.enabled = (*f)["enabled"].value_or(false);
+            // Old TOML used enabled as the master switch for both effects.
+            spot.defocus_enabled = (*f)["defocus_enabled"].value_or(spot.enabled);
             spot.normal_size_u_mm = (*f)["normal_size_u_mm"].value_or(0.0);
             spot.normal_size_v_mm = (*f)["normal_size_v_mm"].value_or(0.0);
             spot.defocus_size_u_mm = (*f)["defocus_size_u_mm"].value_or(0.0);
@@ -595,14 +597,17 @@ namespace yk::spectral {
             if (f->contains("rotation_deg")) throw std::runtime_error("矩形焦点不支持 rotation_deg");
             if (!std::isfinite(spot.epsilon) || spot.epsilon < 0.0 || spot.epsilon > 1.0)
                 throw std::runtime_error("projection.focal_spot.epsilon must be in [0, 1]");
-            if (spot.enabled &&
+            if ((spot.enabled || spot.defocus_enabled) &&
                 ((!std::isfinite(spot.normal_size_u_mm) || spot.normal_size_u_mm < 0) ||
                  (!std::isfinite(spot.normal_size_v_mm) || spot.normal_size_v_mm < 0) ||
                  (!std::isfinite(spot.defocus_size_u_mm) || spot.defocus_size_u_mm < 0) ||
                  (!std::isfinite(spot.defocus_size_v_mm) || spot.defocus_size_v_mm < 0) ||
-                 (spot.epsilon < 1.0 && (spot.normal_size_u_mm <= 0 || spot.normal_size_v_mm <= 0)) ||
-                 (spot.epsilon > 0.0 && (spot.defocus_size_u_mm <= 0 || spot.defocus_size_v_mm <= 0))))
+                 (spot.enabled && (!spot.defocus_enabled || spot.epsilon < 1.0) && (spot.normal_size_u_mm <= 0 || spot.normal_size_v_mm <= 0)) ||
+                 (spot.defocus_enabled && spot.epsilon > 0.0 && (spot.defocus_size_u_mm <= 0 || spot.defocus_size_v_mm <= 0))))
                 throw std::runtime_error("矩形焦点尺寸必须为正");
+            if(spot.enabled&&spot.defocus_enabled&&spot.epsilon>0.0&&
+                (spot.defocus_size_u_mm<spot.normal_size_u_mm||spot.defocus_size_v_mm<spot.normal_size_v_mm))
+                throw std::runtime_error("散焦矩形必须包含正常焦点矩形，才能在外圈分层采样");
         }
         if(c.projection.batching.views<1||c.projection.batching.views>64||
             c.projection.batching.max_buffer_mib<1||c.projection.batching.max_buffer_mib>256)

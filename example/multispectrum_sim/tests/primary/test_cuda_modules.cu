@@ -153,7 +153,51 @@ __global__ void focalProbe(float* result) {
     result[2]=delta.x*n.x+delta.y*n.y+delta.z*n.z;
     result[3]=a.x-b.x;result[4]=a.y-b.y;result[5]=a.z-b.z;
 }
+__global__ void outerFocalProbe(DeviceGeometry g,float2* points,int count){
+    const int p=blockIdx.x*blockDim.x+threadIdx.x;if(p>=count)return;
+    points[p]=sampleFocalPoint(g,makeFocalPartition(g),true,unsigned(p)*0x9e3779b9U);
+}
+void focalPartitionTests(){
+    DeviceGeometry g{};g.normal_fu=2;g.normal_fv=1;g.defocus_fu=4;g.defocus_fv=3;g.focal_epsilon=.25f;
+    const auto plan=makeFocalPartition(g);
+    near(focalPartitionWeight(plan,true),.25*10/12,1e-7,"outer area exposure");
+    near(focalPartitionWeight(plan,false),.75+.25*2/12,1e-7,"shared inner exposure");
+    near(focalPartitionWeight(plan,false)+focalPartitionWeight(plan,true),1,1e-7,"partition exposure conservation");
+    constexpr int count=65536;Device<float2> points(count);
+    for(int shape=0;shape<3;++shape){
+        if(shape==1)g.defocus_fu=g.normal_fu;
+        if(shape==2){g.defocus_fu=4;g.defocus_fv=g.normal_fv;}
+        outerFocalProbe<<<(count+255)/256,256>>>(g,points.get(),count);sync();
+        std::array<int,4> bands{};double sx=0,sy=0;
+        for(auto q:points.read()){
+            require(std::isfinite(q.x)&&std::isfinite(q.y),"nonfinite outer focal point");
+            require(std::abs(q.x)<=.5f*g.defocus_fu&&std::abs(q.y)<=.5f*g.defocus_fv,"outer focus bounds");
+            require(std::abs(q.x)>=.5f*g.normal_fu||std::abs(q.y)>=.5f*g.normal_fv,"outer sample fell inside normal focus");
+            if(q.x<=-.5f*g.normal_fu)++bands[0];else if(q.x>=.5f*g.normal_fu)++bands[1];else if(q.y<0)++bands[2];else ++bands[3];sx+=q.x;sy+=q.y;
+        }
+        const double area=g.defocus_fu*g.defocus_fv-g.normal_fu*g.normal_fv;
+        const double side=.5*(g.defocus_fu-g.normal_fu)*g.defocus_fv/area;
+        const double cap=.5*g.normal_fu*(g.defocus_fv-g.normal_fv)/area;
+        for(int b=0;b<4;++b)near(double(bands[b])/count,b<2?side:cap,.01,"outer bands not weighted by area");
+        near(sx/count,0,.025,"outer U centroid");near(sy/count,0,.025,"outer V centroid");
+    }
+    g.defocus_fu=g.normal_fu;g.defocus_fv=g.normal_fv;
+    near(focalPartitionWeight(makeFocalPartition(g),true),0,0,"equal focus has no outer area");
+    g.focal_epsilon=0;near(focalPartitionWeight(makeFocalPartition(g),false),1,0,"zero defocus normal dose");
+    g.normal_fu=g.normal_fv=0;g.focal_epsilon=1;
+    near(focalPartitionWeight(makeFocalPartition(g),false),0,0,"point inner has zero broad-focus area");
+}
 void focal(){
+    focalPartitionTests();
+    yk::spectral::SimulationConfig controls;auto& spot=controls.projection.focal_spot;
+    spot.normal_size_u_mm=.4;spot.normal_size_v_mm=.3;spot.defocus_size_u_mm=1;spot.defocus_size_v_mm=1.2;spot.epsilon=.01;
+    for(bool normal:{false,true})for(bool defocus:{false,true}){
+        spot.enabled=normal;spot.defocus_enabled=defocus;const auto device=makeDeviceGeometry(controls,2,3);
+        near(device.normal_fu,normal?.4:0,1e-7,"normal switch device size");
+        near(device.normal_fv,normal?.3:0,1e-7,"normal V switch device size");
+        near(device.defocus_fu,defocus?1:0,1e-7,"defocus switch device size");
+        near(device.focal_epsilon,defocus?.01:0,1e-7,"defocus switch device dose");
+    }
     Device<float> result(6);focalProbe<<<1,1>>>(result.get());sync();const auto delta=result.read();
     near(delta[0],2,3e-5,"focal displacement along tilted U");
     near(delta[1],3,3e-5,"focal displacement along tilted V");
@@ -231,10 +275,30 @@ std::array<double,2> multiReference(DeviceGeometry g,int pixel,int view,unsigned
     const std::vector<unsigned char>& labels,const std::vector<int>& map,
     const std::vector<float>& mu,const std::vector<float>& spectrum,const std::vector<float>& energies){
     std::array<double,2> result{};
-    for(int component=0;component<2;++component){double fraction=component?g.focal_epsilon:1-g.focal_epsilon;if(fraction<=0)continue;
+    // Independent CPU stratification: preserve the broad uniform density by
+    // weighting its inner and outer areas, sharing the normal inner samples.
+    const bool stratified=g.focal_epsilon>0&&g.defocus_fu>0&&g.defocus_fv>0&&g.normal_fu<=g.defocus_fu&&g.normal_fv<=g.defocus_fv;
+    const double area_ratio=stratified?double(g.normal_fu)/g.defocus_fu*g.normal_fv/g.defocus_fv:0;
+    const double outer_weight=stratified?g.focal_epsilon*(1-area_ratio):g.focal_epsilon;
+    for(int component=0;component<2;++component){double fraction=component?outer_weight:1-outer_weight;if(fraction<=0)continue;
         for(int sample=0;sample<g.samples;++sample){unsigned base=seed^(unsigned(view*g.nu*g.nv+pixel))*0x9e3779b9U^unsigned(sample)*0x85ebca6bU;
-            float fu=component?g.defocus_fu:g.normal_fu,fv=component?g.defocus_fv:g.normal_fv;
-            auto ray=scannerRay(g,view,float(pixel%g.nu),float(pixel/g.nu),(hostUniform(base+1)-.5f)*fu,(hostUniform(base+2)-.5f)*fv,hostUniform(base+3)-.5f,hostUniform(base+4)-.5f);
+            float x=(hostUniform(base+1)-.5f)*(component?g.defocus_fu:g.normal_fu);
+            float y=(hostUniform(base+2)-.5f)*(component?g.defocus_fv:g.normal_fv);
+            if(component&&stratified){
+                const unsigned outer_seed=base^0xd1b54a35U;
+                const double u=hostUniform(outer_seed+1),v=hostUniform(outer_seed+2);
+                const double vertical=(double(g.defocus_fu)-g.normal_fu)/g.defocus_fu;
+                const double horizontal=double(g.normal_fu)/g.defocus_fu*(double(g.defocus_fv)-g.normal_fv)/g.defocus_fv;
+                const double position=u*(vertical+horizontal);
+                if(vertical>0&&(position<vertical||horizontal<=0)){
+                    const double t=2*position/vertical,band=.5*(g.defocus_fu-g.normal_fu);
+                    x=float(t<1?-.5*g.defocus_fu+t*band:.5*g.normal_fu+(t-1)*band);y=float((v-.5)*g.defocus_fv);
+                }else{
+                    const double t=2*(position-vertical)/horizontal,band=.5*(g.defocus_fv-g.normal_fv);
+                    x=float((v-.5)*g.normal_fu);y=float(t<1?-.5*g.defocus_fv+t*band:.5*g.normal_fv+(t-1)*band);
+                }
+            }
+            auto ray=scannerRay(g,view,float(pixel%g.nu),float(pixel/g.nu),x,y,hostUniform(base+3)-.5f,hostUniform(base+4)-.5f);
             float3 d=make_float3(ray.detector.x-ray.source.x,ray.detector.y-ray.source.y,ray.detector.z-ray.source.z);
             float length=std::sqrt(d.x*d.x+d.y*d.y+d.z*d.z);d.x/=length;d.y/=length;d.z/=length;
             const auto paths=directVoxelPaths(g,labels,map,phantomInverse(g,ray.source,false),phantomInverse(g,d,true));
@@ -304,8 +368,18 @@ void multisample(){
     for(int p=0;p<6;++p){auto reference=multiReference(g,p,2,123,labels,map,mu,sw,en);near(actual[p],reference[0],std::max(.02,reference[0]*3e-5),"generic attenuation rows exceeded actual material count");}
 }
 
+template<int M>
+void launchWarpPrimaryTest(int option,const DeviceGeometry& g,const unsigned char* labels,
+    const int* map,const float* mu,const float* spectrum,const float* energies,
+    int quantum_noise,int view,unsigned seed,unsigned quantum_seed,float* expected,
+    float* sampled,float* air,unsigned char* mask,int views=1){
+    if constexpr(M==2||M==10){
+        if(option){launchWarpPrimarySized<M,128,true>(g,labels,map,mu,spectrum,energies,quantum_noise,view,seed,quantum_seed,expected,sampled,air,mask,views,false);return;}
+    }
+    launchWarpPrimaryKernel<M>(g,labels,map,mu,spectrum,energies,quantum_noise,view,seed,quantum_seed,expected,sampled,air,mask,views);
+}
 // Independent warp kernel versus scalar projector and double CPU box reference.
-void warp(){
+void warp(bool experiments=false){
     DeviceGeometry g{};g.nu=3;g.nv=2;g.nx=5;g.ny=6;g.nz=4;g.vx=.7f;g.vy=1.1f;g.vz=.9f;
     g.views_per_turn=13;g.rotation_direction=1;g.sid=709;g.sdd=1143;g.pu=.6f;g.pv=.8f;g.geometry_flux=1;
     g.phantom_x=.2f;g.phantom_y=-.3f;g.phantom_z=.1f;g.phantom_rx=.1f;g.phantom_ry=.2f;g.phantom_rz=-.12f;
@@ -314,7 +388,7 @@ void warp(){
     std::vector<int> map(256,-1);map[1]=0;map[2]=1;
     Device<unsigned char> dl(labels),mask(12);Device<int> dm(map);
     Device<float> expected(12),sampled(12),air(12);
-    auto verify=[&](auto slots,const std::vector<float>& mu,const std::vector<float>& sw,const std::vector<float>& en){
+    auto verify=[&](auto slots,const std::vector<float>& mu,const std::vector<float>& sw,const std::vector<float>& en,int option=0){
         constexpr int M=decltype(slots)::value;
         Device<float> dmu(mu),ds(sw),de(en);
         std::vector<float> efficiency(6*g.ne);for(size_t p=0;p<efficiency.size();++p)efficiency[p]=.2f+.02f*(p%13);
@@ -323,7 +397,7 @@ void warp(){
             g.detector_response=noise;
             launchPrimaryKernel<M>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),1,noise,2,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2);sync();
             auto refExpected=expected.read(),refSampled=sampled.read(),refAir=air.read();auto refMask=mask.read();
-            launchWarpPrimaryKernel<M>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,2,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2);sync();
+            launchWarpPrimaryTest<M>(option,g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,2,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2);sync();
             auto actual=expected.read(),noisy=sampled.read(),actualAir=air.read();
             require(mask.read()==refMask,"warp object mask differs");
             for(int p=0;p<12;++p){
@@ -335,9 +409,9 @@ void warp(){
                     near(actualAir[p],cpu[1],std::max(.01,cpu[1]*4e-5),"warp independent CPU air");}
             }
             auto repeated=noisy;
-            launchWarpPrimaryKernel<M>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,2,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2);sync();
+            launchWarpPrimaryTest<M>(option,g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,2,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2);sync();
             require(repeated==sampled.read(),"warp output is not deterministic");
-            for(int v=0;v<2;++v)launchWarpPrimaryKernel<M>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,2+v,123,456,expected.get()+v*6,sampled.get()+v*6,air.get()+v*6,mask.get()+v*6);
+            for(int v=0;v<2;++v)launchWarpPrimaryTest<M>(option,g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,2+v,123,456,expected.get()+v*6,sampled.get()+v*6,air.get()+v*6,mask.get()+v*6);
             sync();require(repeated==sampled.read(),"warp batch size changed output");
         }
     };
@@ -345,7 +419,7 @@ void warp(){
     for(int bins:{3,119,128,129,256}){
         g.ne=bins;std::vector<float> mu(2*bins),sw(bins),en(bins);
         for(int e=0;e<bins;++e){mu[e]=.2f+.001f*e;mu[bins+e]=.7f+.002f*e;sw[e]=50.f+e%7;en[e]=20.f+.4f*e;}
-        for(int samples:{1,2,8,30,31,32,33,64}){g.samples=samples;g.focal_epsilon=.25f;verify(std::integral_constant<int,2>{},mu,sw,en);}
+        for(int samples:{1,2,8,30,31,32,33,64}){g.samples=samples;g.focal_epsilon=.25f;verify(std::integral_constant<int,2>{},mu,sw,en);if(experiments&&bins<=128)for(int option:{1})verify(std::integral_constant<int,2>{},mu,sw,en,option);}
         // Single focal component and a vacuum volume, including epsilon endpoints.
         g.samples=33;g.focal_epsilon=0;verify(std::integral_constant<int,2>{},mu,sw,en);
         dl.upload(std::vector<unsigned char>(120));g.focal_epsilon=1;auto saved=labels;labels.assign(120,0);
@@ -359,7 +433,7 @@ void warp(){
         std::vector<float> mu(materials*g.ne),sw(g.ne,100),en(g.ne);
         for(size_t i=0;i<mu.size();++i)mu[i]=.1f+.0002f*i;
         for(int e=0;e<g.ne;++e)en[e]=20.f+e*.4f;
-        if(materials==10)verify(std::integral_constant<int,10>{},mu,sw,en);
+        if(materials==10){verify(std::integral_constant<int,10>{},mu,sw,en);if(experiments)for(int option:{1})verify(std::integral_constant<int,10>{},mu,sw,en,option);}
         else verify(std::integral_constant<int,32>{},mu,sw,en);
     }
 }
@@ -370,7 +444,7 @@ int main(int argc,char** argv){
         require(argc==2,"GPU module selection required");ck(cudaSetDevice(0));const std::string test=argv[1];
         if(test=="geometry")geometry();else if(test=="paths")paths();else if(test=="noise")noise();
         else if(test=="response")response();else if(test=="transmission")transmission();
-        else if(test=="focal")focal();else if(test=="multisample")multisample();else if(test=="warp")warp();
+        else if(test=="focal")focal();else if(test=="multisample")multisample();else if(test=="warp")warp();else if(test=="warp_coefficients")warp(true);
         else throw std::runtime_error("unknown GPU module test");
         std::cout<<test<<": PASS\n";return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

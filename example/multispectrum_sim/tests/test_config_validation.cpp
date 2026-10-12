@@ -177,6 +177,25 @@ int main() {
             "defocus_size_u_mm=3.0\ndefocus_size_v_mm=2.0\nepsilon=1.01\n"
             "[projection.sampling]\nsamples_per_pixel=8\n"
             "[[projection.materials]]\nlabel=1\nname='water'\nformula='H2O'\n", false);
+        const std::string focal_base=
+            "[workflow]\nmode='project'\n[geometry]\nkind='flat_cbct'\nviews=1\nviews_per_turn=1\n"
+            "detector_u=1\ndetector_v=1\nvolume_x=1\nvolume_y=1\nvolume_z=1\n"
+            "[projection]\noutput_file='projection.raw'\n"
+            "[projection.geometry_flux]\nenabled=true\n[projection.quantum_noise]\nenabled=false\nseed=67890\n[projection.sampling]\nsamples_per_pixel=8\n"
+            "[[projection.materials]]\nlabel=1\nname='water'\nformula='H2O'\n"
+            "[projection.focal_spot]\nenabled=true\n";
+        testV2(focal_base+"normal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=0.2\ndefocus_size_v_mm=0.8\nepsilon=0.1\n",false);
+        testV2(focal_base+"normal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=0.4\ndefocus_size_v_mm=0.4\nepsilon=0.25\n",true);
+        testV2(focal_base+"normal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=0.4\ndefocus_size_v_mm=0.8\nepsilon=0.25\n",true);
+        testV2(focal_base+"normal_size_u_mm=0.0\nnormal_size_v_mm=0.0\ndefocus_size_u_mm=1.0\ndefocus_size_v_mm=1.0\nepsilon=1.0\n",true);
+        const auto independent_base=focal_base.substr(0,focal_base.find("[projection.focal_spot]"))+"[projection.focal_spot]\n";
+        testV2(independent_base+"enabled=true\ndefocus_enabled=false\nnormal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=0.2\ndefocus_size_v_mm=0.2\nepsilon=1.0\n",true);
+        testV2(independent_base+"enabled=false\ndefocus_enabled=true\nnormal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=0.2\ndefocus_size_v_mm=0.2\nepsilon=0.25\n",true);
+        testV2(independent_base+"enabled=false\ndefocus_enabled=false\nnormal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=0.2\ndefocus_size_v_mm=0.2\nepsilon=0.25\n",true);
+        testV2(focal_base+"normal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=1.0\ndefocus_size_v_mm=1.0\nepsilon=0.25\n",true);
+        if(!yk::spectral::loadConfig(path).projection.focal_spot.defocus_enabled)throw std::runtime_error("legacy enabled focus lost defocus");
+        testV2(independent_base+"enabled=false\nnormal_size_u_mm=0.4\nnormal_size_v_mm=0.4\ndefocus_size_u_mm=1.0\ndefocus_size_v_mm=1.0\nepsilon=0.25\n",true);
+        if(yk::spectral::loadConfig(path).projection.focal_spot.defocus_enabled)throw std::runtime_error("legacy disabled focus unexpectedly enabled defocus");
         std::filesystem::remove(path);
         return 0;
     } catch (const std::exception& e) {

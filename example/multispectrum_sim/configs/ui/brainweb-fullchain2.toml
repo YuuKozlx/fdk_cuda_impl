@@ -58,11 +58,11 @@ voxel_y_mm = 1.0
 voxel_z_mm = 1.0
 
 [projection]
-air_output_file = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/air.raw'
-energy_output_file = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/energy.raw'
-label_volume = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/example/multispectrum_sim/inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw'
+air_output_file = '../../../../out/reconstruction-display-fixture/air.raw'
+energy_output_file = '../../../../out/reconstruction-display-fixture/energy.raw'
+label_volume = '../../../../example/multispectrum_sim/inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw'
 mAs_per_view = 1.0
-output_file = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/projection.raw'
+output_file = '../../../../out/reconstruction-display-fixture/projection.raw'
 save_metadata = true
 
     [projection.batching]
@@ -122,12 +122,12 @@ save_metadata = true
 
     [projection.scatter]
     enabled = true
-    model_file = 'G:/Code/fanproj/fdk-test/example/multispectrum_sim/inputs/scatter/fasks_runtime_model_v4.json'
+    model_file = '../../../../example/multispectrum_sim/inputs/scatter/fasks_runtime_model_v4.json'
 
     [projection.spectrum]
     anode_angle_deg = 12.0
     bin_width_keV = 1.0
-    export_file = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/spectrum.spec'
+    export_file = '../../../../out/reconstruction-display-fixture/spectrum.spec'
     kvp = 120.0
     model = 'spekpy-v1'
     source = 'generated'
@@ -197,10 +197,10 @@ save_metadata = true
     preset = 'tissue.icru_muscle_adult'
 
 [reconstruction]
-input_projection_file = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/projection.raw'
-output_volume_file = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/reconstruction.raw'
+input_projection_file = '../../../../out/reconstruction-display-fixture/projection.raw'
+output_volume_file = '../../../../out/reconstruction-display-fixture/reconstruction.raw'
 save_slices = true
-slice_prefix = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/reconstruction'
+slice_prefix = '../../../../out/reconstruction-display-fixture/reconstruction'
 type = 'iterative'
 
     [reconstruction.iterative]
@@ -230,9 +230,9 @@ type = 'iterative'
         water_plate_samples = 81
 
         [reconstruction.preprocessing.scatter]
-        air_projection_file = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/air.raw'
+        air_projection_file = '../../../../out/reconstruction-display-fixture/air.raw'
         enabled = true
-        model_file = 'G:/Code/fanproj/fdk-test/example/multispectrum_sim/inputs/scatter/fasks_runtime_model_v4.json'
+        model_file = '../../../../example/multispectrum_sim/inputs/scatter/fasks_runtime_model_v4.json'
 
             [reconstruction.preprocessing.scatter.correction]
             damping = 0.7
@@ -259,7 +259,7 @@ interactive = false
 max_fps = 15.0
 offscreen = false
 projection = 'log'
-snapshot_directory = 'G:/Users/zlx/.codex/worktrees/vtk-viewer/fdk-test/out/reconstruction-display-fixture/display'
+snapshot_directory = '../../../../out/reconstruction-display-fixture/display'
 texture_max_size = 384
 volume_opacity_scale = 0.03
 

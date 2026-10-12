@@ -349,10 +349,15 @@ void number(const char* label, double& value)
             integer("Rays / pixel",p.sampling.samples_per_pixel);
             ImGui::SetNextItemWidth(-185);ImGui::InputScalar("Sampling seed",ImGuiDataType_U32,&p.sampling.seed);
             ImGui::TextWrapped("1..4096 rays per pixel. Higher sampling improves focal/pixel averaging and increases calculation time.");
-            ImGui::Checkbox("Finite focal spot", &p.focal_spot.enabled);
+            ImGui::Checkbox("Finite normal focus", &p.focal_spot.enabled);
             if (p.focal_spot.enabled) {
                 number("Normal U (mm)", p.focal_spot.normal_size_u_mm);
                 number("Normal V (mm)", p.focal_spot.normal_size_v_mm);
+            } else {
+                ImGui::TextDisabled("Normal emission uses a point source.");
+            }
+            ImGui::Checkbox("Defocus", &p.focal_spot.defocus_enabled);
+            if (p.focal_spot.defocus_enabled) {
                 number("Defocus U (mm)", p.focal_spot.defocus_size_u_mm);
                 number("Defocus V (mm)", p.focal_spot.defocus_size_v_mm);
                 number("Defocus fraction", p.focal_spot.epsilon);

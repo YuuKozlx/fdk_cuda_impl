@@ -88,9 +88,9 @@ inline DeviceGeometry makeDeviceGeometry(const SimulationConfig& c,
     result.vz = (float)g.voxel_z_mm;
     result.normal_fu = (float)(c.projection.focal_spot.enabled?c.projection.focal_spot.normal_size_u_mm:0);
     result.normal_fv = (float)(c.projection.focal_spot.enabled?c.projection.focal_spot.normal_size_v_mm:0);
-    result.defocus_fu = (float)(c.projection.focal_spot.enabled?c.projection.focal_spot.defocus_size_u_mm:0);
-    result.defocus_fv = (float)(c.projection.focal_spot.enabled?c.projection.focal_spot.defocus_size_v_mm:0);
-    result.focal_epsilon = (float)(c.projection.focal_spot.enabled?c.projection.focal_spot.epsilon:0);
+    result.defocus_fu = (float)(c.projection.focal_spot.defocus_enabled?c.projection.focal_spot.defocus_size_u_mm:0);
+    result.defocus_fv = (float)(c.projection.focal_spot.defocus_enabled?c.projection.focal_spot.defocus_size_v_mm:0);
+    result.focal_epsilon = (float)(c.projection.focal_spot.defocus_enabled?c.projection.focal_spot.epsilon:0);
     result.offset_u = (float)g.offset_u_mm;
     result.offset_n = (float)g.offset_n_mm;
     result.offset_v = (float)g.offset_v_mm;

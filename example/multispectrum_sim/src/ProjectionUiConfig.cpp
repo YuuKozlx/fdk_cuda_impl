@@ -154,7 +154,7 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
     }
     p->insert_or_assign("materials", std::move(materials));
     const auto& f = c.projection.focal_spot;
-    p->insert_or_assign("focal_spot", toml::table { { "enabled", f.enabled }, { "normal_size_u_mm", f.normal_size_u_mm }, { "normal_size_v_mm", f.normal_size_v_mm }, { "defocus_size_u_mm", f.defocus_size_u_mm }, { "defocus_size_v_mm", f.defocus_size_v_mm }, { "epsilon", f.epsilon } });
+    p->insert_or_assign("focal_spot", toml::table { { "enabled", f.enabled }, { "defocus_enabled", f.defocus_enabled }, { "normal_size_u_mm", f.normal_size_u_mm }, { "normal_size_v_mm", f.normal_size_v_mm }, { "defocus_size_u_mm", f.defocus_size_u_mm }, { "defocus_size_v_mm", f.defocus_size_v_mm }, { "epsilon", f.epsilon } });
     auto setEnabled = [&](toml::table& parent, const char* name, bool enabled) {if(!parent[name].is_table())parent.insert_or_assign(name,toml::table{});parent[name].as_table()->insert_or_assign("enabled",enabled); };
     setEnabled(*p, "scatter", c.projection.scatter.enabled);
     p->get_as<toml::table>("scatter")->insert_or_assign("model_file", c.projection.scatter.model_file.generic_string());
