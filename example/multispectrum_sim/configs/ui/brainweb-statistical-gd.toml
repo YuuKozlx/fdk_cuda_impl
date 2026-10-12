@@ -1,0 +1,282 @@
+# Statistical full-chain example. Generates its own projections; scattering is disabled.
+# BrainWeb label input follows the same local asset convention as brainweb-fullchain2.toml.
+schema_version = 2
+
+[geometry]
+detector_u = 512
+detector_v = 512
+kind = 'flat_cbct'
+nikon_tilt_axis_azimuth_rad = 0.0
+nikon_tilt_rad = 0.0
+offset_n_mm = 0.0
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+phantom_rotation_x_rad = 0.0
+phantom_rotation_y_rad = 0.0
+phantom_rotation_z_rad = 0.0
+pitch_mm_per_turn = 0.0
+pixel_u_mm = 1.2
+pixel_v_mm = 1.2
+planar_detector_y_mm = 434.69995100000006
+planar_resample_mode = 'perspective_orthogonal'
+reconstruction_detector_u = 384
+reconstruction_detector_v = 256
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+reconstruction_volume_x = 256
+reconstruction_volume_y = 256
+reconstruction_volume_z = 200
+reconstruction_voxel_x_mm = 1.2
+reconstruction_voxel_y_mm = 1.2
+reconstruction_voxel_z_mm = 1.2
+rotation_axis_pivot_x_mm = 0.0
+rotation_axis_pivot_y_mm = 0.0
+rotation_axis_pivot_z_mm = 0.0
+rotation_direction = 1
+scan_range_rad = 6.283185307179586
+sdd_mm = 1143.0
+sid_mm = 709.0
+source_lateral_offset_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+source_orbit_radius_mm = 0.0
+start_angle_rad = 0.0
+start_z_mm = 0.0
+tilt_n_rad = 0.0
+tilt_u_rad = 0.0
+tilt_v_rad = 0.0
+views = 360
+views_per_turn = 360
+volume_x = 181
+volume_y = 217
+volume_z = 181
+voxel_x_mm = 1.0
+voxel_y_mm = 1.0
+voxel_z_mm = 1.0
+
+[projection]
+air_output_file = '../../../../out/statistical-brainweb/air.raw'
+energy_output_file = '../../../../out/statistical-brainweb/energy.raw'
+label_volume = '../../../../example/multispectrum_sim/inputs/brainweb/brainweb_normal_1mm_181x217x181_uint8.raw'
+mAs_per_view = 1.0
+output_file = '../../../../out/statistical-brainweb/projection.raw'
+save_metadata = true
+
+    [projection.batching]
+    max_buffer_mib = 256
+    views = 64
+
+    [projection.detector_postprocess.afterglow]
+    enabled = false
+    exposure_time_ms = 8.0
+    frame_time_ms = 10.0
+    initialization = 'zero'
+    p = 0.02
+    time_constants_ms = [ 2.0 ]
+    weights = [ 1.0 ]
+
+    [projection.detector_postprocess.das]
+    adc_lsb_electrons = 1.0
+    electronic_noise_std_electrons = 10.0
+    enabled = false
+    gain_electrons_per_keV = 100.0
+    noise_seed = 24680
+    offset_electrons = 0.0
+    saturation_electrons = 0.0
+
+    [projection.detector_postprocess.electronic_crosstalk]
+    enabled = false
+    kernel_u = [ 0.02, 0.96, 0.02 ]
+    kernel_v = [ 0.02, 0.96, 0.02 ]
+
+    [projection.detector_postprocess.optical_crosstalk]
+    enabled = false
+    kernel_u = [ 0.05, 0.9, 0.05 ]
+    kernel_v = [ 0.05, 0.9, 0.05 ]
+
+    [projection.detector_response]
+    enabled = false
+    oblique_path_correction = true
+
+    [projection.focal_spot]
+    defocus_size_u_mm = 1.0
+    defocus_size_v_mm = 1.0
+    enabled = true
+    epsilon = 0.01
+    normal_size_u_mm = 0.4
+    normal_size_v_mm = 0.4
+
+    [projection.geometry_flux]
+    enabled = true
+
+    [projection.quantum_noise]
+    enabled = true
+    seed = 67890
+
+    [projection.sampling]
+    samples_per_pixel = 30
+    spatial_seed = 12345
+
+    [projection.scatter]
+    enabled = false
+    model_file = ''
+
+    [projection.spectrum]
+    anode_angle_deg = 12.0
+    bin_width_keV = 1.0
+    export_file = '../../../../out/statistical-brainweb/spectrum.spec'
+    kvp = 120.0
+    model = 'spekpy-v1'
+    source = 'generated'
+
+        [[projection.spectrum.filters]]
+        material = 'Al'
+        thickness_mm = 2.0
+
+    [[projection.materials]]
+    density_g_cm3 = 0.001205
+    label = 0
+    name = 'background-air'
+    preset = 'mixture.air'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.007
+    label = 1
+    name = 'csf'
+    preset = 'compound.water'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.045
+    label = 2
+    name = 'grey-matter'
+    preset = 'tissue.icru_brain_adult'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.041
+    label = 3
+    name = 'white-matter'
+    preset = 'tissue.icru_brain_adult'
+
+    [[projection.materials]]
+    density_g_cm3 = 0.95
+    label = 4
+    name = 'fat'
+    preset = 'tissue.icru_adipose_adult2'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.05
+    label = 5
+    name = 'muscle-skin'
+    preset = 'tissue.icru_muscle_adult'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.09
+    label = 6
+    name = 'skin'
+    preset = 'tissue.icru_skin_adult'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.61
+    label = 7
+    name = 'skull'
+    preset = 'tissue.ncat_skull'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.04
+    label = 8
+    name = 'glial-matter'
+    preset = 'tissue.icru_brain_adult'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.12
+    label = 9
+    name = 'connective'
+    preset = 'tissue.icru_muscle_adult'
+
+[reconstruction]
+input_projection_file = '../../../../out/statistical-brainweb/projection.raw'
+output_volume_file = '../../../../out/statistical-brainweb/reconstruction.raw'
+save_slices = true
+slice_prefix = '../../../../out/statistical-brainweb/reconstruction'
+type = 'statistical'
+
+    [reconstruction.statistical]
+    projection_model = 'joseph'
+    non_negative = true
+
+        [reconstruction.statistical.data_fidelity]
+        type = 'weighted_least_squares'
+        scale = 1.0
+        normalize_by_ray_count = false
+
+        [reconstruction.statistical.regularization]
+        plugin = 'huber_tv'
+        strength = 1.0
+        shape = 0.00005
+        dimensions = 3
+
+[reconstruction.statistical.optimizer]
+        type = 'regularized_algebraic'
+        iterations = 10
+        step_size = 0.0
+        backtracking = true
+        max_backtracking = 20
+        step_shrink = 0.5
+        relative_tolerance = 0.0
+        minimum_iterations = 1
+
+    [reconstruction.preprocessing]
+    enabled = true
+
+        [reconstruction.preprocessing.beam_hardening]
+        clamp_max = 20.0
+        clamp_min = 0.0
+        coefficients = [ 0.0, 1.0 ]
+        enabled = true
+        fit_from_water_plate = true
+        order = 3
+        reference_energy_keV = 70.0
+        water_plate_max_mm = 300.0
+        water_plate_samples = 81
+
+        [reconstruction.preprocessing.scatter]
+        air_projection_file = '../../../../out/statistical-brainweb/air.raw'
+        enabled = false
+        model_file = ''
+
+            [reconstruction.preprocessing.scatter.correction]
+            damping = 0.7
+            iterations = 3
+            object_mask_threshold = 1e-06
+            scatter_scale = 1.0
+
+            [reconstruction.preprocessing.scatter.guide]
+            enabled = false
+            sigma_u_pixels = 2.0
+            sigma_v_pixels = 2.0
+
+            [reconstruction.preprocessing.scatter.kernel]
+            mode = 'all'
+
+            [reconstruction.preprocessing.scatter.solver]
+            type = 'fixed'
+
+[visualization]
+auto_load_reconstruction = true
+enabled = false
+hold_open = false
+interactive = false
+max_fps = 15.0
+offscreen = false
+projection = 'log'
+snapshot_directory = '../../../../out/statistical-brainweb/display'
+texture_max_size = 384
+volume_opacity_scale = 0.03
+
+[workflow]
+mode = 'project_and_reconstruct'

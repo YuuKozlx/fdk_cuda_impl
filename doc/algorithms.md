@@ -245,6 +245,8 @@ ART: x <- x + lambda*delta
 
 DetailedSubset 为每子集计算 `R=A_s*1`、`C=A_sᵀ*1`。TigreApprox 用 2×2×2 粗体积估计行权重、XY 范围 1.1 缩放、列权重范围 0.9 语义和连续视角分块；实际子集数以 backend 查询值为准。
 
+公共 `SART` 适配器（包括 Session 的 `EPipeline::SART` 和内部 `sart_reconstruct`）默认使用 TigreApprox，不增加 TOML 或 SDK 参数。仍按原视角顺序逐视图更新，保留松弛、epsilon 和约束设置；归一化改为粗估，因此结果可能与旧 DetailedSubset SART 不同。SIRT/OSSART 的默认权重不变，直接使用统一代数重建配置时仍可明确选择权重模型。粗估后端使用当前子集固定工作区和有预算的 GPU/CPU 权重缓存，未缓存的权重按需现算，不再无条件保存全视角 GPU 权重。
+
 普通门面按 scan 构造圆轨迹，Ex 门面接收完整逐视图 geometry；Ex 只表示几何入口，不代表另一种权重或算法。Cyl、Helical 使用对应类型和算子，不能降格成平板圆轨迹。
 
 ### 平滑 TV 与收敛
@@ -273,12 +275,17 @@ PWLS 目标为 `0.5*(Ax-b)ᵀW(Ax-b)+beta*R(x)`，支持 None、Quadratic、Hube
 
 统一状态为数据更新、约束、残差、TV 更新、步长/停止状态：
 
-- 普通 SART/OS-SART/SIRT 共享 TigreApprox 更新，每个完整外循环衰减 lambda。Nesterov 用候选解与上一候选解组合，内部动量递推；残差增长时停止，不自动承诺回退。
+- 普通 SART/OS-SART/SIRT 共享 TigreApprox 更新，每个完整外循环衰减 lambda。 TIGRE 路径的逆行归一化权重上限为 0.1 mm⁻¹，路径长度采用 mm；普通代数 SART 的粗估后端不加此裁剪。Nesterov 用候选解与上一候选解组合，内部动量递推；残差增长时停止，不自动承诺回退。
 - ASD-POCS 从数据步的范数 `dp=||xd-x0||` 初始化 TV 步长 `dtvg=alpha*dp`。TV 更新量 `dg` 相对 dp 过大且残差尚未达标时，按 alpha_reduction 缩小步长。
 - PCSD 使用数据一致性/残差比控制 TV 与投影更新；Aw 变体用自适应加权 TV，权重与梯度必须按该实现的状态更新。
 - B-ASD-POCS-beta 保留 Bregman 数据状态，不能按普通 ASD-POCS 每轮清空。
 
-初始化可选 Zero/FDK，非负、Nesterov、FDK 初值和 max_l2_error 的支持条件由内部 prepare 校验；公共 Flat Helical 放行不代表圆轨迹 FDK 初值适用于螺旋。公共 block_size 的实际换算见 API 文档。
+TIGRE TV/AwTV 梯度的各方向通量分别从对应的 X/Y/Z 邻居获取，不能交叉使用方向分量。
+回归测试使用独立 CPU 差分端点累加，并覆盖三个方向的平面凸起、非对称三维体积、退化尺寸和边界；普通 TV 还检查稳定化惩罚的有限差分。
+该核只由 TIGRE POCS/PCSD 家族调用，与普通代数数据更新、Smoothed/Huber 插件及标准 TV Prox 分开。
+
+
+初始化可选 Zero/FDK，非负、Nesterov、FDK 初值和 max_l2_error 的支持条件由内部 prepare 校验；公共 Flat Helical 放行不代表圆轨迹 FDK 初值适用于螺旋。SDK 的 block_size 为每块角度数，OS 后端直接采用，末块可较短；UI/TOML 保留 subsets，应用层只换算一次，后端不再次重新划分块大小。lambda_reduction=0 自动选择普通 ART 的 1 或 POCS/PCSD 的 0.99，显式正值覆盖默认。
 
 内部梯度族提供统计与停止原因，但公共 Session 只有 execute 成功/失败和错误消息。需要更详细统计时应明确扩展公共契约，而不是把内部类型暴露给调用方。
 
@@ -338,3 +345,132 @@ NikonTilted 用专门 geometry 和 pipeline 处理倾斜初始源/探测器及�
 本篇保留解释实现所需的公式、离散尺度和边界；旧长篇论文翻译、开发过程及无版本性能表通过 Git 历史查阅。xFDK 理论对应 Grimmer 等《Cone-beam CT image reconstruction with extended z range》，C-FDK 对应 Li 等曲线滤波 FDK 工作；论文坐标、项目坐标和代码归一化需逐项转换，不能仅因公式编号一致就宣布完整复现。
 
 修改算法时同时更新支持矩阵与验证证据。当前未完成的论文级复现、Cyl SART 接线、公共参数映射及量纲验证见 [待验证事项](testing-and-validation.md#待验证与实现限制)。
+
+
+## 可注册的 TV 正则化插件
+
+`src/Reconstruction/Iterative/Regularization/` 独立于 Flat 数据更新后端。
+内部统一代数重建器及公共 Session 的 Flat SART / SIRT / OS-SART 支持插件：
+每完成一轮全部角度的数据更新后调用一次 `apply`，不会在每个投影批次后调用。
+SIRT 仍先累加完整角度的数据项再更新体积；投影常驻或分批加载不改变正则化周期。
+既有 TIGRE TV/ASD-POCS 的更新策略保持原实现，不能通过该公共尾部同时叠加插件。
+
+内置 ID 为 `smoothed_tv` 和 `huber_tv_prox`，`none` 关闭。
+前者保留原平滑 TV 梯度下降语义；后者实现各向同性向量 Huber-TV：
+
+- 前向差分按物理体素间距缩放，边界法向差分为零；二维模式各切片独立。
+- `rho_delta(t) = t*t/(2*delta)`（`t <= delta`），否则 `t-delta/2`。
+- `R(u) = sum rho_delta(norm(Du))`，梯度为 `D^T(Du/max(delta,norm(Du)))`。
+- 每轮固定数据更新后的参考体积 `z`，近似求解 `0.5*||u-z||² + gamma*R(u)`：
+  `u <- u - eta*(u-z+gamma*grad R(u))`，可选非负投影。
+
+`inner_iterations` 是有限 Prox 内步数，不表示已求得精确 Prox。
+自动步长使用 `1/(1+gamma*4*(1/hx²+1/hy²+[3D:1/hz²])/delta)`。
+显式正步长必须不超过初始化时的该上界；若强度增加，实际步长继续限制在安全上界内。
+`strength_reduction` 每轮乘到 gamma，reset 恢复初始 gamma。
+`delta` 对应衰减系数体积的空间梯度量纲，修改体素尺寸后不应直接照搬未按间距缩放的阈值。
+当前输入体积为衰减系数，显示时的 CT 值转换不参与 TV。
+
+Huber-TV 在初始化时申请两份 float32 体积工作区（固定 z 和梯度），全部内步在同一 CUDA stream 中执行，
+没有逐步上传/下载或重复申请显存。gamma 为零时只做可选非负约束且不申请这两份体积。
+Smoothed TV 使用一份梯度体积。应用端预算计入插件工作区，并继续保留 VTK 显存余量。
+
+新增方法实现 `IAlgebraicRegularizer` 的 prepare/apply/reset/release 和工作区估计，
+通过 `registerRegularizerPlugin("new_id", factory)` 在初始化前注册。
+工厂按进程注册且拒绝重复 ID；每个 Session 创建独立实例并拥有 CUDA 工作区。
+这是源码/链接注册接口，暂不扫描外部插件 DLL；新增 TV 内核和工厂不需要修改 SART/SIRT/OS-SART 的数据更新实现。
+示例应用的 TOML/UI 当前仅列出内置方法；自定义方法可由 SDK 使用注册 ID。
+
+本阶段沿用现有 FP/BP，不强制严格伴随。该组合属于代数迭代与正则化的交替更新，
+不能据此宣称整条链路在求解严格 PWLS 目标或具有 FISTA 收敛保证。
+梯度有限差分、各向异性间距、二维/三维/退化边界、固定 z 的 CPU/GPU Prox 对照、
+非负约束、完整轮次调度和分批一致性由 `multispectrum_tv_plugin` / `multispectrum_batched_reconstruction` 测试覆盖。
+
+
+## 统计重建顶层框架
+
+`src/Reconstruction/Iterative/Statistical/` 与现有代数重建并列，按三个独立契约组织：
+
+- `IDataFidelity` 提供目标值、数据梯度、步长初估和能力信息；具体 FP/BP、几何和投影缓存归数据项所有。
+- `IAlgebraicRegularizer` 由现有可注册插件扩展，明确声明 `value / gradient / prox` 能力。
+- `IOptimizer` 管理更新规则、约束、回溯、停止条件和进度；通过 requirements 声明需要的算子与正则能力。
+
+`StatisticalReconstructor` 仅创建模块、检查能力、汇总工作区并绑定数据，不包含具体投影计算或迭代更新公式。
+数据项和优化器工厂分别为 `createDataFidelity` / `createOptimizer`；新增实现集中接入工厂，不修改其他模块的算法。
+投影数据通过 `ProjectionDataSet` 提交设备常驻数组或 `IProjectionDataSource`；已有 Host/file reader 通过适配器接入。
+数据源返回的批缓冲在下一次 fetch 前保持有效，测量值和 W 使用独立缓冲且按相同 view 索引读取。
+
+当前可运行组合：Flat Circular / Helical 的数据项，配合带正则代数重建（默认）或普通 Gradient Descent；正则可选 None、Smoothed TV、Huber-TV、Tikhonov，近端模式还支持标准 TV。
+目标为 `F(x) = scale * 0.5 * sum_i W_i (Ax-b)_i² + lambda * R_shape(x)`；
+默认 W=I，启用 diagonal W 时消费非负、有限的 float32 权重，表示精度权重（例如逆方差），库不自动从投影生成权重。
+`normalize_by_ray_count=true` 仅把数据项及其梯度除以完整射线数，不随批大小改变；lambda 的尺度随该选项变化。
+默认 false 保持数据项求和语义。投影输入必须已经是需要重建的线积分，原有校正缓存可继续复用。
+
+统计重建的 `strength` 统一为目标函数中的 lambda，`shape` 对应 Huber 的 delta 或 Smoothed TV 的 epsilon：
+Smoothed TV 使用 `sum(sqrt(norm(Dx)²+epsilon²)-epsilon)`，Huber-TV 使用前文向量 Huber 定义。
+Tikhonov 为 `0.5*||x||²`，即 L=I 的幅值惩罚，其 shape 未使用；这与旧 PWLS 的邻域二次平滑不是同一个正则项。
+差分按物理体素间距计算并使用零法向边界，支持二维独立切片或完整三维。
+现有代数 Smoothed TV 的旧 strength 仍是更新步长，旧配置没有被重解释为统计 lambda。
+
+GD 每轮合并数据梯度与 `lambda*grad R(x)`，执行有界体积更新。
+自动初步长根据 `max(abs(BP(W*A*1)))` 与正则梯度的 Lipschitz 上界估计；
+前者在非负且匹配的 FP/BP 下有保守界解释，在当前未验证伴随的 BP 下只是启发式初估。
+默认回溯比较完整目标值，拒绝增加目标的候选；失败会明确返回错误，不会把非下降步骤当成功。
+这属于实际目标的单调接受检查，不是 Armijo 条件，也不能据此宣称严格统计梯度或 FISTA 收敛保证。
+可显式设置步长，回溯可关闭；关闭时不保证目标下降。
+停止条件为相对体积更新量和最少轮数，零 tolerance 关闭提前停止。
+`IOptimizerObserver` 可接收完成状态并请求干净停止，保留最后接受的设备体积；该内部观察接口暂未开放到 SDK 的取消按钮。
+
+自有向量与标量工作区按模块查询，在 prepare 阶段一次申请：GD 三份体积（合并梯度、候选、正则梯度），数据项使用有限投影缓冲和算子纹理。
+GD 的正则插件采用 gradient-only 模式，不再额外申请 Huber Prox 的两份体积。
+底层 FP/BP 纹理沿用现有算子的刷新与分配策略，后续可以在数据项实现内优化。
+double 归约块和 Host 标量镜像常驻，每次目标计算只返回小块标量，不下载整幅投影或体积。
+`estimateStatisticalWorkspace` 提供模块分项、调用方体积和输入/权重批缓冲估计；继续额外保留 max(512 MiB,20% total) 给显示及驱动。
+估计包含纹理/几何余量，实际 CUDA 分配仍可能受运行时其他占用影响。
+
+FISTA 已预留优化器种类、requirements 和 Prox 契约，但尚未实现，配置它会明确报不支持。
+显式 `prox(z,u,gamma)` 允许未来优化器传入当前 `eta*lambda`，与代数 apply 的强度计划分开。
+Smoothed TV、Huber-TV 和 Tikhonov 提供 value/gradient/Prox；标准 TV 提供 value/Prox，不支持梯度策略。
+标准 TV 用 Chambolle–Pock 原始对偶内迭代，Smoothed/Huber 用固定 z 的有界梯度内迭代；Tikhonov 使用闭式解。
+Prox 求解包含体积上下界。有限内步返回近似 Prox，不等同于已收敛的精确解。
+Smoothed/Huber Prox 额外使用两份体积，标准 TV 使用 4 份（2D）或 5 份（3D）；均在 prepare 时申请并计入预算。
+这些能力检查避免隐式替换为 Smoothed TV 或其他算法。
+
+`multispectrum_statistical` 覆盖已知二次目标的解、回溯、停止/重置、梯度有限差分、加权归一化目标、
+零权重、非法权重、三种正则项的常驻/Host/reader 分批一致性、工作区估计及不支持组合拒绝。
+
+
+### 归一化代数数据项更新（当前默认）
+
+当前统计入口默认优化器为 `RegularizedAlgebraic`，TOML 为 `regularized_algebraic`；
+纯梯度下降仍由 SDK 的 `GradientDescent`（枚举 0）和 TOML `gradient_descent` 显式选择；
+`raw_gradient_descent` 为其兼容名称。实验名称 `algebraic_gradient` 仅作为带正则代数模式的兼容名称。
+FISTA 的枚举 1 保持未实现，新模式追加枚举 2，不移动旧枚举。
+
+数据项使用一次完整角度的 SIRT 行、列归一化更新：
+`R=A*1`，`C=B*1`，`y=x+C^-1*B[R^-1*(b-Ax)]`，默认数据松弛为 1。
+分批只改变存储与计算，所有批次的反投累加完成后才更新体积。
+启用 W 时使用 `C_W=B*(W*1)` 和 `B[W*R^-1*(b-Ax)]`；W=I 退化为内部 SIRT。
+R 按不可变几何缓存，C 在每次输入绑定时重建以消费当前 W，并在同一次重建的轮次间复用。
+GPU 行权重缓存使用既有迭代权重缓存预算和显示保留策略。
+
+当内部采用 alternating_gradient 时，随后在 y 上计算正则梯度，`x_next=project(y-tau*strength*grad R_penalty(y))`。
+因此 `step_size` 只控制正则子步，不能再把整个数据更新缩小到旧 GD 的 1e-6 量级。
+零正则直接使用 y，并与内部 SIRT 在相同配置、输入分批及约束下进行回归对照。
+自动 tau 根据现有数据项步长初估和正则上界选取；显式 tau 可单独控制正则子步。
+交替梯度的回溯只检查正则子步的惩罚值下降，不拒绝或缩小代数数据更新。
+打印的 WLS+正则目标只作为诊断，交替更新不保证该目标每轮单调下降，不能称为该目标的普通梯度下降。
+数据项 scale 和 normalize_by_ray_count 继续定义诊断目标与自动正则步长初估，SIRT 归一化更新本身不除以完整射线数。
+
+`IDataFidelity` 的 algebraic_update 能力及 algebraicUpdate 接口向优化器提供数据更新，
+优化器不依赖具体 FP/BP 或归一化工作区。三种组合策略共用一个调度器，仅供内部调试比较，不通过 SDK、TOML 或 UI 暴露：
+- alternating_gradient：在数据更新后的 y 上计算梯度，再执行正则子步。
+- synchronous_gradient：在旧 x 上计算正则梯度，与 D(x)-x 合并为方向，再投影到边界；开启回溯时按完整目标缩短整个合并方向，失败明确报错。
+- proximal：执行 prox(y, tau*lambda)，内迭代受 prox_iterations/prox_step 控制，不使用外层惩罚回溯。
+
+三种策略在 lambda=0 时都直接返回同一 SIRT 更新。内部策略作用于 RegularizedAlgebraic；普通 GD 保持原来的联合梯度定义。
+当前默认正则为 Huber-TV，RegularizedAlgebraic 对 Huber-TV（含 huber_tv_prox 别名）采用近端求解，内步数 20、内步长自动选取。标准 TV 也采用近端；Smoothed TV、Tikhonov 暂保留原交替梯度。此为工程默认，不表示已证明图像质量最优。
+已有 SIRT/SART/OS-SART 的 huber_tv_prox 插件入口本来即在完整外轮后求近端；原配置中显式关闭或选择其他正则仍有效。
+当前可组合的数据更新提供者为 SIRT，旧 SART/OS-SART 的 apply 插件入口保持原语义。
+新增模式自有三个体积缓冲，数据项增加归一化工作区，
+均纳入 SDK 工作区估计并保留 VTK 余量；不增加设备数据的逐轮上传下载。

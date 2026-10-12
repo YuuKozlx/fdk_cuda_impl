@@ -468,7 +468,7 @@ CUDA 电子噪声使用全局角度/像素/配置 seed 的确定性 Gaussian 序
 
 256 MiB 限制包含批缓冲的全部设备图像（6 个 float32 平面及 uint8 掩码，共 25 字节/像素/帧）。例如 1536×1024 默认最多容纳 6 帧，另有散射、余晖和 FFT 工作区从受预算约束的显存池借用。阶段耗时先同步计算，避免把正投等待时间误归入下一阶段；日志单独记录正投、传输边界、各阶段及归一化。
 
-进入重建 DLL 前，应用会调用 `trimDevicePool()` 释放当前设备的空闲缓存，并打印释放字节数。活动借用、VTK 和 DLL 自己的缓冲不在清理范围内。纯正投任务之间继续保留池缓存；跨到重建时优先让出空间，之后再次正投需要按需分配。
+进入重建 DLL 前，应用会调用 `yk::spectral::cuda_resources::trimDevicePool()` 释放当前设备的空闲缓存，并打印释放字节数。活动借用、VTK 和 DLL 自己的缓冲不在清理范围内。纯正投任务之间继续保留池缓存；跨到重建时优先让出空间，之后再次正投需要按需分配。
 
 
 前向散射核选择在 UI 的 `Effects → Scatter kernel evaluation` 中设置：`All bins` 使用全部模型核节点，`Segmented` 显示 `Scatter kernel segments`（至少 2 段）。该项控制 `projection.scatter.kernel`，与 Recon 页的散射校正核参数独立。分段模式在模型的对数衰减区间等分取代表节点，并从原模型插值得到核形状，不是直接截取原文件中的前几个核。
@@ -480,7 +480,7 @@ CUDA 电子噪声使用全局角度/像素/配置 seed 的确定性 Gaussian 序
 
 覆盖正投批计算/分配/传输、各处理阶段、散射核生成与 FFT 子步骤、输出读写、VTK 下采样与渲染，以及重建初始化/执行/读写和前处理校验/引导/边缘窗口。启动本地诊断 UI 可运行 `out/run-imgui-profile.cmd <config.toml>`，日志写入 `out/performance/manual-timing.log`。只测校正可运行 `multispectrum_sim --profile-preprocess <config.toml>`，生成输入投影同目录的 `.profile-preprocessed.raw`，不调用重建。
 
-前处理校验已避免在每个像素上构造错误消息字符串。正式 fixed 校正的掩码和边缘距离变换在 GPU 执行；实验 adaptive 仍保留 CPU 掩码/边缘路径。修复了原 CPU 距离变换在弹出包络节点后未重新计算交点的问题，并使用暴力最近背景点距离验证；GPU 结果与修正后的 CPU 基准对照。旧错误路径的少量像素可能改变。校正临时文件现在放在重建输出目录下的 `.preprocess` 子目录，避免占用系统盘临时空间。
+前处理校验已避免在每个像素上构造错误消息字符串。正式 fixed 校正的掩码和边缘距离变换在 GPU 执行；实验 adaptive 仍保留 CPU 掩码/边缘路径。修复了原 CPU 距离变换在弹出包络节点后未重新计算交点的问题，并使用暴力最近背景点距离验证；GPU 结果与修正后的 CPU 基准对照。旧错误路径的少量像素可能改变。重建入口将校正投影持久保存在输入同目录，规则见下节，不再使用系统盘临时目录。
 
 
 原 scalar 正投的谱积分保留“每条射线分别衰减、累计各能量期望光子数、最后一次量子采样”的顺序。没有经过有效材料的射线直接使用透射率 1，跳过材料衰减求和和指数运算；仍计算原有几何通量、探测器响应和空气参考。能量点数不超过 128 时使用 128 项计数缓冲，129..256 点使用 256 项缓冲，减少常见能谱的每线程 local-memory 占用；数组仍是动态索引的线程私有存储，并非全部放进寄存器。空气参考与最终能量求和统一读取能量常量表（不可用时读取设备表）。采样数、随机种子和计数累计顺序保持不变，未启用快速数学近似。多采样测试还覆盖 119、128、129、256 个能量点，以及带探测器响应和量子噪声时两种计数容量的逐值一致性。
@@ -501,10 +501,144 @@ CUDA 电子噪声使用全局角度/像素/配置 seed 的确定性 Gaussian 序
 
 UI 将正常焦点和散焦拆为 `Finite normal focus` 与 `Defocus` 两个独立开关。TOML 的 `[projection.focal_spot] enabled` 控制正常分量是否为有限矩形，新增 `defocus_enabled` 控制散焦；正常关闭时其分量为点源，散焦关闭时 epsilon 暂不参与计算、正常分量获得全部曝光，两者都关闭为点源。关闭任一开关保留尺寸和 epsilon 参数。旧 TOML 缺少 `defocus_enabled` 时继承 `enabled`，保持之前总开关的行为；UI 保存时明确写出两个开关。
 
+### 校正投影持久缓存与 TIGRE-SART 进度
+
+启用重建预处理时，DLL 重建入口自动在原投影旁生成 `<input>.corrected.raw` 和 `<input>.corrected.raw.json`。RAW 是经过散射/BHC 校正的 float32 对数投影，布局为 `[view][v][u]`；JSON 记录尺寸、数据域、依赖和校正设置。完整校正成功后才发布缓存，失败时清理未完成文件；后续重建失败不删除已经完成的校正结果。
+
+重建前检查输入投影、空气场、散射模型和文件能谱的规范路径、大小及修改时间，以及探测器尺寸/间距、全部校正参数和用于水板拟合的生成能谱设置。匹配且缓存完整时跳过校正，日志显示 `corrected_projection_cache hit`。只修改重建算法、迭代次数或重建网格不使缓存失效；重新前投或修改校正依赖后重新生成。文件检查使用元数据，外部编辑时应保留正常修改时间更新；若强制保留大小和时间，可删除 JSON 强制重算。内部校正实现修改时需要递增缓存版本。每个输入保留最新的一份校正结果，不无限累积不同参数的大文件。
+
+如需显式重建导出的校正 RAW，将 `reconstruction.input_projection_file` 指向该文件，并关闭 `reconstruction.preprocessing.enabled`，避免二次校正。`--profile-preprocess` 仍是独立测量入口，不使用此缓存。文件读取和重建上传仍然存在，不是全链路零拷贝。
+
+TIGRE-SART 一轮包含所有视角的逐视角更新。720 视角、10 轮共有 7200 次更新，不能按 10 次正反投理解。界面现在报告轮内子集更新的全程完成数；TIGRE-SART 每个视角完成后更新进度，OS-SART 每个子集更新后报告，TV 算法另包含正则化工作。
+
 ### OSSART 精确归一化权重缓存
+
+内部 `sart` 默认改用 TIGRE 粗估归一化：2×2×2 粗体积估计行权重，二维列权重沿 Z 广播，不增加配置字段。该路径保留内部 SART 的松弛、epsilon 和约束，不进入 TigreGradient 的 TV/POCS 工作区；SIRT/OSSART 默认保持原精确权重。
+
+### TIGRE 工作区与分层权重缓存
+
+普通 `tigre_sart`、`tigre_os_sart`、`tigre_sirt` 直接读取调用者的设备投影，不再复制完整工作投影；模型投影仅在 TV/POCS 或 Nesterov 残差计算需要时分配，五份 TV 工作体仅在 TV/POCS 路径分配，动量体仅在 Nesterov 模式分配。投影和重建体在整个迭代过程中常驻显存。
+
+内部 `sart` 和 TIGRE 共享 `IterationWeightCache`。每个视角/子集的行权重、二维列权重在首次使用时按原算子和公式计算为 float32，不改成新的粗估方法。固定子集工作区循环复用，选定缓存槽跨完整轮次保留；GPU 缓存命中直接使用，CPU 缓存命中上传当前权重，未缓存项重新计算。默认 GPU 附加预算 256 MiB，CPU 预算 4096 MiB；均按需分配，优先为较小的二维列权重保留槽位。GPU 预算在首个完整正反投更新、必需纹理和外部输入体积已分配后规划，预留 `max(512 MiB,20% 总显存)`。可选缓存分配失败时回退；Session reset 保留相同几何缓存，重新初始化或释放时清理。
+
+诊断变量 `YK_TIGRE_WEIGHT_GPU_MIB` 支持 0..512，`YK_TIGRE_WEIGHT_CPU_MIB` 支持 0..8192，0 禁用对应层，非法值采用默认预算。CPU 预算是每个后端的上限；多个并行会话各自计算预算，并非进程统一内存池。重建入口及粗估后端检查必需线性缓冲和纹理预算，空间不足时明确失败，避免无意依靠共享显存运行；投影数据源支持情况见下节；尚未把投影缓冲跨重建任务持久复用。
+
+`multispectrum_tigre_weight_cache` 覆盖内部 SART、TIGRE SART/OS-SART/SIRT/TV，验证无缓存、CPU、GPU、混合缓存及 reset/几何重新初始化。调整缓存不改变权重公式、视角顺序或迭代更新边界。
 
 DetailedWeight OSSART 将固定几何的 `A_s*1` 行权重和 `A_s^T*1` 列权重按子集缓存为原始 float32，保持原正反投算子、归一化公式和子集顺序。默认附加预算 256 MiB；首次正反投完成必要纹理分配后，查询可用显存，并保留 `max(512 MiB,20% 总显存)` 的余量给 VTK/其他缓冲。优先为较小的行权重安排缓存，再为放得下的列权重安排缓存，实际只分配计划使用的字节。首次访问计算权重，其后同一子集直接复用；放不下或可选分配失败的权重继续现算。缓存槽跨完整数据轮次保留，避免循环子集的 LRU 每次都失效。Session reset 保留固定几何权重；重新初始化或释放时清理。
 
 诊断环境变量 `YK_OSSART_WEIGHT_CACHE_MIB=0` 关闭缓存用于 A/B，允许 0..512 MiB；非法值沿用 256 MiB 默认。日志打印计划字节、缓存行/列子集数和释放时的命中次数。8 GiB GPU 上不能完整缓存 40 个 512×512×400 列权重（约 15.6 GiB），大配置仅缓存预算内的一部分，不做半精度或二维近似，也不改变进度透传。
 
 `multispectrum_ossart_weight_cache` 对照关闭、仅行、部分列和完整缓存，并验证 Session reset 与已填充缓存后的几何重初始化。128³、48 帧、256² 探测器、8 子集的预热后六轮 OSSART 对照，关闭/开启缓存的多次耗时中位数约 252/135 ms（约 46% 减少）；该配置的全部权重约 76 MiB，可全部缓存。首次建权重和大配置部分缓存的收益需单独评估。
+
+### SART / OS-SART / SIRT / TV 投影分批加载
+
+内部 `sart`、`sirt`、`ossart` 与 `tigre_sart`、`tigre_os_sart`、`tigre_sirt`、`tigre_sart_tv`、`tigre_os_sart_tv` 支持从已校正 RAW 文件分批读取，不需要先构造完整 CPU 投影数组或上传完整设备投影。默认优先使用完整设备投影；预留显示空间后预算不足时自动选择分批路径，默认预取 64 帧、不超过 256 MiB，并保持重建体常驻。日志 `reconstruction_projection mode=resident/batched` 标明实际选择。权重缓存仍按原来的 GPU/CPU 预算复用。
+
+加载遵循算法的视角索引：SART 保持逐视角更新，TIGRE OS-SART 保持连续子集，内部 OSSART 保持交错子集和既有遍历顺序。尾批正常处理；加载批次不改变更新次数、松弛衰减或权重。预算至少需要容纳一个算法子集，放不下时增加 OS-SART 子集数量或降低投影尺寸，不会静默改算法。读取中监测输入文件大小和修改时间，文件变化或短读会失败。
+
+诊断变量 `YK_RECON_PROJECTION_INPUT=auto/resident/batched` 可用于强制对照，默认 auto。SDK 可传完整 Host 数组或 `SExecutionRequest.projection_read` 回调；可选尾部保留旧请求 ABI。CGLS/PWLS、柱面迭代和 TIGRE Nesterov/FDK 初值、其他高级 TV 变体仍使用原路径，尚不支持此回调。分批意味着每轮可能重新读取/上传投影，显存足够时仍优先常驻；跨重建任务复用尚未实现。
+
+`multispectrum_batched_reconstruction` 验证八种算法的设备常驻、Host 和回调输入，覆盖不同批次、交错索引、尾批、reset、读取失败/异常/重试及旧 ABI。
+
+SIRT 的计算批次不作为算法子集：分批计算行权重和残差，累加完整数据的反投与列归一化，最后统一更新体积。TIGRE SIRT 仍采用粗估二维列权重，内部 SIRT 仍采用精确三维列权重。批次变化可能改变浮点累加分组，允许小量舍入误差；视角顺序和算法轮次不变。TV 数据更新仍按原 SART/OS-SART 顺序进行，残差、自动阈值的 FDK 估计使用有界批缓冲，五份必需 TV 工作体保持常驻。不可变 TV 输入不再复制完整投影，Bregman 等可变输入变体仍保留原完整工作数组。
+
+目录职责：`src/Reconstruction/Iterative/Flat/YkSirtBatchBackend.hpp` 是算法实现；迭代共用的投影数据源、权重缓存和显存预算在 `src/Reconstruction/Iterative/Common/`。示例仿真/校正共用显存池在 `include/cuda/DeviceMemoryPool.hpp` 与 `src/cuda/DeviceMemoryPool.cpp`，命名空间为 `yk::spectral::cuda_resources`，不属于重建预处理阶段。核心 SDK 的 `src/common/YkDeviceWorkspace.hpp` 是独立通用设备缓冲封装，不依赖示例的显存池。
+
+
+### 内部代数重建的 TV 插件
+
+UI 的 Reconstruction 页在选择 `sart`、`sirt` 或 `ossart` 后可选择 Regularization：
+None / Smoothed TV / Huber TV Prox。载入和保存 TOML 会同步对应字段。
+Huber TV Prox 在每轮完整角度更新后执行，可调强度、Huber 阈值、内步数、2D/3D 和强度衰减；
+Prox step 为 0 时自动选安全步长。非负约束沿用重建页的 Non negative 开关。
+默认 None，现有配置不会自动开启 TV。示例：
+
+```toml
+[reconstruction.iterative]
+algorithm = "ossart"
+iterations = 10
+subsets = 12
+relaxation = 1.0
+projection_model = "joseph"
+non_negative = true
+
+[reconstruction.iterative.regularization]
+plugin = "huber_tv_prox"
+strength = 0.002
+huber_delta = 0.001
+inner_iterations = 10
+dimensions = 3
+step_size = 0.0
+strength_reduction = 1.0
+```
+
+数值是起始示例，强度和阈值应按数据与物理体素间距调整；有限内步求得近似 Prox。
+Huber 插件增加两份显存体积工作区，程序预算会计入，并根据余量选择投影常驻或分批输入。
+保留现有 FP/BP，当前不要求严格伴随；算法边界与插件开发方式见 `doc/algorithms.md`。
+
+
+### 统计与带正则代数重建
+
+UI Reconstruction 的 Method 增加 Statistical：分别设置数据项、正则化和优化器。
+当前提供带正则 SIRT（默认）和普通 GD，支持 Flat 圆扫/螺旋，复用同一套投影、校正缓存、进度、输出和 CT 显示。
+可选 Smoothed TV / Huber TV / Tikhonov / Standard TV；两项正则超参数为目标权重 strength 和形状 shape，Tikhonov 不使用 shape。
+统计 lambda 与旧代数 TV 的下降步长或 Prox gamma 不能直接互换数值。
+正则化的组合策略和内层求解参数由库内部决定，UI/TOML 不提供这些调试项。
+默认 Huber-TV 在带正则代数重建中采用近端求解，内部默认 20 次内迭代、自动安全步长；strength=0 保持无正则行为。普通 GD 仍采用联合梯度，不改算法定义。
+旧实验 TOML 中的 composition 表会被忽略，重新保存时移除。Standard TV 需选择带正则代数重建。
+权重文件为空使用 W=I；非空权重 RAW 必须与投影同形状，内容为非负、有限的 float32 精度权重。
+文件读取采用独立批缓冲，SDK 调用者也可使投影及 W 常驻设备。
+
+```toml
+[reconstruction]
+type = "statistical"
+input_projection_file = "corrected.raw"
+output_volume_file = "statistical.raw"
+
+[reconstruction.statistical]
+projection_model = "joseph"
+non_negative = true
+
+[reconstruction.statistical.data_fidelity]
+type = "weighted_least_squares"
+scale = 1.0
+normalize_by_ray_count = false
+# weights_file = "precision-weights.raw"
+
+[reconstruction.statistical.regularization]
+plugin = "huber_tv"
+strength = 1.0
+shape = 0.00005
+dimensions = 3
+
+[reconstruction.statistical.optimizer]
+type = "regularized_algebraic"
+iterations = 10
+step_size = 0.0
+backtracking = true
+max_backtracking = 20
+step_shrink = 0.5
+relative_tolerance = 0.0
+minimum_iterations = 1
+```
+
+以上是配置起点，不代表头部数据的最优正则强度。输入 corrected.raw 已校正时关闭 reconstruction.preprocessing。
+步长 0 使用初估并配合回溯；实际日志给出初末目标、最后步长、回溯次数和完成轮数。
+当前不要求严格伴随，但也不宣称严格统计优化收敛。FISTA 尚未实现，选择它会报不支持。
+
+
+`configs/ui/brainweb-statistical-gd.toml` 是完整示例，读取已有本地 BrainWeb 标签资产，
+生成 512×512×360 投影，重建 256×256×200、1.2 mm 网格，输出到独立的 out/statistical-brainweb。
+示例启用量子噪声和 BHC，关闭散射与散射校正，因此不需要额外散射核文件。
+可以从 UI 载入；命令行也可使用 `multispectrum_sim <该 TOML 路径>` 运行完整链路。
+
+
+统计重建现在默认采用“归一化 SIRT 数据更新 + 正则梯度”，优化器类型为 `regularized_algebraic`。
+`gradient_descent` 表示纯 GD，`raw_gradient_descent` 为其兼容名称。
+UI 的 Data update 可切换两者。新模式的数据项默认松弛 1，step_size 只控制正则子步，
+关闭正则时与内部 SIRT 一致；其回溯只作用于正则子步，完整诊断目标不承诺逐轮下降。
+正式 BrainWeb 示例已切换新模式。
+
+UI/TOML 的 TIGRE OS 和普通 ossart 都使用 subsets 表示子集数量。TIGRE 应用层按 ceil(views/subsets) 换算一次后传入 SDK 的 block_size，后端直接采用，末块可以较短。
+TIGRE POCS 默认每外轮将数据松弛乘 0.99，普通 TIGRE SART/SIRT/OS-SART 默认不衰减；该族使用 0.1 mm⁻¹ 的逆行权重上限保护短路径。
