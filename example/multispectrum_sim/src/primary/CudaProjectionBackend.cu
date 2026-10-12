@@ -10,7 +10,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 
 namespace yk::spectral::primary_detail {
 namespace {
@@ -61,14 +61,14 @@ struct CudaProjectionBackend::Impl {
         if(transfer_done)cudaEventDestroy(transfer_done);
         if(transfer_start)cudaEventDestroy(transfer_start);
         if(batch_host)cudaFreeHost(batch_host);
-        for (auto it = allocations.rbegin(); it != allocations.rend(); ++it) preprocess::poolRelease(*it);
+        for (auto it = allocations.rbegin(); it != allocations.rend(); ++it) yk::spectral::cuda_resources::poolRelease(*it);
     }
     template<class T> cudaError_t allocate(T** pointer, size_t bytes) {
         void* allocated = nullptr;
-        const auto error = preprocess::poolAllocate(&allocated, bytes);
+        const auto error = yk::spectral::cuda_resources::poolAllocate(&allocated, bytes);
         if (error != cudaSuccess) return error;
         try { allocations.push_back(allocated); }
-        catch (...) { preprocess::poolRelease(allocated); throw; }
+        catch (...) { yk::spectral::cuda_resources::poolRelease(allocated); throw; }
         *pointer = static_cast<T*>(allocated);
         return cudaSuccess;
     }

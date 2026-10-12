@@ -3,7 +3,7 @@
 
 #include "LibraryGeometry.hpp"
 #include "ReconstructionPreprocessor.hpp"
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
 
 #include <algorithm>

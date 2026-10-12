@@ -1,6 +1,6 @@
 #include "primary/ScatterEdgeWindow.hpp"
 #include "common/YkCudaTiming.hpp"
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include "CudaFasksScatter.hpp"
 #include "FasksRuntimeModel.hpp"
 
@@ -257,13 +257,13 @@ public:
         spectrum_count_ = static_cast<size_t>(padded_height_) *
                           (padded_width_ / 2 + 1);
         try {
-        check(yk::spectral::preprocess::poolAllocate(&source_, image_count_ * sizeof(float)), "cudaMalloc fASKS source");
-        check(yk::spectral::preprocess::poolAllocate(&kernel_, image_count_ * sizeof(float)), "cudaMalloc fASKS kernel");
-        check(yk::spectral::preprocess::poolAllocate(&source_fft_, spectrum_count_ * sizeof(cufftComplex)), "cudaMalloc fASKS source FFT");
-        check(yk::spectral::preprocess::poolAllocate(&scatter_, imagePixels() * sizeof(float)), "cudaMalloc fASKS scatter");
-        check(yk::spectral::preprocess::poolAllocate(&normal_, imagePixels() * sizeof(float)), "cudaMalloc fASKS normal");
-        check(yk::spectral::preprocess::poolAllocate(&wet_convolved_, imagePixels() * sizeof(float)), "cudaMalloc fASKS wet convolution");
-        check(yk::spectral::preprocess::poolAllocate(&wet_, imagePixels() * sizeof(float)), "cudaMalloc fASKS WET");
+        check(yk::spectral::cuda_resources::poolAllocate(&source_, image_count_ * sizeof(float)), "cudaMalloc fASKS source");
+        check(yk::spectral::cuda_resources::poolAllocate(&kernel_, image_count_ * sizeof(float)), "cudaMalloc fASKS kernel");
+        check(yk::spectral::cuda_resources::poolAllocate(&source_fft_, spectrum_count_ * sizeof(cufftComplex)), "cudaMalloc fASKS source FFT");
+        check(yk::spectral::cuda_resources::poolAllocate(&scatter_, imagePixels() * sizeof(float)), "cudaMalloc fASKS scatter");
+        check(yk::spectral::cuda_resources::poolAllocate(&normal_, imagePixels() * sizeof(float)), "cudaMalloc fASKS normal");
+        check(yk::spectral::cuda_resources::poolAllocate(&wet_convolved_, imagePixels() * sizeof(float)), "cudaMalloc fASKS wet convolution");
+        check(yk::spectral::cuda_resources::poolAllocate(&wet_, imagePixels() * sizeof(float)), "cudaMalloc fASKS WET");
         makePlan2d(forward_plan_,forward_work_,CUFFT_R2C);
         makePlan2d(inverse_plan_,inverse_work_,CUFFT_C2R);
         }catch(...){release();throw;}
@@ -271,31 +271,31 @@ public:
 
     ~FftWorkspace() {release();}
     void release()noexcept {
-        for (auto spectrum : kernels_) if (spectrum) yk::spectral::preprocess::poolRelease(spectrum);
+        for (auto spectrum : kernels_) if (spectrum) yk::spectral::cuda_resources::poolRelease(spectrum);
         if (forward_plan_) cufftDestroy(forward_plan_);
         if (inverse_plan_) cufftDestroy(inverse_plan_);
         if (batch_forward_plan_) cufftDestroy(batch_forward_plan_);
-        yk::spectral::preprocess::poolRelease(forward_work_);
-        yk::spectral::preprocess::poolRelease(inverse_work_);
-        yk::spectral::preprocess::poolRelease(batch_work_);
-        if (batch_source_) yk::spectral::preprocess::poolRelease(batch_source_);
-        if (batch_fft_) yk::spectral::preprocess::poolRelease(batch_fft_);
-        if (batch_kernel_spectra_) yk::spectral::preprocess::poolRelease(batch_kernel_spectra_);
-        if (primary_) yk::spectral::preprocess::poolRelease(primary_);
-        if (air_) yk::spectral::preprocess::poolRelease(air_);
-        if (edge_) yk::spectral::preprocess::poolRelease(edge_);
-        if (basis_nodes_) yk::spectral::preprocess::poolRelease(basis_nodes_);
-        if (amplitude_nodes_) yk::spectral::preprocess::poolRelease(amplitude_nodes_);
-        if (amplitude_values_) yk::spectral::preprocess::poolRelease(amplitude_values_);
-        if (invalid_) yk::spectral::preprocess::poolRelease(invalid_);
-        if (maximum_) yk::spectral::preprocess::poolRelease(maximum_);
-        if (wet_) yk::spectral::preprocess::poolRelease(wet_);
-        if (wet_convolved_) yk::spectral::preprocess::poolRelease(wet_convolved_);
-        if (normal_) yk::spectral::preprocess::poolRelease(normal_);
-        if (scatter_) yk::spectral::preprocess::poolRelease(scatter_);
-        if (source_fft_) yk::spectral::preprocess::poolRelease(source_fft_);
-        if (kernel_) yk::spectral::preprocess::poolRelease(kernel_);
-        if (source_) yk::spectral::preprocess::poolRelease(source_);
+        yk::spectral::cuda_resources::poolRelease(forward_work_);
+        yk::spectral::cuda_resources::poolRelease(inverse_work_);
+        yk::spectral::cuda_resources::poolRelease(batch_work_);
+        if (batch_source_) yk::spectral::cuda_resources::poolRelease(batch_source_);
+        if (batch_fft_) yk::spectral::cuda_resources::poolRelease(batch_fft_);
+        if (batch_kernel_spectra_) yk::spectral::cuda_resources::poolRelease(batch_kernel_spectra_);
+        if (primary_) yk::spectral::cuda_resources::poolRelease(primary_);
+        if (air_) yk::spectral::cuda_resources::poolRelease(air_);
+        if (edge_) yk::spectral::cuda_resources::poolRelease(edge_);
+        if (basis_nodes_) yk::spectral::cuda_resources::poolRelease(basis_nodes_);
+        if (amplitude_nodes_) yk::spectral::cuda_resources::poolRelease(amplitude_nodes_);
+        if (amplitude_values_) yk::spectral::cuda_resources::poolRelease(amplitude_values_);
+        if (invalid_) yk::spectral::cuda_resources::poolRelease(invalid_);
+        if (maximum_) yk::spectral::cuda_resources::poolRelease(maximum_);
+        if (wet_) yk::spectral::cuda_resources::poolRelease(wet_);
+        if (wet_convolved_) yk::spectral::cuda_resources::poolRelease(wet_convolved_);
+        if (normal_) yk::spectral::cuda_resources::poolRelease(normal_);
+        if (scatter_) yk::spectral::cuda_resources::poolRelease(scatter_);
+        if (source_fft_) yk::spectral::cuda_resources::poolRelease(source_fft_);
+        if (kernel_) yk::spectral::cuda_resources::poolRelease(kernel_);
+        if (source_) yk::spectral::cuda_resources::poolRelease(source_);
     }
 
     size_t imagePixels() const { return static_cast<size_t>(width_) * height_; }
@@ -318,13 +318,13 @@ public:
         check(cudaMemcpy(kernel_, padded.data(), image_count_ * sizeof(float), cudaMemcpyHostToDevice),
               "upload fASKS kernel");
         cufftComplex* spectrum = nullptr;
-        check(yk::spectral::preprocess::poolAllocate(&spectrum, spectrum_count_ * sizeof(cufftComplex)),
+        check(yk::spectral::cuda_resources::poolAllocate(&spectrum, spectrum_count_ * sizeof(cufftComplex)),
               "cudaMalloc fASKS kernel spectrum");
         try {
             checkFft(cufftExecR2C(forward_plan_, kernel_, spectrum), "FFT fASKS kernel");
             kernels_.push_back(spectrum);
         } catch (...) {
-            yk::spectral::preprocess::poolRelease(spectrum);
+            yk::spectral::cuda_resources::poolRelease(spectrum);
             throw;
         }
         return static_cast<int>(kernels_.size() - 1);
@@ -345,13 +345,13 @@ public:
         checkFft(cufftMakePlanMany(batch_forward_plan_, 2, const_cast<int*>(dims),
             inembed, istride, idist, onembed, ostride, odist,
             CUFFT_R2C, batch,&work_bytes), "cufftMakePlanMany fASKS forward");
-        if(work_bytes)check(yk::spectral::preprocess::poolAllocate(&batch_work_,work_bytes),"allocate pooled FFT batch workspace");
+        if(work_bytes)check(yk::spectral::cuda_resources::poolAllocate(&batch_work_,work_bytes),"allocate pooled FFT batch workspace");
         checkFft(cufftSetWorkArea(batch_forward_plan_,batch_work_),"set pooled FFT batch workspace");
-        check(yk::spectral::preprocess::poolAllocate(&batch_source_, static_cast<size_t>(batch_) * image_count_ * sizeof(float)),
+        check(yk::spectral::cuda_resources::poolAllocate(&batch_source_, static_cast<size_t>(batch_) * image_count_ * sizeof(float)),
               "cudaMalloc fASKS batch source");
-        check(yk::spectral::preprocess::poolAllocate(&batch_fft_, static_cast<size_t>(batch_) * spectrum_count_ * sizeof(cufftComplex)),
+        check(yk::spectral::cuda_resources::poolAllocate(&batch_fft_, static_cast<size_t>(batch_) * spectrum_count_ * sizeof(cufftComplex)),
               "cudaMalloc fASKS batch FFT");
-        check(yk::spectral::preprocess::poolAllocate(&batch_kernel_spectra_,
+        check(yk::spectral::cuda_resources::poolAllocate(&batch_kernel_spectra_,
                          static_cast<size_t>(batch_) * spectrum_count_ * sizeof(cufftComplex)),
               "cudaMalloc fASKS batch kernel spectra");
         for (int b = 0; b < batch_; ++b)
@@ -364,14 +364,14 @@ public:
     void configureSources(const std::vector<double>& basis, const FasksRuntimeModel& model) {
         amplitude_count_ = static_cast<int>(model.amplitudeValues().size());
         transmission_max_ = model.transmissionMax();
-        check(yk::spectral::preprocess::poolAllocate(&primary_, imagePixels() * sizeof(float)), "allocate fASKS primary");
-        check(yk::spectral::preprocess::poolAllocate(&air_, imagePixels() * sizeof(float)), "allocate fASKS air");
-        check(yk::spectral::preprocess::poolAllocate(&edge_, imagePixels() * sizeof(float)), "allocate fASKS edge window");
-        check(yk::spectral::preprocess::poolAllocate(&basis_nodes_, basis.size() * sizeof(double)), "allocate fASKS basis nodes");
-        check(yk::spectral::preprocess::poolAllocate(&amplitude_nodes_, model.amplitudeAttenuationNodes().size() * sizeof(double)), "allocate fASKS amplitude nodes");
-        check(yk::spectral::preprocess::poolAllocate(&amplitude_values_, model.amplitudeValues().size() * sizeof(double)), "allocate fASKS amplitude values");
-        check(yk::spectral::preprocess::poolAllocate(&invalid_, sizeof(int)), "allocate fASKS source error");
-        check(yk::spectral::preprocess::poolAllocate(&maximum_, sizeof(unsigned)), "allocate fASKS roundoff maximum");
+        check(yk::spectral::cuda_resources::poolAllocate(&primary_, imagePixels() * sizeof(float)), "allocate fASKS primary");
+        check(yk::spectral::cuda_resources::poolAllocate(&air_, imagePixels() * sizeof(float)), "allocate fASKS air");
+        check(yk::spectral::cuda_resources::poolAllocate(&edge_, imagePixels() * sizeof(float)), "allocate fASKS edge window");
+        check(yk::spectral::cuda_resources::poolAllocate(&basis_nodes_, basis.size() * sizeof(double)), "allocate fASKS basis nodes");
+        check(yk::spectral::cuda_resources::poolAllocate(&amplitude_nodes_, model.amplitudeAttenuationNodes().size() * sizeof(double)), "allocate fASKS amplitude nodes");
+        check(yk::spectral::cuda_resources::poolAllocate(&amplitude_values_, model.amplitudeValues().size() * sizeof(double)), "allocate fASKS amplitude values");
+        check(yk::spectral::cuda_resources::poolAllocate(&invalid_, sizeof(int)), "allocate fASKS source error");
+        check(yk::spectral::cuda_resources::poolAllocate(&maximum_, sizeof(unsigned)), "allocate fASKS roundoff maximum");
         check(cudaMemcpy(basis_nodes_, basis.data(), basis.size() * sizeof(double), cudaMemcpyHostToDevice), "upload fASKS basis nodes");
         check(cudaMemcpy(amplitude_nodes_, model.amplitudeAttenuationNodes().data(),
             model.amplitudeAttenuationNodes().size() * sizeof(double), cudaMemcpyHostToDevice), "upload fASKS amplitude nodes");
@@ -471,7 +471,7 @@ private:
         size_t bytes=0;checkFft(cufftCreate(&plan),"create fASKS FFT plan");
         checkFft(cufftSetAutoAllocation(plan,0),"disable fASKS FFT auto allocation");
         checkFft(cufftMakePlan2d(plan,padded_height_,padded_width_,type,&bytes),"make fASKS FFT plan");
-        if(bytes)check(yk::spectral::preprocess::poolAllocate(&work,bytes),"allocate pooled FFT workspace");
+        if(bytes)check(yk::spectral::cuda_resources::poolAllocate(&work,bytes),"allocate pooled FFT workspace");
         checkFft(cufftSetWorkArea(plan,work),"set pooled FFT workspace");
     }
     void *forward_work_=nullptr,*inverse_work_=nullptr,*batch_work_=nullptr;
@@ -508,13 +508,13 @@ public:
             model.wetSlopes().size() != node_count_)
             throw std::runtime_error("invalid fASKS WET interpolation table");
         try {
-            check(yk::spectral::preprocess::poolAllocate(&raw_, pixels_ * sizeof(float)), "cudaMalloc fASKS raw WET");
-            check(yk::spectral::preprocess::poolAllocate(&temporary_, pixels_ * sizeof(float)), "cudaMalloc fASKS temporary WET");
-            check(yk::spectral::preprocess::poolAllocate(&attenuation_nodes_, static_cast<size_t>(node_count_) * sizeof(double)),
+            check(yk::spectral::cuda_resources::poolAllocate(&raw_, pixels_ * sizeof(float)), "cudaMalloc fASKS raw WET");
+            check(yk::spectral::cuda_resources::poolAllocate(&temporary_, pixels_ * sizeof(float)), "cudaMalloc fASKS temporary WET");
+            check(yk::spectral::cuda_resources::poolAllocate(&attenuation_nodes_, static_cast<size_t>(node_count_) * sizeof(double)),
                   "cudaMalloc fASKS WET attenuation nodes");
-            check(yk::spectral::preprocess::poolAllocate(&thickness_nodes_, static_cast<size_t>(node_count_) * sizeof(double)),
+            check(yk::spectral::cuda_resources::poolAllocate(&thickness_nodes_, static_cast<size_t>(node_count_) * sizeof(double)),
                   "cudaMalloc fASKS WET thickness nodes");
-            check(yk::spectral::preprocess::poolAllocate(&slopes_, static_cast<size_t>(node_count_) * sizeof(double)),
+            check(yk::spectral::cuda_resources::poolAllocate(&slopes_, static_cast<size_t>(node_count_) * sizeof(double)),
                   "cudaMalloc fASKS WET slopes");
             check(cudaMemcpy(attenuation_nodes_, model.wetAttenuationNodes().data(),
                              static_cast<size_t>(node_count_) * sizeof(double), cudaMemcpyHostToDevice),
@@ -531,9 +531,9 @@ public:
                 const auto weights_v = gaussianWeights(pixel_v, model.wetSmoothSigmaMm());
                 radius_u_ = static_cast<int>(weights_u.size() / 2);
                 radius_v_ = static_cast<int>(weights_v.size() / 2);
-                check(yk::spectral::preprocess::poolAllocate(&weights_u_, weights_u.size() * sizeof(float)),
+                check(yk::spectral::cuda_resources::poolAllocate(&weights_u_, weights_u.size() * sizeof(float)),
                       "cudaMalloc fASKS WET U weights");
-                check(yk::spectral::preprocess::poolAllocate(&weights_v_, weights_v.size() * sizeof(float)),
+                check(yk::spectral::cuda_resources::poolAllocate(&weights_v_, weights_v.size() * sizeof(float)),
                       "cudaMalloc fASKS WET V weights");
                 check(cudaMemcpy(weights_u_, weights_u.data(), weights_u.size() * sizeof(float),
                                  cudaMemcpyHostToDevice), "upload fASKS WET U weights");
@@ -571,13 +571,13 @@ public:
 
 private:
     void release() noexcept {
-        if (weights_v_) yk::spectral::preprocess::poolRelease(weights_v_);
-        if (weights_u_) yk::spectral::preprocess::poolRelease(weights_u_);
-        if (slopes_) yk::spectral::preprocess::poolRelease(slopes_);
-        if (thickness_nodes_) yk::spectral::preprocess::poolRelease(thickness_nodes_);
-        if (attenuation_nodes_) yk::spectral::preprocess::poolRelease(attenuation_nodes_);
-        if (temporary_) yk::spectral::preprocess::poolRelease(temporary_);
-        if (raw_) yk::spectral::preprocess::poolRelease(raw_);
+        if (weights_v_) yk::spectral::cuda_resources::poolRelease(weights_v_);
+        if (weights_u_) yk::spectral::cuda_resources::poolRelease(weights_u_);
+        if (slopes_) yk::spectral::cuda_resources::poolRelease(slopes_);
+        if (thickness_nodes_) yk::spectral::cuda_resources::poolRelease(thickness_nodes_);
+        if (attenuation_nodes_) yk::spectral::cuda_resources::poolRelease(attenuation_nodes_);
+        if (temporary_) yk::spectral::cuda_resources::poolRelease(temporary_);
+        if (raw_) yk::spectral::cuda_resources::poolRelease(raw_);
         weights_v_ = nullptr;
         weights_u_ = nullptr;
         slopes_ = nullptr;
@@ -622,9 +622,9 @@ struct CudaFasksScatter::Impl {
     double guide_sigma_u = -1, guide_sigma_v = -1;
 
     ~Impl() {
-        yk::spectral::preprocess::poolRelease(device_distance);yk::spectral::preprocess::poolRelease(device_breaks);yk::spectral::preprocess::poolRelease(device_sites);
-        yk::spectral::preprocess::poolRelease(fixed_measured); yk::spectral::preprocess::poolRelease(fixed_invalid);
-        yk::spectral::preprocess::poolRelease(guide_weights_u); yk::spectral::preprocess::poolRelease(guide_weights_v);
+        yk::spectral::cuda_resources::poolRelease(device_distance);yk::spectral::cuda_resources::poolRelease(device_breaks);yk::spectral::cuda_resources::poolRelease(device_sites);
+        yk::spectral::cuda_resources::poolRelease(fixed_measured); yk::spectral::cuda_resources::poolRelease(fixed_invalid);
+        yk::spectral::cuda_resources::poolRelease(guide_weights_u); yk::spectral::cuda_resources::poolRelease(guide_weights_v);
     }
 
     Impl(int width_in, int height_in, double pixel_u_in, double pixel_v_in,
@@ -730,9 +730,9 @@ CudaFasksScatter::CudaFasksScatter(int width, int height, double pixel_u_mm,
 CudaFasksScatter::~CudaFasksScatter() = default;
 
 void CudaFasksScatter::prepareDeviceMask(){
-    if(!impl_->device_distance)check(preprocess::poolAllocate(&impl_->device_distance,impl_->pixels*sizeof(double)),"allocate GPU distance rows");
-    if(!impl_->device_sites)check(preprocess::poolAllocate(&impl_->device_sites,impl_->pixels*sizeof(int)),"allocate GPU EDT sites");
-    if(!impl_->device_breaks)check(preprocess::poolAllocate(&impl_->device_breaks,(impl_->pixels+impl_->width)*sizeof(double)),"allocate GPU EDT breakpoints");
+    if(!impl_->device_distance)check(yk::spectral::cuda_resources::poolAllocate(&impl_->device_distance,impl_->pixels*sizeof(double)),"allocate GPU distance rows");
+    if(!impl_->device_sites)check(yk::spectral::cuda_resources::poolAllocate(&impl_->device_sites,impl_->pixels*sizeof(int)),"allocate GPU EDT sites");
+    if(!impl_->device_breaks)check(yk::spectral::cuda_resources::poolAllocate(&impl_->device_breaks,(impl_->pixels+impl_->width)*sizeof(double)),"allocate GPU EDT breakpoints");
 }
 void CudaFasksScatter::predictDeviceMask(const float* primary,const float* air,const unsigned char* mask,float* output){
     YK::diagnostics::TimingSpan watch("scatter.predict.device");
@@ -779,9 +779,9 @@ void CudaFasksScatter::correctFixed(const std::vector<float>& measured,
             throw std::runtime_error("invalid fixed scatter correction signal");
     const size_t bytes = impl_->pixels * sizeof(float);
     if (!impl_->fixed_measured)
-        check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_measured, bytes), "allocate fixed scatter measurement");
+        check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_measured, bytes), "allocate fixed scatter measurement");
     if (!impl_->fixed_invalid)
-        check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_invalid, sizeof(int)), "allocate fixed scatter validity flag");
+        check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_invalid, sizeof(int)), "allocate fixed scatter validity flag");
     check(cudaMemset(impl_->fixed_invalid, 0, sizeof(int)), "clear fixed scatter validity flag");
     check(cudaMemcpy(impl_->fixed_measured, measured.data(), bytes, cudaMemcpyHostToDevice),
           "upload fixed scatter measurement");
@@ -807,11 +807,11 @@ void CudaFasksScatter::correctFixed(const std::vector<float>& measured,
 }
 
 void CudaFasksScatter::prepareCorrectionWorkspace(bool guidance) {
-    if(!impl_->fixed_measured)check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_measured,impl_->pixels*sizeof(float)),"prepare fixed scatter measurement");
-    if(!impl_->fixed_invalid)check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_invalid,sizeof(int)),"prepare fixed scatter validity");
+    if(!impl_->fixed_measured)check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_measured,impl_->pixels*sizeof(float)),"prepare fixed scatter measurement");
+    if(!impl_->fixed_invalid)check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_invalid,sizeof(int)),"prepare fixed scatter validity");
     if(guidance){
-        if(!impl_->guide_weights_u)check(yk::spectral::preprocess::poolAllocate(&impl_->guide_weights_u,193*sizeof(float)),"prepare guide U weights");
-        if(!impl_->guide_weights_v)check(yk::spectral::preprocess::poolAllocate(&impl_->guide_weights_v,193*sizeof(float)),"prepare guide V weights");
+        if(!impl_->guide_weights_u)check(yk::spectral::cuda_resources::poolAllocate(&impl_->guide_weights_u,193*sizeof(float)),"prepare guide U weights");
+        if(!impl_->guide_weights_v)check(yk::spectral::cuda_resources::poolAllocate(&impl_->guide_weights_v,193*sizeof(float)),"prepare guide V weights");
     }
 }
 void CudaFasksScatter::correctFixedDevice(const float* measured,
@@ -824,9 +824,9 @@ void CudaFasksScatter::correctFixedDevice(const float* measured,
         throw std::runtime_error("invalid fixed scatter correction arguments");
     const size_t bytes = impl_->pixels * sizeof(float);
     if (!impl_->fixed_measured)
-        check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_measured, bytes), "allocate fixed scatter measurement");
+        check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_measured, bytes), "allocate fixed scatter measurement");
     if (!impl_->fixed_invalid)
-        check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_invalid, sizeof(int)), "allocate fixed scatter validity flag");
+        check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_invalid, sizeof(int)), "allocate fixed scatter validity flag");
     check(cudaMemset(impl_->fixed_invalid, 0, sizeof(int)), "clear fixed scatter validity flag");
     check(cudaMemcpy(impl_->fixed_measured, measured, bytes, cudaMemcpyDeviceToDevice),
           "upload fixed scatter measurement");
@@ -860,9 +860,9 @@ void CudaFasksScatter::correctFixedDeviceMask(const float* measured,
         throw std::runtime_error("invalid fixed scatter correction arguments");
     const size_t bytes = impl_->pixels * sizeof(float);
     if (!impl_->fixed_measured)
-        check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_measured, bytes), "allocate fixed scatter measurement");
+        check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_measured, bytes), "allocate fixed scatter measurement");
     if (!impl_->fixed_invalid)
-        check(yk::spectral::preprocess::poolAllocate(&impl_->fixed_invalid, sizeof(int)), "allocate fixed scatter validity flag");
+        check(yk::spectral::cuda_resources::poolAllocate(&impl_->fixed_invalid, sizeof(int)), "allocate fixed scatter validity flag");
     check(cudaMemset(impl_->fixed_invalid, 0, sizeof(int)), "clear fixed scatter validity flag");
     check(cudaMemcpy(impl_->fixed_measured, measured, bytes, cudaMemcpyDeviceToDevice),
           "upload fixed scatter measurement");
@@ -902,7 +902,7 @@ void CudaFasksScatter::smoothGuide(const std::vector<float>& input, double su,
     for (float x : input) if (!std::isfinite(x) || x < 0)
         throw std::runtime_error("invalid Gaussian guide signal");
     auto configure = [&](double sigma, double& cached, float*& weights) {
-        if (!weights) check(yk::spectral::preprocess::poolAllocate(&weights, 193*sizeof(float)), "allocate guide weights");
+        if (!weights) check(yk::spectral::cuda_resources::poolAllocate(&weights, 193*sizeof(float)), "allocate guide weights");
         const int radius = static_cast<int>(std::ceil(3*sigma));
         if (cached != sigma) {
             std::vector<float> w(2*radius+1);
@@ -934,7 +934,7 @@ void CudaFasksScatter::smoothGuideDevice(const float* input, double su,
         su <= 0 || su > 32 || sv <= 0 || sv > 32)
         throw std::runtime_error("invalid Gaussian guide dimensions or sigma");
     auto configure = [&](double sigma, double& cached, float*& weights) {
-        if (!weights) check(yk::spectral::preprocess::poolAllocate(&weights, 193*sizeof(float)), "allocate guide weights");
+        if (!weights) check(yk::spectral::cuda_resources::poolAllocate(&weights, 193*sizeof(float)), "allocate guide weights");
         const int radius = static_cast<int>(std::ceil(3*sigma));
         if (cached != sigma) {
             std::vector<float> w(2*radius+1);

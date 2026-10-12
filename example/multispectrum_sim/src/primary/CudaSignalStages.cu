@@ -2,7 +2,7 @@
 #include "CudaFasksScatter.hpp"
 #include "FasksRuntimeModel.hpp"
 #include "QuantumSampling.cuh"
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
@@ -49,13 +49,13 @@ public:
     void prepare(const SimulationConfig& c)override{const auto& g=c.geometry.parameters;pixels_=size_t(g.detector_u)*g.detector_v;
         model_=std::make_unique<FasksRuntimeModel>(config_.model_file);
         scatter_=std::make_unique<CudaFasksScatter>(g.detector_u,g.detector_v,g.pixel_u_mm,g.pixel_v_mm,*model_,config_.kernel.mode=="segmented"?config_.kernel.segments:0);
-        scatter_->prepareDeviceMask();check(preprocess::poolAllocate(&prediction_,pixels_*sizeof(float)));
+        scatter_->prepareDeviceMask();check(yk::spectral::cuda_resources::poolAllocate(&prediction_,pixels_*sizeof(float)));
     }
     void process(ProjectionFrame& f,const ProjectionStageContext&)override{
         scatter_->predictDeviceMask(f.device.expected,f.device.air,f.device.mask,prediction_);
         addScatter<<<int((pixels_+255)/256),256>>>(f.device.signal,prediction_,pixels_);check(cudaGetLastError());
     }
-    void reset()noexcept override{preprocess::poolRelease(prediction_);prediction_=nullptr;scatter_.reset();model_.reset();}
+    void reset()noexcept override{yk::spectral::cuda_resources::poolRelease(prediction_);prediction_=nullptr;scatter_.reset();model_.reset();}
 };
 class Quantum final:public DeviceStage {
 public:const char* name()const override{return "scatter_noise";}
@@ -71,8 +71,8 @@ public:Crosstalk(CrosstalkConfig c,ProjectionStagePhase phase,const char* name):
     ~Crosstalk(){reset();}
     const char* name()const override{return name_;}ProjectionStagePhase phase()const override{return phase_;}
     void prepare(const SimulationConfig& c)override{
-        check(preprocess::poolAllocate(&u_,config_.kernel_u.size()*sizeof(double)));check(preprocess::poolAllocate(&v_,config_.kernel_v.size()*sizeof(double)));
-        check(preprocess::poolAllocate(&scratch_,size_t(c.geometry.parameters.detector_u)*c.geometry.parameters.detector_v*sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&u_,config_.kernel_u.size()*sizeof(double)));check(yk::spectral::cuda_resources::poolAllocate(&v_,config_.kernel_v.size()*sizeof(double)));
+        check(yk::spectral::cuda_resources::poolAllocate(&scratch_,size_t(c.geometry.parameters.detector_u)*c.geometry.parameters.detector_v*sizeof(float)));
         check(cudaMemcpy(u_,config_.kernel_u.data(),config_.kernel_u.size()*sizeof(double),cudaMemcpyHostToDevice));
         check(cudaMemcpy(v_,config_.kernel_v.data(),config_.kernel_v.size()*sizeof(double),cudaMemcpyHostToDevice));
     }
@@ -81,7 +81,7 @@ public:Crosstalk(CrosstalkConfig c,ProjectionStagePhase phase,const char* name):
         convolve<<<blocks,256>>>(scratch_,p,w,h,v_,int(config_.kernel_v.size()),true);check(cudaGetLastError());}
     void process(ProjectionFrame& f,const ProjectionStageContext&)override{apply(f.device.signal,f.width,f.height);}
     void processAir(ProjectionFrame& f,const ProjectionStageContext&)override{apply(f.device.reference,f.width,f.height);}
-    void reset()noexcept override{preprocess::poolRelease(u_);preprocess::poolRelease(v_);preprocess::poolRelease(scratch_);u_=v_=nullptr;scratch_=nullptr;}
+    void reset()noexcept override{yk::spectral::cuda_resources::poolRelease(u_);yk::spectral::cuda_resources::poolRelease(v_);yk::spectral::cuda_resources::poolRelease(scratch_);u_=v_=nullptr;scratch_=nullptr;}
 };
 class Afterglow final:public DeviceStage {
     DetectorPostprocessConfig::AfterglowConfig config_;LagCoefficient* coefficients_=nullptr;float* states_=nullptr;size_t pixels_=0;bool object_first_=true,air_first_=true;
@@ -95,15 +95,15 @@ public:explicit Afterglow(DetectorPostprocessConfig::AfterglowConfig c):config_(
         for(size_t i=0;i<config_.weights.size();++i){float tau=float(config_.time_constants_ms[i]),de=std::exp(-exposure/tau),dr=std::exp(-readout/tau);
             float input=float(config_.p)*float(config_.weights[i])*tau*(1-de)/exposure;
             coeff.push_back({float(config_.weights[i]),tau,exposure,de,dr,dr*input/std::max(1-de*dr,1e-6f)});}
-        check(preprocess::poolAllocate(&coefficients_,coeff.size()*sizeof(LagCoefficient)));check(cudaMemcpy(coefficients_,coeff.data(),coeff.size()*sizeof(LagCoefficient),cudaMemcpyHostToDevice));
-        check(preprocess::poolAllocate(&states_,2*pixels_*coeff.size()*sizeof(float)));check(cudaMemset(states_,0,2*pixels_*coeff.size()*sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&coefficients_,coeff.size()*sizeof(LagCoefficient)));check(cudaMemcpy(coefficients_,coeff.data(),coeff.size()*sizeof(LagCoefficient),cudaMemcpyHostToDevice));
+        check(yk::spectral::cuda_resources::poolAllocate(&states_,2*pixels_*coeff.size()*sizeof(float)));check(cudaMemset(states_,0,2*pixels_*coeff.size()*sizeof(float)));
     }
     void apply(float* p,bool air){bool& first=air?air_first_:object_first_;bool initialize=first&&config_.initialization=="steady_state";
         lag<<<int((pixels_+255)/256),256>>>(p,states_+(air?pixels_*config_.weights.size():0),pixels_,coefficients_,int(config_.weights.size()),float(config_.p),initialize);
         check(cudaGetLastError());first=false;}
     void process(ProjectionFrame& f,const ProjectionStageContext&)override{apply(f.device.signal,false);}
     void processAir(ProjectionFrame& f,const ProjectionStageContext&)override{apply(f.device.reference,true);}
-    void reset()noexcept override{preprocess::poolRelease(states_);preprocess::poolRelease(coefficients_);states_=nullptr;coefficients_=nullptr;object_first_=air_first_=true;}
+    void reset()noexcept override{yk::spectral::cuda_resources::poolRelease(states_);yk::spectral::cuda_resources::poolRelease(coefficients_);states_=nullptr;coefficients_=nullptr;object_first_=air_first_=true;}
 };
 class Das final:public DeviceStage {
     DetectorPostprocessConfig::DasConfig config_;

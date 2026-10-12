@@ -1,4 +1,4 @@
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include "AdaptiveScatterSolver.hpp"
 #include <cuda_runtime.h>
 #include <thrust/device_ptr.h>
@@ -15,8 +15,8 @@ namespace yk::spectral::experimental {
 namespace {
 struct SortAllocator {
     using value_type=char;
-    char* allocate(std::ptrdiff_t bytes){char* p=nullptr;auto status=preprocess::poolAllocate(&p,size_t(bytes));if(status!=cudaSuccess)throw std::runtime_error(cudaGetErrorString(status));return p;}
-    void deallocate(char* p,size_t){preprocess::poolRelease(p);}
+    char* allocate(std::ptrdiff_t bytes){char* p=nullptr;auto status=yk::spectral::cuda_resources::poolAllocate(&p,size_t(bytes));if(status!=cudaSuccess)throw std::runtime_error(cudaGetErrorString(status));return p;}
+    void deallocate(char* p,size_t){yk::spectral::cuda_resources::poolRelease(p);}
 };
 constexpr int threads = 256;
 void check(cudaError_t error) {
@@ -86,29 +86,29 @@ AdaptiveScatterSolver::AdaptiveScatterSolver(size_t pixels) : pixels_(pixels) {
     if (!pixels || pixels > static_cast<size_t>(std::numeric_limits<int>::max()))
         throw std::runtime_error("invalid adaptive scatter image size");
     try {
-        check(yk::spectral::preprocess::poolAllocate(&transmissions_,pixels*sizeof(double)));
-        check(yk::spectral::preprocess::poolAllocate(&mask_,pixels));
-        check(yk::spectral::preprocess::poolAllocate(&current_, pixels * sizeof(float)));
-        check(yk::spectral::preprocess::poolAllocate(&candidate_, pixels * sizeof(float)));
-        check(yk::spectral::preprocess::poolAllocate(&measured_, pixels * sizeof(float)));
-        check(yk::spectral::preprocess::poolAllocate(&air_, pixels * sizeof(float)));
-        check(yk::spectral::preprocess::poolAllocate(&scatter_, pixels * sizeof(float)));
-        check(yk::spectral::preprocess::poolAllocate(&accepted_scatter_, pixels * sizeof(float)));
-        check(yk::spectral::preprocess::poolAllocate(&statistics_, ((pixels + threads - 1) / threads) * 5 * sizeof(double)));
+        check(yk::spectral::cuda_resources::poolAllocate(&transmissions_,pixels*sizeof(double)));
+        check(yk::spectral::cuda_resources::poolAllocate(&mask_,pixels));
+        check(yk::spectral::cuda_resources::poolAllocate(&current_, pixels * sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&candidate_, pixels * sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&measured_, pixels * sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&air_, pixels * sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&scatter_, pixels * sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&accepted_scatter_, pixels * sizeof(float)));
+        check(yk::spectral::cuda_resources::poolAllocate(&statistics_, ((pixels + threads - 1) / threads) * 5 * sizeof(double)));
     } catch (...) {
-        yk::spectral::preprocess::poolRelease(transmissions_);yk::spectral::preprocess::poolRelease(mask_);
-        yk::spectral::preprocess::poolRelease(current_); yk::spectral::preprocess::poolRelease(candidate_); yk::spectral::preprocess::poolRelease(measured_);
-        yk::spectral::preprocess::poolRelease(air_); yk::spectral::preprocess::poolRelease(scatter_); yk::spectral::preprocess::poolRelease(statistics_);
-        yk::spectral::preprocess::poolRelease(accepted_scatter_);
+        yk::spectral::cuda_resources::poolRelease(transmissions_);yk::spectral::cuda_resources::poolRelease(mask_);
+        yk::spectral::cuda_resources::poolRelease(current_); yk::spectral::cuda_resources::poolRelease(candidate_); yk::spectral::cuda_resources::poolRelease(measured_);
+        yk::spectral::cuda_resources::poolRelease(air_); yk::spectral::cuda_resources::poolRelease(scatter_); yk::spectral::cuda_resources::poolRelease(statistics_);
+        yk::spectral::cuda_resources::poolRelease(accepted_scatter_);
         throw;
     }
 }
 
 AdaptiveScatterSolver::~AdaptiveScatterSolver() {
-    yk::spectral::preprocess::poolRelease(transmissions_);yk::spectral::preprocess::poolRelease(mask_);
-    yk::spectral::preprocess::poolRelease(current_); yk::spectral::preprocess::poolRelease(candidate_); yk::spectral::preprocess::poolRelease(measured_);
-    yk::spectral::preprocess::poolRelease(air_); yk::spectral::preprocess::poolRelease(scatter_); yk::spectral::preprocess::poolRelease(statistics_);
-    yk::spectral::preprocess::poolRelease(accepted_scatter_);
+    yk::spectral::cuda_resources::poolRelease(transmissions_);yk::spectral::cuda_resources::poolRelease(mask_);
+    yk::spectral::cuda_resources::poolRelease(current_); yk::spectral::cuda_resources::poolRelease(candidate_); yk::spectral::cuda_resources::poolRelease(measured_);
+    yk::spectral::cuda_resources::poolRelease(air_); yk::spectral::cuda_resources::poolRelease(scatter_); yk::spectral::cuda_resources::poolRelease(statistics_);
+    yk::spectral::cuda_resources::poolRelease(accepted_scatter_);
 }
 
 AdaptiveScatterReport AdaptiveScatterSolver::solve(const std::vector<float>& m,

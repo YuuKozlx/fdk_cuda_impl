@@ -1,4 +1,4 @@
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include "CudaPixelOps.hpp"
 #include <cuda_runtime.h>
 #include <cmath>
@@ -73,24 +73,24 @@ struct CudaPixelOps::Impl {
     double low = 0, high = 20;
     ~Impl() {
         if (buffers)
-            yk::spectral::preprocess::poolRelease(buffers);
+            yk::spectral::cuda_resources::poolRelease(buffers);
         if (coefficients)
-            yk::spectral::preprocess::poolRelease(coefficients);
+            yk::spectral::cuda_resources::poolRelease(coefficients);
         if (mask)
-            yk::spectral::preprocess::poolRelease(mask);
+            yk::spectral::cuda_resources::poolRelease(mask);
         if (invalid)
-            yk::spectral::preprocess::poolRelease(invalid);
+            yk::spectral::cuda_resources::poolRelease(invalid);
     }
 };
 CudaPixelOps::CudaPixelOps(size_t n) : impl_(std::make_unique<Impl>()) {
     if (!n || n > size_t(std::numeric_limits<int>::max()))
         throw std::runtime_error("empty CUDA preprocess frame");
     impl_->n = n;
-    initializeDevicePool({6 * n * sizeof(float), 17 * sizeof(double), n, sizeof(int)});
-    check(yk::spectral::preprocess::poolAllocate(&impl_->buffers, 6 * n * sizeof(float)));
-    check(yk::spectral::preprocess::poolAllocate(&impl_->coefficients, 17 * sizeof(double)));
-    check(yk::spectral::preprocess::poolAllocate(&impl_->mask, n));
-    check(yk::spectral::preprocess::poolAllocate(&impl_->invalid, sizeof(int)));
+    yk::spectral::cuda_resources::initializeDevicePool({6 * n * sizeof(float), 17 * sizeof(double), n, sizeof(int)});
+    check(yk::spectral::cuda_resources::poolAllocate(&impl_->buffers, 6 * n * sizeof(float)));
+    check(yk::spectral::cuda_resources::poolAllocate(&impl_->coefficients, 17 * sizeof(double)));
+    check(yk::spectral::cuda_resources::poolAllocate(&impl_->mask, n));
+    check(yk::spectral::cuda_resources::poolAllocate(&impl_->invalid, sizeof(int)));
 }
 CudaPixelOps::~CudaPixelOps() = default;
 float *CudaPixelOps::data() { return impl_->buffers; }

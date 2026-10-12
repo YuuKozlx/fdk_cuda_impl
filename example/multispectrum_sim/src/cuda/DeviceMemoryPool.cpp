@@ -1,12 +1,12 @@
 #include "common/YkTimingWatchdog.hpp"
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include <cuda_runtime.h>
 #include <mutex>
 #include <algorithm>
 #include <unordered_map>
 #include <limits>
 #include <stdexcept>
-namespace yk::spectral::preprocess {
+namespace yk::spectral::cuda_resources {
 namespace {
 constexpr size_t cache_limit = 256ull * 1024 * 1024;
 struct Block {
@@ -219,4 +219,4 @@ void trimDevicePool() {
     std::lock_guard<std::mutex> lock(p.mutex);
     trim(p, device);
 }
-} // namespace yk::spectral::preprocess
+} // namespace yk::spectral::cuda_resources

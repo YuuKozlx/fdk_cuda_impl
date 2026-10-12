@@ -2,7 +2,7 @@
 #include <cuda_runtime_api.h>
 #include <cstddef>
 #include <vector>
-namespace yk::spectral::preprocess {
+namespace yk::spectral::cuda_resources {
 struct PoolStatistics {
     size_t allocations = 0, reuses = 0, active_bytes = 0, cached_bytes = 0;
 };
@@ -21,4 +21,4 @@ void initializeDevicePool(const std::vector<size_t> &bytes);
 PoolStatistics devicePoolStatistics();
 // Free only returned buffers on the current device. Active leases remain valid.
 void trimDevicePool();
-} // namespace yk::spectral::preprocess
+} // namespace yk::spectral::cuda_resources

@@ -1,7 +1,7 @@
 #include "SpectralProjectionPipeline.hpp"
 #include "../src/primary/ProjectionStages.hpp"
 #include "../src/primary/CudaProjectionBackend.hpp"
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include <cuda_runtime.h>
 #include <cmath>
 #include <stdexcept>
@@ -11,8 +11,8 @@ void require(bool ok,const char* message){if(!ok)throw std::runtime_error(messag
 void check(cudaError_t status){require(status==cudaSuccess,cudaGetErrorString(status));}
 struct Storage {
     float* pointer=nullptr;
-    explicit Storage(size_t n){check(preprocess::poolAllocate(&pointer,6*n*sizeof(float)));}
-    ~Storage(){preprocess::poolRelease(pointer);}
+    explicit Storage(size_t n){check(yk::spectral::cuda_resources::poolAllocate(&pointer,6*n*sizeof(float)));}
+    ~Storage(){yk::spectral::cuda_resources::poolRelease(pointer);}
     DeviceProjectionFrame frame(size_t n){return {pointer,pointer+n,pointer+2*n,pointer+3*n,pointer+4*n,pointer+5*n,nullptr};}
 };
 }

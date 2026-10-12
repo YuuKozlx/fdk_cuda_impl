@@ -3,7 +3,7 @@
 #include "CudaPixelOps.hpp"
 #include "BeamHardeningFit.hpp"
 #include "Stages.hpp"
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include "../../primary/AirReferenceReader.hpp"
 #include <chrono>
 #include <cmath>
@@ -75,7 +75,7 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
             bhc = fitWaterPlate(config, bhc, progress);
         statistics_.fit_ms = elapsed(tick);
         tick = Clock::now();
-        const auto pool_start=devicePoolStatistics();
+        const auto pool_start=yk::spectral::cuda_resources::devicePoolStatistics();
         CudaPixelOps gpu(pixels);
         builtins = makeStages(config, bhc);
         for (auto &stage : builtins)
@@ -185,7 +185,7 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
                   << " write=" << statistics_.write_ms << " uploads=" << statistics_.image_uploads
                   << " downloads=" << statistics_.image_downloads
                   << " air_uploads=" << statistics_.air_uploads << '\n';
-        const auto pool_end=devicePoolStatistics();
+        const auto pool_end=yk::spectral::cuda_resources::devicePoolStatistics();
         std::cout << "preprocess_pool allocations=" << pool_end.allocations-pool_start.allocations
             << " reuses=" << pool_end.reuses-pool_start.reuses << " active_bytes="
             << pool_end.active_bytes << " cached_bytes=" << pool_end.cached_bytes << '\n';

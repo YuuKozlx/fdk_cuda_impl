@@ -1,5 +1,5 @@
 #include "recon/preprocess/PreprocessPipeline.hpp"
-#include "recon/preprocess/DeviceMemoryPool.hpp"
+#include "cuda/DeviceMemoryPool.hpp"
 #include <fstream>
 #include <cmath>
 #include <limits>
@@ -44,26 +44,26 @@ std::vector<float> read(const std::filesystem::path &p) {
 } // namespace
 void testPreprocessState(const std::filesystem::path &root) {
     // A second reservation must reuse every block without another cudaMalloc.
-    trimDevicePool();
-    initializeDevicePool({4096, 8192});
-    auto first = devicePoolStatistics();
-    initializeDevicePool({4096, 8192});
-    auto second = devicePoolStatistics();
+    yk::spectral::cuda_resources::trimDevicePool();
+    yk::spectral::cuda_resources::initializeDevicePool({4096, 8192});
+    auto first = yk::spectral::cuda_resources::devicePoolStatistics();
+    yk::spectral::cuda_resources::initializeDevicePool({4096, 8192});
+    auto second = yk::spectral::cuda_resources::devicePoolStatistics();
     require(second.allocations == first.allocations && second.reuses >= first.reuses + 2,
             "pool initialization reallocates reserved blocks");
     void *lease1 = nullptr, *lease2 = nullptr;
-    require(poolAllocate(&lease1, 4096) == cudaSuccess &&
-                poolAllocate(&lease2, 4096) == cudaSuccess,
+    require(yk::spectral::cuda_resources::poolAllocate(&lease1, 4096) == cudaSuccess &&
+                yk::spectral::cuda_resources::poolAllocate(&lease2, 4096) == cudaSuccess,
             "cannot borrow pooled buffers");
     require(lease1 != lease2, "pool reused an active lease");
-    require(poolRelease(lease1) == cudaSuccess && poolRelease(lease2) == cudaSuccess,
+    require(yk::spectral::cuda_resources::poolRelease(lease1) == cudaSuccess && yk::spectral::cuda_resources::poolRelease(lease2) == cudaSuccess,
             "cannot return pooled buffers");
-    require(poolRelease(lease2) != cudaSuccess, "pool accepted a double return");
+    require(yk::spectral::cuda_resources::poolRelease(lease2) != cudaSuccess, "pool accepted a double return");
     size_t free_bytes = 0, total_bytes = 0;
     require(cudaMemGetInfo(&free_bytes, &total_bytes) == cudaSuccess,
             "cannot inspect memory budget");
     void *oversized = nullptr;
-    require(poolAllocate(&oversized, total_bytes) == cudaErrorMemoryAllocation && !oversized,
+    require(yk::spectral::cuda_resources::poolAllocate(&oversized, total_bytes) == cudaErrorMemoryAllocation && !oversized,
             "pool consumed VTK reserved memory");
     SimulationConfig config;
     auto &g = config.geometry.parameters;
@@ -88,10 +88,10 @@ void testPreprocessState(const std::filesystem::path &root) {
     require(resident.statistics().image_uploads == 2 && resident.statistics().image_downloads == 2,
             "consecutive device stages transferred full frames");
     require(read(output) == values, "resident pipeline changed identity values");
-    const auto pool_after_first=devicePoolStatistics();
+    const auto pool_after_first=yk::spectral::cuda_resources::devicePoolStatistics();
     require(pool_after_first.active_bytes==0,"completed pipeline retained active leases");
     require(resident.run(config,input,output,diagnostic),diagnostic.c_str());
-    const auto pool_after_second=devicePoolStatistics();
+    const auto pool_after_second=yk::spectral::cuda_resources::devicePoolStatistics();
     require(pool_after_second.allocations==pool_after_first.allocations,"same-size repeated pipeline allocates new device buffers");
 
     Pipeline mixed;

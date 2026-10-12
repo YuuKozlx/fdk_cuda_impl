@@ -291,7 +291,7 @@ foreach(cuda_consumer IN ITEMS multispectrum_sim multispectrum_preprocessing_tes
 endforeach()
 
 if(TARGET YKCBCT)
-    add_library(multispectrum_device_pool STATIC src/recon/preprocess/DeviceMemoryPool.cpp)
+    add_library(multispectrum_device_pool STATIC src/cuda/DeviceMemoryPool.cpp)
     target_include_directories(multispectrum_device_pool PUBLIC include "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
     target_link_libraries(multispectrum_device_pool PUBLIC CUDA::cudart)
     if(MSVC)
