@@ -232,7 +232,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 regularization.plugin=="huber_tv_prox"&&regularization.strength>0?2:0;
             const size_t workspace=statistical?statistical_workspace.solverBytes()+statistical_workspace.caller_volume_bytes+statistical_workspace.weight_staging_bytes:
                 ((size_t((pipeline_name=="ossart"||pipeline_name=="sirt")?5:3)+tv_buffers)*volume_elements+4*block*pixels+
-                size_t(g.reconstruction_volume_x)*g.reconstruction_volume_y+
+                volume_elements+
                 (tv?6*volume_elements+7*size_t(YK::detail::iterativeBatchViews(pixels,g.views))*pixels:0))*sizeof(float)+size_t(32)*1024*1024;
             const size_t resident=workspace+projection_elements*sizeof(float);
             size_t free=0,total=0;check(cudaMemGetInfo(&free,&total)==cudaSuccess,"Cannot query reconstruction memory");

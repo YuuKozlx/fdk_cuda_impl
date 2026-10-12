@@ -24,55 +24,13 @@
 
 
 
-// ============================================================================
-// OSSART_TIGRE : 对齐 TIGRE OS_SART 语义;Config / 公共接口与 OSSART_v0 完全一致
-//
-// Config 字段沿用 v0 语义映射:
-//   n_subset   → 块数。内部换算 blocksize = ceil(Na / n_subset),
-//                连续分块 (= TIGRE order_subsets 'ordered'),按顺序遍历
-//   n_iter     → 外层迭代数;run() = 扫 n_iter 轮全部块
-//   lambda_red → 每扫完一整轮所有块衰减一次(TIGRE MATLAB 语义;=1 时无影响)
-//   eps        → 传入更新步分母。TIGRE 无 eps(用 V=inf),严格对齐请设 0;
-//                默认 1e-6 相对 V 的量级可忽略
-//   use_min    → 对齐 TIGRE 默认行为 (noneg=True) 需调用方设
-//                use_min=true, min_constraint=0;每块更新后 clamp
-//
-// 与 v0 的内部差异:
-//   - W:2x2x2 粗网格,全角度一次 FP 预计算,块取连续切片(零拷贝)
-//   - V:init 预计算,BP 全 1 后沿 Z 取平均 → 每块一张 2D 图 (= .mean(axis=0))
-//   - 测量数据:块连续 → 指针偏移,d_sino_meas_sub_ 移除
-//
-// 依赖两个新 Iter kernel(实现放 Iter kernels .cu,声明并入 Iter 头):
-//   mean_z_to_2d_launch / update_v2d_launch(见文末注释)
-//
-// 未自动对齐:TIGRE 算子对为 Siddon FP + FDK 加权 BP,如有对应 ETask 请在
-// Config 传入。体素布局假定 idx = z*(iVX*iVY) + y*iVX + x。
-// ============================================================================
-
-// ============================================================================
-// OSSART_TIGRE : 对齐 TIGRE OS_SART 语义;Config / 公共接口与 OSSART_v0 完全一致
-//
-// Config 字段沿用 v0 语义映射:
-//   n_subset   → 块数。内部换算 blocksize = ceil(Na / n_subset),
-//                连续分块 (= TIGRE order_subsets 'ordered'),按顺序遍历
-//   n_iter     → 外层迭代数;run() = 扫 n_iter 轮全部块
-//   lambda_red → 每扫完一整轮所有块衰减一次(TIGRE MATLAB 语义;=1 时无影响)
-//   eps        → 传入更新步分母。TIGRE 无 eps(用 V=inf),严格对齐请设 0;
-//                默认 1e-6 相对 V 的量级可忽略
-//   use_min    → 对齐 TIGRE 默认行为 (noneg=True) 需调用方设
-//                use_min=true, min_constraint=0;每块更新后 clamp
-//
-// 与 v0 的内部差异:
-//   - W:2x2x2 粗网格,全角度一次 FP 预计算,块取连续切片(零拷贝)
-//   - V:init 预计算,BP 全 1 后沿 Z 取平均 → 每块一张 2D 图 (= .mean(axis=0))
-//   - 测量数据:块连续 → 指针偏移,d_sino_meas_sub_ 移除
-//
-// 依赖两个新 Iter kernel(实现放 Iter kernels .cu,声明并入 Iter 头):
-//   mean_z_to_2d_launch / update_v2d_launch(见文末注释)
-//
-// 未自动对齐:TIGRE 算子对为 Siddon FP + FDK 加权 BP,如有对应 ETask 请在
-// Config 传入。体素布局假定 idx = z*(iVX*iVY) + y*iVX + x。
-// ============================================================================
+// TIGRE-style row normalization with voxelwise three-dimensional column weights.
+// Rows use a 2x2x2 support-volume projection. Columns are B_s * 1 on the actual
+// reconstruction grid for every trajectory; no Z averaging or 2D broadcast.
+// Positive block_size means exact views per block; zero retains the legacy
+// subset-count conversion. Optional GPU/CPU weight caches remain bounded.
+// FP/BP tasks are supplied by the caller and need not match official TIGRE's
+// Siddon/FDK pair. Thus this backend is not claimed numerically identical to it.
 
 namespace YK {
 
@@ -122,7 +80,6 @@ namespace YK {
 
             const int    Na = params.scan.NAng;
             const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
-            const size_t slice_n = (size_t)params.volume.Nx * params.volume.Ny;
             const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
 
             // ── 连续分块 (= TIGRE 'ordered'):blocksize = ceil(Na/n_subset) ──
@@ -149,10 +106,11 @@ namespace YK {
             }
 
             const size_t max_sino = max_K * view_n;
+            const size_t column_n=vol_n;
 
             // Include the lazy FP volume and BP projection textures, not just
             // the linear workspaces. Caller input/output buffers are separate.
-            if(!detail::fitsReconstructionBudget((4*max_sino+2*vol_n+slice_n)*sizeof(float)+size_t(32)*1024*1024,"TIGRE block workspaces"))return false;
+            if(!detail::fitsReconstructionBudget((4*max_sino+2*vol_n+column_n)*sizeof(float)+size_t(32)*1024*1024,"TIGRE block workspaces"))return false;
 
             // ── 常驻缓冲(块连续 → 无需 d_sino_meas_sub_)────────────────
             d_sino_fwd_.allocate(max_sino, deviceId);
@@ -176,12 +134,12 @@ namespace YK {
             fp_lo_.init(params_lo_, geometry, cfg.fp_task, deviceId, stream);
 
             // Fixed one-block workspaces, shared by every view/subset. Column
-            // weights are small 2D maps; give them cache priority over rows.
+            // Column weights keep the full volume; bounded caches prioritize them.
             d_row_w_.allocate(max_sino, deviceId);
-            d_col_w_.allocate(slice_n, deviceId);
+            d_col_w_.allocate(column_n, deviceId);
             d_ones8_.allocate(8, deviceId);
             YK::Iter::fill_ones_launch(d_ones8_, 8, stream);
-            std::vector<size_t> weight_counts(n_block_,slice_n);
+            std::vector<size_t> weight_counts(n_block_,column_n);
             for(int K:block_size_)weight_counts.push_back(size_t(K)*view_n);
             weights_.configure(weight_counts,deviceId,stream);
 
@@ -204,7 +162,6 @@ namespace YK {
 
             const size_t vol_n = (size_t)params.volume.Nx * params.volume.Ny * params.volume.Nz;
             const size_t view_n = (size_t)params.scan.Nu * params.scan.Nv;
-            const size_t slice_n = size_t(params.volume.Nx)*params.volume.Ny;
 
             for (unsigned int iter = 0; iter < iterations; ++iter)
             {
@@ -229,15 +186,9 @@ namespace YK {
                     if(cfg_.inverse_row_cap>0)YK::Iter::clamp_max_launch(out,sino_n,cfg_.inverse_row_cap,stream);return true;
                 });
                 const float* d_v_blk=weights_.get(size_t(b),d_col_w_,[&](float* out){
-                    auto column_params=ps;
-                    const float sx=params.volume.Nx*params.volume.voxelX_mm,sy=params.volume.Ny*params.volume.voxelY_mm;
-                    const float norm=std::sqrt(sx*sx+sy*sy);
-                    const float scale=norm>1e-8f?std::max(sx,sy)/norm*.9f:.9f;
-                    column_params.volume.voxelX_mm*=scale;column_params.volume.voxelY_mm*=scale;column_params.volume.voxelZ_mm*=scale;
                     YK::Iter::fill_ones_launch(d_residual_,sino_n,stream);
-                    if(!bp_.run(d_residual_,column_params,d_bp_,stream,true))return false;
-                    YK::Iter::mean_z_to_2d_launch(d_bp_,out,params.volume.Nx,params.volume.Ny,params.volume.Nz,stream);
-                    YK::Iter::threshold_inf_launch(out,slice_n,0.f,stream);return true;
+                    if(!bp_.run(d_residual_,ps,out,stream,true))return false;
+                    YK::Iter::threshold_inf_launch(out,vol_n,0.f,stream);return true;
                 });
                 if(!d_w_blk||!d_v_blk)return false;
 
@@ -257,11 +208,8 @@ namespace YK {
                 // Step3: bp = A_b^T r
                 bp_.run(d_residual_, ps, d_bp_, stream, /*clear_vol=*/true);
 
-                // Step4: x += lambda * bp / (V_b + eps)  (V 为 2D,沿 Z 广播)
-                YK::Iter::update_v2d_launch(
-                    d_vol, d_bp_, d_v_blk,
-                    lambda_cur_, cfg_.eps,
-                    params.volume.Nx, params.volume.Ny, params.volume.Nz, stream);
+                // Normalize each voxel by its own three-dimensional coverage.
+                YK::Iter::update_launch(d_vol,d_bp_,d_v_blk,lambda_cur_,cfg_.eps,vol_n,stream);
 
                 // Step5: 约束(每块更新后;= TIGRE noneg 位置)
                 if (cfg_.use_min)

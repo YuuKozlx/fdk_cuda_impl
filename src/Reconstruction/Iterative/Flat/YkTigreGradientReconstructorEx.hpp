@@ -121,7 +121,7 @@ public:
         const size_t scratch=(isPocs_(config.algorithm)?5*volume_count_:0)+(isBregman_(config.algorithm)?projection_count_:0)
             +((isPocs_(config.algorithm)||nesterov)?model:0)+(nesterov?2*volume_count_:0);
         const size_t block_projection=size_t(block_size>=params.scan.NAng?norm_chunk_:block_size)*params.scan.Nu*params.scan.Nv;
-        if(!YK::detail::fitsReconstructionBudget((scratch+4*block_projection+2*volume_count_+size_t(params.volume.Nx)*params.volume.Ny)*sizeof(float)+size_t(32)*1024*1024,"TIGRE solver workspaces"))return false;
+        if(!YK::detail::fitsReconstructionBudget((scratch+4*block_projection+2*volume_count_+volume_count_)*sizeof(float)+size_t(32)*1024*1024,"TIGRE solver workspaces"))return false;
         requested_subset_count_ = (params.scan.NAng + block_size - 1) / block_size;
         AlgebraicTigreBackend::Config data_config{};
         data_config.n_iter = config.iterations;

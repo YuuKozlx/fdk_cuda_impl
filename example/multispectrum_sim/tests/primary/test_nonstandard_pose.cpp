@@ -1,5 +1,6 @@
 #include "TestChecks.hpp"
 #include "LibraryGeometry.hpp"
+#include "primary/ProjectionGeometry.cuh"
 #include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitTomography.hpp"
 #include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtGeometry.hpp"
 #include <iostream>
@@ -106,8 +107,31 @@ void adapter(){
     require(YK::NonStandardFpBp::NikonTiltedCt::buildTiltedAxisGeometry(n,angles,poses,expected),"adapter tilted baseline");
     compare(buildNonStandardProjectionViews(config),expected);
 }
+void helicalAgreement(){
+    using namespace yk::spectral;SimulationConfig config;config.geometry.kind=GeometryKind::FlatHelical;
+    auto& g=config.geometry.parameters;g.views=1800;g.views_per_turn=360;g.scan_range_rad=4*pi;
+    g.sid_mm=709;g.sdd_mm=1143;g.pitch_mm_per_turn=40;g.start_z_mm=-100;
+    g.volume_x=181;g.volume_y=217;g.volume_z=181;
+    g.detector_u=1024;g.detector_v=128;g.pixel_u_mm=g.pixel_v_mm=.6;
+    auto sdk=makeLibrarySystem(config,YK::EPipeline::SART);
+    std::vector<YK::SConeProjGeomVec> views;std::vector<YK::SCylConeProjGeomVec> unused;YK::SVolGeom volume;
+    require(YK::buildSystemGeometry(sdk.geometry,views,unused,volume),"helical SDK geometry");
+    auto device=primary_detail::makeDeviceGeometry(config,1,1);double largest=0;
+    for(int index:{0,180,360,900,1440,1799})for(auto pixel:{std::pair<float,float>{511.5f,63.5f},{0,0},{1023,127}}){
+        const auto ray=primary_detail::scannerRay(device,index,pixel.first,pixel.second);
+        const auto& v=views[index];float3 expectedSource=xyz(v.src);
+        float3 expectedDetector=make_float3(v.detS.x+pixel.first*v.detU.x+pixel.second*v.detV.x,v.detS.y+pixel.first*v.detU.y+pixel.second*v.detV.y,v.detS.z+pixel.first*v.detU.z+pixel.second*v.detV.z);
+        for(auto pair:{std::pair<float3,float3>{ray.source,expectedSource},{ray.detector,expectedDetector}}){
+            largest=std::max(largest,double(std::abs(pair.first.x-pair.second.x)));largest=std::max(largest,double(std::abs(pair.first.y-pair.second.y)));largest=std::max(largest,double(std::abs(pair.first.z-pair.second.z)));
+        }
+    }
+    std::cout<<"helical projector/SDK max coordinate difference mm="<<largest<<" source Z="<<views.front().src.z<<"->"<<views.back().src.z<<'\n';
+    require(largest<.01,"helical primary/reconstruction geometry differs");
+    near(views.back().src.z,-100+40.*1799/360,2e-5,"five-turn helical source height");
+}
+
 }
 int main(){
-    try{planar();tilted();adapter();std::cout<<"non-standard flat detector pose: PASS\n";return 0;}
+    try{planar();tilted();adapter();helicalAgreement();std::cout<<"non-standard flat detector pose: PASS\n";return 0;}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

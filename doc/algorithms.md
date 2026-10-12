@@ -243,7 +243,10 @@ ART: x <- x + lambda*delta
 | 顺序 | Sequential、GoldenRatio |
 | 正则 | None、SmoothedTv |
 
-DetailedSubset 为每子集计算 `R=A_s*1`、`C=A_sᵀ*1`。TigreApprox 用 2×2×2 粗体积估计行权重、XY 范围 1.1 缩放、列权重范围 0.9 语义和连续视角分块；实际子集数以 backend 查询值为准。
+DetailedSubset 为每子集计算 `R=A_s*1`、`C=B_s*1`，B_s 为所选反投算子，不预设严格伴随。
+
+圆扫和螺旋的粗估后端均保留当前子集的完整三维列归一化权重，不再沿 Z 平均并广播；无覆盖体素的零分母屏蔽更新。二维列权重近似已取消，行权重仍保留 2×2×2 粗估。三维列权重使用固定工作体积与原有有界缓存，显存预算计入一份完整列权重体积；未缓存条目按需重算。此处的列归一化不再与官方 TIGRE 的 Z 平均实现相同。
+TigreApprox 仅保留 2×2×2 粗体积行权重估计及 XY 范围 1.1 缩放，列权重在实际重建网格上计算。连续视角分块的实际子集数以 backend 查询值为准。
 
 公共 `SART` 适配器（包括 Session 的 `EPipeline::SART` 和内部 `sart_reconstruct`）默认使用 TigreApprox，不增加 TOML 或 SDK 参数。仍按原视角顺序逐视图更新，保留松弛、epsilon 和约束设置；归一化改为粗估，因此结果可能与旧 DetailedSubset SART 不同。SIRT/OSSART 的默认权重不变，直接使用统一代数重建配置时仍可明确选择权重模型。粗估后端使用当前子集固定工作区和有预算的 GPU/CPU 权重缓存，未缓存的权重按需现算，不再无条件保存全视角 GPU 权重。
 

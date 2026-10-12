@@ -11,7 +11,7 @@ namespace YK {
 class SirtBatchBackend {
     SReconstructionParams params_,low_;cudaStream_t stream_=nullptr;int device_=0,max_chunk_=0,cache_chunk_=0;
     bool coarse_=false,prepared_=false,min_=false,max_=false;float lambda_=1,initial_lambda_=1,reduction_=1,eps_=1e-6f,lo_=0,hi_=0,row_cap_=0;
-    int iterations_=0;unsigned updates_=0;size_t pixels_=0,voxels_=0,slice_=0;
+    int iterations_=0;unsigned updates_=0;size_t pixels_=0,voxels_=0;
     ForwardOperatorAdapter fp_,fp_low_;BackOperatorAdapter bp_;
     DeviceWorkspaceF32 forward_,residual_,row_,column_,bp_sum_,ones_;
     detail::IterationWeightCache weights_;
@@ -24,13 +24,13 @@ public:
         const std::vector<SConeProjGeomVec>& geometry,cudaStream_t stream,int device,bool coarse,float inverse_row_cap=0){
         release();params_=params;low_=params;stream_=stream;device_=device;coarse_=coarse;row_cap_=inverse_row_cap;
         pixels_=size_t(params.scan.Nu)*params.scan.Nv;voxels_=size_t(params.volume.Nx)*params.volume.Ny*params.volume.Nz;
-        slice_=size_t(params.volume.Nx)*params.volume.Ny;max_chunk_=detail::iterativeBatchViews(pixels_,params.scan.NAng);
-        if(!detail::fitsReconstructionBudget((4*size_t(max_chunk_)*pixels_+(coarse?2:4)*voxels_+slice_)*sizeof(float)+size_t(32)*1024*1024,"SIRT batch workspaces"))return false;
+        max_chunk_=detail::iterativeBatchViews(pixels_,params.scan.NAng);
+        if(!detail::fitsReconstructionBudget((4*size_t(max_chunk_)*pixels_+(coarse?3:4)*voxels_)*sizeof(float)+size_t(32)*1024*1024,"SIRT batch workspaces"))return false;
         iterations_=cfg.n_iter;lambda_=initial_lambda_=cfg.lambda;reduction_=cfg.lambda_red;eps_=cfg.eps;
         min_=cfg.use_min;max_=cfg.use_max;lo_=cfg.min_constraint;hi_=cfg.max_constraint;
         const size_t projection=size_t(max_chunk_)*pixels_;
         forward_.allocate(projection,device);residual_.allocate(projection,device);row_.allocate(projection,device);
-        column_.allocate(coarse?slice_:voxels_,device);bp_sum_.allocate(voxels_,device);ones_.allocate(coarse?8:voxels_,device);
+        column_.allocate(voxels_,device);bp_sum_.allocate(voxels_,device);ones_.allocate(coarse?8:voxels_,device);
         Iter::fill_ones_launch(ones_,coarse?8:voxels_,stream);
         if(!fp_.init(params,geometry,cfg.fp_task,device,stream)||!bp_.init(params,geometry,cfg.bp_task,device,stream))return false;
         if(coarse){
@@ -46,22 +46,18 @@ public:
         if(!prepared_)return false;
         const int chunk=detail::projection_input?std::min(max_chunk_,detail::projection_input->capacityViews()):max_chunk_;
         if(chunk<=0)return false;
-        if(cache_chunk_!=chunk){std::vector<size_t> counts{coarse_?slice_:voxels_};
+        if(cache_chunk_!=chunk){std::vector<size_t> counts{voxels_};
             for(int first=0;first<params_.scan.NAng;first+=chunk)counts.push_back(size_t(std::min(chunk,params_.scan.NAng-first))*pixels_);
             weights_.configure(counts,device_,stream_);cache_chunk_=chunk;
         }
         for(unsigned iteration=0;iteration<iterations;++iteration){
             const float* column=weights_.get(0,column_,[&](float* out){
-                const float sx=params_.volume.Nx*params_.volume.voxelX_mm,sy=params_.volume.Ny*params_.volume.voxelY_mm;
-                const float norm=std::sqrt(sx*sx+sy*sy),scale=norm>1e-8f?std::max(sx,sy)/norm*.9f:.9f;
                 for(int first=0;first<params_.scan.NAng;first+=chunk){
                     const int count=std::min(chunk,params_.scan.NAng-first);auto p=batch(first,count);
-                    if(coarse_){p.volume.voxelX_mm*=scale;p.volume.voxelY_mm*=scale;p.volume.voxelZ_mm*=scale;}
                     Iter::fill_ones_launch(residual_,size_t(count)*pixels_,stream_);
-                    if(!bp_.run(residual_,p,coarse_?bp_sum_.data():out,stream_,first==0))return false;
+                    if(!bp_.run(residual_,p,out,stream_,first==0))return false;
                 }
-                if(coarse_){Iter::mean_z_to_2d_launch(bp_sum_,out,params_.volume.Nx,params_.volume.Ny,params_.volume.Nz,stream_);
-                    Iter::threshold_inf_launch(out,slice_,0.f,stream_);}
+                Iter::threshold_inf_launch(out,voxels_,0.f,stream_);
                 return true;
             });
             if(!column)return false;
@@ -81,8 +77,7 @@ public:
                 if(coarse_)Iter::multiply_launch(residual_,row,elements,stream_);else Iter::divide_launch(residual_,row,eps_,elements,stream_);
                 if(!bp_.run(residual_,p,bp_sum_,stream_,first==0))return false;
             }
-            if(coarse_)Iter::update_v2d_launch(volume,bp_sum_,column,lambda_,eps_,params_.volume.Nx,params_.volume.Ny,params_.volume.Nz,stream_);
-            else Iter::update_launch(volume,bp_sum_,column,lambda_,eps_,voxels_,stream_);
+            Iter::update_launch(volume,bp_sum_,column,lambda_,eps_,voxels_,stream_);
             if(min_)Iter::clamp_min_launch(volume,voxels_,lo_,stream_);if(max_)Iter::clamp_max_launch(volume,voxels_,hi_,stream_);
             weights_.planGpu();weights_.retain(0,column);lambda_*=reduction_;++updates_;
             if(!detail::reportExecutionProgress(int(iteration+1),int(iterations),stream_))return false;
