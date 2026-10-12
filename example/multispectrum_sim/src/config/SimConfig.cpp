@@ -714,8 +714,8 @@ namespace yk::spectral {
             throw std::runtime_error("重建工作流需要 reconstruction.input_projection_file");
         if (c.runsReconstruction()) {
             if ((c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "fdk" && c.geometry.kind != GeometryKind::FlatCbct && c.geometry.kind != GeometryKind::CylCbct && c.geometry.kind != GeometryKind::PlanarSourceOrbit && c.geometry.kind != GeometryKind::NikonTilted) ||
-                (c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "wfbp" && c.geometry.kind != GeometryKind::CylHelical))
-                throw std::runtime_error("解析重建支持 flat_cbct/cyl_cbct+fdk、cyl_helical+wfbp");
+                (c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "wfbp" && c.geometry.kind != GeometryKind::CylHelical && c.geometry.kind != GeometryKind::FlatHelical))
+                throw std::runtime_error("解析重建支持 flat_cbct/cyl_cbct+fdk、flat_helical/cyl_helical+wfbp");
         }
         return c;
     }

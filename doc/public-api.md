@@ -138,7 +138,7 @@ int main() {
 
 正投时 volume 是输入，projection 是输出；重建时相反。输入输出均由调用方分配并持有，至少保持有效到 execute 返回；Device 指针必须属于所选 GPU。不要依赖输入原样保留或缓冲区别名，部分内部解析路径会在设备投影上进行处理。
 
-普通 FP、Cyl FDK、非标准 FDK 和公共 Cyl Helical WFBP 支持 Host/Device 传输路径。公共 Flat FDK 的 projection 当前只接受 Host，volume 可为 Host/Device；内部 Flat FDK 已有 Device 批次入口，但 Session 尚未映射该能力。XFDK 和未接入投影数据源的迭代路径要求双方都是 Device。Flat SART/SIRT/OSSART 及无 Nesterov/FDK 初值的 TIGRE SART/OS-SART/SIRT、AsdPocs/OsAsdPocs 支持 Host 投影或读取回调，volume 仍要求 Device。组合限制以 [算法矩阵](algorithms.md#公共支持矩阵) 为准。
+普通 FP、Cyl FDK、非标准 FDK 和公共 Flat/Cyl Helical WFBP 支持 Host/Device 传输路径。公共 Flat FDK 的 projection 当前只接受 Host，volume 可为 Host/Device；内部 Flat FDK 已有 Device 批次入口，但 Session 尚未映射该能力。XFDK 和未接入投影数据源的迭代路径要求双方都是 Device。Flat SART/SIRT/OSSART 及无 Nesterov/FDK 初值的 TIGRE SART/OS-SART/SIRT、AsdPocs/OsAsdPocs 支持 Host 投影或读取回调，volume 仍要求 Device。组合限制以 [算法矩阵](algorithms.md#公共支持矩阵) 为准。
 
 ## 迭代投影分批加载
 
@@ -238,3 +238,7 @@ solverBytes 不含调用方常驻投影/权重、调用方体积及 VTK 保留�
 `GradientDescent=0` 仍保留原始梯度下降，Fista=1 仍报未实现。
 新模式的 step_size 与回溯仅控制正则子步；零 strength 时直接退化为相同约束的内部 SIRT。
 工作区查询额外计入 R/C、反投累加和单位体积缓冲，旧 ABI 布局及原有枚举数值保持。
+
+SDK 的 EPipeline::WFBP 已开放规范平板螺旋：geometry.detector=Flat、trajectory=Helical，Session 从逐视图几何派生重排所需元数据并选择 FlatPanel 输入适配。
+当前要求正向等角度采样、正螺距、无源偏移与探测器偏移/倾斜。输入必须为全量线积分，Host/Device 投影和体积均支持；尚不支持投影读取回调或公共分包。
+多能工具 TOML 已接通平板/曲面螺旋 WFBP；当前平板 ImGui 提供 WFBP 方法和 cutoff/apodization 控制。

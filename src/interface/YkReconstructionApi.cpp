@@ -56,7 +56,7 @@ EReleaseDecision releaseDecision(const SSystemSpec& source)
     case EPipeline::TigreGradient:
         return !cyl ? EReleaseDecision::Released : EReleaseDecision::UnderTest;
     case EPipeline::WFBP:
-        return cyl && helical
+        return helical
             ? EReleaseDecision::Released : EReleaseDecision::UnderTest;
     case EPipeline::CFDK:
         return EReleaseDecision::UnderTest;
@@ -99,12 +99,12 @@ bool hasNonzeroAcquisitionOffset(const SSystemConfig& geometry,
     const bool cyl_fdk = pipeline == EPipeline::FDK &&
         geometry.detector == EDetectorKind::Cylindrical;
     // Cyl-FDK preserves detector V translation in the resampled flat principal point.
-    const bool detector_offset = pipeline == EPipeline::WFBP
+    const bool detector_offset = pipeline == EPipeline::WFBP && geometry.detector == EDetectorKind::Cylindrical
         ? std::fabs(pose.offset_unv_mm.y) > tolerance
         : std::fabs(pose.offset_unv_mm.x) > tolerance ||
             std::fabs(pose.offset_unv_mm.y) > tolerance ||
             (!cyl_fdk && std::fabs(pose.offset_unv_mm.z) > tolerance);
-    const bool detector_tilt = cyl_fdk &&
+    const bool detector_tilt = (cyl_fdk || (pipeline == EPipeline::WFBP && geometry.detector == EDetectorKind::Flat)) &&
         (!std::isfinite(pose.tilt_u_rad) || !std::isfinite(pose.tilt_v_rad) ||
          !std::isfinite(pose.tilt_n_rad) ||
          std::fabs(pose.tilt_u_rad) > tolerance ||

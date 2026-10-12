@@ -15,7 +15,7 @@
 | SIRT / OSSART / CGLS / PWLS | 放行 | 放行 | 放行 | 放行 |
 | SART | 放行 | 边界放行，后端接线不完整，勿依赖 | 放行 | 边界放行，后端接线不完整，勿依赖 |
 | TigreGradient | 放行 | 测试中 | 放行，具体选项另受算法限制 | 测试中 |
-| WFBP | 测试中 | 测试中 | 测试中 | 放行，要求螺旋解析模块开启 |
+| WFBP | 测试中 | 测试中 | 放行，规范几何、无 FFS | 放行，要求螺旋解析模块开启 |
 
 Cyl SART 的区别来自当前 Session：initialize 的 SART 分支没有 Cyl 专用准备，而 execute 的 Cyl 分支统一调用 `cyl_iterative_`。这是现有后端问题，不应把边界放行写成可用承诺。
 
@@ -34,7 +34,7 @@ Cyl SART 的区别来自当前 Session：initialize 的 SART 分支没有 Cyl �
 | 非标准 FDK | Host 或 Device | 公共 Session 不支持分包提交 | 公共路径要求完整投影驻留 Device；内部独立流式接口见下文；窗口/探测器需纹理对齐 |
 | XFDK | 双方均 Device | 不支持 | 理想等角完整 2π、无偏移/倾斜等 |
 | 已接通的迭代算法 | 双方均 Device | 不支持 | 完整序列；并非所有内部参数都导出 |
-| Cyl Helical WFBP | Host 或 Device | 不支持 | 无 FFS、规范几何及后端 prepare 限制 |
+| Flat / Cyl Helical WFBP | Host 或 Device | 不支持 | 无 FFS、规范几何及后端 prepare 限制 |
 
 公共 Joseph/Siddon 模型字段供 FP/迭代配对使用，不是在 FDK 中选择另一套解析 BP。普通 FDK BP、FDK-matched BP、Siddon BP 的数学语义不同。
 
@@ -217,7 +217,9 @@ BP 用三段逆映射得到 c，纹理采样并乘 0.5*DeltaTheta
 
 实现：[WFBP Pipeline](../src/Reconstruction/Analytic/Helical/WFBP/YkWfbpPipeline.hpp)。FreeCT 风格解析管线执行重排、预加权、滤波、冗余处理和 BP，与螺旋迭代路径独立。
 
-公共接口仅开放 Cyl Helical、无 FFS，需要 `YKCBCT_BUILD_HELICAL=ON`；Flat 输入存在内部测试入口但仍未公共放行。源偏移和探测器 N offset 在边界被拒绝，其他几何条件继续由 wFBP prepare 判断，不能因为某项边界未拒绝就承诺任意 tilt。
+公共 SDK 开放 Flat/Cyl Helical、无 FFS，需要 `YKCBCT_BUILD_HELICAL=ON`；Session 根据探测器类型分别选择 FlatPanel 或 CylindricalArc 适配。Flat 入口暂拒绝源偏移、探测器 U/N/V 偏移与倾斜，仅支持递增等角度、正螺距的规则螺旋；其余几何约束仍由 prepare 校验。Cyl 入口保持原边界，不扩大任意姿态支持范围。
+
+多能前投工具的 TOML 已支持 flat_helical/cyl_helical + analytic/wfbp，当前平板 UI 提供 WFBP (helical) 选项、cutoff 和 apodization，并保留加载/保存值。SDK 支持 Host/Device 输入输出四种组合及 reset 后复用，仍要求全量投影，不提供 reader 或逐包 WFBP。平板入口使用解析无限长水柱投影检查中心衰减尺度，不能据此承诺头部、截断或任意螺距的图像质量。
 
 `redundancy_flat` 与滤波参数使用 wFBP 自己的定义，不能照搬普通 FDK 的 Parker 或 cutoff。保留 FreeCT 来源及 [授权声明](../LICENSES/FreeCT_wFBP_NOTICE.md)。
 

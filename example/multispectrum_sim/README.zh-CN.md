@@ -642,3 +642,8 @@ UI 的 Data update 可切换两者。新模式的数据项默认松弛 1，step_
 
 UI/TOML 的 TIGRE OS 和普通 ossart 都使用 subsets 表示子集数量。TIGRE 应用层按 ceil(views/subsets) 换算一次后传入 SDK 的 block_size，后端直接采用，末块可以较短。
 TIGRE POCS 默认每外轮将数据松弛乘 0.99，普通 TIGRE SART/SIRT/OS-SART 默认不衰减；该族使用 0.1 mm⁻¹ 的逆行权重上限保护短路径。
+
+ImGui 的 Reconstruction / Method 提供 WFBP (helical)，用于规范平板螺旋的解析重建。
+选择后可控制 WFBP cutoff 与 apodization，使用 FreeCT ramp 滤波；加载和保存 TOML 保留这些参数。
+对应配置为 geometry.kind=flat_helical、reconstruction.type=analytic、reconstruction.analytic.pipeline=wfbp，filter=ramlak。
+WFBP 当前消费完整投影序列，重排和 FFT 工作区较大；不使用 FDK 的 chunk_views 分包逻辑。UI 的整幅完成进度与 FDK/迭代的分阶段进度区分。

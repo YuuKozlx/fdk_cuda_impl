@@ -237,14 +237,20 @@ public:
         case EPipeline::WFBP:
 #if YKCBCT_HAS_HELICAL
         {
-            if (!cylindrical_ || geometry_.cylGeometry().empty()) break;
             Helical::Wfbp::Config c{};
-            c.input_detector = Helical::Wfbp::EInputDetector::CylindricalArc;
+            c.input_detector = cylindrical_ ? Helical::Wfbp::EInputDetector::CylindricalArc : Helical::Wfbp::EInputDetector::FlatPanel;
             c.redundancy_flat = reconstruction_.wfbp.redundancy_flat;
             c.filter.cutoff_c = reconstruction_.wfbp.filter_cutoff;
             c.filter.apodization_a = reconstruction_.wfbp.filter_apodization;
-            ok = wfbp_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
-                params_.scan.Nv, geometry_.cylGeometry(), c, resources_.stream(), device_);
+            if(cylindrical_){
+                if(geometry_.cylGeometry().empty())break;
+                ok = wfbp_.prepare(geometry_.volumeGeometry(),params_.scan.Nu,params_.scan.Nv,
+                    geometry_.cylGeometry(),c,resources_.stream(),device_);
+            }else{
+                if(geometry_.allGeometry().empty())break;
+                ok = wfbp_.prepare(geometry_.volumeGeometry(),params_.scan.Nu,params_.scan.Nv,
+                    geometry_.allGeometry(),c,resources_.stream(),device_);
+            }
             break;
         }
 #else

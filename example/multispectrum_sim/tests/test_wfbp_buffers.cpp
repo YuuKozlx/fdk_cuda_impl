@@ -16,10 +16,10 @@ void cudaCheck(cudaError_t result) {
 }
 }
 
-int main() {
+void checkBuffers(yk::spectral::GeometryKind kind) {
     try {
         yk::spectral::SimulationConfig config;
-        config.geometry.kind = yk::spectral::GeometryKind::CylHelical;
+        config.geometry.kind = kind;
         auto& g = config.geometry.parameters;
         g.views = 360; g.views_per_turn = 120;
         g.detector_u = 64; g.detector_v = 16;
@@ -77,8 +77,36 @@ int main() {
         partial.view_count=g.views/2;
         require(!session->execute(partial) && session->lastError()==YK::EApiErrorCode::StreamingStateError,
             "partial wFBP input must be rejected");
-        return 0;
+        if(kind==yk::spectral::GeometryKind::FlatHelical){
+            for(int axis=0;axis<3;++axis){auto invalid=system;float* offset=&invalid.geometry.flat_detector.pose.offset_unv_mm.x;offset[axis]=1;require(!session->initialize(invalid)&&session->lastError()==YK::EApiErrorCode::UnsupportedCombination,"flat WFBP offset must be rejected");}
+            auto tilted=system;tilted.geometry.flat_detector.pose.tilt_u_rad=.01f;require(!session->initialize(tilted)&&session->lastError()==YK::EApiErrorCode::UnsupportedCombination,"flat WFBP tilt must be rejected");
+        }
+        return;
     } catch(const std::exception& e) {
-        std::cerr<<e.what()<<'\n'; return 1;
+        throw;
     }
 }
+
+void checkWaterCylinder(){
+    yk::spectral::SimulationConfig config;config.geometry.kind=yk::spectral::GeometryKind::FlatHelical;
+    auto& g=config.geometry.parameters;g.views=360;g.views_per_turn=120;g.detector_u=64;g.detector_v=16;
+    g.pixel_u_mm=g.pixel_v_mm=1;g.sid_mm=500;g.sdd_mm=1000;g.pitch_mm_per_turn=4;g.start_z_mm=-6;
+    g.volume_x=g.volume_y=16;g.volume_z=8;g.voxel_x_mm=g.voxel_y_mm=g.voxel_z_mm=.6;
+    auto system=yk::spectral::makeLibrarySystem(config,YK::EPipeline::WFBP);
+    auto* session=YK::ReconstructionSessionFactory::create();require(session&&session->initialize(system),"flat water init");
+    const double radius=4,mu=.02;std::vector<float> input(size_t(g.views)*g.detector_u*g.detector_v),output(16*16*8);
+    for(int view=0;view<g.views;++view)for(int row=0;row<g.detector_v;++row)for(int channel=0;channel<g.detector_u;++channel){
+        double u=(channel-.5*(g.detector_u-1))*g.pixel_u_mm,v=(row-.5*(g.detector_v-1))*g.pixel_v_mm;
+        double ray_xy=std::hypot(g.sdd_mm,u),impact=g.sid_mm*u/ray_xy;
+        input[(size_t(view)*g.detector_v+row)*g.detector_u+channel]=float(std::abs(impact)<radius?mu*2*std::sqrt(radius*radius-impact*impact)*std::sqrt(ray_xy*ray_xy+v*v)/ray_xy:0);
+    }
+    YK::SExecutionRequest request;request.projection={input.data(),YK::EMemoryLocation::Host,input.size()};request.volume={output.data(),YK::EMemoryLocation::Host,output.size()};request.view_count=g.views;
+    require(session->execute(request),session->lastErrorMessage());
+    double sum=0;int count=0;for(int z=2;z<6;++z)for(int y=0;y<16;++y)for(int x=0;x<16;++x){
+        double xx=(x-7.5)*.6,yy=(y-7.5)*.6;if(xx*xx+yy*yy<1.2*1.2){sum+=output[(z*16+y)*16+x];++count;}
+    }
+    std::cout<<"flat water mu="<<sum/count<<" expected="<<mu<<'\n';
+    require(std::isfinite(sum)&&std::abs(sum/count-mu)<mu*.15,"flat helical water attenuation scale mismatch");
+    YK::ReconstructionSessionFactory::destroy(session);
+}
+int main(){try{checkBuffers(yk::spectral::GeometryKind::CylHelical);checkBuffers(yk::spectral::GeometryKind::FlatHelical);checkWaterCylinder();return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

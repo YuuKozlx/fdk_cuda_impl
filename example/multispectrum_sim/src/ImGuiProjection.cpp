@@ -400,13 +400,25 @@ void number(const char* label, double& value)
         void reconstruction() {
             auto& r=draft.reconstruction;auto& g=draft.geometry.parameters;
             ImGui::Checkbox("Reconstruct after projection",&auto_reconstruct);
-            int method=r.type=="statistical"?2:r.type=="iterative"?1:0;
-            if(ImGui::Combo("Method",&method,"FDK\0Algebraic iterative\0Statistical\0")){r.type=method==2?"statistical":method?"iterative":"analytic";r.analytic.pipeline="fdk";}
-            if(!method){
-                ImGui::TextWrapped("FDK: Flat circular / Planar / Tilted. Flat helical requires another reconstruction method.");
-                int filter=r.analytic.filter=="ramlak"?0:r.analytic.filter=="shepp-logan"?1:2;
-                if(ImGui::Combo("Filter",&filter,"ramlak\0shepp-logan\0hann\0"))r.analytic.filter=filter==0?"ramlak":filter==1?"shepp-logan":"hann";
-                integer("Chunk views",r.analytic.chunk_views);
+            int method=r.type=="statistical"?2:r.type=="iterative"?1:r.analytic.pipeline=="wfbp"?3:0;
+            if(ImGui::Combo("Method",&method,"FDK\0Algebraic iterative\0Statistical\0WFBP (helical)\0")){
+                r.type=method==2?"statistical":method==1?"iterative":"analytic";
+                r.analytic.pipeline=method==3?"wfbp":"fdk";
+                if(method==3)r.analytic.filter="ramlak";
+            }
+            if(method==0||method==3){
+                if(method==3){
+                    ImGui::TextWrapped("WFBP: analytic helical reconstruction. Uses the complete projection sequence.");
+                    if(draft.geometry.kind!=GeometryKind::FlatHelical)ImGui::TextWrapped("Select Flat helical in Geometry to use WFBP.");
+                    number("WFBP cutoff (0, 1]",r.analytic.wfbp_cutoff);
+                    number("WFBP apodization [0, 1]",r.analytic.wfbp_apodization);
+                    ImGui::TextUnformatted("Filter: FreeCT ramp");
+                }else{
+                    ImGui::TextWrapped("FDK: Flat circular / Planar / Tilted. For Flat helical select WFBP or an iterative method.");
+                    int filter=r.analytic.filter=="ramlak"?0:r.analytic.filter=="shepp-logan"?1:2;
+                    if(ImGui::Combo("Filter",&filter,"ramlak\0shepp-logan\0hann\0"))r.analytic.filter=filter==0?"ramlak":filter==1?"shepp-logan":"hann";
+                    integer("Chunk views",r.analytic.chunk_views);
+                }
             }else if(method==1){
                 const char* algorithms[]={"sirt","ossart","cgls","tigre_sart","tigre_os_sart","tigre_sart_tv","tigre_os_sart_tv","sart","tigre_sirt"};
                 int index=0;for(int i=0;i<9;++i)if(r.iterative.algorithm==algorithms[i])index=i;
@@ -722,7 +734,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             if(std::getenv("YK_IMGUI_RECON_SMOKE")||std::getenv("YK_IMGUI_CHAIN_SMOKE")){
                 bool reported=false;for(const auto& event:progress_history){
                     std::cout<<"progress "<<event.phase<<" "<<event.completed<<"/"<<event.total<<std::endl;
-                    if(event.completed>0 && (std::string(event.phase)=="FDK views"||std::string(event.phase)=="Iterative updates"))reported=true;
+                    if(event.completed>0 && (std::string(event.phase)=="FDK views"||std::string(event.phase)=="Iterative updates"||std::string(event.phase)=="Full-volume reconstruction"))reported=true;
                 }
                 if(!reported)throw std::runtime_error("reconstruction did not report completed units");
             }
@@ -772,7 +784,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         const bool chain_smoke=std::getenv("YK_IMGUI_CHAIN_SMOKE")!=nullptr;
         ui.calculate = smoke || chain_smoke;
         try {loadResources(ui.draft);}
-        catch(const std::exception& e){ui.message=e.what();view.setEditingEnabled(true);view.setStatus("Could not load TOML resources. Correct paths or load another TOML.");if(smoke)throw;}
+        catch(const std::exception& e){ui.message=e.what();view.setEditingEnabled(true);view.setStatus("Could not load TOML resources. Correct paths or load another TOML.");if(smoke||chain_smoke)throw;}
         if(ui.message.empty())ui.message=initial.source_config_file.string();
         if(std::getenv("YK_IMGUI_LOAD_SMOKE")) {
             auto trial=initial;

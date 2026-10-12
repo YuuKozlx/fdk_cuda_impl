@@ -192,8 +192,8 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             "DLL FDK requires a supported flat, cylindrical, or non-standard acquisition");
         check(!cyl_fdk || config.geometry.kind == GeometryKind::CylCbct,
             "DLL cyl_fdk 只放行 cyl_cbct");
-        check(!wfbp || config.geometry.kind == GeometryKind::CylHelical,
-            "DLL wFBP 当前只放行 cyl_helical");
+        check(!wfbp || config.geometry.kind == GeometryKind::CylHelical || config.geometry.kind == GeometryKind::FlatHelical,
+            "DLL wFBP requires flat_helical or cyl_helical");
         auto system = makeLibrarySystem(config, pipeline,
             YK::EProjectionModel::Joseph, parseFilter(config.reconstruction.analytic.filter),
             GeometryUse::Reconstruction);

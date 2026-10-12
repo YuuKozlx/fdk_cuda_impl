@@ -75,6 +75,16 @@ int main(){try{
     const auto subset_config=loadConfig(dir/"tigre-subsets.toml");
     require(subset_config.reconstruction.iterative.subsets==3,"TIGRE subset-count roundtrip");
     c.reconstruction.iterative.algorithm="sirt";c.reconstruction.iterative.subsets=1;
+    c.geometry.kind=GeometryKind::FlatHelical;c.geometry.parameters.pitch_mm_per_turn=4;
+    c.reconstruction.type="analytic";c.reconstruction.analytic.pipeline="wfbp";c.reconstruction.analytic.filter="ramlak";
+    c.reconstruction.analytic.wfbp_cutoff=.8;c.reconstruction.analytic.wfbp_apodization=.4;
+    saveProjectionUiConfig(c,dir/"flat-helical-wfbp.toml",WorkflowMode::ProjectAndReconstruct);
+    const auto wfbp=loadConfig(dir/"flat-helical-wfbp.toml");
+    require(wfbp.geometry.kind==GeometryKind::FlatHelical&&wfbp.reconstruction.analytic.pipeline=="wfbp"&&wfbp.reconstruction.analytic.wfbp_cutoff==.8&&wfbp.reconstruction.analytic.wfbp_apodization==.4,"flat WFBP roundtrip");
+    c.geometry.kind=GeometryKind::FlatCbct;saveProjectionUiConfig(c,dir/"invalid-circular-wfbp.toml",WorkflowMode::ProjectAndReconstruct);
+    bool wrongWfbp=false;try{loadConfig(dir/"invalid-circular-wfbp.toml");}catch(const std::exception&){wrongWfbp=true;}
+    require(wrongWfbp,"circular WFBP accepted");
+    c.reconstruction.analytic.pipeline="fdk";
     c.reconstruction.type="statistical";
     c.reconstruction.statistical.regularization.plugin="smoothed_tv";
     c.reconstruction.statistical.regularization.strength=.4;c.reconstruction.statistical.regularization.shape=.002;

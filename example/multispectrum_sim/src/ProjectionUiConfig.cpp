@@ -180,7 +180,12 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
     recon.insert_or_assign("output_volume_file",r.output_volume_file.generic_string());recon.insert_or_assign("slice_prefix",r.slice_prefix.generic_string());recon.insert_or_assign("save_slices",r.save_slices);
     recon.erase("analytic");recon.erase("iterative");recon.erase("statistical");
     if(r.type=="analytic")recon.insert("analytic",toml::table{{"pipeline",r.analytic.pipeline},{"filter",r.analytic.filter},{"chunk_views",r.analytic.chunk_views}});
-    else if(r.type=="iterative") recon.insert("iterative",toml::table{{"algorithm",r.iterative.algorithm},{"iterations",r.iterative.iterations},{"relaxation",r.iterative.relaxation},{"subsets",r.iterative.subsets},
+    if(r.type=="analytic"&&r.analytic.pipeline=="wfbp"){
+        auto* a=recon["analytic"].as_table();
+        a->insert_or_assign("wfbp_cutoff",r.analytic.wfbp_cutoff);
+        a->insert_or_assign("wfbp_apodization",r.analytic.wfbp_apodization);
+    }
+    if(r.type=="iterative") recon.insert("iterative",toml::table{{"algorithm",r.iterative.algorithm},{"iterations",r.iterative.iterations},{"relaxation",r.iterative.relaxation},{"subsets",r.iterative.subsets},
         {"projection_model",r.iterative.projection_model},{"tv_iterations",r.iterative.tv_iterations},{"tv_alpha",r.iterative.tv_alpha},{"tv_alpha_reduction",r.iterative.tv_alpha_reduction},
         {"maximum_update_ratio",r.iterative.maximum_update_ratio},{"non_negative",r.iterative.non_negative},
         {"regularization",toml::table{{"plugin",r.iterative.regularization.plugin},{"strength",r.iterative.regularization.strength},
