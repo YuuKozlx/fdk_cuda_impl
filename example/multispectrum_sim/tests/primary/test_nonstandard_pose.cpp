@@ -113,6 +113,8 @@ void helicalAgreement(){
     g.sid_mm=709;g.sdd_mm=1143;g.pitch_mm_per_turn=40;g.start_z_mm=-100;
     g.volume_x=181;g.volume_y=217;g.volume_z=181;
     g.detector_u=1024;g.detector_v=128;g.pixel_u_mm=g.pixel_v_mm=.6;
+    for(int direction : {-1, 1}) for(double pitch : {-40., 40.}) {
+    g.rotation_direction=direction;g.pitch_mm_per_turn=pitch;g.start_angle_rad=.37;
     auto sdk=makeLibrarySystem(config,YK::EPipeline::SART);
     std::vector<YK::SConeProjGeomVec> views;std::vector<YK::SCylConeProjGeomVec> unused;YK::SVolGeom volume;
     require(YK::buildSystemGeometry(sdk.geometry,views,unused,volume),"helical SDK geometry");
@@ -127,7 +129,8 @@ void helicalAgreement(){
     }
     std::cout<<"helical projector/SDK max coordinate difference mm="<<largest<<" source Z="<<views.front().src.z<<"->"<<views.back().src.z<<'\n';
     require(largest<.01,"helical primary/reconstruction geometry differs");
-    near(views.back().src.z,-100+40.*1799/360,2e-5,"five-turn helical source height");
+    near(views.back().src.z,g.start_z_mm+pitch*direction*1799/360,5e-5,"five-turn helical source height");
+    }
 }
 
 }

@@ -121,7 +121,8 @@ namespace yk::spectral {
             scan.sid_mm = static_cast<float>(g.sid_mm);
             scan.sdd_mm = static_cast<float>(g.sdd_mm);
             scan.start_z_mm = static_cast<float>(g.start_z_mm);
-            scan.pitch_mm_per_turn = static_cast<float>(g.pitch_mm_per_turn);
+            // Simulation pitch follows the source angle; SDK pitch is physical bed travel.
+            scan.pitch_mm_per_turn = -static_cast<float>(g.pitch_mm_per_turn) * g.rotation_direction;
             scan.source_offset_mm = make_float3(
                 static_cast<float>(g.source_offset_y_mm),
                 static_cast<float>(-g.source_offset_x_mm),

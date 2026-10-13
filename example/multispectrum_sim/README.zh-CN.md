@@ -826,3 +826,7 @@ gain = 1.0
 ```
 
 把 pipeline 改为 fdk 即复用相同窗配置。WFBP 的公共执行仍要求完整投影序列；此声明不改变扫描几何或启用逐帧流式调用。
+
+### 螺旋配置与 SDK 床进方向
+
+示例 TOML 的 `pitch_mm_per_turn` 描述随源角度增加的源探 Z 位移，前投、模型重投影和显示共用该约定。SDK 的 `SRegularHelicalScanSpec::pitch_mm_per_turn` 描述物理床进，因此示例在 `LibraryGeometry` 中按 `-pitch_mm_per_turn * rotation_direction` 转换；SDK 调用方仍遵循物理床进约定。

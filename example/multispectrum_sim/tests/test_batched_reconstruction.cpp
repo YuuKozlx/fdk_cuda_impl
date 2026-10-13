@@ -57,7 +57,7 @@ std::vector<float> run(const std::string& algo,int source,int batch,int views=13
 void helicalSphere(bool helical=true){
     SimulationConfig c;c.geometry.kind=helical?GeometryKind::FlatHelical:GeometryKind::FlatCbct;auto& g=c.geometry.parameters;
     g.views=96;g.views_per_turn=24;g.detector_u=64;g.detector_v=16;g.pixel_u_mm=g.pixel_v_mm=1;
-    g.sid_mm=500;g.sdd_mm=1000;g.pitch_mm_per_turn=helical?8:0;g.start_z_mm=helical?16:0;if(!helical)g.views_per_turn=g.views;
+    g.sid_mm=500;g.sdd_mm=1000;g.pitch_mm_per_turn=helical?8:0;g.start_z_mm=helical?-16:0;if(!helical)g.views_per_turn=g.views;
     g.volume_x=g.volume_y=g.volume_z=32;g.reconstruction_volume_x=g.reconstruction_volume_y=g.reconstruction_volume_z=32;
     g.voxel_x_mm=g.voxel_y_mm=g.voxel_z_mm=g.reconstruction_voxel_x_mm=g.reconstruction_voxel_y_mm=g.reconstruction_voxel_z_mm=1;
     c.reconstruction.type="iterative";c.reconstruction.iterative.algorithm="sart";c.reconstruction.iterative.iterations=3;
