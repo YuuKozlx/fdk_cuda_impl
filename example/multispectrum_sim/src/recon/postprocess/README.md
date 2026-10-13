@@ -56,3 +56,6 @@ reconstructWithLibraryFdk(config, projection, volume, slices, diagnostic, progre
 Stage、Exporter、状态转换、逆序清理、进度、计时和工厂使用 [统一流水线基础层](../../../include/pipeline/README.md)，不再维护独立的 Stage/Requirements/Registry 契约。`prepare(const Context&)` 通过 `context.grid` 获取当前体积几何；插件不得自行修改 domain/location 标记，转换由流水线提交。
 
 Stage 与 Exporter 通过共同 IPlugin::info() 提供元信息，注册表通过 add(PluginInfo, Factory) 注册，list()/find(id) 查询不会实例化插件；详见统一流水线的静态自描述说明。
+
+
+强度处理已按标定、校正、分割拆分到 `stages/`。μ↔HU 可配置基准、空气／水 ROI 标定、HU 线性校正和多级标签分割的 CPU/CUDA 接口见 [使用说明](../../../include/recon/postprocess/stages/README.md)。标签域与 HU、衰减域分开，原有衰减 RAW 导出不会接收标签图。

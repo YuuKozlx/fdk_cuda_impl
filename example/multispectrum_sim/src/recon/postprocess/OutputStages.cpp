@@ -1,4 +1,5 @@
 #include "pipeline/BuiltinPluginInfo.hpp"
+#include "image/GridMetadata.hpp"
 #include "recon/postprocess/PostprocessPipeline.hpp"
 #include <algorithm>
 #include <cmath>
@@ -126,6 +127,7 @@ namespace {
             file.write(reinterpret_cast<const char*>(v.host_data), std::streamsize(v.elements * sizeof(float)));
             file.close();
             check(bool(file), "cannot write reconstruction output");
+            image::writeGridMetadata(c.volume_file,v.grid);
         }
     };
     class OrthogonalBmpExporter final : public IExporter {

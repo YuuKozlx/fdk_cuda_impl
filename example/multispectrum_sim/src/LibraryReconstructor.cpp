@@ -1,6 +1,7 @@
 #include "common/YkTimingWatchdog.hpp"
 #include "LibraryReconstructor.hpp"
 #include "recon/postprocess/PostprocessPipeline.hpp"
+#include "image/ImageStages.hpp"
 
 #include "LibraryGeometry.hpp"
 #include "ReconstructionPreprocessor.hpp"
@@ -193,6 +194,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
 
 
         std::vector<float> volume(volume_elements, 0.f);
+        std::shared_ptr<float> device_result;
         if (fdk && !cyl_fdk && !nonstandard_fdk) {
             std::vector<float> chunk;
             const int chunk_views = std::min(g.views,
@@ -300,7 +302,9 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 check(session->execute(request), std::string("YKCBCT 迭代重建执行失败: ") + session->lastErrorMessage());
                 if(YK::diagnostics::timingEnabled()&&cudaDeviceSynchronize()!=cudaSuccess)throw std::runtime_error("reconstruction profiling synchronization failed");
                 }
-                cudaCheck(cudaMemcpy(volume.data(), d_volume, volume.size() * sizeof(float), cudaMemcpyDeviceToHost), "下载迭代重建体失败");
+                int result_device=0;cudaCheck(cudaGetDevice(&result_device),"获取重建设备失败");
+                float* completed_volume=d_volume;d_volume=nullptr;
+                device_result=std::shared_ptr<float>(completed_volume,[result_device](float* p){int old=0;cudaGetDevice(&old);cudaSetDevice(result_device);cudaFree(p);cudaSetDevice(old);});
             } catch (...) {
                 if (d_projection) cudaFree(d_projection);
                 if (d_volume) cudaFree(d_volume);
@@ -309,13 +313,18 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             cudaFree(d_projection);
             cudaFree(d_volume);
         }
+        YK::ReconstructionSessionFactory::destroy(session);
+        session=nullptr;
         postprocess::Volume result;
         result.grid.dimensions={g.reconstruction_volume_x,g.reconstruction_volume_y,g.reconstruction_volume_z};
         result.grid.spacing_mm={g.reconstruction_voxel_x_mm,g.reconstruction_voxel_y_mm,g.reconstruction_voxel_z_mm};
         const double center[]={g.reconstruction_offset_x_mm,g.reconstruction_offset_y_mm,g.reconstruction_offset_z_mm};
         for(int i=0;i<3;++i)result.grid.origin_mm[i]=center[i]-.5*(result.grid.dimensions[i]-1)*result.grid.spacing_mm[i];
         result.elements=volume.size();result.host_data=volume.data();
-        postprocess::Context context;
+        if(device_result){result.device_owner=std::move(device_result);result.device_data=result.device_owner.get();result.location=postprocess::Location::Device;}
+        image::VolumeTransfer transfer;
+        image::Workspace image_workspace(image::Location::Device);
+        postprocess::Context context;context.transfer=&transfer;context.image_workspace=&image_workspace;
         context.volume_file=volume_file;context.slice_prefix=slice_prefix;context.progress=progress;
         context.original_projection_file=projection_file;context.reconstruction_projection_file=reconstruction_input;
         context.source_config_file=config.source_config_file;
@@ -325,11 +334,9 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         postprocessing.appendExporter(postprocess::makeRawFloatExporter());
         if(config.reconstruction.save_slices)postprocessing.appendExporter(postprocess::makeOrthogonalBmpExporter());
         postprocessing.run(result,context);
-        YK::ReconstructionSessionFactory::destroy(session);
-        session = nullptr;
         if(progress)progress({"Completed",1,1});
         diagnostic = pipeline_name +
-            " 重建完成，输出体素=" + std::to_string(volume.size());
+            " 重建完成，输出体素=" + std::to_string(result.elements);
         return true;
     } catch (const std::exception& e) {
         if (session) YK::ReconstructionSessionFactory::destroy(session);

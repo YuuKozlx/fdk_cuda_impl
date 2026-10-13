@@ -33,29 +33,7 @@ namespace {
             throw std::runtime_error("postprocess transfer did not produce requested location");
         validate(v);
     }
-    class HuConversion final : public IStage {
-        double water_;
 
-    public:
-        explicit HuConversion(double water)
-            : water_(water)
-        {
-            if (!std::isfinite(water) || water <= 0)
-                throw std::invalid_argument("invalid water attenuation reference");
-        }
-        const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::HuConversion);}
-        pipeline::Contract<Domain> contract() const override { return { Domain::AttenuationMmInv, Domain::HounsfieldUnits }; }
-        void process(Volume& v, const Context&) override
-        {
-            for (size_t i = 0; i < v.elements; ++i) {
-                const double hu = 1000. * (v.host_data[i] / water_ - 1.);
-                if (!std::isfinite(hu) || std::abs(hu) > std::numeric_limits<float>::max())
-                    throw std::runtime_error("invalid HU value");
-            }
-            for (size_t i = 0; i < v.elements; ++i)
-                v.host_data[i] = float(1000. * (v.host_data[i] / water_ - 1.));
-        }
-    };
 }
 void Pipeline::append(std::unique_ptr<IStage> stage)
 {
@@ -84,7 +62,6 @@ void Pipeline::run(Volume& v, const Context& input_context)
         domain = pipeline::advanceDomain(domain, contract, stage->info().name.c_str());
         if ((location != contract.input_location || contract.input_location != contract.output_location) && !c.transfer)
             throw std::runtime_error("postprocess data transfer bridge is missing");
-        stage->validateContext(c);
         location = contract.output_location;
     }
     for (const auto& exporter : exporters_) {
@@ -101,6 +78,8 @@ void Pipeline::run(Volume& v, const Context& input_context)
     auto record = [&](const char* name, double ms) {timings_.push_back({name,ms});SimLogger::instance().info(std::string("[postprocess] ")+name+" host_ms="+std::to_string(ms)); };
     for (auto& stage : stages_) {
         // Geometry is available through the typed context during preparation.
+        c.grid=v.grid;
+        stage->validateContext(c);
         stage->prepare(c);
         const auto timing = pipeline::execute(stage->info().name.c_str(), stage->contract(), &v, 1, [&](pipeline::Location location) { ensure(v, location, c); }, [&](Volume& value) { stage->process(value, c); }, [] {});
         validate(v);
@@ -108,6 +87,7 @@ void Pipeline::run(Volume& v, const Context& input_context)
         progress.advance();
     }
     for (auto& exporter : exporters_) {
+        c.grid=v.grid;
         exporter->prepare(c);
         const pipeline::Contract<Domain> contract { v.domain, v.domain, exporter->inputLocation(), exporter->inputLocation() };
         const auto timing = pipeline::execute(exporter->info().name.c_str(), contract, &v, 1, [&](pipeline::Location location) { ensure(v, location, c); }, [&](Volume& value) { exporter->write(ReadOnlyVolume(value), c); }, [] {});
@@ -116,5 +96,4 @@ void Pipeline::run(Volume& v, const Context& input_context)
         progress.advance();
     }
 }
-std::unique_ptr<IStage> makeHuConversionStage(double water) { return std::make_unique<HuConversion>(water); }
 }

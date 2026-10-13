@@ -1,5 +1,7 @@
 #pragma once
 #include "PluginInfo.hpp"
+#include "image/ImagePluginInfo.hpp"
+#include "recon/postprocess/stages/IntensityPluginInfo.hpp"
 #include <algorithm>
 namespace yk::spectral::pipeline {
 enum class BuiltinPlugin {
@@ -62,6 +64,10 @@ inline const std::vector<PluginInfo>& builtinPluginDescriptions()
             "Generate projection batches from volume, geometry, materials and spectrum using the fused backend.",
             PluginKind::ProjectionSource, "forward_projection", { "spectral", "source", "batch" },
             { { "rays_per_pixel", "Rays per pixel", "Monte Carlo ray samples per detector pixel.", ParameterType::Integer, "1" } });
+        const auto& images=image::pluginDescriptions();
+        result.insert(result.end(),images.begin(),images.end());
+        const auto& intensities=postprocess::intensityPluginDescriptions();
+        result.insert(result.end(),intensities.begin(),intensities.end());
         return result;
     }();
     return descriptions;

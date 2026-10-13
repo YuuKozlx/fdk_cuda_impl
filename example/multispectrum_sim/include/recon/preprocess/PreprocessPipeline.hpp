@@ -4,6 +4,7 @@
 #include "pipeline/Stage.hpp"
 #include <memory>
 #include <vector>
+namespace yk::spectral::image { class Workspace; }
 namespace yk::spectral::preprocess {
 class CudaPixelOps;
 enum class Domain { LogAttenuation,
@@ -25,6 +26,7 @@ struct Context {
     CudaPixelOps& cuda;
     const TaskProgressCallback& progress;
     const std::filesystem::path& output_file;
+    image::Workspace* image_workspace = nullptr;
 };
 using IStage = pipeline::IStage<Frame, Context, Domain>;
 struct Statistics {

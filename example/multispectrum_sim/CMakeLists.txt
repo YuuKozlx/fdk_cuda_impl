@@ -393,3 +393,67 @@ if(BUILD_TESTING)
     target_include_directories(multispectrum_plugin_metadata_test PRIVATE include)
     add_test(NAME multispectrum_plugin_metadata COMMAND multispectrum_plugin_metadata_test)
 endif()
+
+if(TARGET YKCBCT)
+    add_library(multispectrum_image_processing STATIC
+        src/image/ImageProcessing.cpp src/image/ImageKernels.cu src/image/ImageStages.cpp)
+    target_include_directories(multispectrum_image_processing PUBLIC include)
+    target_link_libraries(multispectrum_image_processing PUBLIC multispectrum_device_pool CUDA::cudart)
+    set_property(TARGET multispectrum_image_processing PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    if(MSVC)
+        target_compile_options(multispectrum_image_processing PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+    endif()
+    target_link_libraries(multispectrum_sim PRIVATE multispectrum_image_processing)
+    if(TARGET multispectrum_preprocessing_test)
+        target_link_libraries(multispectrum_preprocessing_test PRIVATE multispectrum_image_processing)
+    endif()
+    if(BUILD_TESTING)
+        add_executable(multispectrum_image_test tests/test_image_processing.cpp
+            src/recon/postprocess/PostprocessPipeline.cpp src/SimLogger.cpp)
+        target_include_directories(multispectrum_image_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+        target_link_libraries(multispectrum_image_test PRIVATE multispectrum_image_processing)
+        if(MSVC)
+            target_compile_options(multispectrum_image_test PRIVATE /utf-8)
+        endif()
+        add_test(NAME multispectrum_image_processing COMMAND multispectrum_image_test)
+    endif()
+endif()
+
+add_library(multispectrum_intensity_stages STATIC
+    src/recon/postprocess/stages/IntensityOps.cpp
+    src/recon/postprocess/stages/correction/HuTransforms.cpp
+    src/recon/postprocess/stages/calibration/HuCalibration.cpp
+    src/recon/postprocess/stages/segmentation/HuThresholds.cpp)
+target_include_directories(multispectrum_intensity_stages PUBLIC include)
+if(MSVC)
+    target_compile_options(multispectrum_intensity_stages PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+endif()
+if(TARGET YKCBCT)
+    target_sources(multispectrum_intensity_stages PRIVATE src/recon/postprocess/stages/IntensityKernels.cu)
+    target_compile_definitions(multispectrum_intensity_stages PRIVATE YK_INTENSITY_CUDA=1)
+    target_link_libraries(multispectrum_intensity_stages PRIVATE multispectrum_device_pool CUDA::cudart)
+    set_property(TARGET multispectrum_intensity_stages PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+endif()
+foreach(intensity_consumer IN ITEMS multispectrum_sim multispectrum_postprocess_test multispectrum_image_test)
+    if(TARGET ${intensity_consumer})
+        target_link_libraries(${intensity_consumer} PRIVATE multispectrum_intensity_stages)
+    endif()
+endforeach()
+if(BUILD_TESTING)
+    add_executable(multispectrum_intensity_test tests/test_intensity_stages.cpp
+        src/recon/postprocess/PostprocessPipeline.cpp src/SimLogger.cpp)
+    target_include_directories(multispectrum_intensity_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    target_link_libraries(multispectrum_intensity_test PRIVATE multispectrum_intensity_stages)
+    if(TARGET YKCBCT)
+        target_link_libraries(multispectrum_intensity_test PRIVATE multispectrum_image_processing)
+        target_compile_definitions(multispectrum_intensity_test PRIVATE YK_INTENSITY_CUDA=1)
+    endif()
+    if(MSVC)
+        target_compile_options(multispectrum_intensity_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_intensity_stages COMMAND multispectrum_intensity_test)
+endif()

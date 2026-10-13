@@ -1,6 +1,7 @@
 #pragma once
 #include "TaskProgress.hpp"
 #include "pipeline/Stage.hpp"
+#include "image/ImageGrid.hpp"
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -8,16 +9,15 @@
 #include <memory>
 #include <string>
 #include <vector>
+namespace yk::spectral::image { class Workspace; }
 namespace yk::spectral::postprocess {
 enum class Domain { AttenuationMmInv,
-    HounsfieldUnits };
+    HounsfieldUnits,
+    Labels };
 using Location = pipeline::Location;
-struct Grid {
-    std::array<int, 3> dimensions {};
-    std::array<double, 3> spacing_mm { 1, 1, 1 }, origin_mm {};
-    // Voxel-index axes in scanner world coordinates; not assumed to be patient axes.
-    std::array<double, 9> direction { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-};
+using Grid = image::Grid;
+struct LabelClass { int value=0; std::string name; };
+struct LabelMapping { std::vector<double> thresholds_hu; std::vector<LabelClass> classes; };
 // Borrowed storage. location is authoritative; the other pointer may be stale.
 // Plugins must not retain pointers or silently reinterpret attenuation as HU.
 struct Volume {
@@ -27,6 +27,9 @@ struct Volume {
     float* device_data = nullptr;
     Domain domain = Domain::AttenuationMmInv;
     Location location = Location::Host;
+    // Replacing stages transfer ownership here; output survives stage reset.
+    std::shared_ptr<float> host_owner, device_owner;
+    std::shared_ptr<const LabelMapping> label_mapping;
 };
 struct Context;
 class IDataTransfer {
@@ -43,6 +46,7 @@ struct Context {
     TaskProgressCallback progress;
     IDataTransfer* transfer = nullptr;
     void* stream = nullptr;
+    image::Workspace* image_workspace = nullptr;
 };
 using IStage = pipeline::IStage<Volume, Context, Domain>;
 struct ReadOnlyVolume {
@@ -52,6 +56,7 @@ struct ReadOnlyVolume {
     const float* device_data;
     Domain domain;
     Location location;
+    std::shared_ptr<const LabelMapping> label_mapping;
     explicit ReadOnlyVolume(const Volume& v)
         : grid(v.grid)
         , elements(v.elements)
@@ -59,6 +64,7 @@ struct ReadOnlyVolume {
         , device_data(v.device_data)
         , domain(v.domain)
         , location(v.location)
+        , label_mapping(v.label_mapping)
     {
     }
 };

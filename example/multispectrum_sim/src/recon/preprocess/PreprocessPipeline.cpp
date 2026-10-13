@@ -1,3 +1,4 @@
+#include "image/ImageProcessing.hpp"
 #include "pipeline/BuiltinPluginInfo.hpp"
 #include "common/YkTimingWatchdog.hpp"
 #include "recon/preprocess/PreprocessPipeline.hpp"
@@ -91,7 +92,8 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
             stages.push_back(stage.get());
         CorrectedProjectionOutput output;
         auto cleanup=pipeline::onExit([&]{output.reset();pipeline::resetReverse(stages);});
-        Context context{config, gpu, progress,output_path};
+        image::Workspace image_workspace(Location::Device);
+        Context context{config, gpu, progress,output_path,&image_workspace};
         Domain domain = Domain::LogAttenuation;
         for(auto* stage:stages){
             domain=pipeline::advanceDomain(domain,stage->contract(),stage->info().name.c_str());

@@ -1,4 +1,5 @@
 #include "ReconstructionDisplay.hpp"
+#include "image/GridMetadata.hpp"
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -22,5 +23,11 @@ int main(){try{
     bool rejected=false;try{yk::visualization::extractFloatSlice(volume,2,5);}catch(const std::exception&){rejected=true;}require(rejected,"invalid slice accepted");
     values.pop_back();write();rejected=false;try{loadReconstructionDisplay(file,grid);}catch(const std::exception&){rejected=true;}require(rejected,"short volume accepted");
     values.push_back(std::numeric_limits<float>::quiet_NaN());write();rejected=false;try{loadReconstructionDisplay(file,grid);}catch(const std::exception&){rejected=true;}require(rejected,"nonfinite volume accepted");
+    values.assign(12,.02f);write();
+    image::Grid outputGrid;outputGrid.dimensions={2,3,2};outputGrid.spacing_mm={.75,1.5,3};
+    image::writeGridMetadata(file,outputGrid);
+    const auto resampled=loadReconstructionDisplay(file,grid);
+    require(resampled.dimensions==outputGrid.dimensions&&resampled.spacing==outputGrid.spacing_mm,"display ignored resampled output grid");
+    std::filesystem::remove(image::gridMetadataPath(file));
     std::filesystem::remove(file);std::cout<<"Reconstruction load, three orientations and spacing passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

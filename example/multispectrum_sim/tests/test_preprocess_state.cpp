@@ -1,4 +1,5 @@
 #include "pipeline/BuiltinPluginInfo.hpp"
+#include "image/ImageStages.hpp"
 #include "recon/preprocess/PreprocessPipeline.hpp"
 #include "../examples/PolynomialBhcStage.hpp"
 #include "cuda/DeviceMemoryPool.hpp"
@@ -117,6 +118,16 @@ void testPreprocessState(const std::filesystem::path &root) {
     require(example.statistics().image_uploads==0 && example.statistics().image_downloads==0,"CPU example unexpectedly transferred frame signals");
     require(example.run(config,input,output,diagnostic),"example stage could not be reused");
     bh.enabled=true;
+    {
+        image::Options filter;filter.operation=image::Operation::Mean;
+        Pipeline images;images.append(image::makeProjectionStage(filter));images.append(image::makeProjectionStage(filter));
+        require(images.run(config,input,output,diagnostic),diagnostic.c_str());
+        require(images.statistics().image_uploads==2&&images.statistics().image_downloads==2,"image stages introduced extra PCIe transfers");
+        image::Image reference;reference.grid.dimensions={3,2,1};reference.batches=2;reference.domain=image::Domain::Projection;reference.data=const_cast<float*>(values.data());
+        image::Workspace cpu(image::Location::Host);image::process(reference,filter,cpu);image::process(reference,filter,cpu);
+        const auto actual=read(output);for(size_t i=0;i<actual.size();++i)require(std::abs(actual[i]-reference.data[i])<1.e-6,"projection image stage numerical mismatch");
+        require(cuda_resources::devicePoolStatistics().active_bytes==0,"image stage retained scratch after pipeline reset");
+    }
     // Compare the CUDA polynomial against double Horner, including clamp endpoints.
     for (int degree = 0; degree <= 16; ++degree) {
         bh.coefficients.resize(degree + 1);
