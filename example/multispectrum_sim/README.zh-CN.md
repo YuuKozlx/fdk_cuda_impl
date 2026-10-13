@@ -647,3 +647,11 @@ ImGui 的 Reconstruction / Method 提供 WFBP (helical)，用于规范平板螺�
 选择后可控制 WFBP cutoff 与 apodization，使用 FreeCT ramp 滤波；加载和保存 TOML 保留这些参数。
 对应配置为 geometry.kind=flat_helical、reconstruction.type=analytic、reconstruction.analytic.pipeline=wfbp，filter=ramlak。
 WFBP 当前消费完整投影序列，重排和 FFT 工作区较大；不使用 FDK 的 chunk_views 分包逻辑。UI 的整幅完成进度与 FDK/迭代的分阶段进度区分。
+
+### 几何相对显示
+
+ImGui 界面顶部的 `Gantry fixed (relative)` 可切换为机架固定的观察坐标系。以扫描首帧为参考，源、探测器、光束及其局部坐标系保持固定，模体及模体坐标系按扫描轨迹反向运动。圆扫描反向旋转，螺旋扫描同时反向平移；原有模体姿态与位置偏置仍保留。橙色轨迹切换为模体中心的相对运动轨迹。
+
+此开关只改变显示，不改变计算几何、投影贴图或重建结果，不需要重新计算。源与探测器必须构成刚性机架；不满足该条件的轨迹会禁用开关，避免显示失真。重新加载配置后仍以新扫描首帧为参考。
+
+ImGui 的内部正则插件配置仅在内部 `sirt`、`sart`、`ossart` 下显示。CGLS 与所有 TIGRE 算法隐藏这组正则插件并清除插件选择。TIGRE 自带的 `tigre_sart_tv`、`tigre_os_sart_tv` 仍可选择，并显示它们自己的 TV 迭代步数与 alpha 参数；不与内部正则插件绑定。

@@ -63,6 +63,10 @@ public:
     void setReconstructionSlices(const std::array<int,3>&);
     void setReconstructionWindow(double low,double high);
     std::array<double,2> reconstructionWindow() const;
+    void setRelativeGeometryMode(bool);
+    bool relativeGeometryAvailable() const;
+    bool relativeGeometryMode() const;
+    void setTrajectory(const std::vector<FrameGeometry>&);
     void setTrajectory(const std::vector<Point>& sources, const std::vector<Point>& detector_centers);
     void setParameters(const std::vector<EditableParameter>&);
     std::vector<double> parameterValues() const;

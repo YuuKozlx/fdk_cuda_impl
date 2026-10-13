@@ -141,15 +141,11 @@ bool SpectralProjectionPipeline::run(const SimulationConfig& c,
             throw std::runtime_error("projection pipeline requires positive views");
 #ifdef YK_SPECTRAL_VTK
         if (display) {
-            std::vector<yk::visualization::Point> sources, centers;
-            sources.reserve(g.views);
-            centers.reserve(g.views);
-            for (int view = 0; view < g.views; ++view) {
-                const auto pose = backend_->geometryForDisplay(view);
-                sources.push_back(pose.source);
-                centers.push_back(pose.detector_center);
-            }
-            display->setTrajectory(sources, centers);
+            std::vector<yk::visualization::FrameGeometry> frames;
+            frames.reserve(g.views);
+            for (int view = 0; view < g.views; ++view)
+                frames.push_back(backend_->geometryForDisplay(view));
+            display->setTrajectory(frames);
         }
 #endif
         const int batch_capacity=std::min(g.views,backend_->batchCapacity());

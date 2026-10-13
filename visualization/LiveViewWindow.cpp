@@ -1,5 +1,6 @@
 #include "../src/common/YkTimingWatchdog.hpp"
 #include "LiveView.hpp"
+#include "RelativeGeometry.hpp"
 #include "ParameterPanel.hpp"
 #ifdef YK_VTK_IMGUI
 #include "ImGuiOverlay.hpp"
@@ -195,6 +196,10 @@ struct LiveView::Impl {
     vtkNew<vtkActor> source_trail;
     vtkNew<vtkActor> detector_trail;
     vtkSmartPointer<vtkPolyData> source_path, detector_path;
+    bool relative_mode=false, relative_available=false;
+    FrameGeometry reference_frame;
+    CachedFrame preview_frame;
+    vtkSmartPointer<vtkPolyData> object_path;
     bool following = true, browsing = true, recompute = false, interactive = false, editing = false, beam_visible = true;
     LiveViewOptions options;
     vtkNew<vtkRenderer> renderer;
@@ -424,7 +429,7 @@ struct LiveView::Impl {
             } else if (key == "t" || key == "T") {
                 const bool show = !p.source_trail->GetVisibility();
                 p.source_trail->SetVisibility(show);
-                p.detector_trail->SetVisibility(show);
+                p.detector_trail->SetVisibility(show && !p.relative_mode);
                 p.renderMeasured("scene/UI");
             }
         });
@@ -578,19 +583,26 @@ struct LiveView::Impl {
             mesh->SetInputData(detector_path);
             mesh->Write();
         }
+        if(relative_mode && object_path){
+            mesh->SetFileName(path("object-relative-trajectory.vtp").c_str());
+            mesh->SetInputData(object_path);mesh->Write();
+        }
+        const auto displayed=relative_mode?relativeGeometry(reference_frame,last_frame):last_frame;
         std::ofstream meta(path("scene.txt"));
+        meta << "display_mode " << (relative_mode?"gantry_fixed":"world") << "\n";
+        meta << "source_detector_trajectory_coordinates world\n";
         meta.precision(17);
-        meta << "view " << last_frame.view << "\nsource ";
-        for (double x : last_frame.source)
+        meta << "view " << displayed.view << "\nsource ";
+        for (double x : displayed.source)
             meta << x << ' ';
         meta << "\nobject_pose ";
-        for (double x : last_frame.object_pose)
+        for (double x : displayed.object_pose)
             meta << x << ' ';
         meta << "\ndetector_center ";
-        for (double x : last_frame.detector_center)
+        for (double x : displayed.detector_center)
             meta << x << ' ';
         meta << "\ndetector_axes ";
-        for (auto a : last_frame.detector_axes)
+        for (auto a : displayed.detector_axes)
             for (double x : a)
                 meta << x << ' ';
         meta << "\n";
@@ -735,6 +747,7 @@ void LiveView::setGeometryPreview(const FrameGeometry& geometry) {
     preview.geometry=geometry;preview.geometry.view=0;
     preview.width=preview.height=1;preview.rgb={150,165,185};
     preview.description="Loaded geometry; projections not calculated";
+    p.preview_frame=preview;
     p.frames.emplace(0,std::move(preview));
     p.renderFrame(0);
     p.frames.clear();p.slider->SetEnabled(0);
@@ -778,11 +791,46 @@ bool LiveView::takeRecomputeRequest()
     impl_->recompute = false;
     return v;
 }
+bool LiveView::relativeGeometryAvailable() const { return impl_->relative_available; }
+bool LiveView::relativeGeometryMode() const { return impl_->relative_mode; }
+void LiveView::setRelativeGeometryMode(bool enabled) {
+    auto& p=*impl_;
+    if(enabled && !p.relative_available)throw std::invalid_argument("trajectory is not a rigid gantry");
+    p.relative_mode=enabled;
+    auto* mapper=vtkPolyDataMapper::SafeDownCast(p.source_trail->GetMapper());
+    if(mapper)mapper->SetInputData(enabled?p.object_path:p.source_path);
+    p.detector_trail->SetVisibility(!enabled && p.source_trail->GetVisibility());
+    if(p.has_frame){
+        if(!p.frames.empty())p.renderFrame(p.last_frame.view);
+        else {p.frames.emplace(0,p.preview_frame);p.renderFrame(0);p.frames.clear();
+            p.energy_title->SetInput("Energy: press Calculate");
+            p.attenuation_title->SetInput("Attenuation: press Calculate");}
+    }
+}
+void LiveView::setTrajectory(const std::vector<FrameGeometry>& frames) {
+    if(frames.empty())throw std::invalid_argument("empty geometry trajectory");
+    std::vector<Point> sources,centers,objects;
+    bool rigid=true;
+    for(const auto& f:frames){
+        sources.push_back(f.source);centers.push_back(f.detector_center);
+        const auto relative=relativeGeometry(frames.front(),f);
+        rigid=rigid && rigidGantryMatches(frames.front(),relative);
+        objects.push_back(posePoint(relative.object_pose,Point{}));
+    }
+    auto& p=*impl_;const bool enabled=p.relative_mode;
+    setTrajectory(sources,centers);
+    p.reference_frame=frames.front();p.relative_available=rigid;p.object_path=trajectory(objects);
+    // The new scan's preview is installed by the caller; do not redraw old frames here.
+    p.relative_mode=enabled && rigid;
+    vtkPolyDataMapper::SafeDownCast(p.source_trail->GetMapper())->SetInputData(p.relative_mode?p.object_path:p.source_path);
+    p.detector_trail->SetVisibility(!p.relative_mode && p.source_trail->GetVisibility());
+}
 void LiveView::setTrajectory(const std::vector<Point>& sources, const std::vector<Point>& centers)
 {
     if (sources.size() != centers.size())
         throw std::invalid_argument("trajectory count mismatch");
     auto& p = *impl_;
+    p.relative_mode=false;p.relative_available=false;
     p.source_path = trajectory(sources);
     p.detector_path = trajectory(centers, true);
     vtkNew<vtkPolyDataMapper> sm;
@@ -912,7 +960,7 @@ void LiveView::Impl::renderFrame(int view)
     if (p.closed)
         return;
     const auto& saved = p.frames.at(view);
-    const auto& frame = saved.geometry;
+    const auto frame = p.relative_mode ? relativeGeometry(p.reference_frame,saved.geometry) : saved.geometry;
     const int tw = saved.width, th = saved.height;
     vtkNew<vtkPoints> points;
     points->SetDataTypeToDouble();
@@ -991,8 +1039,8 @@ void LiveView::Impl::renderFrame(int view)
     p.panel(p.attenuation_renderer, p.attenuation_actor, p.attenuation_image, p.attenuation_title, saved.attenuation, tw, th, "Attenuation", frame.view);
     }
     std::ostringstream caption;
-    caption << saved.description << "\nframe " << frame.view << " | computed " << p.frames.size() << " | source " << frame.source[0] << ", " << frame.source[1] << ", " << frame.source[2] << " mm\ntexture " << tw << " x " << th << " | volume full resolution"
-            << "\nSlider / Left / Right: scan frame | End: latest | T: trajectories\nOrange: source path | Cyan: detector center path";
+    caption << (p.relative_mode ? "Gantry fixed / object relative motion\n" : "World geometry\n") << saved.description << "\nframe " << frame.view << " | computed " << p.frames.size() << " | source " << frame.source[0] << ", " << frame.source[1] << ", " << frame.source[2] << " mm\ntexture " << tw << " x " << th << " | volume full resolution"
+            << "\nSlider / Left / Right: scan frame | End: latest | T: trajectories\n" << (p.relative_mode ? "Orange: object center path" : "Orange: source path | Cyan: detector center path");
     p.text->SetInput(caption.str().c_str());
     if (!p.initialized || !p.has_frame) {
         auto* camera = p.renderer->GetActiveCamera();
@@ -1007,7 +1055,7 @@ void LiveView::Impl::renderFrame(int view)
     p.slider_rep->SetValue(frame.view);
     if (!p.gui_active && p.browsing && p.frames.size() > 1)
         p.slider->SetEnabled(1);
-    p.last_frame = frame;
+    p.last_frame = saved.geometry;
     p.has_frame = true;
     p.renderer->ResetCameraClippingRange();
     p.renderMeasured("scene/UI");
