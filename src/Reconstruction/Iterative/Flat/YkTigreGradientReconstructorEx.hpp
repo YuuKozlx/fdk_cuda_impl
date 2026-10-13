@@ -71,7 +71,7 @@ struct TigreGradientConfig {
     int bregman_interval = 5;
 
     ETask fp_task = ETask::FP_Joseph;
-    ETask bp_task = ETask::BP_FDK_matched;
+    ETask bp_task = ETask::BP_FDK_PseudoMatched;
 };
 
 struct TigreGradientStatistics {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cmath>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -45,6 +46,80 @@ struct SProjectionShape {
         return static_cast<size_t>(channels) * rows * views;
     }
 };
+
+struct alignas(16) SFootprintView {
+    float4 source{};
+    float4 u_numerator{};
+    float4 v_numerator{};
+    float4 denominator{};
+};
+
+inline SFootprintView makeFootprintView(const SConeProjGeomVec& view)
+{
+    const auto dot = [](const float3& a, const float3& b) {
+        return static_cast<double>(a.x) * b.x +
+            static_cast<double>(a.y) * b.y +
+            static_cast<double>(a.z) * b.z;
+    };
+    const auto xyz = [](const float4& a) {
+        return make_float3(a.x, a.y, a.z);
+    };
+    const float3 source = xyz(view.src);
+    const float3 detector = xyz(view.detS);
+    const float3 u = xyz(view.detU);
+    const float3 v = xyz(view.detV);
+    const float3 normal = make_float3(u.y * v.z - u.z * v.y,
+        u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x);
+    const float3 source_minus_detector = make_float3(
+        source.x - detector.x, source.y - detector.y,
+        source.z - detector.z);
+    const double uu = dot(u, u), uv = dot(u, v), vv = dot(v, v);
+    const double gram = uu * vv - uv * uv;
+    SFootprintView result{};
+    result.source = view.src;
+    if (std::fabs(gram) < 1e-20) return result;
+    const double inv_gram = 1.0 / gram;
+    const double plane_scale = dot(make_float3(detector.x - source.x,
+        detector.y - source.y, detector.z - source.z), normal);
+    const double source_u = dot(source, u);
+    const double source_v = dot(source, v);
+    const double source_n = dot(source, normal);
+    const double a = dot(source_minus_detector, u);
+    const double b = dot(source_minus_detector, v);
+    const double u_base = a * vv - b * uv;
+    const double v_base = -a * uv + b * uu;
+
+    result.denominator = make_float4(normal.x, normal.y, normal.z,
+        static_cast<float>(-source_n));
+    result.u_numerator = make_float4(
+        static_cast<float>((u_base * normal.x + plane_scale *
+            (vv * u.x - uv * v.x)) * inv_gram),
+        static_cast<float>((u_base * normal.y + plane_scale *
+            (vv * u.y - uv * v.y)) * inv_gram),
+        static_cast<float>((u_base * normal.z + plane_scale *
+            (vv * u.z - uv * v.z)) * inv_gram),
+        static_cast<float>((-u_base * source_n + plane_scale *
+            (-vv * source_u + uv * source_v)) * inv_gram));
+    result.v_numerator = make_float4(
+        static_cast<float>((v_base * normal.x + plane_scale *
+            (-uv * u.x + uu * v.x)) * inv_gram),
+        static_cast<float>((v_base * normal.y + plane_scale *
+            (-uv * u.y + uu * v.y)) * inv_gram),
+        static_cast<float>((v_base * normal.z + plane_scale *
+            (-uv * u.z + uu * v.z)) * inv_gram),
+        static_cast<float>((-v_base * source_n + plane_scale *
+            (uv * source_u - uu * source_v)) * inv_gram));
+    return result;
+}
+
+inline std::vector<SFootprintView> makeFootprintViews(
+    const std::vector<SConeProjGeomVec>& views)
+{
+    std::vector<SFootprintView> result;
+    result.reserve(views.size());
+    for (const auto& view : views) result.push_back(makeFootprintView(view));
+    return result;
+}
 
 struct SViewRange {
     int first = 0;

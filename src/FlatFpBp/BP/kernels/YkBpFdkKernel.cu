@@ -491,7 +491,7 @@ namespace YK {
 
 
             template<int ZSIZE, int PROJ_PER_KERNEL>
-            static void fdk_matched_bp_launch_impl(
+            static void fdk_pseudo_matched_bp_launch_impl(
                 cudaTextureObject_t     sinoTex,
                 const SConeProjGeomVec* d_views,
                 const FdkAffineCoeff* d_coeffs,
@@ -536,7 +536,7 @@ namespace YK {
         }
 
 
-        void fdk_matched_bp_launch(
+        void fdk_pseudo_matched_bp_launch(
             cudaTextureObject_t     sinoTex,
             const SConeProjGeomVec* d_views_world,
             const FdkAffineCoeff* d_coeffs,
@@ -549,7 +549,7 @@ namespace YK {
             CudaOp::clearIfOverwrite(d_vol,
                 static_cast<size_t>(vg.Nx) * vg.Ny * vg.Nz,
                 CudaOp::writeMode(accumulate), stream);
-            detail::fdk_matched_bp_launch_impl<4, 32>(
+            detail::fdk_pseudo_matched_bp_launch_impl<4, 32>(
                 sinoTex, d_views_world, d_coeffs, d_vol, vg,
                 0, Na, stream);
             YK_CUDA_KERNEL_CHECK();

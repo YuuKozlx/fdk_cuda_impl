@@ -214,6 +214,12 @@ SimulationConfig fixture()
     g.volume_x = g.volume_y = g.volume_z = 16;
     g.reconstruction_volume_x = g.reconstruction_volume_y = g.reconstruction_volume_z = 16;
     c.reconstruction.type = "statistical";
+    // Equivalence checks below compare statistical and SIRT updates. Pin both
+    // paths to the same operators; automatic selection is tested separately.
+    c.reconstruction.statistical.forward_projector = "joseph";
+    c.reconstruction.statistical.back_projector = "joseph_v3";
+    c.reconstruction.iterative.forward_projector = "joseph";
+    c.reconstruction.iterative.back_projector = "joseph_v3";
     c.reconstruction.statistical.optimizer.iterations = 3;
     c.reconstruction.statistical.regularization.strength = .01;
     return c;
@@ -224,7 +230,7 @@ std::vector<float> runSdk(const char* penalty, int source, bool weighted, bool z
     c.reconstruction.statistical.regularization.plugin = penalty;
     if (zero)
         c.reconstruction.statistical.regularization.strength = 0;
-    auto s = makeLibrarySystem(c, YK::EPipeline::Statistical, YK::EProjectionModel::Joseph, YK::EFdkFilter::RamLak, GeometryUse::Reconstruction);
+    auto s = makeLibrarySystem(c, YK::EPipeline::Statistical, YK::EFdkFilter::RamLak, GeometryUse::Reconstruction);
     const auto strategy=defaultComposition(s.statistical).strategy;
     s.statistical.data_fidelity.use_projection_weights = weighted;
     YK::SStatisticalWorkspaceEstimate estimate;
@@ -324,7 +330,7 @@ void testDataFidelity()
     const auto tv_batched=runSdk("tv",2,true);
     for(size_t i=0;i<tv_resident.size();++i)ck(std::abs(tv_resident[i]-tv_batched[i])<2e-6,"internal TV policy batch mismatch");
     auto c = fixture();
-    auto s = makeLibrarySystem(c, YK::EPipeline::Statistical, YK::EProjectionModel::Joseph, YK::EFdkFilter::RamLak, GeometryUse::Reconstruction);
+    auto s = makeLibrarySystem(c, YK::EPipeline::Statistical, YK::EFdkFilter::RamLak, GeometryUse::Reconstruction);
     std::vector<YK::SConeProjGeomVec> geometry;
     std::vector<YK::SCylConeProjGeomVec> cylindrical;
     YK::SVolGeom volume;
@@ -401,7 +407,7 @@ void testSdk()
             }
         }
     auto c = fixture();
-    auto s = makeLibrarySystem(c, YK::EPipeline::Statistical, YK::EProjectionModel::Joseph, YK::EFdkFilter::RamLak, GeometryUse::Reconstruction);
+    auto s = makeLibrarySystem(c, YK::EPipeline::Statistical, YK::EFdkFilter::RamLak, GeometryUse::Reconstruction);
     auto* session = YK::ReconstructionSessionFactory::create();
     s.statistical.optimizer.kind = YK::EStatisticalOptimizer::Fista;
     ck(!session->initialize(s) && session->lastError() == YK::EApiErrorCode::UnsupportedCombination, "FISTA unsupported check");

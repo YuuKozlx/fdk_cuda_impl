@@ -70,7 +70,7 @@ namespace YK {
             BpSiddonGpuContext(const BpSiddonGpuContext&) = delete;
             BpSiddonGpuContext& operator=(const BpSiddonGpuContext&) = delete;
 
-            // ── 带纹理（Joseph / CVP）────────────────────────────────────
+            // ── 带纹理的反投影路径 ───────────────────────────────────────
             void init(
                 const float* d_sino,
                 const SProjDims& proj_dims,        // ← 对应 Fp 的 vol_geom

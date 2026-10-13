@@ -107,14 +107,14 @@ struct FdkWeight {
     }
 };
 
-struct FdkMatchedWeight {
+struct FdkPseudoMatchedWeight {
     __device__ static float evaluate(const SCylFdkView& view,
         const DetectorCoordinate& coordinate, const SVolGeom& volume_geometry)
     {
         if (!(coordinate.source_distance_squared > 1e-12f)) return 0.f;
         // 一般曲面的 detector Jacobian 为 L^3/(n·ray)。源中心圆柱上
         // n·ray=R，L²=R²+v_det²。再乘体素体积/探测器像素面积，得到与
-        // 平板 BP_FDK_matched 相同约定下的圆柱权重。
+        // 平板 BP_FDK_PseudoMatched 相同约定下的圆柱权重。
         const float detector_distance_squared =
             view.radius_mm * view.radius_mm +
             coordinate.axial_mm * coordinate.axial_mm;
@@ -213,11 +213,11 @@ void launch_cyl_fdk_bp(cudaTextureObject_t projection_texture,
         volume_geometry, stream, CudaOp::writeMode(accumulate));
 }
 
-void launch_cyl_fdk_matched_bp(cudaTextureObject_t projection_texture,
+void launch_cyl_fdk_pseudo_matched_bp(cudaTextureObject_t projection_texture,
     const SCylFdkView* geometry, float* volume, int views,
     const SVolGeom& volume_geometry, cudaStream_t stream, bool accumulate)
 {
-    launch<FdkMatchedWeight>(projection_texture, geometry, volume, views,
+    launch<FdkPseudoMatchedWeight>(projection_texture, geometry, volume, views,
         volume_geometry, stream, CudaOp::writeMode(accumulate));
 }
 

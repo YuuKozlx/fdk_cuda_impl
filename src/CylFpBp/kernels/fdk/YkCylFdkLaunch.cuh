@@ -7,6 +7,6 @@ void launch_cyl_fdk_preweight(const float* input, float* output,
     cudaStream_t stream);
 void launch_cyl_fdk_bp(cudaTextureObject_t, const SCylFdkView*, float*, int,
     const SVolGeom&, cudaStream_t, bool);
-void launch_cyl_fdk_matched_bp(cudaTextureObject_t, const SCylFdkView*, float*,
+void launch_cyl_fdk_pseudo_matched_bp(cudaTextureObject_t, const SCylFdkView*, float*,
     int, const SVolGeom&, cudaStream_t, bool);
 } // namespace YK::CylFpBp::detail

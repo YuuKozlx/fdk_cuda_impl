@@ -39,7 +39,6 @@ project(YKCBCT VERSION 1.0.0 LANGUAGES CXX CUDA)
 # ============================================================================
 
 option(YKCBCT_BUILD_HELICAL "构建实验性螺旋 CT 算法" ON)
-option(YKCBCT_BUILD_CVP "构建实验性 CVP 正投影算法" OFF)
 option(BUILD_TESTS "构建 Yktest 集成与数值回归测试" OFF)
 option(BUILD_UNIT_TESTS "构建轻量 GoogleTest 单元测试" OFF)
 option(BUILD_DLLTEST "构建 DLL 公共接口测试" ON)

@@ -22,6 +22,8 @@ public:
         cudaStream_t stream, bool accumulate = false) const = 0;
     virtual bool backprojectGather(const Mem::Tex3DHandle& texture, float* volume,
         cudaStream_t stream, bool accumulate = false) const = 0;
+    virtual bool backprojectFootprint(const float* projection, float* volume,
+        cudaStream_t stream, bool accumulate = false) const = 0;
     virtual void release() = 0;
 };
 
@@ -93,6 +95,19 @@ public:
             geometry_->voxelData(), geometry_->siddonChannelRays(),
             geometry_->views(), geometry_->rows(), geometry_->channels(),
             geometry_->volumeGeometry(), stream, accumulate);
+        completion_.record(stream);
+        return true;
+    }
+
+    bool backprojectFootprint(const float* projection, float* volume,
+        cudaStream_t stream, bool accumulate = false) const override
+    {
+        if (!geometry_ || !projection || !volume || !stream) return false;
+        completion_.waitBefore(stream);
+        detail::launch_footprint_back(projection, volume,
+            geometry_->voxelData(), geometry_->views(), geometry_->rows(),
+            geometry_->channels(), geometry_->volumeGeometry(), stream,
+            accumulate);
         completion_.record(stream);
         return true;
     }

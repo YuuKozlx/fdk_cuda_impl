@@ -3,6 +3,20 @@
 
 namespace YK {
 
-enum class EProjectionModel : int32_t { Joseph, Siddon };
+enum class EForwardProjector : int32_t {
+    Automatic,
+    Siddon,
+    Joseph,
+    SeparableFootprint,
+};
+
+enum class EBackProjector : int32_t {
+    Automatic,
+    FdkPseudoMatched,
+    SiddonRayDriven,
+    Joseph,
+    JosephV3,
+    SeparableFootprint,
+};
 
 } // namespace YK

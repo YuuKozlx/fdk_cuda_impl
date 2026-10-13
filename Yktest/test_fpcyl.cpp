@@ -333,7 +333,7 @@ int main_fpcyl_fdk_adjoint()
         YK_CUDA_CHECK(cudaMemsetAsync(d_bp.data(), 0,
             volume_count * sizeof(float), stream));
         if (matched) {
-            CylFpBp::FdkMatchedBackprojector backprojector;
+            CylFpBp::FdkPseudoMatchedBackprojector backprojector;
             ok = ok && backprojector.prepare(volumeGeometry(h), h.iPU, h.iPV,
                 geometry, stream) && backprojector.uploadProjection(d_y.data()) &&
                 backprojector.backproject(d_bp.data(), false);
@@ -364,7 +364,7 @@ int main_fpcyl_fdk_adjoint()
     }
     YK_LOGI("[CylFpBp FP_Joseph + FDK BP] <Ax,y>={:.9e} <x,BPy>={:.9e} "
         "rel={:.6f} ratio={:.6f}", lhs, fdk_rhs, fdk_relative, fdk_ratio);
-    YK_LOGI("[CylFpBp FP_Joseph + FDK-matched BP] <Ax,y>={:.9e} "
+    YK_LOGI("[CylFpBp FP_Joseph + FDK-pseudo-matched BP] <Ax,y>={:.9e} "
         "<x,BPy>={:.9e} rel={:.6f} ratio={:.6f}", lhs, matched_rhs,
         matched_relative, matched_ratio);
     cudaStreamDestroy(stream);
@@ -400,7 +400,7 @@ int main_fpcyl_fdk_backprojectors()
 
     const auto geometry = TestGeometry::helicalCyl(h, h.SDD);
     CylFpBp::FdkBackprojector fdk;
-    CylFpBp::FdkMatchedBackprojector matched;
+    CylFpBp::FdkPseudoMatchedBackprojector matched;
     bool ok = fdk.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, stream) &&
         matched.prepare(volumeGeometry(h), h.iPU, h.iPV, geometry, stream) &&
         fdk.uploadProjection(d_projection.data()) &&
@@ -516,7 +516,7 @@ int main_fpcyl_fdk_backprojectors()
         fdk_result.empty() ? 0.f : fdk_result[center], expected_fdk,
         fdk_relative_error, fdk_off_center_error, fdk_ms,
         ok ? "PASS" : "FAIL");
-    YK_LOGI("[CylFdkMatchedBp] center={:.9e} expected={:.9e} rel={:.3e} "
+    YK_LOGI("[CylFdkPseudoMatchedBp] center={:.9e} expected={:.9e} rel={:.3e} "
         "off-center-rel={:.3e} time={:.3f} ms R!=SDD-rejected={} {}",
         matched_result.empty() ? 0.f : matched_result[center], expected_matched,
         matched_relative_error, matched_off_center_error, matched_ms,
@@ -702,10 +702,10 @@ int main_fpcyl_kernel_benchmark()
             CylFpBp::EBackProjection::Siddon,
             CylFpBp::EBackProjection::SiddonRayDriven,
             CylFpBp::EBackProjection::Fdk,
-            CylFpBp::EBackProjection::FdkMatched }) {
+            CylFpBp::EBackProjection::FdkPseudoMatched }) {
         const bool needs_source_centered_arc =
             model == CylFpBp::EBackProjection::Fdk ||
-            model == CylFpBp::EBackProjection::FdkMatched;
+            model == CylFpBp::EBackProjection::FdkPseudoMatched;
         const auto& model_geometry = needs_source_centered_arc
             ? fdk_geometry : geometry;
         auto backprojection = CylFpBp::makeBackProjection(model);
@@ -718,7 +718,7 @@ int main_fpcyl_kernel_benchmark()
         if (backprojection) backprojection->release();
     }
     YK_LOGI("[CylFpBp IBackProjection] joseph/v3/siddon-v2/"
-        "siddon-v3/siddon-ray-driven/fdk/fdk-matched {}",
+        "siddon-v3/siddon-ray-driven/fdk/fdk-pseudo-matched {}",
         back_interface_ok ? "PASS" : "FAIL");
 
     const auto benchmark_geometry = CylFpBp::detail::prepareJosephGeometry(
@@ -875,7 +875,7 @@ int main_fpcyl_kernel_benchmark()
     ok = ok && cylindrical_v3_ok;
     if (cylindrical_v3) cylindrical_v3->release();
 
-    // 圆柱其余纹理算子：Siddon FP、FDK/FDK-matched BP。线性内存路径不统计。
+    // 圆柱其余纹理算子：Siddon FP、FDK/FDK-pseudo-matched BP。线性内存路径不统计。
     cudaEvent_t cyl_extra_start = nullptr, cyl_extra_stop = nullptr;
     const bool cyl_events = cudaEventCreate(&cyl_extra_start) == cudaSuccess &&
         cudaEventCreate(&cyl_extra_stop) == cudaSuccess;
@@ -976,11 +976,11 @@ int main_fpcyl_kernel_benchmark()
         fdk_bp.uploadProjection(d_projection.data());
         measure_cyl("fdk-bp", [&] { fdk_bp.backproject(d_backprojection.data(), true); });
         fdk_bp.release();
-        CylFpBp::FdkMatchedBackprojector matched_bp;
+        CylFpBp::FdkPseudoMatchedBackprojector matched_bp;
         matched_bp.prepare(volumeGeometry(h), h.iPU, h.iPV,
             TestGeometry::helicalCyl(h, h.SDD), stream);
         matched_bp.uploadProjection(d_projection.data());
-        measure_cyl("fdk-matched-bp", [&] { matched_bp.backproject(d_backprojection.data(), true); });
+        measure_cyl("fdk-pseudo-matched-bp", [&] { matched_bp.backproject(d_backprojection.data(), true); });
         matched_bp.release();
     }
     if (cyl_extra_start) cudaEventDestroy(cyl_extra_start);
@@ -1118,8 +1118,8 @@ int main_fpcyl_kernel_benchmark()
                 flat_bp.geo.d_coeffs_data(), d_backprojection.data(),
                 flat_volume_geometry, flat_params.scan.NAng, true, stream);
         });
-        measure_flat("fdk-matched-bp", [&] {
-            Bp::fdk_matched_bp_launch(flat_bp.sinoTex.tex,
+        measure_flat("fdk-pseudo-matched-bp", [&] {
+            Bp::fdk_pseudo_matched_bp_launch(flat_bp.sinoTex.tex,
                 flat_bp.geo.d_views_world(), flat_bp.geo.d_coeffs_data(),
                 d_backprojection.data(), flat_volume_geometry,
                 flat_params.scan.NAng, true, stream);
@@ -1530,9 +1530,9 @@ int main_fpcyl_iterative_comparison()
             CylFpBp::EIterativeForwardModel::JosephMatchedReference,
             CylFpBp::EIterativeBackprojectorModel::Joseph, 2, 1, 1.f, 1.f },
         // FDK 风格 BP 可与迭代方法自由组合，作为工程近似对照。
-        { "cgls-joseph-fdk-matched", CylFpBp::EIterativeMethod::Cgls,
+        { "cgls-joseph-fdk-pseudo-matched", CylFpBp::EIterativeMethod::Cgls,
             CylFpBp::EIterativeForwardModel::Joseph,
-            CylFpBp::EIterativeBackprojectorModel::FdkMatched, 2, 1, 1.f, 1.f }
+            CylFpBp::EIterativeBackprojectorModel::FdkPseudoMatched, 2, 1, 1.f, 1.f }
     };
 
     cudaStream_t stream = nullptr;

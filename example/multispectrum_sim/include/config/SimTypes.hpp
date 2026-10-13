@@ -219,7 +219,8 @@ struct IterativeReconstructionConfig {
     int iterations = 10;
     double relaxation = 1.0;
     int subsets = 1;
-    std::string projection_model = "joseph";
+    std::string forward_projector = "auto";
+    std::string back_projector = "auto";
     int tv_iterations = 20;
     double tv_alpha = 0.002;
     double tv_alpha_reduction = 0.95;
@@ -299,7 +300,8 @@ struct StatisticalReconstructionConfig {
         double step_size=0.0,step_shrink=0.5,relative_tolerance=0.0;
         bool backtracking=true;
     } optimizer;
-    std::string projection_model="joseph";
+    std::string forward_projector="auto";
+    std::string back_projector="auto";
     bool non_negative=true;
 };
 

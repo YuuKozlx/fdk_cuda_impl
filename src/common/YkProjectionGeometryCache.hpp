@@ -23,6 +23,7 @@ public:
     {
         world_geometry_ = world_geometry;
         voxel_geometry_ = normalizeToVoxelBatch(world_geometry_, volume_geometry);
+        footprint_geometry_ = makeFootprintViews(world_geometry_);
         volume_geometry_ = volume_geometry;
 
         Mem::PodDataController memory;
@@ -30,6 +31,8 @@ public:
             world_geometry_, device_id);
         device_voxel_geometry_ = memory.allocateAndUpload(
             voxel_geometry_, device_id);
+        device_footprint_geometry_ = memory.allocateAndUpload(
+            footprint_geometry_, device_id);
     }
 
     SConeProjGeomVec* deviceWorldGeometry() const
@@ -37,6 +40,9 @@ public:
 
     SConeProjGeomVec* deviceVoxelGeometry() const
     { return device_voxel_geometry_.data(); }
+
+    const SFootprintView* deviceFootprintGeometry() const
+    { return device_footprint_geometry_.data(); }
 
     const SConeProjGeomVec* hostWorldGeometry() const
     { return world_geometry_.data(); }
@@ -56,6 +62,8 @@ public:
     SConeProjGeomVec* d_views() const { return deviceWorldGeometry(); }
     SConeProjGeomVec* d_views_world() const { return deviceWorldGeometry(); }
     SConeProjGeomVec* d_views_vox() const { return deviceVoxelGeometry(); }
+    const SFootprintView* d_footprint_views() const
+    { return deviceFootprintGeometry(); }
     const SConeProjGeomVec* h_views() const { return hostWorldGeometry(); }
     const SConeProjGeomVec* h_views_world() const { return hostWorldGeometry(); }
     const SConeProjGeomVec* h_views_vox() const { return hostVoxelGeometry(); }
@@ -70,8 +78,10 @@ public:
 private:
     std::vector<SConeProjGeomVec> world_geometry_;
     std::vector<SConeProjGeomVec> voxel_geometry_;
+    std::vector<SFootprintView> footprint_geometry_;
     Mem::DeviceLinearBuffer<SConeProjGeomVec> device_world_geometry_;
     Mem::DeviceLinearBuffer<SConeProjGeomVec> device_voxel_geometry_;
+    Mem::DeviceLinearBuffer<SFootprintView> device_footprint_geometry_;
     SVolGeom volume_geometry_{};
 };
 

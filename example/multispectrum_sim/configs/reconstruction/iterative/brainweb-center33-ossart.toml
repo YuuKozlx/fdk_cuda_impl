@@ -47,13 +47,15 @@ input_projection_file = "../../../outputs/projections/brainweb-center33-fdk.raw"
 type = "iterative"
 output_volume_file = "../../../outputs/reconstructions/brainweb-center33-ossart-50.raw"
 slice_prefix = "../../../outputs/images/brainweb-center33-ossart-50"
+save_slices = true
 
 [reconstruction.iterative]
 algorithm = "ossart"
 iterations = 50
 relaxation = 0.8
 subsets = 20
-projection_model = "joseph"
+forward_projector = "auto"
+back_projector = "auto"
 tv_iterations = 20
 tv_alpha = 0.002
 tv_alpha_reduction = 0.95

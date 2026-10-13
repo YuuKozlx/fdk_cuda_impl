@@ -124,7 +124,7 @@ public:
     {
         if (!prepared_ || !volume) return false;
         if constexpr (MatchedWeight) {
-            launch_cyl_iter_fdk_matched_bp(projection_texture_.tex,
+            launch_cyl_iter_fdk_pseudo_matched_bp(projection_texture_.tex,
                 d_geometry_.data(), volume, views_, volume_geometry_, stream_,
                 accumulate);
         }
@@ -177,6 +177,6 @@ private:
 } // namespace detail
 
 using FdkBackprojector = detail::CylFdkBackprojectorImpl<false>;
-using FdkMatchedBackprojector = detail::CylFdkBackprojectorImpl<true>;
+using FdkPseudoMatchedBackprojector = detail::CylFdkBackprojectorImpl<true>;
 
 } // namespace YK::CylFpBp

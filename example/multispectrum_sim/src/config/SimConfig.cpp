@@ -293,9 +293,15 @@ namespace yk::spectral {
                 if(c.geometry.kind!=GeometryKind::FlatCbct&&c.geometry.kind!=GeometryKind::FlatHelical)
                     throw std::runtime_error("Statistical reconstruction currently requires flat circular/helical geometry");
                 auto& cfg=c.reconstruction.statistical;
-                cfg.projection_model=(*s)["projection_model"].value_or(std::string("joseph"));
+                if ((*s).contains("projection_model"))
+                    throw std::runtime_error("statistical.projection_model was removed; use forward_projector and back_projector");
+                cfg.forward_projector=(*s)["forward_projector"].value_or(std::string("auto"));
+                cfg.back_projector=(*s)["back_projector"].value_or(std::string("auto"));
                 cfg.non_negative=(*s)["non_negative"].value_or(true);
-                if(cfg.projection_model!="joseph"&&cfg.projection_model!="siddon")throw std::runtime_error("Statistical projection_model requires joseph/siddon");
+                if(cfg.forward_projector!="auto"&&cfg.forward_projector!="joseph"&&cfg.forward_projector!="siddon"&&cfg.forward_projector!="footprint")
+                    throw std::runtime_error("Statistical forward_projector supports auto/joseph/siddon/footprint");
+                if(cfg.back_projector!="auto"&&cfg.back_projector!="fdk_pseudo_matched"&&cfg.back_projector!="siddon_ray"&&cfg.back_projector!="joseph"&&cfg.back_projector!="joseph_v3"&&cfg.back_projector!="footprint")
+                    throw std::runtime_error("Statistical back_projector is unsupported");
                 if(auto* d=(*s)["data_fidelity"].as_table()){
                     cfg.data_fidelity.type=(*d)["type"].value_or(std::string("weighted_least_squares"));
                     cfg.data_fidelity.scale=(*d)["scale"].value_or(1.0);
@@ -373,11 +379,17 @@ namespace yk::spectral {
                 rc.iterations = (*i)["iterations"].value_or(10);
                 rc.relaxation = (*i)["relaxation"].value_or(1.0);
                 rc.subsets = (*i)["subsets"].value_or(1);
-                if ((*i).contains("forward_projector") || (*i).contains("back_projector"))
-                    throw std::runtime_error("Use iterative.projection_model; separate FP/BP selectors have been removed");
-                rc.projection_model = (*i)["projection_model"].value_or(std::string("joseph"));
-                if (rc.projection_model != "joseph" && rc.projection_model != "siddon")
-                    throw std::runtime_error("projection_model supports joseph/siddon");
+                if ((*i).contains("projection_model"))
+                    throw std::runtime_error("iterative.projection_model was removed; use forward_projector and back_projector");
+                rc.forward_projector = (*i)["forward_projector"].value_or(std::string("auto"));
+                rc.back_projector = (*i)["back_projector"].value_or(std::string("auto"));
+                if (rc.forward_projector != "auto" && rc.forward_projector != "joseph" &&
+                    rc.forward_projector != "siddon" && rc.forward_projector != "footprint")
+                    throw std::runtime_error("forward_projector supports auto/joseph/siddon/footprint");
+                if (rc.back_projector != "auto" && rc.back_projector != "fdk_pseudo_matched" &&
+                    rc.back_projector != "siddon_ray" && rc.back_projector != "joseph" &&
+                    rc.back_projector != "joseph_v3" && rc.back_projector != "footprint")
+                    throw std::runtime_error("back_projector is unsupported");
                 rc.tv_iterations = (*i)["tv_iterations"].value_or(20);
                 rc.tv_alpha = (*i)["tv_alpha"].value_or(0.002);
                 rc.tv_alpha_reduction = (*i)["tv_alpha_reduction"].value_or(0.95);

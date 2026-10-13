@@ -8,7 +8,7 @@ namespace YK {
         BP_Siddon_RayDriven = 4,
         BP_Siddon_VoxDriven = 5,
         BP_FDK = 6,
-        BP_FDK_matched = 7,
+        BP_FDK_PseudoMatched = 7,
         BP_Joseph = 8,   //
         BP_Joseph_v2 = 9,
         BP_Joseph_v3 = 10,
@@ -17,6 +17,8 @@ namespace YK {
         BP_Siddon_VoxDriven_v2 = 13,
         BP_Siddon_VoxDriven_v3 = 14,
         BP_Joseph_gather = 15,
+        FP_SeparableFootprint = 16,
+        BP_SeparableFootprint = 17,
     };
 struct ExecuteRequest {
     const float* angles = nullptr;

@@ -9,6 +9,7 @@
 #include "FlatFpBp/BP/kernels/YkBpJosephLaunch.cuh"
 #include "FlatFpBp/BP/kernels/YkBPSiddonLaunch.cuh"
 #include "FlatFpBp/FP/YkFPGpuContext.hpp"
+#include "FlatFpBp/FP/kernels/YkFlatFootprintLaunch.cuh"
 #include "FlatFpBp/FP/kernels/YkFPLaunch.cuh"
 #include "Reconstruction/Analytic/Circular/Flat/FDK/YkFDKVecGeoDerived.hpp"
 #include "YKCBCT/geometry/YkModularGeometryBuilder.hpp"
@@ -42,7 +43,8 @@ namespace detail {
 
 inline bool isForwardTask(ETask task)
 {
-    return task == ETask::FP_Joseph || task == ETask::FP_Siddon;
+    return task == ETask::FP_Joseph || task == ETask::FP_Siddon ||
+        task == ETask::FP_SeparableFootprint;
 }
 
 inline bool isBackTask(ETask task)
@@ -53,7 +55,8 @@ inline bool isBackTask(ETask task)
         task == ETask::BP_Joseph || task == ETask::BP_Joseph_v2 ||
         task == ETask::BP_Joseph_v3 || task == ETask::BP_Joseph_gather ||
         task == ETask::BP_FDK ||
-        task == ETask::BP_FDK_matched;
+        task == ETask::BP_FDK_PseudoMatched ||
+        task == ETask::BP_SeparableFootprint;
 }
 
 inline void buildCircularViews(const SReconstructionParams& p, std::vector<SConeProjGeomVec>& views)
@@ -151,18 +154,25 @@ public:
                 view = transformProjectionGeometry(view, local_from_world);
         }
         gpu_ = std::make_unique<Fp::FpGpuContext>();
-        gpu_->init(d_volume, vol, views, resources.device(),
-            kind_ == ETask::FP_Siddon ? cudaFilterModePoint :
-                cudaFilterModeLinear, resources.stream());
+        if (kind_ == ETask::FP_SeparableFootprint)
+            gpu_->initNoTex(d_volume, vol, views, resources.device());
+        else
+            gpu_->init(d_volume, vol, views, resources.device(),
+                kind_ == ETask::FP_Siddon ? cudaFilterModePoint :
+                    cudaFilterModeLinear, resources.stream());
         const size_t count = static_cast<size_t>(batch.scan.NAng) * batch.scan.Nv * batch.scan.Nu;
         YK_CUDA_CHECK(cudaMemsetAsync(d_projection, 0, count * sizeof(float), resources.stream()));
         if (kind_ == ETask::FP_Joseph) {
             Fp::fp_joseph_launch(gpu_->volTex.tex, gpu_->geo.h_views_vec(), gpu_->geo.d_views_vox(),
                 d_projection, vol, batch.scan.NAng, batch.scan.Nu, batch.scan.Nv, false,
                 resources.stream(), Fp::FpStepSuperSample::x1);
-        } else {
+        } else if (kind_ == ETask::FP_Siddon) {
             Fp::fp_siddon_launch(gpu_->volTex.tex, d_projection, gpu_->geo.d_views(), vol,
                 batch.scan.Nu, batch.scan.Nv, batch.scan.NAng, false, resources.stream());
+        } else {
+            Footprint::forward_launch(d_volume, d_projection,
+                gpu_->geo.d_footprint_views(), vol, batch.scan.NAng,
+                batch.scan.Nu, batch.scan.Nv, false, resources.stream());
         }
         YK_CUDA_CHECK(cudaEventRecord(completion_, stream_));
         completion_recorded_ = true;
@@ -306,14 +316,19 @@ public:
                 resources.stream());
             break;
         }
+        case ETask::BP_SeparableFootprint:
+            Footprint::back_launch(d_projection, d_volume,
+                gpu_->geo.d_footprint_views(), vol, na, batch.scan.Nu,
+                batch.scan.Nv, accumulate, resources.stream());
+            break;
         case ETask::BP_FDK:
-        case ETask::BP_FDK_matched: {
+        case ETask::BP_FDK_PseudoMatched: {
             gpu_->sinoTex = makeProjectionTexture(cudaFilterModeLinear);
             if (kind_ == ETask::BP_FDK)
                 Bp::fdk_bp_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                     d_volume, vol, na, accumulate, resources.stream());
             else
-                Bp::fdk_matched_bp_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
+                Bp::fdk_pseudo_matched_bp_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                     d_volume, vol, na, accumulate, resources.stream());
             break;
         }

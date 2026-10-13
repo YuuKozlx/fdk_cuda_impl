@@ -451,6 +451,12 @@ void number(const char* label, double& value)
                 if(!listed)ImGui::TextWrapped("This UI supports TV plugins with internal SIRT / SART / OS-SART only. Choose an algorithm from the list before reconstructing.");
                 integer("Iterations",r.iterative.iterations);number("Relaxation",r.iterative.relaxation);
                 if(r.iterative.algorithm=="ossart" || r.iterative.algorithm=="tigre_os_sart" || r.iterative.algorithm=="tigre_os_sart_tv")integer("Subsets",r.iterative.subsets);
+                const char* fp_values[]={"auto","siddon","joseph","footprint"};
+                int fp_index=0;for(int i=0;i<4;++i)if(r.iterative.forward_projector==fp_values[i])fp_index=i;
+                if(ImGui::Combo("Forward projector",&fp_index,"Auto\0Siddon\0Joseph\0Separable footprint\0"))r.iterative.forward_projector=fp_values[fp_index];
+                const char* bp_values[]={"auto","fdk_pseudo_matched","siddon_ray","joseph","joseph_v3","footprint"};
+                int bp_index=0;for(int i=0;i<6;++i)if(r.iterative.back_projector==bp_values[i])bp_index=i;
+                if(ImGui::Combo("Backprojector",&bp_index,"Auto\0FDK pseudo matched\0Siddon ray driven\0Joseph matched\0Joseph V3 fast\0Separable footprint\0"))r.iterative.back_projector=bp_values[bp_index];
                 ImGui::Checkbox("Non negative",&r.iterative.non_negative);
                 if(r.iterative.algorithm=="tigre_sart_tv" || r.iterative.algorithm=="tigre_os_sart_tv"){
                     ImGui::SeparatorText("TIGRE TV");
@@ -478,8 +484,12 @@ void number(const char* label, double& value)
                 auto& s=r.statistical;
                 ImGui::SeparatorText("Data fidelity");
                 ImGui::TextUnformatted("Weighted least squares");
-                int model=s.projection_model=="siddon"?1:0;
-                if(ImGui::Combo("Projector",&model,"Joseph\0Siddon\0"))s.projection_model=model?"siddon":"joseph";
+                const char* fp_values[]={"auto","siddon","joseph","footprint"};
+                int fp_index=0;for(int i=0;i<4;++i)if(s.forward_projector==fp_values[i])fp_index=i;
+                if(ImGui::Combo("Forward projector",&fp_index,"Auto\0Siddon\0Joseph\0Separable footprint\0"))s.forward_projector=fp_values[fp_index];
+                const char* bp_values[]={"auto","fdk_pseudo_matched","siddon_ray","joseph","joseph_v3","footprint"};
+                int bp_index=0;for(int i=0;i<6;++i)if(s.back_projector==bp_values[i])bp_index=i;
+                if(ImGui::Combo("Backprojector",&bp_index,"Auto\0FDK pseudo matched\0Siddon ray driven\0Joseph matched\0Joseph V3 fast\0Separable footprint\0"))s.back_projector=bp_values[bp_index];
                 number("Data scale",s.data_fidelity.scale);
                 ImGui::Checkbox("Mean data term",&s.data_fidelity.normalize_by_ray_count);
                 pathInput("Weights (optional)",s.data_fidelity.weights_file,L"Weights\0*.raw\0All files\0*.*\0\0");

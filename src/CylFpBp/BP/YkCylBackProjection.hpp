@@ -21,7 +21,8 @@ enum class EBackProjection {
     JosephV3,
     JosephExactGather,
     Fdk,
-    FdkMatched
+    FdkPseudoMatched,
+    Footprint,
 };
 
 // Cyl 专用反投影接口。所有模型接收相同的线性设备内存，调用方只选择
@@ -81,6 +82,13 @@ public:
             }
             break;
         }
+        case EBackProjection::Footprint: {
+            const auto prepared = detail::prepareJosephGeometry(volume_geometry,
+                channels, rows, geometry, device_id_);
+            operator_ = makeCylBackOperator();
+            ok = prepared && operator_ && operator_->prepare(prepared, config);
+            break;
+        }
         case EBackProjection::SiddonV2:
         case EBackProjection::SiddonV3:
             ok = siddon_voxel_.prepare(volume_geometry, channels, rows,
@@ -97,8 +105,8 @@ public:
             ok = fdk_.prepare(volume_geometry, channels, rows, geometry,
                 stream_, device_id_);
             break;
-        case EBackProjection::FdkMatched:
-            ok = fdk_matched_.prepare(volume_geometry, channels, rows, geometry,
+        case EBackProjection::FdkPseudoMatched:
+            ok = fdk_pseudo_matched_.prepare(volume_geometry, channels, rows, geometry,
                 stream_, device_id_);
             break;
         }
@@ -139,9 +147,12 @@ public:
         case EBackProjection::Fdk:
             return fdk_.uploadProjection(projection) &&
                 fdk_.backproject(volume, accumulate);
-        case EBackProjection::FdkMatched:
-            return fdk_matched_.uploadProjection(projection) &&
-                fdk_matched_.backproject(volume, accumulate);
+        case EBackProjection::FdkPseudoMatched:
+            return fdk_pseudo_matched_.uploadProjection(projection) &&
+                fdk_pseudo_matched_.backproject(volume, accumulate);
+        case EBackProjection::Footprint:
+            return operator_->backprojectFootprint(projection, volume, stream_,
+                accumulate);
         }
         return false;
     }
@@ -154,7 +165,7 @@ public:
         siddon_voxel_.release();
         joseph_v3_.release();
         fdk_.release();
-        fdk_matched_.release();
+        fdk_pseudo_matched_.release();
         stream_ = nullptr;
         channels_ = rows_ = views_ = 0;
         device_id_ = 0;
@@ -176,7 +187,7 @@ private:
     detail::SiddonVoxelStrategy siddon_voxel_{};
     detail::JosephV3Strategy joseph_v3_{};
     detail::CylFdkBackprojectorImpl<false> fdk_{};
-    detail::CylFdkBackprojectorImpl<true> fdk_matched_{};
+    detail::CylFdkBackprojectorImpl<true> fdk_pseudo_matched_{};
     cudaStream_t stream_ = nullptr;
     int channels_ = 0;
     int rows_ = 0;

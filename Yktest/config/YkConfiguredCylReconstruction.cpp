@@ -113,11 +113,11 @@ CylFpBp::EIterativeBackprojectorModel parseBackprojectorModel(
     if (value == "joseph-v3")
         return CylFpBp::EIterativeBackprojectorModel::JosephV3;
     if (value == "fdk") return CylFpBp::EIterativeBackprojectorModel::Fdk;
-    if (value == "fdk-matched")
-        return CylFpBp::EIterativeBackprojectorModel::FdkMatched;
+    if (value == "fdk-pseudo-matched")
+        return CylFpBp::EIterativeBackprojectorModel::FdkPseudoMatched;
     throw std::runtime_error(
         "backprojector_model 必须是 joseph、siddon、siddon-v2、"
-        "siddon-ray-driven、joseph-v3、fdk 或 fdk-matched");
+        "siddon-ray-driven、joseph-v3、fdk 或 fdk-pseudo-matched");
 }
 
 std::filesystem::path resolve(const std::filesystem::path& base,

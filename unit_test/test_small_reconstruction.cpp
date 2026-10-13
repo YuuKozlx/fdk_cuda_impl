@@ -9,6 +9,7 @@
 #include <cuda_runtime_api.h>
 
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
+#include "interface/YkProjectorSelection.hpp"
 
 namespace {
 
@@ -37,7 +38,8 @@ YK::SSystemSpec smallCircularSystem(YK::EPipeline pipeline)
     system.geometry.volume = {24, 24, 16, 1.f, 1.f, 1.f,
         make_float3(0.f, 0.f, 0.f)};
     system.reconstruction.pipeline = pipeline;
-    system.reconstruction.projection_model = YK::EProjectionModel::Joseph;
+    system.reconstruction.forward_projector = YK::EForwardProjector::Joseph;
+    system.reconstruction.back_projector = YK::EBackProjector::JosephV3;
     system.reconstruction.fdk.filter = YK::EFdkFilter::RamLak;
     return system;
 }
@@ -82,6 +84,37 @@ double cosineSimilarity(const std::vector<float>& lhs,
     return product / std::sqrt(std::max(lhs_energy * rhs_energy, 1e-30));
 }
 
+TEST(ProjectorSelection, AutomaticUsesMeasuredDefaultsAndStrictAdjoints)
+{
+    using YK::EBackProjector;
+    using YK::EForwardProjector;
+    using YK::ETask;
+    using YK::detail::resolveBackProjector;
+    using YK::detail::resolveForwardProjector;
+
+    EXPECT_EQ(resolveForwardProjector(EForwardProjector::Automatic,
+        false, false), ETask::FP_Siddon);
+    EXPECT_EQ(resolveBackProjector(EBackProjector::Automatic,
+        false, false), ETask::BP_FDK_PseudoMatched);
+
+    EXPECT_EQ(resolveForwardProjector(EForwardProjector::Automatic,
+        true, false), ETask::FP_Joseph);
+    EXPECT_EQ(resolveBackProjector(EBackProjector::Automatic,
+        true, false), ETask::BP_Joseph_v3);
+
+    for (bool cylindrical : {false, true}) {
+        EXPECT_EQ(resolveForwardProjector(EForwardProjector::Automatic,
+            cylindrical, true), ETask::FP_Siddon);
+        EXPECT_EQ(resolveBackProjector(EBackProjector::Automatic,
+            cylindrical, true), ETask::BP_Siddon_RayDriven);
+    }
+
+    EXPECT_EQ(resolveForwardProjector(EForwardProjector::SeparableFootprint,
+        false, false), ETask::FP_SeparableFootprint);
+    EXPECT_EQ(resolveBackProjector(EBackProjector::SeparableFootprint,
+        true, false), ETask::BP_SeparableFootprint);
+}
+
 TEST(SmallReconstruction, AnalyticEllipsoidsRoundTripThroughFpAndFdk)
 {
     int device_count = 0;
@@ -121,6 +154,60 @@ TEST(SmallReconstruction, AnalyticEllipsoidsRoundTripThroughFpAndFdk)
     EXPECT_GT(*std::max_element(reconstruction.begin(), reconstruction.end()),
         0.f);
     EXPECT_GT(cosineSimilarity(truth, reconstruction), 0.70);
+}
+
+TEST(SmallReconstruction, AutomaticFlatAlgebraicPairExecutes)
+{
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0)
+        GTEST_SKIP() << "CUDA device is unavailable";
+
+    auto system = smallCircularSystem(YK::EPipeline::ForwardProjection);
+    system.reconstruction.forward_projector = YK::EForwardProjector::Automatic;
+    system.reconstruction.back_projector = YK::EBackProjector::Automatic;
+    auto truth = makeAnalyticPhantom(system.geometry.volume);
+    const size_t projection_count = static_cast<size_t>(
+        system.geometry.flat_detector.channels) *
+        system.geometry.flat_detector.rows *
+        system.geometry.circular.total_views;
+    std::vector<float> projection(projection_count, 0.f);
+    std::vector<float> reconstruction(truth.size(), 0.f);
+    YK::SExecutionRequest request{};
+    request.view_count = system.geometry.circular.total_views;
+    request.volume = hostBuffer(truth);
+    request.projection = hostBuffer(projection);
+
+    auto session = makeSession();
+    ASSERT_TRUE(session->initialize(system)) << session->lastErrorMessage();
+    ASSERT_TRUE(session->execute(request)) << session->lastErrorMessage();
+
+    system.reconstruction.pipeline = YK::EPipeline::SIRT;
+    system.reconstruction.iterative.iterations = 1;
+    ASSERT_TRUE(session->initialize(system)) << session->lastErrorMessage();
+    float* device_projection = nullptr;
+    float* device_volume = nullptr;
+    ASSERT_EQ(cudaMalloc(&device_projection, projection.size() * sizeof(float)),
+        cudaSuccess);
+    ASSERT_EQ(cudaMalloc(&device_volume, reconstruction.size() * sizeof(float)),
+        cudaSuccess);
+    ASSERT_EQ(cudaMemcpy(device_projection, projection.data(),
+        projection.size() * sizeof(float), cudaMemcpyHostToDevice), cudaSuccess);
+    ASSERT_EQ(cudaMemset(device_volume, 0,
+        reconstruction.size() * sizeof(float)), cudaSuccess);
+    request.projection = {device_projection, YK::EMemoryLocation::Device,
+        projection.size()};
+    request.volume = {device_volume, YK::EMemoryLocation::Device,
+        reconstruction.size()};
+    ASSERT_TRUE(session->execute(request)) << session->lastErrorMessage();
+    ASSERT_EQ(cudaMemcpy(reconstruction.data(), device_volume,
+        reconstruction.size() * sizeof(float), cudaMemcpyDeviceToHost),
+        cudaSuccess);
+    cudaFree(device_projection);
+    cudaFree(device_volume);
+    EXPECT_TRUE(std::all_of(reconstruction.begin(), reconstruction.end(),
+        [](float value) { return std::isfinite(value); }));
+    EXPECT_GT(*std::max_element(reconstruction.begin(), reconstruction.end()),
+        0.f);
 }
 
 TEST(SmallReconstruction, RejectsUndersizedBuffersBeforeExecution)

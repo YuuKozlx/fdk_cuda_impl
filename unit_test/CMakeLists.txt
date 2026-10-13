@@ -92,6 +92,7 @@ add_executable(YKCBCT_operator_benchmark_test
     ${PROJECT_SOURCE_DIR}/src/global/YkLog.cpp
     ${PROJECT_SOURCE_DIR}/src/FlatFpBp/FP/kernels/YkFPKernels.cu
     ${PROJECT_SOURCE_DIR}/src/FlatFpBp/FP/kernels/YkFPSiddonKernel.cu
+    ${PROJECT_SOURCE_DIR}/src/FlatFpBp/FP/kernels/YkFlatFootprintKernels.cu
     ${PROJECT_SOURCE_DIR}/src/FlatFpBp/BP/kernels/YkBPSiddonKernel.cu
     ${PROJECT_SOURCE_DIR}/src/FlatFpBp/BP/kernels/YkBPJosephKernel.cu
     ${PROJECT_SOURCE_DIR}/src/FlatFpBp/BP/kernels/YkBpFdkKernel.cu

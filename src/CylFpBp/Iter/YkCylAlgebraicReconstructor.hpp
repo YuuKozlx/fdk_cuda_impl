@@ -35,7 +35,8 @@ enum class EIterativeForwardModel {
     Joseph,
     Siddon,
     JosephMatchedReference,
-    JosephLayered
+    JosephLayered,
+    Footprint,
 };
 
 enum class EIterativeBackprojectorModel {
@@ -50,7 +51,8 @@ enum class EIterativeBackprojectorModel {
     // FDK 风格解析反投影；允许所有迭代方法使用，但不是 A^T。
     Fdk,
     // FDK 风格的匹配权重版本；相对 FP 更接近，但仍非严格转置。
-    FdkMatched
+    FdkPseudoMatched,
+    Footprint,
 };
 
 struct IterativeConfig {
@@ -111,7 +113,9 @@ public:
                 config_.forward_model == EIterativeForwardModel::Siddon ?
                     "Siddon" : config_.forward_model ==
                     EIterativeForwardModel::JosephLayered ?
-                    "JosephLayered" : "JosephMatchedReference";
+                    "JosephLayered" : config_.forward_model ==
+                    EIterativeForwardModel::Footprint ? "Footprint" :
+                    "JosephMatchedReference";
             const char* bp_name = config_.backprojector_model ==
                     EIterativeBackprojectorModel::JosephV3 ? "JosephV3" :
                 config_.backprojector_model ==
@@ -125,8 +129,9 @@ public:
                 config_.backprojector_model == EIterativeBackprojectorModel::SiddonRayDriven ?
                     "SiddonRayDriven" : config_.backprojector_model ==
                     EIterativeBackprojectorModel::Fdk ? "Fdk" :
-                    config_.backprojector_model == EIterativeBackprojectorModel::FdkMatched ?
-                    "FdkMatched" : "Joseph";
+                    config_.backprojector_model == EIterativeBackprojectorModel::FdkPseudoMatched ?
+                    "FdkPseudoMatched" : config_.backprojector_model ==
+                    EIterativeBackprojectorModel::Footprint ? "Footprint" : "Joseph";
             YK_LOGI("[CylIterative:CGLS] FP={} BP={}；默认快速组合为 "
                 "Joseph + JosephV3", fp_name, bp_name);
             if (config_.forward_model == EIterativeForwardModel::Siddon &&
@@ -149,7 +154,7 @@ public:
                     "JosephLayered + JosephExactGather");
             }
             else if (config_.backprojector_model == EIterativeBackprojectorModel::Fdk ||
-                     config_.backprojector_model == EIterativeBackprojectorModel::FdkMatched) {
+                     config_.backprojector_model == EIterativeBackprojectorModel::FdkPseudoMatched) {
                 YK_LOGW("[CylIterative:CGLS] FDK BP 是解析重建权重，非 A^T；"
                     "当前按工程近似 CGLS 使用");
             }
@@ -395,6 +400,8 @@ private:
         case EIterativeForwardModel::JosephLayered:
             return op.forwardLayered(shared_volume_texture_, projection,
                 stream_, false);
+        case EIterativeForwardModel::Footprint:
+            return op.forwardFootprint(volume, projection, stream_, false);
         }
         return false;
     }
@@ -418,6 +425,8 @@ private:
         case EIterativeForwardModel::JosephLayered:
             return full_forward_->forwardLayered(shared_volume_texture_, projection,
                 stream_, false);
+        case EIterativeForwardModel::Footprint:
+            return full_forward_->forwardFootprint(volume, projection, stream_, false);
         }
         return false;
     }
@@ -448,8 +457,10 @@ private:
         case EIterativeBackprojectorModel::JosephExactGather:
             return EBackProjection::JosephExactGather;
         case EIterativeBackprojectorModel::Fdk: return EBackProjection::Fdk;
-        case EIterativeBackprojectorModel::FdkMatched:
-            return EBackProjection::FdkMatched;
+        case EIterativeBackprojectorModel::FdkPseudoMatched:
+            return EBackProjection::FdkPseudoMatched;
+        case EIterativeBackprojectorModel::Footprint:
+            return EBackProjection::Footprint;
         }
         return EBackProjection::Joseph;
     }

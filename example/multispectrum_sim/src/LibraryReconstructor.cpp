@@ -123,7 +123,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         check(!wfbp || config.geometry.kind == GeometryKind::CylHelical || config.geometry.kind == GeometryKind::FlatHelical,
             "DLL wFBP requires flat_helical or cyl_helical");
         auto system = makeLibrarySystem(config, pipeline,
-            YK::EProjectionModel::Joseph, parseFilter(config.reconstruction.analytic.filter),
+            parseFilter(config.reconstruction.analytic.filter),
             GeometryUse::Reconstruction);
         if(statistical)check(YK::estimateStatisticalWorkspace(system,statistical_workspace),"Cannot estimate statistical workspace for requested modules");
         if(statistical){const auto& s=config.reconstruction.statistical;

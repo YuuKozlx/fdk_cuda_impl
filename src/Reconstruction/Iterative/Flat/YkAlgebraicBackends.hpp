@@ -358,7 +358,7 @@ namespace YK {
             // FP/BP 应为匹配对：Joseph FP ↔ Joseph_v2 BP（推荐）。
             // 不要用 BP_FDK（仅适合单遍 FDK，进迭代会产生棋盘格/星状伪影）。
             ETask fp_task = ETask::FP_Joseph;
-            ETask bp_task = ETask::BP_FDK_matched;
+            ETask bp_task = ETask::BP_FDK_PseudoMatched;
         };
 
         bool init(const SReconstructionParams& params, const Config& cfg,

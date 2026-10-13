@@ -384,6 +384,130 @@ __global__ void exact_gather_kernel(cudaTextureObject_t projection_texture,
     }
 }
 
+__device__ double footprint_atomic_add_double(double* address, double value)
+{
+#if __CUDA_ARCH__ >= 600
+    return atomicAdd(address, value);
+#else
+    auto* integer_address = reinterpret_cast<unsigned long long*>(address);
+    unsigned long long old = *integer_address;
+    unsigned long long assumed = 0;
+    do {
+        assumed = old;
+        old = atomicCAS(integer_address, assumed,
+            __double_as_longlong(value + __longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+#endif
+}
+
+__device__ void footprint_splat(double* projection, int views, int rows,
+    int channels, int view, int channel, int row, double value)
+{
+    if (view < 0 || view >= views || channel < 0 || channel >= channels ||
+        row < 0 || row >= rows) return;
+    footprint_atomic_add_double(projection +
+        (static_cast<size_t>(view) * rows + row) * channels + channel, value);
+}
+
+__device__ float footprint_read(const float* projection, int views, int rows,
+    int channels, int view, int channel, int row)
+{
+    if (view < 0 || view >= views || channel < 0 || channel >= channels ||
+        row < 0 || row >= rows) return 0.f;
+    return projection[(static_cast<size_t>(view) * rows + row) * channels +
+        channel];
+}
+
+__global__ void footprint_forward_kernel(const float* volume_input,
+    double* projection, const SVoxelDrivenView* geometry, int views, int rows,
+    int channels, SVolGeom volume, size_t voxel_count)
+{
+    const int view_index = blockIdx.y;
+    if (view_index >= views) return;
+    const SVoxelDrivenView& view = geometry[view_index];
+    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+         index < voxel_count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
+        const float value = volume_input[index];
+        if (value == 0.f) continue;
+        const int x = static_cast<int>(index % volume.Nx);
+        const size_t quotient = index / volume.Nx;
+        const int y = static_cast<int>(quotient % volume.Ny);
+        const int z = static_cast<int>(quotient / volume.Ny);
+        const float3 voxel = index_to_world(make_float3(
+            static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)),
+            volume);
+        float channel_f = 0.f, row_f = 0.f;
+        if (!project_to_detector(view, voxel, channel_f, row_f)) continue;
+        const int channel0 = static_cast<int>(floorf(channel_f));
+        const int row0 = static_cast<int>(floorf(row_f));
+        const float wc = channel_f - channel0;
+        const float wr = row_f - row0;
+        const float length = physical_main_axis_length(
+            sub3(voxel, to3(view.source)), volume);
+        const float scaled = value * length;
+        footprint_splat(projection, views, rows, channels, view_index,
+            channel0, row0, static_cast<double>(scaled) * (1.f-wc) * (1.f-wr));
+        footprint_splat(projection, views, rows, channels, view_index,
+            channel0+1, row0, static_cast<double>(scaled) * wc * (1.f-wr));
+        footprint_splat(projection, views, rows, channels, view_index,
+            channel0, row0+1, static_cast<double>(scaled) * (1.f-wc) * wr);
+        footprint_splat(projection, views, rows, channels, view_index,
+            channel0+1, row0+1, static_cast<double>(scaled) * wc * wr);
+    }
+}
+
+__global__ void footprint_convert_projection_kernel(const double* source,
+    float* destination, size_t count, bool accumulate)
+{
+    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x +
+             threadIdx.x;
+         index < count;
+         index += static_cast<size_t>(gridDim.x) * blockDim.x) {
+        const float value = static_cast<float>(source[index]);
+        if (accumulate) destination[index] += value;
+        else destination[index] = value;
+    }
+}
+
+__global__ void footprint_back_kernel(const float* projection,
+    float* volume_output, const SVoxelDrivenView* geometry, int views,
+    int rows, int channels, SVolGeom volume, size_t voxel_count)
+{
+    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+         index < voxel_count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
+        const int x = static_cast<int>(index % volume.Nx);
+        const size_t quotient = index / volume.Nx;
+        const int y = static_cast<int>(quotient % volume.Ny);
+        const int z = static_cast<int>(quotient / volume.Ny);
+        const float3 voxel = index_to_world(make_float3(
+            static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)),
+            volume);
+        float sum = 0.f;
+        for (int view_index = 0; view_index < views; ++view_index) {
+            const SVoxelDrivenView& view = geometry[view_index];
+            float channel_f = 0.f, row_f = 0.f;
+            if (!project_to_detector(view, voxel, channel_f, row_f)) continue;
+            const int channel0 = static_cast<int>(floorf(channel_f));
+            const int row0 = static_cast<int>(floorf(row_f));
+            const float wc = channel_f - channel0;
+            const float wr = row_f - row0;
+            const float detector_value =
+                footprint_read(projection, views, rows, channels, view_index,
+                    channel0, row0) * (1.f-wc) * (1.f-wr) +
+                footprint_read(projection, views, rows, channels, view_index,
+                    channel0+1, row0) * wc * (1.f-wr) +
+                footprint_read(projection, views, rows, channels, view_index,
+                    channel0, row0+1) * (1.f-wc) * wr +
+                footprint_read(projection, views, rows, channels, view_index,
+                    channel0+1, row0+1) * wc * wr;
+            sum += detector_value * physical_main_axis_length(
+                sub3(voxel, to3(view.source)), volume);
+        }
+        volume_output[index] += sum;
+    }
+}
+
 } // namespace
 
 void launch_joseph_backproject_v3(cudaTextureObject_t projection_texture,
@@ -432,6 +556,59 @@ void launch_joseph_exact_gather(cudaTextureObject_t projection_texture,
         65535));
     exact_gather_kernel<<<blocks, threads, 0, stream>>>(projection_texture,
         volume, geometry, channel_rays, views, rows, channels, volume_geometry);
+    YK_CUDA_KERNEL_CHECK();
+}
+
+void launch_footprint_forward(const float* volume, float* projection,
+    const SVoxelDrivenView* geometry, int views, int rows, int channels,
+    const SVolGeom& volume_geometry, cudaStream_t stream, bool accumulate)
+{
+    const size_t voxel_count = static_cast<size_t>(volume_geometry.Nx) *
+        volume_geometry.Ny * volume_geometry.Nz;
+    const size_t plane_count = static_cast<size_t>(rows) * channels;
+    constexpr int max_batch_views = 16;
+    const int allocation_views = views < max_batch_views ? views :
+        max_batch_views;
+    double* accumulator = nullptr;
+    YK_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void**>(&accumulator),
+        static_cast<size_t>(allocation_views) * plane_count * sizeof(double),
+        stream));
+    constexpr int threads = 256;
+    const int blocks = static_cast<int>(std::min<size_t>(
+        (voxel_count + threads - 1) / threads, 65535));
+    for (int view_begin = 0; view_begin < views;
+         view_begin += max_batch_views) {
+        const int batch_views = std::min(max_batch_views, views - view_begin);
+        const size_t batch_count = static_cast<size_t>(batch_views) * plane_count;
+        YK_CUDA_CHECK(cudaMemsetAsync(accumulator, 0,
+            batch_count * sizeof(double), stream));
+        footprint_forward_kernel<<<dim3(blocks, batch_views), threads, 0,
+            stream>>>(volume, accumulator, geometry + view_begin, batch_views,
+                rows, channels, volume_geometry, voxel_count);
+        YK_CUDA_KERNEL_CHECK();
+        footprint_convert_projection_kernel<<<static_cast<int>(std::min<size_t>(
+            (batch_count + threads - 1) / threads, 65535)), threads, 0,
+            stream>>>(accumulator, projection +
+                static_cast<size_t>(view_begin) * plane_count, batch_count,
+                accumulate);
+        YK_CUDA_KERNEL_CHECK();
+    }
+    YK_CUDA_CHECK(cudaFreeAsync(accumulator, stream));
+}
+
+void launch_footprint_back(const float* projection, float* volume,
+    const SVoxelDrivenView* geometry, int views, int rows, int channels,
+    const SVolGeom& volume_geometry, cudaStream_t stream, bool accumulate)
+{
+    const size_t voxel_count = static_cast<size_t>(volume_geometry.Nx) *
+        volume_geometry.Ny * volume_geometry.Nz;
+    CudaOp::clearIfOverwrite(volume, voxel_count,
+        CudaOp::writeMode(accumulate), stream);
+    constexpr int threads = 256;
+    const int blocks = static_cast<int>(std::min<size_t>(
+        (voxel_count + threads - 1) / threads, 65535));
+    footprint_back_kernel<<<blocks, threads, 0, stream>>>(projection, volume,
+        geometry, views, rows, channels, volume_geometry, voxel_count);
     YK_CUDA_KERNEL_CHECK();
 }
 

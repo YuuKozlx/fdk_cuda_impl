@@ -8,7 +8,8 @@ namespace YK {
 // 算法级配置与系统几何分离，便于同一套 Flat/Cyl geometry 复用到不同算法。
 struct SReconstructionSpec {
     EPipeline pipeline = EPipeline::FDK;
-    EProjectionModel projection_model = EProjectionModel::Joseph;
+    EForwardProjector forward_projector = EForwardProjector::Automatic;
+    EBackProjector back_projector = EBackProjector::Automatic;
     SFdkAlgoParams fdk{};
     SIterAlgoParams iterative{};
     SCglsAlgoParams cgls{};

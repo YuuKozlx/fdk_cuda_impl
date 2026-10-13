@@ -81,7 +81,7 @@ enum class ProjectorModel { Joseph, Siddon, CylindricalJoseph, CylindricalSiddon
 enum class InputModel { Phantom, VolumeRaw, ProjectionRaw };
 enum class Operation { Forward, Backproject, ForwardBackproject };
 enum class CylBackprojector {
-    JosephV3, Siddon, SiddonV2, SiddonV3, SiddonRayDriven, Fdk, FdkMatched
+    JosephV3, Siddon, SiddonV2, SiddonV3, SiddonRayDriven, Fdk, FdkPseudoMatched
 };
 
 struct ForwardCase {
@@ -142,7 +142,7 @@ CylBackprojector parseCylBackprojector(const std::string& value)
     if (value == "siddon-v3") return CylBackprojector::SiddonV3;
     if (value == "siddon-ray-driven") return CylBackprojector::SiddonRayDriven;
     if (value == "fdk") return CylBackprojector::Fdk;
-    if (value == "fdk-matched") return CylBackprojector::FdkMatched;
+    if (value == "fdk-pseudo-matched") return CylBackprojector::FdkPseudoMatched;
     throw std::runtime_error("未知 operator.backprojector: " + value);
 }
 
@@ -306,11 +306,11 @@ ForwardCase parseCase(const toml::table& table, const std::filesystem::path& bas
             "：BP 仅支持 cylindrical，且必须设置 output.volume");
     if (result.operation != Operation::Forward &&
         (result.backprojector == CylBackprojector::Fdk ||
-         result.backprojector == CylBackprojector::FdkMatched)) {
+         result.backprojector == CylBackprojector::FdkPseudoMatched)) {
         const float tolerance = std::max(1e-3f, 1e-5f * p.scan.sdd_mm);
         if (std::fabs(result.curvature_radius_mm - p.scan.sdd_mm) > tolerance)
             throw std::runtime_error(result.name +
-                "：圆柱 FDK/FDK-matched BP 仅支持 R=SDD；请先将一般圆柱投影重映射到源中心等角弧面");
+                "：圆柱 FDK/FDK-pseudo-matched BP 仅支持 R=SDD；请先将一般圆柱投影重映射到源中心等角弧面");
     }
     if (result.operation == Operation::Backproject &&
         result.input != InputModel::ProjectionRaw)
@@ -520,8 +520,8 @@ int runCase(const ForwardCase& config)
                 return CylFpBp::EBackProjection::SiddonRayDriven;
             case CylBackprojector::Fdk:
                 return CylFpBp::EBackProjection::Fdk;
-            case CylBackprojector::FdkMatched:
-                return CylFpBp::EBackProjection::FdkMatched;
+            case CylBackprojector::FdkPseudoMatched:
+                return CylFpBp::EBackProjection::FdkPseudoMatched;
             }
             return CylFpBp::EBackProjection::JosephV3;
         };

@@ -206,7 +206,8 @@ slice_prefix = '../../../../out/statistical-brainweb/reconstruction'
 type = 'statistical'
 
     [reconstruction.statistical]
-    projection_model = 'joseph'
+    forward_projector = 'auto'
+    back_projector = 'auto'
     non_negative = true
 
         [reconstruction.statistical.data_fidelity]

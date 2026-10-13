@@ -36,7 +36,7 @@ Cyl SART 的区别来自当前 Session：initialize 的 SART 分支没有 Cyl �
 | 已接通的迭代算法 | 双方均 Device | 不支持 | 完整序列；并非所有内部参数都导出 |
 | Flat / Cyl Helical WFBP | Host 或 Device | 不支持 | 无 FFS、规范几何及后端 prepare 限制 |
 
-公共 Joseph/Siddon 模型字段供 FP/迭代配对使用，不是在 FDK 中选择另一套解析 BP。普通 FDK BP、FDK-matched BP、Siddon BP 的数学语义不同。
+公共 Joseph/Siddon 模型字段供 FP/迭代配对使用，不是在 FDK 中选择另一套解析 BP。普通 FDK BP、FDK-pseudo-matched BP、Siddon BP 的数学语义不同。
 
 ## 流式范围与当前完成状态
 
@@ -65,13 +65,13 @@ C-FDK、wFBP 和迭代重建不适合本次逐帧即时累加的要求，不通�
 | Joseph FP | 按射线主轴采样，以插值读取体积并按物理长度积分 | 硬件 Linear 权重量化，不能无条件称严格伴随 |
 | Joseph voxel-driven BP | 体素投影到探测器，插值和相应长度权重 | 与 FP 为近似配对，需具体数值测试 |
 | FDK BP | 解析距离/角度权重的反投 | 不是上述 FP 的离散转置 |
-| FDK-matched BP | 使用体素、像素与距离相关的匹配权重 | 不能等同于精确 Aᵀ，不能保证比普通 FDK 更接近离散转置 |
+| FDK-pseudo-matched BP | 使用体素、像素与距离相关的近似匹配权重 | 不能等同于精确 Aᵀ，不能保证比普通 FDK 更接近离散转置 |
 
 内部 Cyl Siddon V2 用连续 channel/row、Linear 纹理、连续射线盒交长；V3 将 channel/row 四舍五入，用 Point 纹理和离散像素中心射线盒交长。二者都是体素驱动近似，不是 RayDriven FP 的严格转置，也不是同算法的纯性能版本。
 
 V3 在全部视图满足源在圆柱轴上、圆柱轴与体积 Z 对齐时选标准几何专用 kernel，否则回退通用 V3。旧 Joseph 风格 voxel-driven 不能因为使用体素线程就改称 Siddon。
 
-DLT 投影矩阵算子位于 `src/DLTFpBp/`，有独立伴随与代数测试；当前公共 `SSystemSpec` 没有任意 DLT 矩阵输入。CVP 属于实验内部实现，也不是公共第三种 projection_model。
+DLT 投影矩阵算子位于 `src/DLTFpBp/`，有独立伴随与代数测试；当前公共 `SSystemSpec` 没有任意 DLT 矩阵输入。
 
 ## 普通 Flat FDK
 
@@ -165,7 +165,7 @@ complete 仅在收齐全部视图时成功；未收齐可继续 enqueue。空包
 
 映射后的 Device 数据以 FdkProjectionBatch.location=Device 提交给内部 Flat FDK，采用 DeviceToDevice 复制；普通 Flat 内部批次默认 Host，兼容原有调用。公共 Flat Session 的投影仍要求 Host，公共 Cyl Session 仍要求完整序列，这些内部扩展未增加新的 SDK 分包能力。
 
-内部仍有 Cyl FDK/FDK-matched BP kernel 和专项测试；它们不是当前公共 FDK pipeline 的同义描述。旧“映射到 R=SDD 虚拟圆柱再进行柱面 FDK”的开发说明不能代表当前主路径。
+内部仍有 Cyl FDK/FDK-pseudo-matched BP kernel 和专项测试；它们不是当前公共 FDK pipeline 的同义描述。旧“映射到 R=SDD 虚拟圆柱再进行柱面 FDK”的开发说明不能代表当前主路径。
 
 ## xFDK
 

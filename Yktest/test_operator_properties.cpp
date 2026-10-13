@@ -110,7 +110,7 @@ int main_operator_matrix_smoke()
         { "joseph/joseph-v2", ETask::FP_Joseph, ETask::BP_Joseph_v2 },
         { "joseph/joseph-v3", ETask::FP_Joseph, ETask::BP_Joseph_v3 },
         { "joseph/fdk", ETask::FP_Joseph, ETask::BP_FDK },
-        { "joseph/fdk-matched", ETask::FP_Joseph, ETask::BP_FDK_matched },
+        { "joseph/fdk-pseudo-matched", ETask::FP_Joseph, ETask::BP_FDK_PseudoMatched },
         { "siddon/siddon-ray", ETask::FP_Siddon, ETask::BP_Siddon_RayDriven },
         { "siddon/siddon-voxel", ETask::FP_Siddon, ETask::BP_Siddon_VoxDriven },
         { "siddon/siddon-voxel-v2", ETask::FP_Siddon,
@@ -121,7 +121,7 @@ int main_operator_matrix_smoke()
         { "siddon/joseph-v2", ETask::FP_Siddon, ETask::BP_Joseph_v2 },
         { "siddon/joseph-v3", ETask::FP_Siddon, ETask::BP_Joseph_v3 },
         { "siddon/fdk", ETask::FP_Siddon, ETask::BP_FDK },
-        { "siddon/fdk-matched", ETask::FP_Siddon, ETask::BP_FDK_matched },
+        { "siddon/fdk-pseudo-matched", ETask::FP_Siddon, ETask::BP_FDK_PseudoMatched },
     };
 
     bool ok = true;

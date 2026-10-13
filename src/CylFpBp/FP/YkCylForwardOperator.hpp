@@ -27,6 +27,8 @@ public:
     virtual bool forwardLayered(const Mem::Tex3DHandle& texture,
         float* projection, cudaStream_t stream,
         bool accumulate = false) const = 0;
+    virtual bool forwardFootprint(const float* volume, float* projection,
+        cudaStream_t stream, bool accumulate = false) const = 0;
     virtual void release() = 0;
 };
 
@@ -119,6 +121,19 @@ public:
             geometry_->voxelData(), geometry_->siddonChannelRays(),
             geometry_->views(), geometry_->rows(), geometry_->channels(),
             geometry_->volumeGeometry(), stream, accumulate);
+        completion_.record(stream);
+        return true;
+    }
+
+    bool forwardFootprint(const float* volume, float* projection,
+        cudaStream_t stream, bool accumulate = false) const override
+    {
+        if (!geometry_ || !volume || !projection || !stream) return false;
+        completion_.waitBefore(stream);
+        detail::launch_footprint_forward(volume, projection,
+            geometry_->voxelData(), geometry_->views(), geometry_->rows(),
+            geometry_->channels(), geometry_->volumeGeometry(), stream,
+            accumulate);
         completion_.record(stream);
         return true;
     }

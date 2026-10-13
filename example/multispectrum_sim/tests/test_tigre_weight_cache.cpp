@@ -22,7 +22,7 @@ std::vector<float> run(const std::string& algorithm,int gpu,int cpu,bool reset,d
     g.volume_x=g.volume_y=g.volume_z=32;g.reconstruction_volume_x=g.reconstruction_volume_y=32;g.reconstruction_volume_z=20;
     c.reconstruction.type="iterative";auto& it=c.reconstruction.iterative;it.algorithm=algorithm;it.iterations=3;it.subsets=4;it.relaxation=.73;it.tv_iterations=2;
     auto system=makeLibrarySystem(c,algorithm=="sart"?YK::EPipeline::SART:YK::EPipeline::TigreGradient,
-        YK::EProjectionModel::Joseph,YK::EFdkFilter::SheppLogan,GeometryUse::Reconstruction);
+        YK::EFdkFilter::SheppLogan,GeometryUse::Reconstruction);
     if(block>0)system.reconstruction.tigre.block_size=block;
     system.reconstruction.tigre.lambda_reduction=reduction;
     if(voxel>0){auto& v=system.geometry.volume;v.voxel_x_mm=v.voxel_y_mm=v.voxel_z_mm=voxel;}
@@ -35,7 +35,7 @@ std::vector<float> run(const std::string& algorithm,int gpu,int cpu,bool reset,d
     const auto execute=[&]{cudaMemset(dv,0,output.size()*4);ck(session->execute(request),"execute failed");cudaMemcpy(output.data(),dv,output.size()*4,cudaMemcpyDeviceToHost);};
     if(offset!=0){
         g.offset_u_mm=0;const auto prior=makeLibrarySystem(c,algorithm=="sart"?YK::EPipeline::SART:YK::EPipeline::TigreGradient,
-            YK::EProjectionModel::Joseph,YK::EFdkFilter::SheppLogan,GeometryUse::Reconstruction);
+            YK::EFdkFilter::SheppLogan,GeometryUse::Reconstruction);
         ck(session->initialize(prior),"prior geometry init");execute();
         ck(session->initialize(system),"geometry reinitialize");
     }

@@ -166,7 +166,7 @@ kernel 使用 CUDA event，说明重复次数、预热、尺寸、模型和是�
 
 `fpcyl/fdk-backprojectors` 的普通 Cyl FDK BP 中心值 32 与期望一致，但离中心点相对误差 1.172e-3 超过源码 1e-4 阈值，导致整项失败。matched BP 的中心相对误差 5.595e-5、离中心相对误差 1.313e-7 在各自阈值内；日志两行共享同一累计 ok 状态，因此两行均打印 FAIL，不能据此把 matched 的数值也判为超阈值。该项测试源码未因文档整理改变，待排查解析权重与测试期望的差异。
 
-`fpcyl/fdk-adjoint` 的退出 0 只证明执行完成，没有严格伴随误差阈值。本次 Joseph FP 配普通 Cyl FDK BP 的 relative=0.171618，配 FDK-matched BP 的 relative=0.735591；后者在该测试中并未更接近离散转置。不要沿用旧文档“matched 一定更接近”的结论。独立 `fpcyl/adjoint` 中，Joseph 配对误差约 2.535e-3，Siddon RayDriven 配对约 3.716e-7，均通过该测试自己的阈值。
+`fpcyl/fdk-adjoint` 的退出 0 只证明执行完成，没有严格伴随误差阈值。本次 Joseph FP 配普通 Cyl FDK BP 的 relative=0.171618，配 FDK-pseudo-matched BP 的 relative=0.735591；后者在该测试中并未更接近离散转置。不要把 pseudo-matched 名称理解为严格离散伴随。独立 `fpcyl/adjoint` 中，Joseph 配对误差约 2.535e-3，Siddon RayDriven 配对约 3.716e-7，均通过该测试自己的阈值。
 
 本次外部示例首次缺少 MSVC /utf-8 导致 SDK 中文注释被按本机代码页解释，补入接入文档的编译选项后成功；unit_test 首次发现测试时因 GTest 运行 DLL 不在 PATH 报 0xc0000135，加入依赖前缀的 bin 后构建与 CTest 成功。这些环境要求分别记入接入与运行说明，不通过改动 SDK 或测试源码规避。
 
@@ -210,7 +210,7 @@ kernel 使用 CUDA event，说明重复次数、预热、尺寸、模型和是�
 这些事项来自代码接线审计或旧实验的未完成条件；文档整理不修改算法：
 
 - Cyl SART 边界放行与实际后端接线不一致；需要接通并补公共 DLL 回归。
-- 内部 fpcyl/fdk-backprojectors 当前有离中心解析值回归失败；FDK-matched 的名称也不能代替数值伴随结论，详见本次验证记录。
+- 内部 fpcyl/fdk-backprojectors 当前有离中心解析值回归失败；FDK-pseudo-matched 的名称也不能代替数值伴随结论，详见本次验证记录。
 - Flat CGLS 的公开停止/策略字段、TIGRE block_size、PWLS 逐射线权重尚未按声明完整消费。需决定接通或收缩契约，并增加参数生效测试。
 - XFDK 内部 pinned-host 流式能力未向公共 Session 导出；公共完整 Device 输入与内部 streaming 分别验证。
 - C-FDK 论文级复现仍缺解析椭球、3×3 子射线和论文原始模体的同条件实验；重排插值强度/分辨率损失、大尺寸性能及中央条纹需量化。
@@ -224,6 +224,6 @@ kernel 使用 CUDA event，说明重复次数、预热、尺寸、模型和是�
 
 旧接口指南和内部使用示例分别合并到 public-api 与 architecture；FDK/Ram-Lak/ART/TIGRE/CFDK/xFDK/正则化内容合并到 algorithms；几何样例合并到 geometry；TOML、模块数值与状态记录合并到本篇。源码和测试目录仅留导航链接到统一文档。长篇论文翻译、重复规范和开发过程通过 Git 历史保存。
 
-`doc/cvp/` 的原始论文 TeX/图件、`helical_ct_geometry_designer_v2.html` 和已有 SVG 作为参考材料/工具保留，不是第七份详细开发规范，也不作为当前代码行为的权威说明。独立应用、标定工具和第三方授权文档保留原位置。
+`helical_ct_geometry_designer_v2.html` 和已有 SVG 作为参考材料/工具保留，不是第七份详细开发规范，也不作为当前代码行为的权威说明。独立应用、标定工具和第三方授权文档保留原位置。
 
 提交前检查所有相对链接、引用文件、测试名、构建开关默认值和 SDK 示例；同一修改同步更新支持矩阵。验证证据记日期和代码版本，不能通过只修改“最后更新时间”宣称重新验证。

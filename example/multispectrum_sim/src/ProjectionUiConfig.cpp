@@ -189,7 +189,7 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
         if(r.analytic.filter=="tukey")a->insert_or_assign("tukey_alpha",r.analytic.tukey_alpha);
     }
     if(r.type=="iterative") recon.insert("iterative",toml::table{{"algorithm",r.iterative.algorithm},{"iterations",r.iterative.iterations},{"relaxation",r.iterative.relaxation},{"subsets",r.iterative.subsets},
-        {"projection_model",r.iterative.projection_model},{"tv_iterations",r.iterative.tv_iterations},{"tv_alpha",r.iterative.tv_alpha},{"tv_alpha_reduction",r.iterative.tv_alpha_reduction},
+        {"forward_projector",r.iterative.forward_projector},{"back_projector",r.iterative.back_projector},{"tv_iterations",r.iterative.tv_iterations},{"tv_alpha",r.iterative.tv_alpha},{"tv_alpha_reduction",r.iterative.tv_alpha_reduction},
         {"maximum_update_ratio",r.iterative.maximum_update_ratio},{"non_negative",r.iterative.non_negative},
         {"regularization",toml::table{{"plugin",r.iterative.regularization.plugin},{"strength",r.iterative.regularization.strength},
           {"huber_delta",r.iterative.regularization.huber_delta},{"step_size",r.iterative.regularization.step_size},
@@ -201,7 +201,7 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
     }
     if(r.type=="statistical"){
         const auto& s=r.statistical;
-        recon.insert("statistical",toml::table{{"projection_model",s.projection_model},{"non_negative",s.non_negative},
+        recon.insert("statistical",toml::table{{"forward_projector",s.forward_projector},{"back_projector",s.back_projector},{"non_negative",s.non_negative},
             {"data_fidelity",toml::table{{"type",s.data_fidelity.type},{"scale",s.data_fidelity.scale},
                 {"normalize_by_ray_count",s.data_fidelity.normalize_by_ray_count},{"require_verified_adjoint",s.data_fidelity.require_verified_adjoint},
                 {"weights_file",s.data_fidelity.weights_file.generic_string()}}},

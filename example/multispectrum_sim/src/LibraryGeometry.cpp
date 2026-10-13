@@ -13,10 +13,30 @@ namespace yk::spectral {
         {
             if (!condition) throw std::runtime_error(message);
         }
+
+        YK::EForwardProjector parseForwardProjector(const std::string& value)
+        {
+            if (value == "auto") return YK::EForwardProjector::Automatic;
+            if (value == "siddon") return YK::EForwardProjector::Siddon;
+            if (value == "joseph") return YK::EForwardProjector::Joseph;
+            if (value == "footprint") return YK::EForwardProjector::SeparableFootprint;
+            throw std::runtime_error("Unsupported forward_projector: " + value);
+        }
+
+        YK::EBackProjector parseBackProjector(const std::string& value)
+        {
+            if (value == "auto") return YK::EBackProjector::Automatic;
+            if (value == "fdk_pseudo_matched") return YK::EBackProjector::FdkPseudoMatched;
+            if (value == "siddon_ray") return YK::EBackProjector::SiddonRayDriven;
+            if (value == "joseph") return YK::EBackProjector::Joseph;
+            if (value == "joseph_v3") return YK::EBackProjector::JosephV3;
+            if (value == "footprint") return YK::EBackProjector::SeparableFootprint;
+            throw std::runtime_error("Unsupported back_projector: " + value);
+        }
     }
 
     YK::SSystemSpec makeLibrarySystem(const SimulationConfig& config,
-        YK::EPipeline pipeline, YK::EProjectionModel projection_model, YK::EFdkFilter filter,
+        YK::EPipeline pipeline, YK::EFdkFilter filter,
         GeometryUse use)
     {
         const auto& g = config.geometry.parameters;
@@ -164,12 +184,12 @@ namespace yk::spectral {
             static_cast<float>(voxel_x), static_cast<float>(voxel_y),
             static_cast<float>(voxel_z), volume_offset };
         system.reconstruction.pipeline = pipeline;
-        system.reconstruction.projection_model = projection_model;
         const auto& iterative = config.reconstruction.iterative;
         if (use == GeometryUse::Reconstruction && config.reconstruction.type == "iterative") {
-            const bool siddon = iterative.projection_model == "siddon";
-            system.reconstruction.projection_model = siddon
-                ? YK::EProjectionModel::Siddon : YK::EProjectionModel::Joseph;
+            system.reconstruction.forward_projector =
+                parseForwardProjector(iterative.forward_projector);
+            system.reconstruction.back_projector =
+                parseBackProjector(iterative.back_projector);
         }
         system.reconstruction.iterative.iterations = iterative.iterations;
         system.reconstruction.iterative.relaxation = static_cast<float>(iterative.relaxation);
@@ -178,7 +198,8 @@ namespace yk::spectral {
             system.reconstruction.tigre.block_size=std::max(1,(g.views+std::max(1,iterative.subsets)-1)/std::max(1,iterative.subsets));
         if(use==GeometryUse::Reconstruction&&config.reconstruction.type=="statistical"){
             const auto& s=config.reconstruction.statistical;auto& out=system.statistical;
-            system.reconstruction.projection_model=s.projection_model=="siddon"?YK::EProjectionModel::Siddon:YK::EProjectionModel::Joseph;
+            system.reconstruction.forward_projector=parseForwardProjector(s.forward_projector);
+            system.reconstruction.back_projector=parseBackProjector(s.back_projector);
             out.data_fidelity.scale=float(s.data_fidelity.scale);
             out.data_fidelity.normalize_by_ray_count=s.data_fidelity.normalize_by_ray_count;
             out.data_fidelity.require_verified_adjoint=s.data_fidelity.require_verified_adjoint;
@@ -237,7 +258,7 @@ namespace yk::spectral {
             config.geometry.kind != GeometryKind::NikonTilted)
             return {};
         const auto system = makeLibrarySystem(config, YK::EPipeline::ForwardProjection,
-            YK::EProjectionModel::Joseph, YK::EFdkFilter::RamLak,
+            YK::EFdkFilter::RamLak,
             GeometryUse::PhantomProjection);
         YK::NonStandardFpBp::TrajectorySampling sampling{};
         if (config.geometry.kind == GeometryKind::PlanarSourceOrbit) {

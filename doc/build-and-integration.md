@@ -25,7 +25,6 @@ Windows 请从 VS x64 Developer PowerShell 执行，确保 `cl`、`link`、`rc` 
 | 开关 | 默认 | 作用 |
 | --- | --- | --- |
 | `YKCBCT_BUILD_HELICAL` | ON | 编入 wFBP 等螺旋解析源码；部分 Cyl/Heli 测试也受此开关控制 |
-| `YKCBCT_BUILD_CVP` | OFF | 实验 CVP 正投；不增加公共 `EProjectionModel` 选项 |
 | `BUILD_TESTS` | OFF | `ykcbct_manual_tests` 内部 CUDA/数值/集成测试 |
 | `BUILD_UNIT_TESTS` | OFF | `YKCBCT_unit_test`，当前主要测试 Logger |
 | `BUILD_DLLTEST` | ON | `dlltest`、`dlltest_shepp_logan` 公共接口测试 |

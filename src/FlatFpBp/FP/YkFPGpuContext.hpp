@@ -31,7 +31,7 @@ namespace YK {
         // sinogram 输出由外部传入，不在此管理
         // ================================================================
         struct FpGpuContext {
-            Mem::Tex3DHandle volTex;   // CVP 路径下保持默认（无效句柄）
+            Mem::Tex3DHandle volTex;
             FpGeoData        geo;
             const float* d_vol_raw = nullptr;  // 无纹理路径使用
             cudaTextureFilterMode texture_filter = cudaFilterModeLinear;
@@ -40,7 +40,7 @@ namespace YK {
             FpGpuContext(const FpGpuContext&) = delete;
             FpGpuContext& operator=(const FpGpuContext&) = delete;
 
-            // ── 带纹理（Joseph / CVP）─────────────────────────────────
+            // ── 带纹理的正投影路径 ─────────────────────────────────────
             void init(
                 const float* d_vol,
                 const SVolGeom& vol_geom,

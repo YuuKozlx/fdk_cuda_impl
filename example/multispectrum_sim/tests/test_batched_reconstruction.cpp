@@ -21,9 +21,13 @@ std::vector<float> run(const std::string& algo,int source,int batch,int views=13
     g.volume_x=g.volume_y=g.volume_z=16;g.reconstruction_volume_x=g.reconstruction_volume_y=g.reconstruction_volume_z=16;
     if(helical){c.geometry.kind=GeometryKind::FlatHelical;g.views_per_turn=6;g.pitch_mm_per_turn=8;g.start_z_mm=-8;}
     c.reconstruction.type="iterative";c.reconstruction.iterative.algorithm=algo;c.reconstruction.iterative.iterations=3;c.reconstruction.iterative.subsets=4;
+    // This test verifies batching/source equivalence, not automatic projector
+    // selection. Keep both sides on the historical operator pair.
+    c.reconstruction.iterative.forward_projector="joseph";
+    c.reconstruction.iterative.back_projector="joseph_v3";
     if(tv){auto& r=c.reconstruction.iterative.regularization;r.plugin="huber_tv_prox";r.strength=.002;r.huber_delta=.001;r.inner_iterations=7;}
     const auto pipeline=algo=="sart"?YK::EPipeline::SART:algo=="ossart"?YK::EPipeline::OSSART:algo=="sirt"?YK::EPipeline::SIRT:YK::EPipeline::TigreGradient;
-    auto* session=YK::ReconstructionSessionFactory::create();ck(session&&session->initialize(makeLibrarySystem(c,pipeline,YK::EProjectionModel::Joseph,YK::EFdkFilter::RamLak,GeometryUse::Reconstruction)),"initialize");
+    auto* session=YK::ReconstructionSessionFactory::create();ck(session&&session->initialize(makeLibrarySystem(c,pipeline,YK::EFdkFilter::RamLak,GeometryUse::Reconstruction)),"initialize");
     Reader reader;reader.views=views;reader.input.resize(size_t(views)*32*24);for(size_t i=0;i<reader.input.size();++i)reader.input[i]=.1f+.001f*float(i%29);
     std::vector<float> output(16*16*16),repeat(output.size());float *dp=nullptr,*dv=nullptr;
     ck(cudaMalloc(&dv,output.size()*4)==cudaSuccess,"volume allocation");
@@ -53,19 +57,22 @@ std::vector<float> run(const std::string& algo,int source,int batch,int views=13
 void helicalSphere(bool helical=true){
     SimulationConfig c;c.geometry.kind=helical?GeometryKind::FlatHelical:GeometryKind::FlatCbct;auto& g=c.geometry.parameters;
     g.views=96;g.views_per_turn=24;g.detector_u=64;g.detector_v=16;g.pixel_u_mm=g.pixel_v_mm=1;
-    g.sid_mm=500;g.sdd_mm=1000;g.pitch_mm_per_turn=helical?8:0;g.start_z_mm=helical?-16:0;if(!helical)g.views_per_turn=g.views;
+    g.sid_mm=500;g.sdd_mm=1000;g.pitch_mm_per_turn=helical?8:0;g.start_z_mm=helical?16:0;if(!helical)g.views_per_turn=g.views;
     g.volume_x=g.volume_y=g.volume_z=32;g.reconstruction_volume_x=g.reconstruction_volume_y=g.reconstruction_volume_z=32;
     g.voxel_x_mm=g.voxel_y_mm=g.voxel_z_mm=g.reconstruction_voxel_x_mm=g.reconstruction_voxel_y_mm=g.reconstruction_voxel_z_mm=1;
     c.reconstruction.type="iterative";c.reconstruction.iterative.algorithm="sart";c.reconstruction.iterative.iterations=3;
+    c.reconstruction.iterative.forward_projector="joseph";
+    c.reconstruction.iterative.back_projector="joseph_v3";
     constexpr float mu=.02f;std::vector<float> truth(32*32*32),output(truth.size());
     for(int z=0;z<32;++z)for(int y=0;y<32;++y)for(int x=0;x<32;++x){float xx=x-15.5f,yy=y-15.5f,zz=z-15.5f;truth[(z*32+y)*32+x]=xx*xx+yy*yy+zz*zz<25?mu:0;}
     float *projection=nullptr,*volume=nullptr;ck(cudaMalloc(&projection,size_t(96*64*16)*4)==cudaSuccess&&cudaMalloc(&volume,truth.size()*4)==cudaSuccess,"sphere buffers");
     auto* session=YK::ReconstructionSessionFactory::create();
-    auto system=makeLibrarySystem(c,YK::EPipeline::ForwardProjection,YK::EProjectionModel::Joseph,YK::EFdkFilter::RamLak,GeometryUse::Reconstruction);
+    auto system=makeLibrarySystem(c,YK::EPipeline::ForwardProjection,YK::EFdkFilter::RamLak,GeometryUse::Reconstruction);
+    system.reconstruction.forward_projector=YK::EForwardProjector::Joseph;
     ck(session&&session->initialize(system),"sphere FP initialize");cudaMemcpy(volume,truth.data(),truth.size()*4,cudaMemcpyHostToDevice);
     YK::SExecutionRequest request;request.view_count=96;request.projection={projection,YK::EMemoryLocation::Device,size_t(96*64*16)};request.volume={volume,YK::EMemoryLocation::Device,truth.size()};
     ck(session->execute(request),"sphere FP");
-    system=makeLibrarySystem(c,YK::EPipeline::SART,YK::EProjectionModel::Joseph,YK::EFdkFilter::RamLak,GeometryUse::Reconstruction);
+    system=makeLibrarySystem(c,YK::EPipeline::SART,YK::EFdkFilter::RamLak,GeometryUse::Reconstruction);
     ck(session->initialize(system),"sphere SART initialize");cudaMemset(volume,0,truth.size()*4);ck(session->execute(request),"sphere SART");cudaMemcpy(output.data(),volume,output.size()*4,cudaMemcpyDeviceToHost);
     double sum=0,norm=0,error=0,peak=0;int count=0;
     for(int z=0;z<32;++z)for(int y=0;y<32;++y)for(int x=0;x<32;++x){size_t i=(z*32+y)*32+x;ck(std::isfinite(output[i]),"sphere nonfinite");double xx=x-15.5,yy=y-15.5,zz=z-15.5;if(xx*xx+yy*yy+zz*zz<4){sum+=output[i];++count;}double d=output[i]-truth[i];error+=d*d;norm+=truth[i]*truth[i];peak=std::max(peak,double(output[i]));}

@@ -14,7 +14,8 @@ enum class EForwardProjection {
     Joseph,
     JosephMatchedReference,
     JosephLayered,
-    Siddon
+    Siddon,
+    Footprint,
 };
 
 class IForwardProjection {
@@ -102,6 +103,9 @@ public:
         case EForwardProjection::Siddon:
             return operator_->forwardSiddon(volume_texture_, d_projection,
                 stream_, accumulate);
+        case EForwardProjection::Footprint:
+            return operator_->forwardFootprint(d_volume, d_projection, stream_,
+                accumulate);
         }
         return false;
     }

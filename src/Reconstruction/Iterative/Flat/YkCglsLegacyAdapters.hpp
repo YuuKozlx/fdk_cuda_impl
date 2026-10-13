@@ -88,7 +88,7 @@ public:
         bool use_max = false;
         float max_constraint = 1e30f;
         ETask fp_task = ETask::FP_Joseph;
-        ETask bp_task = ETask::BP_FDK_matched;
+        ETask bp_task = ETask::BP_FDK_PseudoMatched;
     };
     bool init(const SReconstructionParams& params, const Config& old,
         cudaStream_t stream, int device_id = 0)

@@ -1,4 +1,5 @@
 #include "interface/YkExecutionBackend.hpp"
+#include "interface/YkProjectorSelection.hpp"
 #include "common/YkExecutionContext.hpp"
 #include "Reconstruction/Iterative/Common/YkProjectionInput.hpp"
 #include "Reconstruction/Iterative/Statistical/StatisticalReconstructor.hpp"
@@ -48,9 +49,22 @@ SFilterKernelDesc makeFilterDesc(const SAnalyticFilterParams& ap)
 
 CylFpBp::EIterativeForwardModel makeCylForwardModel(ETask task)
 {
-    return task == ETask::FP_Siddon
-        ? CylFpBp::EIterativeForwardModel::Siddon
-        : CylFpBp::EIterativeForwardModel::Joseph;
+    switch (task) {
+    case ETask::FP_Siddon: return CylFpBp::EIterativeForwardModel::Siddon;
+    case ETask::FP_SeparableFootprint:
+        return CylFpBp::EIterativeForwardModel::Footprint;
+    default: return CylFpBp::EIterativeForwardModel::Joseph;
+    }
+}
+
+CylFpBp::EForwardProjection makeCylForwardProjectionModel(ETask task)
+{
+    switch (task) {
+    case ETask::FP_Siddon: return CylFpBp::EForwardProjection::Siddon;
+    case ETask::FP_SeparableFootprint:
+        return CylFpBp::EForwardProjection::Footprint;
+    default: return CylFpBp::EForwardProjection::Joseph;
+    }
 }
 
 CylFpBp::EIterativeBackprojectorModel makeCylBackModel(ETask task)
@@ -65,7 +79,8 @@ CylFpBp::EIterativeBackprojectorModel makeCylBackModel(ETask task)
     case ETask::BP_Joseph_v3: return Model::JosephV3;
     case ETask::BP_Joseph_v2: return Model::JosephV3; // 新 DLL 边界已拒绝；仅供旧内部请求过渡。
     case ETask::BP_FDK: return Model::Fdk;
-    case ETask::BP_FDK_matched: return Model::FdkMatched;
+    case ETask::BP_FDK_PseudoMatched: return Model::FdkPseudoMatched;
+    case ETask::BP_SeparableFootprint: return Model::Footprint;
     default: return Model::JosephV3;
     }
 }
@@ -252,9 +267,7 @@ public:
 #endif
         case EPipeline::ForwardProjection:
             if (cylindrical_) {
-                const auto model = forwardTask_() == ETask::FP_Siddon
-                    ? CylFpBp::EForwardProjection::Siddon
-                    : CylFpBp::EForwardProjection::Joseph;
+                const auto model = makeCylForwardProjectionModel(forwardTask_());
                 cyl_forward_ = CylFpBp::makeForwardProjection(model);
                 auto fp_geometry = geometry_.cylGeometry();
                 const auto& pose = geometry_.forwardProjectionPose();
@@ -628,13 +641,22 @@ private:
 
     ETask forwardTask_() const
     {
-        return reconstruction_.projection_model == EProjectionModel::Siddon
-            ? ETask::FP_Siddon : ETask::FP_Joseph;
+        return detail::resolveForwardProjector(
+            reconstruction_.forward_projector, cylindrical_,
+            requiresStrictAdjoint_());
     }
     ETask backTask_() const
     {
-        return reconstruction_.projection_model == EProjectionModel::Siddon
-            ? ETask::BP_Siddon_RayDriven : ETask::BP_Joseph_v3;
+        return detail::resolveBackProjector(
+            reconstruction_.back_projector, cylindrical_,
+            requiresStrictAdjoint_());
+    }
+
+    bool requiresStrictAdjoint_() const
+    {
+        return reconstruction_.pipeline == EPipeline::CGLS ||
+            reconstruction_.pipeline == EPipeline::PWLS ||
+            reconstruction_.pipeline == EPipeline::Statistical;
     }
 
     bool prepareCylIterative_(CylFpBp::EIterativeMethod method)

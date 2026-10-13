@@ -66,8 +66,17 @@ EReleaseDecision releaseDecision(const SSystemSpec& source)
 
 bool validProjectorSelection(const SSystemSpec& source)
 {
-    return source.reconstruction.projection_model == EProjectionModel::Joseph ||
-        source.reconstruction.projection_model == EProjectionModel::Siddon;
+    const auto fp = source.reconstruction.forward_projector;
+    const auto bp = source.reconstruction.back_projector;
+    const bool valid_fp = fp == EForwardProjector::Automatic ||
+        fp == EForwardProjector::Siddon || fp == EForwardProjector::Joseph ||
+        fp == EForwardProjector::SeparableFootprint;
+    const bool valid_bp = bp == EBackProjector::Automatic ||
+        bp == EBackProjector::FdkPseudoMatched ||
+        bp == EBackProjector::SiddonRayDriven ||
+        bp == EBackProjector::Joseph || bp == EBackProjector::JosephV3 ||
+        bp == EBackProjector::SeparableFootprint;
+    return valid_fp && valid_bp;
 }
 
 bool requiresCanonicalAcquisitionOffsets(EPipeline pipeline)
