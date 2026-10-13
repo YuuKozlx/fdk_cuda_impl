@@ -16,6 +16,7 @@ namespace YK {
         // 已公开任务的 ABI 数值不变；三者数值语义不同，不做隐式替换。
         BP_Siddon_VoxDriven_v2 = 13,
         BP_Siddon_VoxDriven_v3 = 14,
+        BP_Joseph_gather = 15,
     };
 struct ExecuteRequest {
     const float* angles = nullptr;

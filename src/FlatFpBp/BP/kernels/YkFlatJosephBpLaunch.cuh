@@ -28,4 +28,9 @@ void joseph_bp_v3_launch(cudaTextureObject_t projection_texture,
     const SConeProjGeomVec* d_views, const FdkAffineCoeff* coefficients,
     float* volume, const SVolGeom& volume_geometry, int views,
     bool accumulate, cudaStream_t stream);
+void joseph_bp_gather_launch(cudaTextureObject_t projection_texture,
+    const SConeProjGeomVec* d_views_world,
+    const SConeProjGeomVec* d_views_voxel, float* volume,
+    const SVolGeom& volume_geometry, int views, int channels, int rows,
+    bool accumulate, cudaStream_t stream);
 } // namespace YK::Bp

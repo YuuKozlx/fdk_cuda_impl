@@ -13,6 +13,7 @@ namespace YK::CylFpBp {
 enum class EForwardProjection {
     Joseph,
     JosephMatchedReference,
+    JosephLayered,
     Siddon
 };
 
@@ -95,6 +96,9 @@ public:
         case EForwardProjection::JosephMatchedReference:
             return operator_->forwardMatchedReference(volume_texture_,
                 d_projection, stream_, accumulate);
+        case EForwardProjection::JosephLayered:
+            return operator_->forwardLayered(volume_texture_, d_projection,
+                stream_, accumulate);
         case EForwardProjection::Siddon:
             return operator_->forwardSiddon(volume_texture_, d_projection,
                 stream_, accumulate);

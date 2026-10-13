@@ -36,6 +36,8 @@ struct SHelicalTrajectorySpec {
     float sid_mm = 0.f;
     float sdd_mm = 0.f;
     float start_z_mm = 0.f;
+    // 源探系统在固定物体坐标系中的带符号轴向位移。该底层量直接写入
+    // cone-vector geometry；它与宏观配置中的物理床进方向互为相反数。
     float pitch_mm_per_turn = 0.f;
     float3 source_offset_mm = make_float3(0.f, 0.f, 0.f);
 };
@@ -52,7 +54,8 @@ struct SRegularHelicalScanSpec {
     float sid_mm = 0.f;
     float sdd_mm = 0.f;
     float start_z_mm = 0.f;
-    // 带符号的物理进床量。正负号决定 Z 方向，与机架旋转方向无关。
+    // 带符号的物理床进量。正值表示床沿 +Z 运动；转换到固定物体坐标系
+    // 后，源探 cone-vector 轨迹沿 -Z 运动。该符号与机架旋转方向无关。
     float pitch_mm_per_turn = 0.f;
     float3 source_offset_mm = make_float3(0.f, 0.f, 0.f);
 };

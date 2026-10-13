@@ -34,7 +34,8 @@ enum class EIterativeMethod {
 enum class EIterativeForwardModel {
     Joseph,
     Siddon,
-    JosephMatchedReference
+    JosephMatchedReference,
+    JosephLayered
 };
 
 enum class EIterativeBackprojectorModel {
@@ -45,6 +46,7 @@ enum class EIterativeBackprojectorModel {
     SiddonRayDriven,
     // Cyl Joseph_V3：体素驱动实现，采用 Joseph 插值语义的几何权重。
     JosephV3,
+    JosephExactGather,
     // FDK 风格解析反投影；允许所有迭代方法使用，但不是 A^T。
     Fdk,
     // FDK 风格的匹配权重版本；相对 FP 更接近，但仍非严格转置。
@@ -107,9 +109,14 @@ public:
             const char* fp_name = config_.forward_model ==
                     EIterativeForwardModel::Joseph ? "Joseph" :
                 config_.forward_model == EIterativeForwardModel::Siddon ?
-                    "Siddon" : "JosephMatchedReference";
+                    "Siddon" : config_.forward_model ==
+                    EIterativeForwardModel::JosephLayered ?
+                    "JosephLayered" : "JosephMatchedReference";
             const char* bp_name = config_.backprojector_model ==
                     EIterativeBackprojectorModel::JosephV3 ? "JosephV3" :
+                config_.backprojector_model ==
+                    EIterativeBackprojectorModel::JosephExactGather ?
+                    "JosephExactGather" :
                 config_.backprojector_model == EIterativeBackprojectorModel::Siddon ?
                     "SiddonRayDriven" : config_.backprojector_model ==
                     EIterativeBackprojectorModel::SiddonV2 ? "SiddonV2" :
@@ -133,6 +140,13 @@ public:
                 config_.backprojector_model == EIterativeBackprojectorModel::Joseph) {
                 YK_LOGI("[CylIterative:CGLS] 当前为高伴随性 Joseph 参考组合，"
                     "但速度最慢（Point FP + Joseph BP）");
+            }
+            else if (config_.forward_model ==
+                    EIterativeForwardModel::JosephLayered &&
+                config_.backprojector_model ==
+                    EIterativeBackprojectorModel::JosephExactGather) {
+                YK_LOGI("[CylIterative:CGLS] strict pair: "
+                    "JosephLayered + JosephExactGather");
             }
             else if (config_.backprojector_model == EIterativeBackprojectorModel::Fdk ||
                      config_.backprojector_model == EIterativeBackprojectorModel::FdkMatched) {
@@ -378,6 +392,9 @@ private:
         case EIterativeForwardModel::JosephMatchedReference:
             return op.forwardMatchedReference(shared_volume_texture_, projection,
                 stream_, false);
+        case EIterativeForwardModel::JosephLayered:
+            return op.forwardLayered(shared_volume_texture_, projection,
+                stream_, false);
         }
         return false;
     }
@@ -398,6 +415,9 @@ private:
         case EIterativeForwardModel::JosephMatchedReference:
             return full_forward_->forwardMatchedReference(shared_volume_texture_,
                 projection, stream_, false);
+        case EIterativeForwardModel::JosephLayered:
+            return full_forward_->forwardLayered(shared_volume_texture_, projection,
+                stream_, false);
         }
         return false;
     }
@@ -425,6 +445,8 @@ private:
         case EIterativeBackprojectorModel::SiddonRayDriven:
             return EBackProjection::SiddonRayDriven;
         case EIterativeBackprojectorModel::JosephV3: return EBackProjection::JosephV3;
+        case EIterativeBackprojectorModel::JosephExactGather:
+            return EBackProjection::JosephExactGather;
         case EIterativeBackprojectorModel::Fdk: return EBackProjection::Fdk;
         case EIterativeBackprojectorModel::FdkMatched:
             return EBackProjection::FdkMatched;

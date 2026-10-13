@@ -186,6 +186,8 @@ private:
                 if (!(sid > 0.f && sdd > sid)) return false;
                 out.trajectory.sid_mm = sid;
                 out.trajectory.sdd_mm = sdd;
+                // 暂存第一帧实际源点高度；得到带符号 pitch 后再换算成
+                // 底层显式轨迹所需的 angle=0 轴向截距。
                 out.trajectory.start_z_mm = source4.z;
                 out.channel_spacing_mm = norm(xyz(u4));
                 out.row_spacing_mm = norm(xyz(v4));
@@ -213,8 +215,12 @@ private:
         out.trajectory.pitch_mm_per_turn = (sourceZ(views.back()) -
             sourceZ(views.front())) * static_cast<float>(vpt) /
             static_cast<float>(views.size() - 1);
+        if (!std::isfinite(out.trajectory.pitch_mm_per_turn) ||
+            std::fabs(out.trajectory.pitch_mm_per_turn) <= 1e-6f) return false;
+        out.trajectory.start_z_mm -= out.trajectory.pitch_mm_per_turn *
+            out.trajectory.angles_rad.front() / (2.f * CUDA_PI);
         out.detector_pose = {};
-        return out.trajectory.pitch_mm_per_turn > 0.f;
+        return std::isfinite(out.trajectory.start_z_mm);
     }
 
     static int phiSpotCount_(EFocalSpotMode mode)
@@ -238,7 +244,9 @@ private:
             volume.Ny <= 0 || volume.Nz <= 0 || trajectory.sid_mm <= 0.f ||
             trajectory.sdd_mm <= trajectory.sid_mm ||
             p.channel_spacing_mm <= 0.f || p.row_spacing_mm <= 0.f ||
-            trajectory.pitch_mm_per_turn <= 0.f || p.views_per_turn < 4 ||
+            !std::isfinite(trajectory.pitch_mm_per_turn) ||
+            std::fabs(trajectory.pitch_mm_per_turn) <= 1e-6f ||
+            p.views_per_turn < 4 ||
             c.channel_oversampling != 2 || c.redundancy_flat < 0.f ||
             c.redundancy_flat >= 1.f || c.filter.cutoff_c <= 0.f ||
             c.filter.cutoff_c > 1.f || c.filter.apodization_a < 0.f ||

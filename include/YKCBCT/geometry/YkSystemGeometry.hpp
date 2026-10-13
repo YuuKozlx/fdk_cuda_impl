@@ -85,9 +85,10 @@ inline bool buildHelicalTrajectory(const SRegularHelicalScanSpec& scan,
     SystemGeometryDetail::buildRegularAngles(scan, trajectory.angles_rad);
     trajectory.sid_mm = scan.sid_mm;
     trajectory.sdd_mm = scan.sdd_mm;
-    // 底层显式轨迹按绝对角度计算 z。换算截距并吸收旋转方向，保证
-    // pitch 的正负只表示物理进床方向，不随角度增减方向翻转。
-    trajectory.pitch_mm_per_turn = scan.pitch_mm_per_turn *
+    // 宏观 pitch 描述床的物理运动；cone-vector 位于固定物体坐标系，
+    // 因而源探系统采用相反的轴向位移。底层显式轨迹按绝对角度计算 z，
+    // 还需吸收旋转方向，使床进符号不随角度增减方向翻转。
+    trajectory.pitch_mm_per_turn = -scan.pitch_mm_per_turn *
         static_cast<float>(scan.rotation_direction);
     trajectory.start_z_mm = scan.start_z_mm -
         trajectory.pitch_mm_per_turn * scan.start_angle_rad / kTwoPi;

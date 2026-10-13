@@ -24,6 +24,7 @@ struct SVoxelDrivenView {
     float4 source_perp{};
     float source_perp_norm_sq = 0.f;
     unsigned int source_on_axis = 0;
+    unsigned int main_axis = 0;
 };
 // V3 离散像素射线在 prepare 阶段缓存，避免 kernel 内重复 sincosf。
 struct SCylVoxelChannelRay { float4 detector_at_principal_row{}; };

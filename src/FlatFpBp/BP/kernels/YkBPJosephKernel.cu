@@ -268,6 +268,164 @@ namespace YK {
     } // namespace Bp
 } // namespace YK
 
+namespace YK::Bp {
+namespace {
+
+__device__ float3 flat_add(float3 a, float3 b)
+{ return make_float3(a.x + b.x, a.y + b.y, a.z + b.z); }
+__device__ float3 flat_sub(float3 a, float3 b)
+{ return make_float3(a.x - b.x, a.y - b.y, a.z - b.z); }
+__device__ float3 flat_mul(float3 a, float s)
+{ return make_float3(a.x * s, a.y * s, a.z * s); }
+__device__ float flat_dot(float3 a, float3 b)
+{ return a.x*b.x + a.y*b.y + a.z*b.z; }
+__device__ float3 flat_cross(float3 a, float3 b)
+{ return make_float3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
+__device__ float3 flat_xyz(float4 a) { return make_float3(a.x, a.y, a.z); }
+__device__ float flat_component(float3 a, int axis)
+{ return axis == 0 ? a.x : (axis == 1 ? a.y : a.z); }
+__device__ int flat_dimension(const SVolGeom& g, int axis)
+{ return axis == 0 ? g.Nx : (axis == 1 ? g.Ny : g.Nz); }
+__device__ float flat_voxel_size(const SVolGeom& g, int axis)
+{ return axis == 0 ? g.vox_x : (axis == 1 ? g.vox_y : g.vox_z); }
+
+__device__ int flat_main_axis(const SConeProjGeomVec& view, int channels,
+    int rows)
+{
+    const float3 source = flat_xyz(view.src);
+    const float3 detector = flat_add(flat_add(flat_xyz(view.detS),
+        flat_mul(flat_xyz(view.detU), 0.5f * (channels - 1))),
+        flat_mul(flat_xyz(view.detV), 0.5f * (rows - 1)));
+    const float3 direction = flat_sub(detector, source);
+    const float ax = fabsf(direction.x), ay = fabsf(direction.y),
+        az = fabsf(direction.z);
+    return ax >= ay && ax >= az ? 0 : (ay >= az ? 1 : 2);
+}
+
+__device__ bool flat_project(const SConeProjGeomVec& view, float3 point,
+    float& channel, float& row)
+{
+    const float3 source = flat_xyz(view.src);
+    const float3 det_s = flat_xyz(view.detS);
+    const float3 det_u = flat_xyz(view.detU);
+    const float3 det_v = flat_xyz(view.detV);
+    const float3 normal = flat_cross(det_u, det_v);
+    const float3 direction = flat_sub(point, source);
+    const float denominator = flat_dot(direction, normal);
+    if (fabsf(denominator) < 1e-12f) return false;
+    const float t = flat_dot(flat_sub(det_s, source), normal) / denominator;
+    if (t <= 0.f) return false;
+    const float3 relative = flat_sub(flat_add(source,
+        flat_mul(direction, t)), det_s);
+    const float u2 = flat_dot(det_u, det_u);
+    const float v2 = flat_dot(det_v, det_v);
+    if (u2 < 1e-16f || v2 < 1e-16f) return false;
+    channel = flat_dot(relative, det_u) / u2;
+    row = flat_dot(relative, det_v) / v2;
+    return isfinite(channel) && isfinite(row);
+}
+
+__device__ float flat_joseph_weight(const SConeProjGeomVec& view,
+    int channel, int row, int axis, int x, int y, int z,
+    const SVolGeom& volume, float& physical_length)
+{
+    const float3 source = flat_xyz(view.src);
+    const float3 detector = flat_add(flat_add(flat_xyz(view.detS),
+        flat_mul(flat_xyz(view.detU), static_cast<float>(channel))),
+        flat_mul(flat_xyz(view.detV), static_cast<float>(row)));
+    const float3 direction = flat_sub(detector, source);
+    const float denominator = flat_component(direction, axis);
+    if (fabsf(denominator) < 1e-12f) return 0.f;
+    const int axis1 = axis == 0 ? 1 : 0;
+    const int axis2 = axis == 2 ? 1 : 2;
+    const float slope1 = flat_component(direction, axis1) / denominator;
+    const float slope2 = flat_component(direction, axis2) / denominator;
+    const int index0 = axis == 0 ? x : (axis == 1 ? y : z);
+    const int index1 = axis1 == 0 ? x : (axis1 == 1 ? y : z);
+    const int index2 = axis2 == 0 ? x : (axis2 == 1 ? y : z);
+    const float centered0 = index0 - 0.5f * (flat_dimension(volume, axis)-1);
+    const float intercept1 = flat_component(source, axis1) -
+        slope1 * flat_component(source, axis);
+    const float intercept2 = flat_component(source, axis2) -
+        slope2 * flat_component(source, axis);
+    const float sample1 = slope1 * centered0 + intercept1 +
+        0.5f * (flat_dimension(volume, axis1)-1);
+    const float sample2 = slope2 * centered0 + intercept2 +
+        0.5f * (flat_dimension(volume, axis2)-1);
+    const float weight1 = fmaxf(0.f, 1.f - fabsf(sample1-index1));
+    const float weight2 = fmaxf(0.f, 1.f - fabsf(sample2-index2));
+    const float v0 = flat_voxel_size(volume, axis);
+    const float v1 = flat_voxel_size(volume, axis1);
+    const float v2 = flat_voxel_size(volume, axis2);
+    physical_length = sqrtf(v0*v0 + slope1*slope1*v1*v1 +
+        slope2*slope2*v2*v2);
+    return weight1 * weight2;
+}
+
+__global__ void flat_joseph_gather_kernel(cudaTextureObject_t projection,
+    const SConeProjGeomVec* views_world,
+    const SConeProjGeomVec* views_voxel, float* volume_output,
+    SVolGeom volume, int views, int channels, int rows, size_t voxel_count)
+{
+    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+         index < voxel_count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
+        const int x = static_cast<int>(index % volume.Nx);
+        const size_t quotient = index / volume.Nx;
+        const int y = static_cast<int>(quotient % volume.Ny);
+        const int z = static_cast<int>(quotient / volume.Ny);
+        const float3 origin = volume.origin();
+        const float3 voxel = make_float3(origin.x+x*volume.vox_x,
+            origin.y+y*volume.vox_y, origin.z+z*volume.vox_z);
+        float sum = 0.f;
+        for (int view_index = 0; view_index < views; ++view_index) {
+            float detector_u = 0.f, detector_v = 0.f;
+            if (!flat_project(views_world[view_index], voxel,
+                detector_u, detector_v)) continue;
+            const int center_u = static_cast<int>(floorf(detector_u + 0.5f));
+            const int center_v = static_cast<int>(floorf(detector_v + 0.5f));
+            const int axis = flat_main_axis(views_world[view_index], channels, rows);
+            constexpr int radius = 3;
+            for (int v = max(0, center_v-radius);
+                 v <= min(rows-1, center_v+radius); ++v) {
+                for (int u = max(0, center_u-radius);
+                     u <= min(channels-1, center_u+radius); ++u) {
+                    float length = 0.f;
+                    const float weight = flat_joseph_weight(
+                        views_voxel[view_index], u, v, axis, x, y, z,
+                        volume, length);
+                    if (weight == 0.f) continue;
+                    sum += tex3D<float>(projection, u+0.5f, v+0.5f,
+                        view_index+0.5f) * weight * length;
+                }
+            }
+        }
+        volume_output[index] += sum;
+    }
+}
+
+} // namespace
+
+void joseph_bp_gather_launch(cudaTextureObject_t projection_texture,
+    const SConeProjGeomVec* d_views_world,
+    const SConeProjGeomVec* d_views_voxel, float* volume,
+    const SVolGeom& volume_geometry, int views, int channels, int rows,
+    bool accumulate, cudaStream_t stream)
+{
+    const size_t count = static_cast<size_t>(volume_geometry.Nx) *
+        volume_geometry.Ny * volume_geometry.Nz;
+    CudaOp::clearIfOverwrite(volume, count, CudaOp::writeMode(accumulate), stream);
+    constexpr int threads = 256;
+    const size_t needed_blocks = (count + threads - 1) / threads;
+    const int blocks = static_cast<int>(needed_blocks < 65535 ?
+        needed_blocks : 65535);
+    flat_joseph_gather_kernel<<<blocks, threads, 0, stream>>>(projection_texture,
+        d_views_world, d_views_voxel, volume, volume_geometry, views,
+        channels, rows, count);
+    YK_CUDA_KERNEL_CHECK();
+}
+
+} // namespace YK::Bp
+
 // 体素驱动 Joseph BP。兼容入口仍使用 v2 名称。
 namespace YK {
     namespace Bp {

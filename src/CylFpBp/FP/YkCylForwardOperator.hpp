@@ -24,6 +24,9 @@ public:
     virtual bool forwardMatchedReference(const Mem::Tex3DHandle& texture,
         float* projection, cudaStream_t stream,
         bool accumulate = false) const = 0;
+    virtual bool forwardLayered(const Mem::Tex3DHandle& texture,
+        float* projection, cudaStream_t stream,
+        bool accumulate = false) const = 0;
     virtual void release() = 0;
 };
 
@@ -99,6 +102,23 @@ public:
             geometry_->data(), geometry_->views(), geometry_->rows(),
             geometry_->channels(), geometry_->volumeGeometry(), config_, stream,
             accumulate);
+        completion_.record(stream);
+        return true;
+    }
+
+    bool forwardLayered(const Mem::Tex3DHandle& texture, float* projection,
+        cudaStream_t stream, bool accumulate = false) const override
+    {
+        if (!geometry_ || !projection || !stream ||
+            !texture.matches(geometry_->volumeGeometry().Nx,
+                geometry_->volumeGeometry().Ny,
+                geometry_->volumeGeometry().Nz, cudaFilterModePoint))
+            return false;
+        completion_.waitBefore(stream);
+        detail::launch_joseph_layered_forward(texture.tex, projection,
+            geometry_->voxelData(), geometry_->siddonChannelRays(),
+            geometry_->views(), geometry_->rows(), geometry_->channels(),
+            geometry_->volumeGeometry(), stream, accumulate);
         completion_.record(stream);
         return true;
     }

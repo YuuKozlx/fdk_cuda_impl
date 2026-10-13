@@ -51,7 +51,8 @@ inline bool isBackTask(ETask task)
         task == ETask::BP_Siddon_VoxDriven_v2 ||
         task == ETask::BP_Siddon_VoxDriven_v3 ||
         task == ETask::BP_Joseph || task == ETask::BP_Joseph_v2 ||
-        task == ETask::BP_Joseph_v3 || task == ETask::BP_FDK ||
+        task == ETask::BP_Joseph_v3 || task == ETask::BP_Joseph_gather ||
+        task == ETask::BP_FDK ||
         task == ETask::BP_FDK_matched;
 }
 
@@ -295,6 +296,14 @@ public:
             gpu_->sinoTex = makeProjectionTexture(cudaFilterModeLinear);
             Bp::joseph_bp_v3_launch(gpu_->sinoTex.tex, gpu_->geo.d_views_world(), gpu_->geo.d_coeffs_data(),
                 d_volume, vol, na, accumulate, resources.stream());
+            break;
+        }
+        case ETask::BP_Joseph_gather: {
+            gpu_->sinoTex = makeProjectionTexture(cudaFilterModePoint);
+            Bp::joseph_bp_gather_launch(gpu_->sinoTex.tex,
+                gpu_->geo.d_views_world(), gpu_->geo.d_views_vox(), d_volume,
+                vol, na, batch.scan.Nu, batch.scan.Nv, accumulate,
+                resources.stream());
             break;
         }
         case ETask::BP_FDK:

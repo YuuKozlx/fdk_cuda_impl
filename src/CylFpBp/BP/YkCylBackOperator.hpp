@@ -20,6 +20,8 @@ public:
         cudaStream_t stream, bool accumulate = false) const = 0;
     virtual bool backprojectSiddon(const Mem::Tex3DHandle& texture, float* volume,
         cudaStream_t stream, bool accumulate = false) const = 0;
+    virtual bool backprojectGather(const Mem::Tex3DHandle& texture, float* volume,
+        cudaStream_t stream, bool accumulate = false) const = 0;
     virtual void release() = 0;
 };
 
@@ -76,6 +78,21 @@ public:
             geometry_->data(), geometry_->siddonChannelRays(),
             geometry_->views(), geometry_->rows(), geometry_->channels(),
             geometry_->volumeGeometry(), accumulate, stream);
+        completion_.record(stream);
+        return true;
+    }
+
+    bool backprojectGather(const Mem::Tex3DHandle& texture, float* volume,
+        cudaStream_t stream, bool accumulate = false) const override
+    {
+        if (!geometry_ || !volume || !stream ||
+            !texture.matches(geometry_->channels(), geometry_->rows(),
+                geometry_->views(), cudaFilterModePoint)) return false;
+        completion_.waitBefore(stream);
+        detail::launch_joseph_exact_gather(texture.tex, volume,
+            geometry_->voxelData(), geometry_->siddonChannelRays(),
+            geometry_->views(), geometry_->rows(), geometry_->channels(),
+            geometry_->volumeGeometry(), stream, accumulate);
         completion_.record(stream);
         return true;
     }

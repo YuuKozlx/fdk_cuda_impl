@@ -19,6 +19,7 @@ enum class EBackProjection {
     SiddonV3,
     SiddonRayDriven,
     JosephV3,
+    JosephExactGather,
     Fdk,
     FdkMatched
 };
@@ -65,6 +66,7 @@ public:
         bool ok = false;
         switch (model_) {
         case EBackProjection::Joseph:
+        case EBackProjection::JosephExactGather:
         case EBackProjection::Siddon:
         case EBackProjection::SiddonRayDriven: {
             const auto prepared = detail::prepareJosephGeometry(volume_geometry,
@@ -119,6 +121,9 @@ public:
         switch (model_) {
         case EBackProjection::Joseph:
             return uploadCommon_(projection) && operator_->backproject(
+                projection_texture_, volume, stream_, accumulate);
+        case EBackProjection::JosephExactGather:
+            return uploadCommon_(projection) && operator_->backprojectGather(
                 projection_texture_, volume, stream_, accumulate);
         case EBackProjection::Siddon:
         case EBackProjection::SiddonRayDriven:
