@@ -49,6 +49,7 @@ if(BUILD_VTK_VISUALIZATION_TESTS)
         "${SPECTRAL_ROOT}/src/primary/CudaProjectionBackend.cu"
         "${SPECTRAL_ROOT}/src/LibraryGeometry.cpp"
         "${SPECTRAL_ROOT}/src/SpectralProjectionPipeline.cpp"
+        "${SPECTRAL_ROOT}/src/MultiSpecFpStage.cpp"
         "${SPECTRAL_ROOT}/src/SpectralModel.cpp"
         "${SPECTRAL_ROOT}/src/SimLogger.cpp"
         "${SPECTRAL_ROOT}/src/FasksRuntimeModel.cpp"

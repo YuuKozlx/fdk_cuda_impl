@@ -2,6 +2,7 @@
 #include "SpectralProjectionPipeline.hpp"
 
 namespace yk::spectral::primary_detail {
+ProjectionSourceRegistry makeCudaProjectionSourceRegistry();
 class CudaProjectionBackend final : public IProjectionBackend {
 public:
     CudaProjectionBackend();

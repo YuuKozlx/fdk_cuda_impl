@@ -1,8 +1,9 @@
 #pragma once
 
-#include "config/SimConfig.hpp"
-#include "SpectralModel.hpp"
 #include "../../../visualization/LiveView.hpp"
+#include "SpectralModel.hpp"
+#include "config/SimConfig.hpp"
+#include "pipeline/Stage.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -22,10 +23,16 @@ using ProjectionViewGeometry = yk::visualization::FrameGeometry;
 // stages (threshold response, dead time/pile-up), and a count output sink.
 
 // Energy-integrating signals and photon counts have different physical units.
-enum class ProjectionSignalDomain { EnergyKeV, PhotonCounts };
-enum class ProjectionMemoryLocation { Host, Device };
+enum class ProjectionSignalDomain { EnergyKeV,
+    PhotonCounts };
+using ProjectionMemoryLocation = pipeline::Location;
 enum class ProjectionStagePhase {
-    Scatter, QuantumNoise, OpticalCrosstalk, Afterglow, ElectronicCrosstalk, Readout
+    Scatter,
+    QuantumNoise,
+    OpticalCrosstalk,
+    Afterglow,
+    ElectronicCrosstalk,
+    Readout
 };
 
 struct PhotonCountFrame {
@@ -41,8 +48,8 @@ struct PhotonCountFrame {
 };
 
 struct DeviceProjectionFrame {
-    float *expected=nullptr,*sampled=nullptr,*air=nullptr,*signal=nullptr,*reference=nullptr,*logarithm=nullptr;
-    unsigned char* mask=nullptr;
+    float *expected = nullptr, *sampled = nullptr, *air = nullptr, *signal = nullptr, *reference = nullptr, *logarithm = nullptr;
+    unsigned char* mask = nullptr;
 };
 struct ProjectionFrame {
     int view = 0, width = 0, height = 0;
@@ -54,7 +61,7 @@ struct ProjectionFrame {
     PhotonCountFrame photon_counts;
     DeviceProjectionFrame device;
     std::vector<float> logarithm;
-    bool logarithm_valid=false;
+    bool logarithm_valid = false;
     void resize(int columns, int rows);
 };
 
@@ -65,62 +72,67 @@ public:
     virtual ~IProjectionBackend() = default;
     virtual ProjectionSignalDomain outputDomain() const = 0;
     virtual void prepare(const SimulationConfig&, const std::vector<std::uint8_t>&,
-        const SpectralTransmissionModel&) = 0;
+        const SpectralTransmissionModel&)
+        = 0;
     virtual void project(int view, ProjectionFrame&) = 0;
-    virtual bool supportsDeviceFrames()const{return false;}
-    virtual void ensureLocation(std::vector<ProjectionFrame>&,ProjectionMemoryLocation);
-    virtual void finalizeBatch(std::vector<ProjectionFrame>&){}
-    virtual void synchronize(){}
-    virtual int batchCapacity() const {return 1;}
-    virtual void projectBatch(int first_view,int count,std::vector<ProjectionFrame>&);
+    virtual bool supportsDeviceFrames() const { return false; }
+    virtual void ensureLocation(std::vector<ProjectionFrame>&, ProjectionMemoryLocation);
+    virtual void finalizeBatch(std::vector<ProjectionFrame>&) { }
+    virtual void synchronize() { }
+    virtual int batchCapacity() const { return 1; }
+    virtual void projectBatch(int first_view, int count, std::vector<ProjectionFrame>&);
     virtual ProjectionViewGeometry geometryForDisplay(int view) const;
     virtual void sampleScatterNoise(ProjectionFrame&) = 0;
     virtual void reset() noexcept = 0;
 };
 
+struct SpectralSourceContext {
+    const SimulationConfig& config;
+    const std::vector<std::uint8_t>& labels;
+    const SpectralTransmissionModel& model;
+};
+class IProjectionSource : public pipeline::ISource<ProjectionFrame, SpectralSourceContext, ProjectionSignalDomain> {
+public:
+    virtual void ensureLocation(std::vector<ProjectionFrame>&, ProjectionMemoryLocation) = 0;
+    virtual void finalizeBatch(std::vector<ProjectionFrame>&) = 0;
+    virtual void synchronize() = 0;
+    virtual ProjectionViewGeometry geometryForDisplay(int view) const = 0;
+    virtual void sampleScatterNoise(ProjectionFrame&) = 0;
+};
+using ProjectionSourceRegistry = pipeline::FactoryRegistry<IProjectionSource>;
+
 struct ProjectionStageContext {
     const SimulationConfig& config;
-    IProjectionBackend& backend;
+    IProjectionSource& source;
 };
 
-class IProjectionStage {
+class IProjectionStage : public pipeline::IStage<ProjectionFrame, ProjectionStageContext, ProjectionSignalDomain> {
 public:
-    virtual ~IProjectionStage() = default;
-    virtual const char* name() const = 0;
     virtual ProjectionStagePhase phase() const = 0;
-    virtual ProjectionSignalDomain domain() const = 0;
-    virtual ProjectionMemoryLocation location() const {
-        return ProjectionMemoryLocation::Host;
-    }
-    virtual void prepare(const SimulationConfig&) {}
-    virtual void process(ProjectionFrame&, const ProjectionStageContext&) = 0;
-    // Air is a deterministic reference. Stateful modules keep separate air state.
-    virtual void processAir(ProjectionFrame&, const ProjectionStageContext&) {}
-    virtual void reset() noexcept {}
+    // Separate deterministic air state remains a projection-specific operation.
+    virtual void processAir(ProjectionFrame&, const ProjectionStageContext&) { }
 };
 
-class IProjectionOutputSink {
-public:
-    virtual ~IProjectionOutputSink() = default;
-    virtual ProjectionSignalDomain domain() const = 0;
-    virtual void prepare(const SimulationConfig&, const std::filesystem::path&) = 0;
-    virtual void write(const ProjectionFrame&) = 0;
-    virtual void finish() = 0;
-    virtual void reset() noexcept = 0;
+struct ProjectionOutputContext {
+    const SimulationConfig& config;
+    const std::filesystem::path& output_file;
 };
+using IProjectionOutputSink = pipeline::IOutput<ProjectionFrame, ProjectionOutputContext, ProjectionSignalDomain>;
 
 class SpectralProjectionPipeline {
 public:
-    explicit SpectralProjectionPipeline(std::unique_ptr<IProjectionBackend> backend);
+    explicit SpectralProjectionPipeline(std::unique_ptr<IProjectionSource> source);
+    const pipeline::PluginInfo& sourceInfo() const noexcept;
     ~SpectralProjectionPipeline();
     void addStage(std::unique_ptr<IProjectionStage> stage);
     void setOutputSink(std::unique_ptr<IProjectionOutputSink> sink);
     void setVisualization(yk::visualization::LiveView*);
     bool run(const SimulationConfig&, const std::vector<std::uint8_t>&,
         const SpectralTransmissionModel&, const std::filesystem::path& output,
-        std::string& error);
+        std::string& error, TaskProgressCallback progress = {});
+
 private:
-    std::unique_ptr<IProjectionBackend> backend_;
+    std::unique_ptr<IProjectionSource> source_;
     std::vector<std::unique_ptr<IProjectionStage>> extensions_;
     std::unique_ptr<IProjectionOutputSink> sink_;
     bool running_ = false;

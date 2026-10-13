@@ -51,8 +51,9 @@ endif()
 if(TARGET YKCBCT)
     target_sources(multispectrum_sim PRIVATE
         src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/ReconstructionPreprocessor.cpp
+        src/recon/postprocess/PostprocessPipeline.cpp src/recon/postprocess/OutputStages.cpp
         src/recon/preprocess/ProjectionCache.cpp
-        src/CudaPrimaryProjector.cu src/SpectralProjectionPipeline.cpp
+        src/CudaPrimaryProjector.cu src/SpectralProjectionPipeline.cpp src/MultiSpecFpStage.cpp
         src/primary/CudaProjectionBackend.cu src/primary/DetectorSignal.cpp
         src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
         src/CudaFasksScatter.cu)
@@ -135,7 +136,7 @@ if(BUILD_TESTING)
         endforeach()
         add_executable(multispectrum_pipeline_test tests/test_projection_pipeline.cpp tests/test_device_signal_stages.cpp
             src/primary/CudaProjectionBackend.cu src/LibraryGeometry.cpp
-            src/SpectralProjectionPipeline.cpp src/SpectralModel.cpp src/SimLogger.cpp
+            src/SpectralProjectionPipeline.cpp src/MultiSpecFpStage.cpp src/SpectralModel.cpp src/SimLogger.cpp
             src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
             src/primary/DetectorSignal.cpp src/FasksRuntimeModel.cpp src/CudaFasksScatter.cu)
         target_include_directories(multispectrum_pipeline_test PRIVATE include
@@ -370,4 +371,25 @@ if(BUILD_TESTING)
     add_executable(multispectrum_relative_geometry_test tests/test_relative_geometry.cpp)
     target_compile_features(multispectrum_relative_geometry_test PRIVATE cxx_std_17)
     add_test(NAME multispectrum_relative_geometry COMMAND multispectrum_relative_geometry_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_postprocess_test tests/test_postprocess.cpp src/recon/postprocess/PostprocessPipeline.cpp src/recon/postprocess/OutputStages.cpp src/SimLogger.cpp)
+    target_include_directories(multispectrum_postprocess_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    if(MSVC)
+        target_compile_options(multispectrum_postprocess_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_postprocess COMMAND multispectrum_postprocess_test "${CMAKE_CURRENT_BINARY_DIR}/postprocess-tests")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_stage_runtime_test tests/test_stage_runtime.cpp)
+    target_include_directories(multispectrum_stage_runtime_test PRIVATE include)
+    add_test(NAME multispectrum_stage_runtime COMMAND multispectrum_stage_runtime_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_plugin_metadata_test tests/test_plugin_metadata.cpp)
+    target_include_directories(multispectrum_plugin_metadata_test PRIVATE include)
+    add_test(NAME multispectrum_plugin_metadata COMMAND multispectrum_plugin_metadata_test)
 endif()

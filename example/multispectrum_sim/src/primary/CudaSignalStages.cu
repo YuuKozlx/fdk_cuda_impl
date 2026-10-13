@@ -1,3 +1,4 @@
+#include "pipeline/BuiltinPluginInfo.hpp"
 #include "ProjectionStages.hpp"
 #include "CudaFasksScatter.hpp"
 #include "FasksRuntimeModel.hpp"
@@ -36,17 +37,16 @@ __global__ void readout(float* signal,size_t n,DetectorPostprocessConfig::DasCon
 }
 __global__ void addScatter(float* signal,const float* scatter,size_t n){size_t p=size_t(blockIdx.x)*blockDim.x+threadIdx.x;if(p<n)signal[p]+=scatter[p];}
 class DeviceStage:public IProjectionStage {
-public:ProjectionSignalDomain domain()const override{return ProjectionSignalDomain::EnergyKeV;}
-    ProjectionMemoryLocation location()const override{return ProjectionMemoryLocation::Device;}
+public:pipeline::Contract<ProjectionSignalDomain> contract()const override{return {ProjectionSignalDomain::EnergyKeV,ProjectionSignalDomain::EnergyKeV,ProjectionMemoryLocation::Device,ProjectionMemoryLocation::Device};}
 };
 class Scatter final:public DeviceStage {
     ScatterConfig config_;std::unique_ptr<FasksRuntimeModel> model_;std::unique_ptr<CudaFasksScatter> scatter_;float* prediction_=nullptr;size_t pixels_=0;
 public:
     explicit Scatter(ScatterConfig c):config_(std::move(c)){}
     ~Scatter(){reset();}
-    const char* name()const override{return "scatter";}
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CudaScatter);}
     ProjectionStagePhase phase()const override{return ProjectionStagePhase::Scatter;}
-    void prepare(const SimulationConfig& c)override{const auto& g=c.geometry.parameters;pixels_=size_t(g.detector_u)*g.detector_v;
+    void prepare(const ProjectionStageContext& context)override{const auto& c=context.config;const auto& g=c.geometry.parameters;pixels_=size_t(g.detector_u)*g.detector_v;
         model_=std::make_unique<FasksRuntimeModel>(config_.model_file);
         scatter_=std::make_unique<CudaFasksScatter>(g.detector_u,g.detector_v,g.pixel_u_mm,g.pixel_v_mm,*model_,config_.kernel.mode=="segmented"?config_.kernel.segments:0);
         scatter_->prepareDeviceMask();check(yk::spectral::cuda_resources::poolAllocate(&prediction_,pixels_*sizeof(float)));
@@ -58,19 +58,19 @@ public:
     void reset()noexcept override{yk::spectral::cuda_resources::poolRelease(prediction_);prediction_=nullptr;scatter_.reset();model_.reset();}
 };
 class Quantum final:public DeviceStage {
-public:const char* name()const override{return "scatter_noise";}
+public:const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CudaQuantum);}
     ProjectionStagePhase phase()const override{return ProjectionStagePhase::QuantumNoise;}
     void process(ProjectionFrame& f,const ProjectionStageContext& c)override{
-        if(c.config.projection.scatter.enabled)c.backend.sampleScatterNoise(f);
+        if(c.config.projection.scatter.enabled)c.source.sampleScatterNoise(f);
         else check(cudaMemcpy(f.device.signal,f.device.sampled,size_t(f.width)*f.height*sizeof(float),cudaMemcpyDeviceToDevice));
     }
 };
 class Crosstalk final:public DeviceStage {
-    CrosstalkConfig config_;ProjectionStagePhase phase_;const char* name_;double *u_=nullptr,*v_=nullptr;float* scratch_=nullptr;
-public:Crosstalk(CrosstalkConfig c,ProjectionStagePhase phase,const char* name):config_(std::move(c)),phase_(phase),name_(name){}
+    CrosstalkConfig config_;ProjectionStagePhase phase_;double *u_=nullptr,*v_=nullptr;float* scratch_=nullptr;
+public:Crosstalk(CrosstalkConfig c,ProjectionStagePhase phase):config_(std::move(c)),phase_(phase){}
     ~Crosstalk(){reset();}
-    const char* name()const override{return name_;}ProjectionStagePhase phase()const override{return phase_;}
-    void prepare(const SimulationConfig& c)override{
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(phase_==ProjectionStagePhase::OpticalCrosstalk?pipeline::BuiltinPlugin::CudaOptical:pipeline::BuiltinPlugin::CudaElectronic);}ProjectionStagePhase phase()const override{return phase_;}
+    void prepare(const ProjectionStageContext& context)override{const auto& c=context.config;
         check(yk::spectral::cuda_resources::poolAllocate(&u_,config_.kernel_u.size()*sizeof(double)));check(yk::spectral::cuda_resources::poolAllocate(&v_,config_.kernel_v.size()*sizeof(double)));
         check(yk::spectral::cuda_resources::poolAllocate(&scratch_,size_t(c.geometry.parameters.detector_u)*c.geometry.parameters.detector_v*sizeof(float)));
         check(cudaMemcpy(u_,config_.kernel_u.data(),config_.kernel_u.size()*sizeof(double),cudaMemcpyHostToDevice));
@@ -87,8 +87,8 @@ class Afterglow final:public DeviceStage {
     DetectorPostprocessConfig::AfterglowConfig config_;LagCoefficient* coefficients_=nullptr;float* states_=nullptr;size_t pixels_=0;bool object_first_=true,air_first_=true;
 public:explicit Afterglow(DetectorPostprocessConfig::AfterglowConfig c):config_(std::move(c)){}
     ~Afterglow(){reset();}
-    const char* name()const override{return "afterglow";}ProjectionStagePhase phase()const override{return ProjectionStagePhase::Afterglow;}
-    void prepare(const SimulationConfig& c)override{
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CudaAfterglow);}ProjectionStagePhase phase()const override{return ProjectionStagePhase::Afterglow;}
+    void prepare(const ProjectionStageContext& context)override{const auto& c=context.config;
         if(config_.weights.empty()||config_.weights.size()!=config_.time_constants_ms.size())throw std::runtime_error("invalid CUDA afterglow components");
         pixels_=size_t(c.geometry.parameters.detector_u)*c.geometry.parameters.detector_v;std::vector<LagCoefficient> coeff;
         float exposure=float(config_.exposure_time_ms),readout=float(config_.frame_time_ms-config_.exposure_time_ms);
@@ -108,7 +108,7 @@ public:explicit Afterglow(DetectorPostprocessConfig::AfterglowConfig c):config_(
 class Das final:public DeviceStage {
     DetectorPostprocessConfig::DasConfig config_;
 public:explicit Das(DetectorPostprocessConfig::DasConfig c):config_(c){}
-    const char* name()const override{return "das";}ProjectionStagePhase phase()const override{return ProjectionStagePhase::Readout;}
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CudaDas);}ProjectionStagePhase phase()const override{return ProjectionStagePhase::Readout;}
     void process(ProjectionFrame& f,const ProjectionStageContext&)override{readout<<<(f.width*f.height+255)/256,256>>>(f.device.signal,size_t(f.width)*f.height,config_,f.view);check(cudaGetLastError());}
 };
 }
@@ -116,9 +116,9 @@ std::vector<std::unique_ptr<IProjectionStage>> makeCudaProjectionStages(const Si
     std::vector<std::unique_ptr<IProjectionStage>> stages;const auto& p=c.projection;const auto& d=p.detector_postprocess;
     if(p.scatter.enabled)stages.push_back(std::make_unique<Scatter>(p.scatter));
     if(p.quantum_noise.enabled)stages.push_back(std::make_unique<Quantum>());
-    if(d.optical_crosstalk.enabled)stages.push_back(std::make_unique<Crosstalk>(d.optical_crosstalk,ProjectionStagePhase::OpticalCrosstalk,"optical_crosstalk"));
+    if(d.optical_crosstalk.enabled)stages.push_back(std::make_unique<Crosstalk>(d.optical_crosstalk,ProjectionStagePhase::OpticalCrosstalk));
     if(d.afterglow.enabled)stages.push_back(std::make_unique<Afterglow>(d.afterglow));
-    if(d.electronic_crosstalk.enabled)stages.push_back(std::make_unique<Crosstalk>(d.electronic_crosstalk,ProjectionStagePhase::ElectronicCrosstalk,"electronic_crosstalk"));
+    if(d.electronic_crosstalk.enabled)stages.push_back(std::make_unique<Crosstalk>(d.electronic_crosstalk,ProjectionStagePhase::ElectronicCrosstalk));
     if(d.das.enabled)stages.push_back(std::make_unique<Das>(d.das));return stages;
 }
 }

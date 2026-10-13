@@ -1,3 +1,4 @@
+#include "MultiSpecFpStage.hpp"
 #include "InteractiveProjection.hpp"
 #ifdef YK_SPECTRAL_IMGUI
 #include "ImGuiProjection.hpp"
@@ -62,7 +63,7 @@ bool runInteractiveProjection(const SimulationConfig& initial, const std::vector
         const auto& v = current.visualization;
         yk::visualization::LiveView view({ v.texture_max_size, v.max_fps, false, true, v.snapshot_directory.string() });
         view.setParameters(parameters(current.geometry.parameters));
-        SpectralProjectionPipeline pipeline(std::make_unique<primary_detail::CudaProjectionBackend>());
+        SpectralProjectionPipeline pipeline(primary_detail::makeCudaProjectionSourceRegistry().create("projection.source.multi_spec_fp"));
         pipeline.setVisualization(&view);
         bool success = false;
         for (;;) {

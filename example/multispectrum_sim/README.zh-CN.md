@@ -655,3 +655,15 @@ ImGui 界面顶部的 `Gantry fixed (relative)` 可切换为机架固定的观�
 此开关只改变显示，不改变计算几何、投影贴图或重建结果，不需要重新计算。源与探测器必须构成刚性机架；不满足该条件的轨迹会禁用开关，避免显示失真。重新加载配置后仍以新扫描首帧为参考。
 
 ImGui 的内部正则插件配置仅在内部 `sirt`、`sart`、`ossart` 下显示。CGLS 与所有 TIGRE 算法隐藏这组正则插件并清除插件选择。TIGRE 自带的 `tigre_sart_tv`、`tigre_os_sart_tv` 仍可选择，并显示它们自己的 TV 迭代步数与 alpha 参数；不与内部正则插件绑定。
+
+### 重建后处理
+
+重建后的处理和导出通过独立的 `recon/postprocess` 流水线管理，包含处理 Stage、只读 Exporter 和工厂 Registry。当前已接入原有 RAW/三视图 BMP 导出，并提供可选的 HU 转换 Stage；DICOM、降噪、骨硬化和 MAR 算法尚未实现。数据位置与数值域检查及扩展方式见 [后处理插件说明](src/recon/postprocess/README.md)。
+
+### 统一流水线基础层
+
+多能前投、重建前处理及后处理已直接采用同一个有类型 Stage/Output 契约与执行器，统一数据位置、数值域转换、生命周期、进度、计时和工厂。物理阶段排序、空气参考和三维体积等业务差异仍由各自接口表达，详见 [统一流水线说明](include/pipeline/README.md)。
+
+三条流水线的 Stage/Exporter 强制通过 IPlugin::info() 提供静态自描述；FactoryRegistry 支持不实例化插件的 list()/find(id) 查询。内置描述目录与参数说明详见 [插件自描述与查询](include/pipeline/README.md)。
+
+多能前投已作为注册的 `MultiSpecFpStage` 源阶段接入：配置/体积/材料/能谱准备、批次生成、输出校验及 Backend 生命周期由源统一管理；现有融合 kernel、批次显存预算和设备驻留保持不变。源 ID 为 `projection.source.multi_spec_fp`，可查询注册描述和 Pipeline::sourceInfo()。

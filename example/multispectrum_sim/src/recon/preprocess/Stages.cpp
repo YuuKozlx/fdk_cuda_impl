@@ -1,3 +1,4 @@
+#include "pipeline/BuiltinPluginInfo.hpp"
 #include "common/YkCudaTiming.hpp"
 #include "Stages.hpp"
 #include "CudaPixelOps.hpp"
@@ -12,9 +13,8 @@ namespace yk::spectral::preprocess {
 namespace {
 class Restore final : public IStage {
   public:
-    const char *name() const override { return "Energy restore"; }
-    Domain inputDomain() const override { return Domain::LogAttenuation; }
-    Domain outputDomain() const override { return Domain::EnergySignal; }
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::EnergyRestore);}
+    pipeline::Contract<Domain> contract()const override{return {Domain::LogAttenuation,Domain::EnergySignal,Location::Device,Location::Device};}
     void prepare(const Context &) override {}
     void process(Frame &, const Context &c) override { c.cuda.restoreEnergy(); }
     void reset() noexcept override {}
@@ -26,9 +26,8 @@ class Scatter final : public IStage {
     std::unique_ptr<experimental::AdaptiveScatterSolver> adaptive_;
 #endif
   public:
-    const char *name() const override { return "Scatter correction"; }
-    Domain inputDomain() const override { return Domain::EnergySignal; }
-    Domain outputDomain() const override { return Domain::EnergySignal; }
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::ScatterCorrection);}
+    pipeline::Contract<Domain> contract()const override{return {Domain::EnergySignal,Domain::EnergySignal,Location::Device,Location::Device};}
     void prepare(const Context &c) override {
         const auto &g = c.config.geometry.parameters;
         const auto &s = c.config.reconstruction.preprocessing.scatter;
@@ -112,13 +111,11 @@ class Finalize final : public IStage {
 
   public:
     Finalize(bool energy, BeamHardeningConfig bhc) : energy_(energy), bhc_(std::move(bhc)) {}
-    const char *name() const override {
-        return bhc_.enabled ? "BHC / log conversion" : "Log conversion";
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(bhc_.enabled?pipeline::BuiltinPlugin::Bhc:pipeline::BuiltinPlugin::LogConversion);}
+    pipeline::Contract<Domain> contract()const override {
+        return {energy_ ? Domain::EnergySignal : Domain::LogAttenuation,
+            Domain::LogAttenuation,Location::Device,Location::Device};
     }
-    Domain inputDomain() const override {
-        return energy_ ? Domain::EnergySignal : Domain::LogAttenuation;
-    }
-    Domain outputDomain() const override { return Domain::LogAttenuation; }
     void prepare(const Context &c) override {
         if (bhc_.enabled)
             c.cuda.configureBhc(bhc_);

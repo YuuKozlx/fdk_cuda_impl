@@ -1,3 +1,4 @@
+#include "MultiSpecFpStage.hpp"
 #include <windows.h>
 
 #include "ImGuiProjection.hpp"
@@ -703,7 +704,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         yk::visualization::LiveView view({ options.texture_max_size, options.max_fps, false, false, options.snapshot_directory.string() });
         if (!view.installGui([&](int w, int h, bool enabled, const std::string& status) { ui.draw(w, h, enabled, status, view); }))
             throw std::runtime_error("Build with BUILD_VTK_VISUALIZATION=ON and BUILD_IMGUI_GUI=ON");
-        SpectralProjectionPipeline pipeline(std::make_unique<primary_detail::CudaProjectionBackend>());
+        SpectralProjectionPipeline pipeline(primary_detail::makeCudaProjectionSourceRegistry().create("projection.source.multi_spec_fp"));
         pipeline.setVisualization(&view);
         XcomAttenuationProvider attenuation({});
         std::optional<SimulationConfig> computed_config, reconstructed_config;

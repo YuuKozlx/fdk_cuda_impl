@@ -1,3 +1,4 @@
+#include "pipeline/BuiltinPluginInfo.hpp"
 #pragma once
 #include "SpectralProjectionPipeline.hpp"
 #include <fstream>
@@ -6,9 +7,10 @@ namespace yk::spectral::primary_detail {
 // preserve channel counts, bin thresholds, and per-channel air calibration.
 class EnergyProjectionOutput final : public IProjectionOutputSink {
 public:
-    ProjectionSignalDomain domain() const override { return ProjectionSignalDomain::EnergyKeV; }
-    void prepare(const SimulationConfig&, const std::filesystem::path&) override;
-    void write(const ProjectionFrame&) override;
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::EnergyOutput);}
+    bool acceptsDomain(ProjectionSignalDomain domain)const override{return domain==ProjectionSignalDomain::EnergyKeV;}
+    void prepare(const ProjectionOutputContext&) override;
+    void write(const ProjectionFrame&,const ProjectionOutputContext&) override;
     void finish() override;
     void reset() noexcept override;
     const std::vector<float>& attenuationForDisplay() const { return attenuation_buffer_; }
