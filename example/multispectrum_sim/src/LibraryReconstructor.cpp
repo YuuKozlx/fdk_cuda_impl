@@ -40,6 +40,10 @@ YK::EFdkFilter parseFilter(const std::string& name)
     if (name == "hann") return YK::EFdkFilter::Hann;
     if (name == "hamming") return YK::EFdkFilter::Hamming;
     if (name == "shepp-logan") return YK::EFdkFilter::SheppLogan;
+    if (name == "blackman") return YK::EFdkFilter::Blackman;
+    if (name == "butterworth") return YK::EFdkFilter::Butterworth;
+    if (name == "kaiser") return YK::EFdkFilter::Kaiser;
+    if (name == "tukey") return YK::EFdkFilter::Tukey;
     throw std::runtime_error("未知滤波核: " + name);
 }
 
@@ -122,10 +126,6 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             YK::EProjectionModel::Joseph, parseFilter(config.reconstruction.analytic.filter),
             GeometryUse::Reconstruction);
         if(statistical)check(YK::estimateStatisticalWorkspace(system,statistical_workspace),"Cannot estimate statistical workspace for requested modules");
-        if (wfbp) {
-            system.reconstruction.wfbp.filter_cutoff = static_cast<float>(config.reconstruction.analytic.wfbp_cutoff);
-            system.reconstruction.wfbp.filter_apodization = static_cast<float>(config.reconstruction.analytic.wfbp_apodization);
-        }
         if(statistical){const auto& s=config.reconstruction.statistical;
             std::cout<<" optimizer="<<s.optimizer.type<<" iterations="<<s.optimizer.iterations<<" regularization="<<s.regularization.plugin
                 <<" strength="<<s.regularization.strength<<" shape="<<s.regularization.shape<<" adjoint=approximate";
@@ -135,9 +135,8 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 << " subsets=" << config.reconstruction.iterative.subsets;
         }
         std::cout << "reconstruction=" << pipeline_name
-            << " filter=" << (wfbp ? "freect-ramp" : config.reconstruction.analytic.filter);
-        if (wfbp) std::cout << " cutoff=" << config.reconstruction.analytic.wfbp_cutoff
-            << " apodization=" << config.reconstruction.analytic.wfbp_apodization
+            << " filter=" << config.reconstruction.analytic.filter;
+        if (wfbp) std::cout << " cutoff=" << config.reconstruction.analytic.cutoff
             << " full_input_bytes=" << projection_elements * sizeof(float)
             << " chunk_views=not-applicable";
         std::cout << std::endl;

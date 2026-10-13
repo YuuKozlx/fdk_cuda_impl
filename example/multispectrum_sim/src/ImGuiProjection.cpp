@@ -407,21 +407,31 @@ void number(const char* label, double& value)
             if(ImGui::Combo("Method",&method,"FDK\0Algebraic iterative\0Statistical\0WFBP (helical)\0")){
                 r.type=method==2?"statistical":method==1?"iterative":"analytic";
                 r.analytic.pipeline=method==3?"wfbp":"fdk";
-                if(method==3)r.analytic.filter="ramlak";
+
             }
             if(method==0||method==3){
                 if(method==3){
                     ImGui::TextWrapped("WFBP: analytic helical reconstruction. Uses the complete projection sequence.");
                     if(draft.geometry.kind!=GeometryKind::FlatHelical)ImGui::TextWrapped("Select Flat helical in Geometry to use WFBP.");
-                    number("WFBP cutoff (0, 1]",r.analytic.wfbp_cutoff);
-                    number("WFBP apodization [0, 1]",r.analytic.wfbp_apodization);
-                    ImGui::TextUnformatted("Filter: FreeCT ramp");
+
                 }else{
                     ImGui::TextWrapped("FDK: Flat circular / Planar / Tilted. For Flat helical select WFBP or an iterative method.");
-                    int filter=r.analytic.filter=="ramlak"?0:r.analytic.filter=="shepp-logan"?1:2;
-                    if(ImGui::Combo("Filter",&filter,"ramlak\0shepp-logan\0hann\0"))r.analytic.filter=filter==0?"ramlak":filter==1?"shepp-logan":"hann";
                     integer("Chunk views",r.analytic.chunk_views);
                 }
+                const char* filters[]={"ramlak","shepp-logan","cosine","hann","hamming","blackman","butterworth","kaiser","tukey"};
+                if(ImGui::BeginCombo("Filter",r.analytic.filter.c_str())) {
+                    for(const auto* name:filters) {
+                        bool selected=r.analytic.filter==name;
+                        if(ImGui::Selectable(name,selected))r.analytic.filter=name;
+                        if(selected)ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                number("Cutoff (0, 0.5] cycles/sample",r.analytic.cutoff);
+                number("Filter gain",r.analytic.gain);
+                if(r.analytic.filter=="butterworth")number("Butterworth order",r.analytic.butterworth_order);
+                if(r.analytic.filter=="kaiser")number("Kaiser beta",r.analytic.kaiser_beta);
+                if(r.analytic.filter=="tukey")number("Tukey alpha",r.analytic.tukey_alpha);
             }else if(method==1){
                 const char* algorithms[]={"sirt","ossart","cgls","tigre_sart","tigre_os_sart","tigre_sart_tv","tigre_os_sart_tv","sart","tigre_sirt"};
                 bool listed=false;for(const auto* algorithm:algorithms)listed=listed || r.iterative.algorithm==algorithm;

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
+#include <cstdlib>
+#include <cstring>
 
 #include "Reconstruction/Analytic/Helical/WFBP/YkWfbpProcessors.hpp"
 #include "global/YkLog.h"
@@ -67,6 +69,49 @@ public:
             return false;
         }
 
+        size_t free_bytes=0,total_bytes=0;
+        if(cudaMemGetInfo(&free_bytes,&total_bytes)!=cudaSuccess) return false;
+        int padded=1; while(padded<2*geometry_.output_channels) padded<<=1;
+        const size_t raw=size_t(geometry_.raw_views)*geometry_.input_rows*geometry_.input_channels*sizeof(float);
+        const size_t filtered=size_t(geometry_.views)*geometry_.rows*geometry_.output_channels*sizeof(float);
+        const size_t fft=size_t(geometry_.views)*geometry_.rows*padded*sizeof(float)*2;
+        const size_t volume_bytes=size_t(volume.Nx)*volume.Ny*volume.Nz*sizeof(float);
+        const size_t reserve=std::max(size_t(512)<<20,total_bytes/5);
+        const size_t resident=raw*2+filtered*2+fft+volume_bytes;
+        const char* force=std::getenv("YK_WFBP_BATCHED");
+        batched_=resident>(free_bytes>reserve?free_bytes-reserve:0) || (force && std::string(force)=="1");
+        if(batched_) {
+            if(config_.focal_spot_mode!=EFocalSpotMode::None) {
+                YK_LOGE("[wFBP] large FFS workspace is not supported by the phase-batched path");
+                return false;
+            }
+            filter_views_=std::min(32,geometry_.views);
+            raw_capacity_=std::min(geometry_.raw_views,filter_views_+2*geometry_.add_projections+2);
+            const int half=std::max(1,geometry_.views_per_turn/2);
+            const int turns=geometry_.views/half;
+            const size_t plane=size_t(geometry_.rows)*geometry_.output_channels;
+            phase_views_=std::min(std::min(half,8),std::max(1,int((256ULL<<20)/(plane*sizeof(float)*turns))));
+            const size_t staged_raw=size_t(raw_capacity_)*geometry_.input_rows*geometry_.input_channels*sizeof(float);
+            const size_t batch_fft=size_t(filter_views_)*geometry_.rows*padded*sizeof(float)*2;
+            const size_t staged_bytes=staged_raw*(config_.input_detector==EInputDetector::EquiangularArc?1:2)+
+                size_t(filter_views_+std::max(filter_views_,phase_views_*turns))*plane*sizeof(float)+
+                batch_fft+volume_bytes+(size_t(128)<<20);
+            if(staged_bytes>(free_bytes>reserve?free_bytes-reserve:0)) {
+                YK_LOGE("[wFBP] batched workspace needs {} bytes beyond reserve {}, free {}",staged_bytes,reserve,free_bytes);
+                return false;
+            }
+            d_raw_staging_=memory_.allocateDevice3D<float>(geometry_.input_channels,geometry_.input_rows,raw_capacity_,device_id_);
+            if(config_.input_detector!=EInputDetector::EquiangularArc)
+                d_arc_projection_=memory_.allocateDevice3D<float>(geometry_.input_channels,geometry_.input_rows,raw_capacity_,device_id_);
+            d_rebinned_=memory_.allocateDevice3D<float>(geometry_.output_channels,geometry_.rows,filter_views_,device_id_);
+            d_filtered_=memory_.allocateDevice3D<float>(geometry_.output_channels,geometry_.rows,std::max(filter_views_,phase_views_*turns),device_id_);
+            auto filter_geometry=geometry_; filter_geometry.views=filter_views_;
+            if(!filter_.prepare(filter_geometry,config_,stream_,device_id_)) return false;
+            prepared_=true;
+            YK_LOGI("[wFBP] batched workspace: estimated resident={} bytes, filter_views={}, phases={}, host_filtered={} bytes",resident,filter_views_,phase_views_,filtered);
+            return true;
+        }
+
         if (config_.input_detector != EInputDetector::EquiangularArc) {
             d_arc_projection_ = memory_.allocateDevice3D<float>(
                 geometry_.input_channels, geometry_.input_rows,
@@ -102,6 +147,7 @@ public:
     bool reconstruct(const float* projection, float* volume)
     {
         if (!prepared_ || !projection || !volume) return false;
+        if(batched_) return reconstructBatched_(projection,volume,cudaMemcpyDeviceToDevice);
         const float* arc_projection = projection;
         if (config_.input_detector == EInputDetector::FlatPanel) {
             if (!flat_to_arc_.apply(projection, d_arc_projection_.data(), stream_))
@@ -118,6 +164,12 @@ public:
             backproject_.apply(d_filtered_.data(), volume, stream_);
     }
 
+    bool usesBatchedWorkspace() const { return batched_; }
+    bool reconstructHost(const float* projection,float* volume) {
+        return prepared_ && batched_ && projection && volume &&
+            reconstructBatched_(projection,volume,cudaMemcpyHostToDevice);
+    }
+
     void release()
     {
         // reconstruct() 有意只负责入队。释放或重新 prepare 会覆盖内部工作区，
@@ -128,11 +180,13 @@ public:
         d_arc_projection_ = {};
         d_rebinned_ = {};
         d_filtered_ = {};
+        d_raw_staging_ = {};
         input_ = {};
         volume_ = {};
         geometry_ = {};
         stream_ = nullptr;
         prepared_ = false;
+        batched_=false; filter_views_=raw_capacity_=phase_views_=0;
     }
 
     const Geometry& geometry() const { return geometry_; }
@@ -145,6 +199,53 @@ public:
     const float* filteredData() const { return d_filtered_.data(); }
 
 private:
+    bool reconstructBatched_(const float* projection,float* volume,cudaMemcpyKind input_kind) {
+        const size_t raw_plane=size_t(geometry_.input_channels)*geometry_.input_rows;
+        const size_t plane=size_t(geometry_.output_channels)*geometry_.rows;
+        // Public execution still supplies the complete scan. Only intermediate
+        // filtered data are staged on Host; every W(q) normalization retains all
+        // half-turn observations belonging to its phase.
+        std::vector<float> filtered(size_t(geometry_.views)*plane);
+        for(int first=0;first<geometry_.views;first+=filter_views_) {
+            const int count=std::min(filter_views_,geometry_.views-first);
+            const int raw_first=first;
+            const int raw_last=std::min(geometry_.raw_views,first+count+2*geometry_.add_projections+2);
+            const int raw_count=raw_last-raw_first;
+            YK_CUDA_CHECK(cudaMemcpyAsync(d_raw_staging_.data(),projection+size_t(raw_first)*raw_plane,
+                size_t(raw_count)*raw_plane*sizeof(float),input_kind,stream_));
+            const float* arc=d_raw_staging_.data();
+            auto chunk_geometry=geometry_; chunk_geometry.raw_views=raw_count;
+            if(config_.input_detector==EInputDetector::FlatPanel) {
+                if(!flat_to_arc_.prepare(chunk_geometry,input_.channel_spacing_mm,config_) ||
+                    !flat_to_arc_.apply(arc,d_arc_projection_.data(),stream_)) return false;
+                arc=d_arc_projection_.data();
+            } else if(config_.input_detector==EInputDetector::CylindricalArc) {
+                if(!cylindrical_to_arc_.prepare(chunk_geometry,config_.arc_curvature_radius_mm,input_.channel_spacing_mm,config_) ||
+                    !cylindrical_to_arc_.apply(arc,d_arc_projection_.data(),stream_)) return false;
+                arc=d_arc_projection_.data();
+            }
+            if(count<filter_views_) YK_CUDA_CHECK(cudaMemsetAsync(d_rebinned_.data(),0,size_t(filter_views_)*plane*sizeof(float),stream_));
+            detail::launch_rebin_range(arc,d_rebinned_.data(),geometry_,first,count,raw_first,raw_count,config_.launch,stream_);
+            if(!filter_.apply(d_rebinned_.data(),d_filtered_.data())) return false;
+            YK_CUDA_CHECK(cudaMemcpyAsync(filtered.data()+size_t(first)*plane,d_filtered_.data(),size_t(count)*plane*sizeof(float),cudaMemcpyDeviceToHost,stream_));
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        }
+        const int half=std::max(1,geometry_.views_per_turn/2), turns=geometry_.views/half;
+        std::vector<float> packed(size_t(phase_views_)*turns*plane);
+        for(int first=0;first<half;first+=phase_views_) {
+            const int count=std::min(phase_views_,half-first);
+            for(int turn=0;turn<turns;++turn) for(int phase=0;phase<count;++phase)
+                std::memcpy(packed.data()+(size_t(turn)*count+phase)*plane,
+                    filtered.data()+(size_t(turn)*half+first+phase)*plane,plane*sizeof(float));
+            YK_CUDA_CHECK(cudaMemcpyAsync(d_filtered_.data(),packed.data(),size_t(count)*turns*plane*sizeof(float),cudaMemcpyHostToDevice,stream_));
+            detail::launch_backproject_phases(d_filtered_.data(),volume,volume_.Nx,volume_.Ny,volume_.Nz,
+                volume_.vox_x,volume_.vox_y,volume_.vox_z,volume_.center.x,volume_.center.y,volume_.center.z,
+                geometry_,config_.redundancy_flat,first,count,first==0,config_.launch,stream_);
+            YK_CUDA_CHECK(cudaStreamSynchronize(stream_));
+            YK_LOGI("[wFBP] phase group {}/{}",first+count,half);
+        }
+        return true;
+    }
     template <typename GeometryView>
     static bool derivePublicGeometry_(const std::vector<GeometryView>& views,
         int channels, int rows, InputGeometry& out, float& curvature_radius)
@@ -240,9 +341,7 @@ private:
             p.channel_spacing_mm <= 0.f || p.row_spacing_mm <= 0.f ||
             trajectory.pitch_mm_per_turn <= 0.f || p.views_per_turn < 4 ||
             c.channel_oversampling != 2 || c.redundancy_flat < 0.f ||
-            c.redundancy_flat >= 1.f || c.filter.cutoff_c <= 0.f ||
-            c.filter.cutoff_c > 1.f || c.filter.apodization_a < 0.f ||
-            c.filter.apodization_a > 1.f ||
+            c.redundancy_flat >= 1.f || !Filter::validAnalyticFilter(c.filter) ||
             p.views_per_turn % focal_spots != 0 ||
             (p.views_per_turn / focal_spots) % 2 != 0 ||
             trajectory.angles_rad.size() < static_cast<size_t>(p.views_per_turn) ||
@@ -437,8 +536,11 @@ private:
     cudaStream_t stream_ = nullptr;
     int device_id_ = 0;
     bool prepared_ = false;
+    bool batched_ = false;
+    int filter_views_=0,raw_capacity_=0,phase_views_=0;
     Mem::MemoryController memory_{};
     Mem::DeviceLinearBuffer3D<float> d_arc_projection_{};
+    Mem::DeviceLinearBuffer3D<float> d_raw_staging_{};
     Mem::DeviceLinearBuffer3D<float> d_rebinned_{};
     Mem::DeviceLinearBuffer3D<float> d_filtered_{};
     RebinProcessor rebin_{};

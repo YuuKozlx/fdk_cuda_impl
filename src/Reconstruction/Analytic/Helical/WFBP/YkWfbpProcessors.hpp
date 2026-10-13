@@ -4,6 +4,8 @@
 
 #include "Filter/YkConv.hpp"
 #include "Filter/YkFFT.hpp"
+#include "Filter/YkCreateFilterKernelFFT.hpp"
+#include "Filter/YkAnalyticFilterSettings.hpp"
 #include "CylFpBp/Analytic/YkCylAnalyticProjectionMapper.hpp"
 #include "Reconstruction/Analytic/Helical/WFBP/YkWfbpTypes.hpp"
 #include "Reconstruction/Analytic/Helical/WFBP/kernels/YkWfbpLaunch.cuh"
@@ -107,7 +109,6 @@ public:
         geometry_ = geometry;
         policy_ = config.launch;
         stream_ = stream;
-        filter_config_ = config.filter;
 
         // FreeCT 新版使用至少 2*Nu 的 2 次幂零填充，避免周期卷积污染有效通道。
         padded_channels_ = 1;
@@ -118,21 +119,15 @@ public:
 
         d_padded_ = memory_.allocateDevice3D<float>(padded_channels_,
             geometry_.rows, geometry_.views, device_id);
-        d_complex_ = memory_.allocateDevice3D<cufftComplex>(complex_channels_,
-            geometry_.rows, geometry_.views, device_id);
-        d_spatial_filter_ = memory_.allocateDevice3D<float>(padded_channels_, 1, 1,
-            device_id);
-        d_filter_fft_ = memory_.allocateDevice3D<cufftComplex>(complex_channels_, 1, 1,
-            device_id);
-
-        if (!fft_.init(padded_channels_, batch, stream_) ||
-            !filter_fft_.init(padded_channels_, 1, CudaFFT::EPlanMode::R2COnly,
-                stream_)) return false;
-
-        // 严格采用 FreeCT generate_filter() 的空间核，再 FFT 到频域。
-        detail::launch_build_freect_filter(d_spatial_filter_.data(),
-            padded_channels_, geometry_.parallel_spacing, filter_config_, policy_, stream_);
-        filter_fft_.fft(d_spatial_filter_.data(), d_filter_fft_.data());
+        if(!Filter::validAnalyticFilter(config.filter)) return false;
+        kernel_.prepare(padded_channels_,stream_);
+        weights_=kernel_.alloc_weights();
+        // The finite discrete Ram-Lak base is the FreeCT c=1 ramp; window
+        // construction, physical spacing and IFFT normalization are shared
+        // with FDK's existing filter subsystem.
+        kernel_.build_weights(weights_.data(),Filter::analyticFilterDesc(config.filter,
+            EWeightsBuildSource::DiscreteRLFFT),geometry_.parallel_spacing,true);
+        if(!frequency_.init(padded_channels_,batch,stream_)) return false;
         prepared_ = true;
         return true;
     }
@@ -142,11 +137,7 @@ public:
         if (!prepared_ || !input || !output) return false;
         detail::launch_pad(input, d_padded_.data(), geometry_.output_channels,
             padded_channels_, geometry_.rows, geometry_.views, policy_, stream_);
-        fft_.fft(d_padded_.data(), d_complex_.data());
-        detail::launch_multiply_filter(d_complex_.data(), d_filter_fft_.data(),
-            complex_channels_, geometry_.views * geometry_.rows,
-            1.f / padded_channels_, policy_, stream_);
-        fft_.ifft(d_complex_.data(), d_padded_.data());
+        frequency_.apply(d_padded_.data(),weights_.data());
         detail::launch_crop(d_padded_.data(), output, geometry_.output_channels,
             padded_channels_, geometry_.rows, geometry_.views, policy_, stream_);
         return true;
@@ -154,19 +145,16 @@ public:
 
     void release()
     {
-        fft_.release(false);
-        filter_fft_.release(false);
+        frequency_.release();
+        kernel_.release();
         d_padded_ = {};
-        d_complex_ = {};
-        d_spatial_filter_ = {};
-        d_filter_fft_ = {};
+        weights_.reset();
         padded_channels_ = complex_channels_ = 0;
         prepared_ = false;
     }
 
 private:
     Geometry geometry_{};
-    FreeCtFilterConfig filter_config_{};
     SKernelLaunchPolicy policy_{};
     cudaStream_t stream_ = nullptr;
     int padded_channels_ = 0;
@@ -174,11 +162,9 @@ private:
     bool prepared_ = false;
     Mem::MemoryController memory_{};
     Mem::DeviceLinearBuffer3D<float> d_padded_{};
-    Mem::DeviceLinearBuffer3D<cufftComplex> d_complex_{};
-    Mem::DeviceLinearBuffer3D<float> d_spatial_filter_{};
-    Mem::DeviceLinearBuffer3D<cufftComplex> d_filter_fft_{};
-    CudaFFT fft_{};
-    CudaFFT filter_fft_{};
+    Mem::DeviceLinearBuffer<float> weights_{};
+    Filter::CreateFilterKernelFromFFT kernel_{};
+    Filter::FrequencyFilter frequency_{};
 };
 
 class BackProjectProcessor {

@@ -1,12 +1,12 @@
 #pragma once
 #include <cstdint>
+#include "YkAnalyticFilterParams.hpp"
 
 namespace YK {
 
 struct SWfbpAlgoParams {
     float redundancy_flat = 0.6f;
-    float filter_cutoff = 1.f;
-    float filter_apodization = 1.f;
+    SAnalyticFilterParams filter{};
 };
 
 } // namespace YK

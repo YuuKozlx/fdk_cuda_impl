@@ -201,8 +201,8 @@ struct ProjectionConfig {
 struct AnalyticReconstructionConfig {
     std::string pipeline = "fdk";
     std::string filter = "shepp-logan";
-    double wfbp_cutoff = 1.0;
-    double wfbp_apodization = 1.0;
+    double cutoff = 0.5, gain = 1.0;
+    double butterworth_order = 2.0, kaiser_beta = 8.6, tukey_alpha = 0.5;
     int chunk_views = 32;
 };
 
