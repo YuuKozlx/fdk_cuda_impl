@@ -359,6 +359,7 @@ public:
             c.epsilon = regularization->epsilon;
             c.strength_reduction = regularization->strength_reduction;
             c.non_negative = regularization->non_negative;
+            Iter::configureAutomaticHuberProx(c);
             if (!tv_plugin_.prepare(params_, c, resources_.stream(), device_)) {
                 YK_LOGE("[Session] Invalid TV plugin or regularization parameters.");
                 release(); return false;

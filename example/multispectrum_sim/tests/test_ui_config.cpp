@@ -68,6 +68,8 @@ int main(){try{
         tv_config.reconstruction.iterative.regularization.strength==.004 &&
         tv_config.reconstruction.iterative.regularization.huber_delta==.002 &&
         tv_config.reconstruction.iterative.regularization.dimensions==2,"TV plugin roundtrip");
+    {std::ifstream input(dir/"tv-plugin.toml");require(bool(input),"Huber saved TOML missing");std::string saved((std::istreambuf_iterator<char>(input)),{});
+     require(saved.find("inner_iterations")==std::string::npos&&saved.find("step_size")==std::string::npos&&saved.find("strength_reduction")==std::string::npos,"Huber inner solver controls leaked to TOML");}
     c.reconstruction.iterative.regularization.plugin="none";
     c.reconstruction.type="iterative";c.reconstruction.iterative.algorithm="tigre_os_sart";
     c.reconstruction.iterative.subsets=3;

@@ -474,8 +474,13 @@ GPU 行权重缓存使用既有迭代权重缓存预算和显示保留策略。
 - proximal：执行 prox(y, tau*lambda)，内迭代受 prox_iterations/prox_step 控制，不使用外层惩罚回溯。
 
 三种策略在 lambda=0 时都直接返回同一 SIRT 更新。内部策略作用于 RegularizedAlgebraic；普通 GD 保持原来的联合梯度定义。
-当前默认正则为 Huber-TV，RegularizedAlgebraic 对 Huber-TV（含 huber_tv_prox 别名）采用近端求解，内步数 20、内步长自动选取。标准 TV 也采用近端；Smoothed TV、Tikhonov 暂保留原交替梯度。此为工程默认，不表示已证明图像质量最优。
+当前默认正则为 Huber-TV，RegularizedAlgebraic 对 Huber-TV（含 huber_tv_prox 别名）采用近端求解，内层自动安全步长与收敛停止，内部安全上限 1000 步。标准 TV 也采用近端；Smoothed TV、Tikhonov 暂保留原交替梯度。此为工程默认，不表示已证明图像质量最优。
 已有 SIRT/SART/OS-SART 的 huber_tv_prox 插件入口本来即在完整外轮后求近端；原配置中显式关闭或选择其他正则仍有效。
 当前可组合的数据更新提供者为 SIRT，旧 SART/OS-SART 的 apply 插件入口保持原语义。
 新增模式自有三个体积缓冲，数据项增加归一化工作区，
 均纳入 SDK 工作区估计并保留 VTK 余量；不增加设备数据的逐轮上传下载。
+
+Huber-TV 的公共近端调用采用内部自动求解策略：安全步长、最多 1000 步，每 10 步检查一次归一化投影梯度残差，初始点已满足条件时直接返回。
+残差为 ||u-project(u-(u-z+gamma*gradR(u)))|| / max(||z||,sqrt(N)*1e-8)，阈值 1e-4；不按小步长下的相邻体积差判断收敛。
+达到内步上限仍返回近似解，但日志标记 iteration_limit，不假称已经收敛。归约复用既有 8 KiB 工作区，只传输小标量块，不下载体积。
+旧 SDK 的 Huber inner_iterations/step_size/strength_reduction 字段为 ABI 兼容保留，公共调用内部统一采用自动策略；独立内部测试可关闭自动停止以验证固定步公式。

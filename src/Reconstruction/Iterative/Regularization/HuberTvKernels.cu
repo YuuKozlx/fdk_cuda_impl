@@ -44,6 +44,18 @@ namespace {
         for (size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += size_t(gridDim.x) * blockDim.x)
             u[i] = fminf(hi, fmaxf(lo, u[i] - eta * (u[i] - z[i] + gamma * g[i])));
     }
+
+    __global__ void stationarity(const float* u,const float* z,const float* g,size_t n,float gamma,float lo,float hi,double* partial){
+        __shared__ double sum[256];double value=0;
+        for(size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;i<n;i+=size_t(gridDim.x)*blockDim.x){
+            const float grad=u[i]-z[i]+gamma*g[i];
+            const float projected=fminf(hi,fmaxf(lo,u[i]-grad));
+            const double r=double(u[i])-projected;value+=r*r;
+        }
+        sum[threadIdx.x]=value;__syncthreads();
+        for(unsigned stride=128;stride;stride>>=1){if(threadIdx.x<stride)sum[threadIdx.x]+=sum[threadIdx.x+stride];__syncthreads();}
+        if(threadIdx.x==0)partial[blockIdx.x]=sum[0];
+    }
     __global__ void dualUpdate(const float* x, float* p, int nx, int ny, int nz, float hx, float hy, float hz, int dim, float sigma, float gamma, size_t n)
     {
         for (size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += size_t(gridDim.x) * blockDim.x) {
@@ -93,6 +105,9 @@ void huber_tv_prox_update_launch(float* u, const float* z, const float* g, size_
 void bounded_prox_update_launch(float* u, const float* z, const float* g, size_t n, float gamma, float eta, float lo, float hi, cudaStream_t s)
 {
     boundedUpdate<<<unsigned(std::min(size_t(65535), (n + 255) / 256)), 256, 0, s>>>(u, z, g, n, gamma, eta, lo, hi);
+}
+void prox_stationarity_launch(const float* u,const float* z,const float* g,size_t n,float gamma,float lo,float hi,double* partial,cudaStream_t stream){
+    stationarity<<<1024,256,0,stream>>>(u,z,g,n,gamma,lo,hi,partial);
 }
 void tv_dual_launch(const float* x, float* p, int nx, int ny, int nz, float hx, float hy, float hz, int dim, float sigma, float gamma, cudaStream_t s)
 {

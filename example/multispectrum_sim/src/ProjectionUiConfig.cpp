@@ -192,6 +192,10 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
           {"huber_delta",r.iterative.regularization.huber_delta},{"step_size",r.iterative.regularization.step_size},
           {"inner_iterations",r.iterative.regularization.inner_iterations},{"dimensions",r.iterative.regularization.dimensions},
           {"epsilon",r.iterative.regularization.epsilon},{"strength_reduction",r.iterative.regularization.strength_reduction}}}});
+    if(r.type=="iterative"&&(r.iterative.regularization.plugin=="huber_tv"||r.iterative.regularization.plugin=="huber_tv_prox")){
+        auto* table=recon["iterative"]["regularization"].as_table();
+        table->erase("inner_iterations");table->erase("step_size");table->erase("strength_reduction");
+    }
     if(r.type=="statistical"){
         const auto& s=r.statistical;
         recon.insert("statistical",toml::table{{"projection_model",s.projection_model},{"non_negative",s.non_negative},

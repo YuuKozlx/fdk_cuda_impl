@@ -434,14 +434,14 @@ void number(const char* label, double& value)
                     int plugin=tv.plugin=="huber_tv_prox"?2:tv.plugin=="smoothed_tv"?1:0;
                     if(ImGui::Combo("Regularization",&plugin,"None\0Smoothed TV\0Huber TV Prox\0")){
                         tv.plugin=plugin==2?"huber_tv_prox":plugin==1?"smoothed_tv":"none";
-                        if(plugin&&tv.strength==0)tv.strength=.002;
+                        if(plugin&&tv.strength==0)tv.strength=plugin==2?1e-4:.002;
                     }
                     if(plugin){
-                        number("TV strength",tv.strength);integer("TV inner steps",tv.inner_iterations);
+                        number("TV strength",tv.strength);if(plugin!=2)integer("TV inner steps",tv.inner_iterations);
                         int dims=tv.dimensions==2?0:1;
                         if(ImGui::Combo("TV dimensions",&dims,"2D slices\0Full 3D\0"))tv.dimensions=dims?3:2;
-                        number("TV strength reduction",tv.strength_reduction);
-                        if(plugin==2){number("Huber delta",tv.huber_delta);number("Prox step (0 = auto)",tv.step_size);}
+                        if(plugin!=2)number("TV strength reduction",tv.strength_reduction);
+                        if(plugin==2){number("Huber delta",tv.huber_delta);ImGui::TextWrapped("Prox solver accuracy is managed automatically.");}
                         else number("TV epsilon",tv.epsilon);
                         ImGui::TextWrapped("Applied after every full angle sweep. Uses GPU volume buffers.");
                     }

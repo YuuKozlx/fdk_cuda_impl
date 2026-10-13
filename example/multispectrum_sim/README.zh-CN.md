@@ -585,7 +585,7 @@ UI Reconstruction 的 Method 增加 Statistical：分别设置数据项、正则
 可选 Smoothed TV / Huber TV / Tikhonov / Standard TV；两项正则超参数为目标权重 strength 和形状 shape，Tikhonov 不使用 shape。
 统计 lambda 与旧代数 TV 的下降步长或 Prox gamma 不能直接互换数值。
 正则化的组合策略和内层求解参数由库内部决定，UI/TOML 不提供这些调试项。
-默认 Huber-TV 在带正则代数重建中采用近端求解，内部默认 20 次内迭代、自动安全步长；strength=0 保持无正则行为。普通 GD 仍采用联合梯度，不改算法定义。
+默认 Huber-TV 在带正则代数重建中采用近端求解，内部自动安全步长与收敛停止，安全上限 1000 步；strength=0 保持无正则行为。普通 GD 仍采用联合梯度，不改算法定义。
 旧实验 TOML 中的 composition 表会被忽略，重新保存时移除。Standard TV 需选择带正则代数重建。
 权重文件为空使用 W=I；非空权重 RAW 必须与投影同形状，内容为非负、有限的 float32 精度权重。
 文件读取采用独立批缓冲，SDK 调用者也可使投影及 W 常驻设备。
