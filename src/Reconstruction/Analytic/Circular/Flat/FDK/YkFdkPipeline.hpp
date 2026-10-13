@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include "Filter/YkAnalyticFilterSettings.hpp"
 #include <utility>
 #include <vector>
 
@@ -550,23 +551,6 @@ public:
     { return geometry_diagnostics_; }
 
 private:
-    static EFilterKernel mapFilter_(EFdkFilter filter)
-    {
-        switch (filter) {
-        case EFdkFilter::None: return EFilterKernel::None;
-        case EFdkFilter::RamLak: return EFilterKernel::RamLak;
-        case EFdkFilter::SheppLogan: return EFilterKernel::SheppLogan;
-        case EFdkFilter::Cosine: return EFilterKernel::Cosine;
-        case EFdkFilter::Hann: return EFilterKernel::Hann;
-        case EFdkFilter::Hamming: return EFilterKernel::Hamming;
-        case EFdkFilter::Blackman: return EFilterKernel::Blackman;
-        case EFdkFilter::Butterworth: return EFilterKernel::Butterworth;
-        case EFdkFilter::Kaiser: return EFilterKernel::Kaiser;
-        case EFdkFilter::Tukey: return EFilterKernel::Tukey;
-        }
-        return EFilterKernel::RamLak;
-    }
-
     static bool buildParams_(const SSystemConfig& system,
         const SReconstructionSpec& reconstruction,
         const SVolGeom& volume, SReconstructionParams& params)
@@ -604,15 +588,9 @@ private:
         params.volume.centerX_mm = volume.center.x;
         params.volume.centerY_mm = volume.center.y;
         params.volume.centerZ_mm = volume.center.z;
-        const auto& input = reconstruction.fdk;
-        auto& filter = params.reconstruction.filter;
-        filter.kind = mapFilter_(input.filter);
-        filter.source = EWeightsBuildSource::AnalyticFreq;
-        filter.cutoff = input.cutoff;
-        filter.gain = input.gain;
-        filter.order = input.butterworth_order;
-        filter.beta = input.kaiser_beta;
-        filter.tukey_alpha = input.tukey_alpha;
+        const auto& input = reconstruction.fdk.filter;
+        if(!Filter::validAnalyticFilter(input)) return false;
+        params.reconstruction.filter=Filter::analyticFilterDesc(input);
         return true;
     }
 

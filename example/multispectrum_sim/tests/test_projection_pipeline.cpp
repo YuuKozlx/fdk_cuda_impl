@@ -1,3 +1,5 @@
+#include "MultiSpecFpStage.hpp"
+#include "pipeline/BuiltinPluginInfo.hpp"
 #include "SpectralProjectionPipeline.hpp"
 #include "../src/primary/CudaProjectionBackend.hpp"
 #include <cmath>
@@ -9,6 +11,7 @@
 
 using namespace yk::spectral;
 void testDeviceSignalStages();
+void testSpectralSourceStage();
 namespace {
 void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
@@ -49,9 +52,9 @@ class ArithmeticStage final : public IProjectionStage {
 public:
     ArithmeticStage(ProjectionStagePhase phase, bool multiply, State& state)
         : phase_(phase), multiply_(multiply), state_(state) {}
-    const char* name() const override { return multiply_ ? "multiply" : "add"; }
+    const pipeline::PluginInfo& info()const noexcept override{static const pipeline::PluginInfo multiply{"test.multiply","multiply","Test multiplication","",pipeline::PluginKind::ProjectionStage};static const pipeline::PluginInfo add{"test.add","add","Test addition","",pipeline::PluginKind::ProjectionStage};return multiply_?multiply:add;}
     ProjectionStagePhase phase() const override { return phase_; }
-    ProjectionSignalDomain domain() const override { return ProjectionSignalDomain::EnergyKeV; }
+    pipeline::Contract<ProjectionSignalDomain> contract() const override { return {ProjectionSignalDomain::EnergyKeV,ProjectionSignalDomain::EnergyKeV}; }
     void process(ProjectionFrame& f, const ProjectionStageContext&) override {
         if (state_.fail) throw std::runtime_error("intentional stage failure");
         for (auto& value : f.signal_energy) value = multiply_ ? value * 2.f : value + 2.f;
@@ -67,9 +70,10 @@ private:
 class CountSink final : public IProjectionOutputSink {
 public:
     explicit CountSink(State& state) : state_(state) {}
-    ProjectionSignalDomain domain() const override { return ProjectionSignalDomain::PhotonCounts; }
-    void prepare(const SimulationConfig&, const std::filesystem::path&) override {}
-    void write(const ProjectionFrame& f) override {
+    const yk::spectral::pipeline::PluginInfo& info()const noexcept override{static const yk::spectral::pipeline::PluginInfo p{"test.exporter","Count test output","Test-only plugin","",yk::spectral::pipeline::PluginKind::Exporter};return p;}
+    bool acceptsDomain(ProjectionSignalDomain domain)const override{return domain==ProjectionSignalDomain::PhotonCounts;}
+    void prepare(const ProjectionOutputContext&) override {}
+    void write(const ProjectionFrame& f,const ProjectionOutputContext&) override {
         require(f.domain == ProjectionSignalDomain::PhotonCounts, "count signal converted to energy");
         require(f.photon_counts.bin_edges_keV == std::vector<float>({20,40,80}), "count thresholds changed");
         require(f.photon_counts.channel_counts == std::vector<float>({3,4}), "channel counts changed");
@@ -103,7 +107,7 @@ int main(int argc, char** argv) {
         c.projection.energy_output_file = directory / "energy.raw";
         c.projection.air_output_file = directory / "air.raw";
         State state;
-        SpectralProjectionPipeline energy(std::make_unique<Backend>(state, ProjectionSignalDomain::EnergyKeV));
+        SpectralProjectionPipeline energy(std::make_unique<MultiSpecFpStage>(std::make_unique<Backend>(state, ProjectionSignalDomain::EnergyKeV)));
         // Register in reverse order. Phase ordering must yield (3 * 2) + 2.
         energy.addStage(std::make_unique<ArithmeticStage>(ProjectionStagePhase::Afterglow, false, state));
         energy.addStage(std::make_unique<ArithmeticStage>(ProjectionStagePhase::OpticalCrosstalk, true, state));
@@ -125,7 +129,7 @@ int main(int argc, char** argv) {
         require(state.backend_resets == 3, "backend cleanup omitted");
 
         State vacuum; vacuum.vacuum = true;
-        SpectralProjectionPipeline airRun(std::make_unique<Backend>(vacuum, ProjectionSignalDomain::EnergyKeV));
+        SpectralProjectionPipeline airRun(std::make_unique<MultiSpecFpStage>(std::make_unique<Backend>(vacuum, ProjectionSignalDomain::EnergyKeV)));
         c.projection.detector_postprocess.afterglow.enabled = true;
         c.projection.detector_postprocess.afterglow.p = .2;
         c.projection.detector_postprocess.afterglow.weights = {1};
@@ -160,7 +164,7 @@ int main(int argc, char** argv) {
         gpuConfig.projection.materials={material};
         SpectralTransmissionModel gpuModel({material}, {{40,100,1},{80,50,1}}, attenuation, {});
         const auto gpuPath=directory/"gpu-vacuum.raw";
-        SpectralProjectionPipeline gpu(std::make_unique<primary_detail::CudaProjectionBackend>());
+        SpectralProjectionPipeline gpu(primary_detail::makeCudaProjectionSourceRegistry().create("projection.source.multi_spec_fp"));
         require(gpu.run(gpuConfig,std::vector<std::uint8_t>(512,0),gpuModel,gpuPath,error),error.c_str());
         const size_t pixels=256;
         std::vector<float> logs(pixels*3),airFrames(pixels*3);
@@ -216,10 +220,11 @@ int main(int argc, char** argv) {
         gpuConfig.visualization.enabled=false;
 #endif
 
+        testSpectralSourceStage();
         testDeviceSignalStages();
         State counts;
         SpectralProjectionPipeline counting(
-            std::make_unique<Backend>(counts, ProjectionSignalDomain::PhotonCounts));
+            std::make_unique<MultiSpecFpStage>(std::make_unique<Backend>(counts, ProjectionSignalDomain::PhotonCounts)));
         require(!counting.run(c, {}, model, directory / "wrong-sink.raw", error),
             "count backend accepted an energy sink");
         counting.setOutputSink(std::make_unique<CountSink>(counts));
@@ -230,4 +235,44 @@ int main(int argc, char** argv) {
         std::cout << "projection pipeline extension/order/recovery/photon-count contracts: PASS\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
+}
+
+void testSpectralSourceStage(){
+    struct Stats{int constructors=0,prepares=0,resets=0,transfers=0,finalizes=0;bool fail_prepare=false,malformed=false,device=false;};
+    class SourceBackend final:public IProjectionBackend {
+        Stats& stats_;
+    public:
+        explicit SourceBackend(Stats& s):stats_(s){++stats_.constructors;}
+        ProjectionSignalDomain outputDomain()const override{return ProjectionSignalDomain::EnergyKeV;}
+        bool supportsDeviceFrames()const override{return stats_.device;}
+        int batchCapacity()const override{return 3;}
+        void prepare(const SimulationConfig&,const std::vector<std::uint8_t>&,const SpectralTransmissionModel&)override{++stats_.prepares;if(stats_.fail_prepare)throw std::runtime_error("prepare failure");}
+        void project(int view,ProjectionFrame& f)override{f.view=stats_.malformed?view+1:view;f.location=stats_.device?ProjectionMemoryLocation::Device:ProjectionMemoryLocation::Host;f.expected_primary_energy={float(view+3)};f.air_energy={10};f.photon_counts.air_channel_counts={20};}
+        void ensureLocation(std::vector<ProjectionFrame>& frames,ProjectionMemoryLocation location)override{++stats_.transfers;for(auto& frame:frames)frame.location=location;}
+        void finalizeBatch(std::vector<ProjectionFrame>&)override{++stats_.finalizes;}
+        void sampleScatterNoise(ProjectionFrame&)override{}
+        void reset()noexcept override{++stats_.resets;}
+    };
+    auto rejects=[](auto action){bool failed=false;try{action();}catch(const std::exception&){failed=true;}require(failed,"invalid source request accepted");};
+    Stats stats;ProjectionSourceRegistry registry;
+    registry.add(pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::MultiSpecFp),[&]{return std::make_unique<MultiSpecFpStage>(std::make_unique<SourceBackend>(stats));});
+    require(registry.find("projection.source.multi_spec_fp")&&registry.list().size()==1&&stats.constructors==0,"source metadata query constructed backend");
+    auto source=registry.create("projection.source.multi_spec_fp");
+    require(source->info().kind==pipeline::PluginKind::ProjectionSource,"source kind missing");
+    SimulationConfig config;auto& g=config.geometry.parameters;g.views=5;g.detector_u=g.detector_v=1;
+    Attenuation attenuation;SpectralTransmissionModel model({}, {},attenuation,{});const std::vector<std::uint8_t> labels;
+    SpectralSourceContext context{config,labels,model};std::vector<ProjectionFrame> frames;
+    rejects([&]{source->generate(0,1,frames);});source->prepare(context);require(source->batchCapacity()==3,"source batch budget changed");
+    rejects([&]{source->prepare(context);});source->generate(0,3,frames);
+    require(frames.size()==3&&frames[2].signal_energy==std::vector<float>{5}&&frames[2].reference_energy==std::vector<float>{10}&&frames[2].photon_counts.reference_channel_counts==std::vector<float>{20},"host source signal/reference seeding changed");
+    source->generate(3,2,frames);require(frames.size()==2&&frames[1].view==4&&frames[1].signal_energy[0]==7,"source tail batch changed");
+    rejects([&]{source->generate(4,2,frames);});rejects([&]{source->generate(0,4,frames);});
+    stats.malformed=true;rejects([&]{source->generate(0,1,frames);});source->reset();source->reset();require(stats.resets==1,"source reset released backend twice");
+    stats.malformed=false;stats.device=true;source->prepare(context);source->generate(0,3,frames);
+    require(frames[0].location==ProjectionMemoryLocation::Device&&stats.transfers==0,"device source forced a host transfer");
+    source->finalizeBatch(frames);source->ensureLocation(frames,ProjectionMemoryLocation::Host);require(stats.finalizes==1&&stats.transfers==1,"source service ownership broken");source->reset();
+    stats.fail_prepare=true;rejects([&]{source->prepare(context);});source->reset();require(stats.resets==3,"failed prepare cleanup was duplicated");
+    stats.fail_prepare=false;source->prepare(context);source->generate(0,1,frames);source->reset();require(stats.resets==4&&stats.prepares==4,"source failed to recover after initialization error");
+    {MultiSpecFpStage owned(std::make_unique<SourceBackend>(stats));owned.prepare(context);}
+    require(stats.resets==5,"source destruction did not release prepared backend");
 }

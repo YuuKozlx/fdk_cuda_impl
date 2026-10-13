@@ -1,3 +1,5 @@
+#include "image/ImageProcessing.hpp"
+#include "pipeline/BuiltinPluginInfo.hpp"
 #include "common/YkTimingWatchdog.hpp"
 #include "recon/preprocess/PreprocessPipeline.hpp"
 #include "CudaPixelOps.hpp"
@@ -18,6 +20,22 @@ void require(bool ok, const std::string &message) {
     if (!ok)
         throw std::runtime_error(message);
 }
+class CorrectedProjectionOutput final:public pipeline::IOutput<Frame,Context,Domain> {
+    std::ofstream file_;
+public:
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CorrectedOutput);}
+    bool acceptsDomain(Domain domain)const override{return domain==Domain::LogAttenuation;}
+    void prepare(const Context& context)override{
+        if(!context.output_file.parent_path().empty())std::filesystem::create_directories(context.output_file.parent_path());
+        file_.open(context.output_file,std::ios::binary);require(bool(file_),"cannot create preprocessed projection");
+    }
+    void write(const Frame& frame,const Context&)override{
+        file_.write(reinterpret_cast<const char*>(frame.host_data->data()),std::streamsize(frame.pixels*sizeof(float)));
+        require(bool(file_),"cannot write preprocessed frame");
+    }
+    void finish()override{file_.close();require(bool(file_),"cannot flush preprocessed projection");}
+    void reset()noexcept override{if(file_.is_open())file_.close();file_.clear();}
+};
 using Clock = std::chrono::steady_clock;
 double elapsed(Clock::time_point tick) {
     return std::chrono::duration<double, std::milli>(Clock::now() - tick).count();
@@ -36,21 +54,11 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
         return false;
     }
     YK::diagnostics::TimingSpan total_watch("preprocess.run",std::to_string(config.geometry.parameters.views)+" views");
-    running_ = true;
+    pipeline::RunScope run_scope(running_);
     statistics_ = {};
     auto started = Clock::now();
     std::vector<std::unique_ptr<IStage>> builtins;
     std::vector<IStage *> stages;
-    // Always reset prepared stages, including on exceptions, before releasing CUDA storage.
-    struct Reset {
-        std::vector<IStage *> &stages;
-        bool &running;
-        ~Reset() {
-            for (auto i = stages.rbegin(); i != stages.rend(); ++i)
-                (*i)->reset();
-            running = false;
-        }
-    };
     try {
         const auto &g = config.geometry.parameters;
         const auto &pp = config.reconstruction.preprocessing;
@@ -82,18 +90,18 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
             stages.push_back(stage.get());
         for (auto &stage : extensions_)
             stages.push_back(stage.get());
-        Reset reset{stages, running_};
-        Context context{config, gpu, progress};
+        CorrectedProjectionOutput output;
+        auto cleanup=pipeline::onExit([&]{output.reset();pipeline::resetReverse(stages);});
+        image::Workspace image_workspace(Location::Device);
+        Context context{config, gpu, progress,output_path,&image_workspace};
         Domain domain = Domain::LogAttenuation;
-        for (auto *stage : stages) {
-            require(stage->inputDomain() == domain,
-                    std::string("preprocess domain mismatch before ") + stage->name());
-            domain = stage->outputDomain();
-            statistics_.stages_ms.emplace_back(stage->name(), 0);
-            stage->prepare(context);
+        for(auto* stage:stages){
+            domain=pipeline::advanceDomain(domain,stage->contract(),stage->info().name.c_str());
+            stage->validateContext(context);
+            statistics_.stages_ms.emplace_back(stage->info().name.c_str(),0);
         }
-        require(domain == Domain::LogAttenuation,
-                "preprocess final output must be log attenuation");
+        require(domain==Domain::LogAttenuation,"preprocess final output must be log attenuation");
+        for(auto* stage:stages)stage->prepare(context);
         gpu.synchronize();
         statistics_.init_ms = elapsed(tick);
         std::unique_ptr<primary_detail::AirReferenceReader> air_reader;
@@ -106,13 +114,10 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
         }
         std::ifstream input(input_path, std::ios::binary);
         require(bool(input), "cannot open preprocessing input");
-        if (!output_path.parent_path().empty())
-            std::filesystem::create_directories(output_path.parent_path());
-        std::ofstream output(output_path, std::ios::binary);
-        require(bool(output), "cannot create preprocessed projection");
+        output.prepare(context);
         std::vector<float> host(pixels), air;
-        if (progress)
-            progress({"Projection correction", 0, g.views});
+        pipeline::Progress progress_report(progress,"Projection correction",g.views);
+        progress_report.start();
         for (int view = 0; view < g.views; ++view) {
             tick = Clock::now();
             {YK::diagnostics::TimingSpan watch("preprocess.read","view="+std::to_string(view));input.read(reinterpret_cast<char *>(host.data()), pixels * sizeof(float));
@@ -155,29 +160,24 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
             };
             for (size_t index = 0; index < stages.size(); ++index) {
                 auto *stage = stages[index];
-                ensure(stage->inputLocation());
-                tick = Clock::now();
-                YK::diagnostics::TimingSpan stage_watch(std::string("preprocess.stage.")+stage->name(),std::string(stage->name())+" view="+std::to_string(view));
-                stage->process(frame, context);
-                gpu.synchronize();
-                require(host.size() == pixels && frame.host_data == &host &&
-                            frame.device_data == gpu.data(),
-                        "preprocess stage changed borrowed frame storage");
-                frame.domain = stage->outputDomain();
-                frame.location = stage->outputLocation();
-                statistics_.stages_ms[index].second += elapsed(tick);
+                YK::diagnostics::TimingSpan stage_watch(std::string("preprocess.stage.")+stage->info().name.c_str(),std::string(stage->info().name.c_str())+" view="+std::to_string(view));
+                const auto timing=pipeline::execute(stage->info().name.c_str(),stage->contract(),&frame,1,ensure,
+                    [&](Frame& value){stage->process(value,context);
+                        require(host.size()==pixels && value.host_data==&host && value.device_data==gpu.data(),"preprocess stage changed borrowed frame storage");},
+                    [&]{gpu.synchronize();});
+                statistics_.stages_ms[index].second+=timing.process_ms;
             }
             ensure(Location::Host);
             {YK::diagnostics::TimingSpan watch("preprocess.validate.output","view="+std::to_string(view));for(float v:host)require(std::isfinite(v),"preprocessing produced a non-finite value");}
-            tick = Clock::now();
-            {YK::diagnostics::TimingSpan watch("preprocess.write","view="+std::to_string(view));output.write(reinterpret_cast<const char *>(host.data()), pixels * sizeof(float));
-            require(bool(output), "cannot write preprocessed frame");}
-            statistics_.write_ms += elapsed(tick);
-            if (progress)
-                progress({"Projection correction", view + 1, g.views});
+            {YK::diagnostics::TimingSpan watch("preprocess.write","view="+std::to_string(view));
+                const pipeline::Contract<Domain> contract{Domain::LogAttenuation,Domain::LogAttenuation};
+                const auto timing=pipeline::execute(output.info().name.c_str(),contract,&frame,1,ensure,
+                    [&](const Frame& value){output.write(value,context);},[]{});
+                statistics_.write_ms+=timing.process_ms;
+            }
+            progress_report.advance();
         }
-        output.close();
-        require(bool(output), "cannot flush preprocessed projection");
+        output.finish();
         statistics_.total_ms = elapsed(started);
         std::cout << "preprocess_timing_ms total=" << statistics_.total_ms
                   << " init=" << statistics_.init_ms << " fit=" << statistics_.fit_ms
@@ -195,7 +195,6 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
         diagnostic = "reconstruction preprocessing complete: " + output_path.string();
         return true;
     } catch (const std::exception &error) {
-        running_ = false;
         diagnostic = error.what();
         return false;
     }

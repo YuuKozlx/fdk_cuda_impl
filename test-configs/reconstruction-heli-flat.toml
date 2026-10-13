@@ -26,8 +26,8 @@ views_per_rotation=32
 input_detector="flat-panel"
 focal_spot_mode="none"
 redundancy_flat=0.6
-filter_cutoff=1.0
-filter_apodization=1.0
+cutoff=0.5
+filter="ramlak"
 [case.input]
 mode="phantom"
 phantom="catphan"

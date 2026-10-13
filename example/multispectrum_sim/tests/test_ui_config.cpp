@@ -68,6 +68,8 @@ int main(){try{
         tv_config.reconstruction.iterative.regularization.strength==.004 &&
         tv_config.reconstruction.iterative.regularization.huber_delta==.002 &&
         tv_config.reconstruction.iterative.regularization.dimensions==2,"TV plugin roundtrip");
+    {std::ifstream input(dir/"tv-plugin.toml");require(bool(input),"Huber saved TOML missing");std::string saved((std::istreambuf_iterator<char>(input)),{});
+     require(saved.find("inner_iterations")==std::string::npos&&saved.find("step_size")==std::string::npos&&saved.find("strength_reduction")==std::string::npos,"Huber inner solver controls leaked to TOML");}
     c.reconstruction.iterative.regularization.plugin="none";
     c.reconstruction.type="iterative";c.reconstruction.iterative.algorithm="tigre_os_sart";
     c.reconstruction.iterative.subsets=3;
@@ -77,10 +79,10 @@ int main(){try{
     c.reconstruction.iterative.algorithm="sirt";c.reconstruction.iterative.subsets=1;
     c.geometry.kind=GeometryKind::FlatHelical;c.geometry.parameters.pitch_mm_per_turn=4;
     c.reconstruction.type="analytic";c.reconstruction.analytic.pipeline="wfbp";c.reconstruction.analytic.filter="ramlak";
-    c.reconstruction.analytic.wfbp_cutoff=.8;c.reconstruction.analytic.wfbp_apodization=.4;
+    c.reconstruction.analytic.cutoff=.4;c.reconstruction.analytic.filter="hann";
     saveProjectionUiConfig(c,dir/"flat-helical-wfbp.toml",WorkflowMode::ProjectAndReconstruct);
     const auto wfbp=loadConfig(dir/"flat-helical-wfbp.toml");
-    require(wfbp.geometry.kind==GeometryKind::FlatHelical&&wfbp.reconstruction.analytic.pipeline=="wfbp"&&wfbp.reconstruction.analytic.wfbp_cutoff==.8&&wfbp.reconstruction.analytic.wfbp_apodization==.4,"flat WFBP roundtrip");
+    require(wfbp.geometry.kind==GeometryKind::FlatHelical&&wfbp.reconstruction.analytic.pipeline=="wfbp"&&wfbp.reconstruction.analytic.cutoff==.4&&wfbp.reconstruction.analytic.filter=="hann","flat WFBP roundtrip");
     c.geometry.kind=GeometryKind::FlatCbct;saveProjectionUiConfig(c,dir/"invalid-circular-wfbp.toml",WorkflowMode::ProjectAndReconstruct);
     bool wrongWfbp=false;try{loadConfig(dir/"invalid-circular-wfbp.toml");}catch(const std::exception&){wrongWfbp=true;}
     require(wrongWfbp,"circular WFBP accepted");

@@ -202,8 +202,8 @@ for (int offset = 0; offset < 360; offset += 47) {
 `plugin_id` 为借用字符串，只需存活至 initialize 返回；Session 保存配置副本。
 当前公共接入支持 Flat SART/SIRT/OSSART，其他后端请求插件会报不支持。
 ID `none`、空字符串和空指针关闭插件；内置为 `smoothed_tv` / `huber_tv_prox`。
-`strength`、`huber_delta`、`step_size`（零为自动）、`inner_iterations`、`dimensions`（2/3）、
-`strength_reduction` 和 `non_negative` 控制 Huber Prox；`epsilon` 用于 Smoothed TV。
+`strength`、`huber_delta`、`dimensions`（2/3）和 `non_negative` 定义 Huber Prox；`epsilon` 用于 Smoothed TV。
+Huber 的内步长和内迭代停止由库自动管理：相对投影梯度残差阈值 1e-4，每 10 步检查，安全上限 1000 步。旧 step_size、inner_iterations、strength_reduction 字段为 ABI 兼容及其他插件保留，Huber 公共调用不消费这些求解调试设置。
 调用 reset 保留工作区并恢复强度计划，release 释放插件。
 插件开启时进度按完整外迭代轮次报告，且包含该轮 TV 的 GPU 完成状态。
 

@@ -5,6 +5,7 @@
 #include "Reconstruction/Iterative/Common/kernels/YkTvRegularizationLaunch.cuh"
 #include "RegularizationValueLaunch.cuh"
 #include "RegularizerPlugin.hpp"
+#include "global/YkLog.h"
 #include <algorithm>
 #include <cmath>
 #include <mutex>
@@ -13,7 +14,7 @@ namespace YK::Iter {
 namespace {
     bool valid(const SReconstructionParams& p, const AlgebraicRegularizationConfig& c)
     {
-        return std::isfinite(c.lower_bound) && std::isfinite(c.upper_bound) && c.lower_bound <= c.upper_bound && (!c.non_negative || c.upper_bound >= 0) && p.volume.Nx > 0 && p.volume.Ny > 0 && p.volume.Nz > 0 && p.volume.voxelX_mm > 0 && p.volume.voxelY_mm > 0 && p.volume.voxelZ_mm > 0 && std::isfinite(p.volume.voxelX_mm) && std::isfinite(p.volume.voxelY_mm) && std::isfinite(p.volume.voxelZ_mm) && std::isfinite(c.strength) && c.strength >= 0 && c.inner_iterations > 0 && std::isfinite(c.strength_reduction) && c.strength_reduction > 0 && (c.tv_dimensionality == ETvDimensionality::Slice2D || c.tv_dimensionality == ETvDimensionality::Volume3D);
+        return std::isfinite(c.prox_relative_tolerance) && c.prox_relative_tolerance>=0 && c.prox_check_interval>0 && std::isfinite(c.lower_bound) && std::isfinite(c.upper_bound) && c.lower_bound <= c.upper_bound && (!c.non_negative || c.upper_bound >= 0) && p.volume.Nx > 0 && p.volume.Ny > 0 && p.volume.Nz > 0 && p.volume.voxelX_mm > 0 && p.volume.voxelY_mm > 0 && p.volume.voxelZ_mm > 0 && std::isfinite(p.volume.voxelX_mm) && std::isfinite(p.volume.voxelY_mm) && std::isfinite(p.volume.voxelZ_mm) && std::isfinite(c.strength) && c.strength >= 0 && c.inner_iterations > 0 && std::isfinite(c.strength_reduction) && c.strength_reduction > 0 && (c.tv_dimensionality == ETvDimensionality::Slice2D || c.tv_dimensionality == ETvDimensionality::Volume3D);
     }
     double differenceNormBound(const SReconstructionParams& p, int dimensions)
     {
@@ -133,6 +134,7 @@ namespace {
         size_t n_ = 0;
         float gamma_ = 0;
         bool prepared_ = false;
+        ProxStatistics stats_{};
 
     public:
         ~HuberTvProx() override { release(); }
@@ -179,9 +181,11 @@ namespace {
         }
         bool prox(const float* z, float* u, float gamma) override
         {
+            stats_={};
             if (!prepared_ || !z || !u || !std::isfinite(gamma) || gamma < 0)
                 return false;
             if (gamma == 0) {
+                stats_.converged=true;
                 if (u != z && cudaMemcpyAsync(u, z, n_ * sizeof(float), cudaMemcpyDeviceToDevice, stream_) != cudaSuccess)
                     return false;
                 clamp_launch(u, n_, c_.non_negative ? std::max(0.f, c_.lower_bound) : c_.lower_bound, c_.upper_bound, stream_);
@@ -196,13 +200,33 @@ namespace {
             const double d = differenceNormBound(p_, int(c_.tv_dimensionality));
             const float safe = float(1 / (1 + gamma * d / c_.huber_delta));
             const float eta = c_.step_size == 0 ? safe : std::min(c_.step_size, safe);
-            for (int j = 0; j < c_.inner_iterations; ++j) {
-                huber_tv_gradient_launch(u, gradient_, p_.volume.Nx, p_.volume.Ny, p_.volume.Nz, p_.volume.voxelX_mm,
-                    p_.volume.voxelY_mm, p_.volume.voxelZ_mm, c_.huber_delta, int(c_.tv_dimensionality), stream_);
-                bounded_prox_update_launch(u, reference_, gradient_, n_, gamma, eta, c_.non_negative ? std::max(0.f, c_.lower_bound) : c_.lower_bound, c_.upper_bound, stream_);
-                if (cudaPeekAtLastError() != cudaSuccess)
-                    return false;
+
+            const float lo=c_.non_negative?std::max(0.f,c_.lower_bound):c_.lower_bound;
+            const bool automatic=c_.prox_relative_tolerance>0;double reference_half_norm=0;
+            if(automatic){
+                clamp_launch(u,n_,lo,c_.upper_bound,stream_);
+                if(!evaluatePenalty(reference_,reference_half_norm,p_,1,3,2,reduction_,stream_))return false;
             }
+            bool gradient_ready=false;
+            auto check=[&](){
+                prox_stationarity_launch(u,reference_,gradient_,n_,gamma,lo,c_.upper_bound,reduction_.data(),stream_);
+                double squared=0;if(!reduction_.read(stream_,squared))return false;
+                stats_.relative_stationarity=std::sqrt(squared/std::max(2*reference_half_norm,double(n_)*1e-16));
+                stats_.converged=stats_.relative_stationarity<=c_.prox_relative_tolerance;return true;
+            };
+            for(int j=0;j<c_.inner_iterations;++j){
+                if(!gradient_ready && !gradient(u,gradient_))return false;
+                if(automatic&&j==0){if(!check())return false;if(stats_.converged)return true;}
+                bounded_prox_update_launch(u,reference_,gradient_,n_,gamma,eta,lo,c_.upper_bound,stream_);
+                if(cudaPeekAtLastError()!=cudaSuccess)return false;
+                stats_.iterations=j+1;gradient_ready=false;
+                if(automatic&&((j+1)%c_.prox_check_interval==0||j+1==c_.inner_iterations)){
+                    if(!gradient(u,gradient_))return false;gradient_ready=true;
+                    if(!check())return false;if(stats_.converged)break;
+                }
+            }
+            stats_.iteration_limit=automatic&&!stats_.converged;
+            if(automatic)YK_LOGI("[Huber-TV prox] inner_steps={} relative_stationarity={:.5e} converged={} limit={}",stats_.iterations,stats_.relative_stationarity,stats_.converged,stats_.iteration_limit);
             return true;
         }
         RegularizerCapabilities capabilities() const override { return { true, true, true }; }
@@ -216,7 +240,8 @@ namespace {
         }
         bool value(const float* x, double& v) override { return prepared_ && evaluatePenalty(x, v, p_, c_.huber_delta, int(c_.tv_dimensionality), 0, reduction_, stream_); }
         double gradientLipschitz() const override { return differenceNormBound(p_, int(c_.tv_dimensionality)) / c_.huber_delta; }
-        void reset() override { gamma_ = c_.strength; }
+        ProxStatistics proxStatistics()const override{return stats_;}
+        void reset() override { gamma_ = c_.strength;stats_={}; }
         void release() override
         {
             if (reference_ || gradient_)

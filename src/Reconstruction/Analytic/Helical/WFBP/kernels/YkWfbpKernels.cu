@@ -169,7 +169,8 @@ __device__ float parallel_target_beta(const Geometry& g, int output_channel,
 }
 
 __device__ float sample_intermediate(const float* input, const Geometry& g,
-    int sequence_output_view, float raw_row, int z_spot, int intermediate)
+    int sequence_output_view, float raw_row, int z_spot, int intermediate,
+    int first_raw, int raw_views)
 {
     intermediate = max(0, min(intermediate,
         g.input_channels * g.phi_spot_count - 1));
@@ -191,24 +192,24 @@ __device__ float sample_intermediate(const float* input, const Geometry& g,
     const int v0 = min(static_cast<int>(floorf(sequence_view)), g.sequence_views - 1);
     const int v1 = min(v0 + 1, g.sequence_views - 1);
     const float tv = sequence_view - v0;
-    const float raw0 = static_cast<float>(v0 * g.focal_spot_count + spot);
-    const float raw1 = static_cast<float>(v1 * g.focal_spot_count + spot);
-    const float a = sample_projection(input, g.raw_views, g.input_rows,
+    const float raw0 = static_cast<float>(v0 * g.focal_spot_count + spot - first_raw);
+    const float raw1 = static_cast<float>(v1 * g.focal_spot_count + spot - first_raw);
+    const float a = sample_projection(input, raw_views, g.input_rows,
         g.input_channels, raw0, raw_row, channel);
-    const float b = sample_projection(input, g.raw_views, g.input_rows,
+    const float b = sample_projection(input, raw_views, g.input_rows,
         g.input_channels, raw1, raw_row, channel);
     return a + tv * (b - a);
 }
 
 __global__ void rebin_kernel(const float* input, float* output, Geometry g,
-    size_t count)
+    size_t count, int first_output, int first_raw, int raw_views)
 {
     for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
         const int p = static_cast<int>(index % g.output_channels);
         const size_t t = index / g.output_channels;
         const int row = static_cast<int>(t % g.rows);
-        const int view = static_cast<int>(t / g.rows);
+        const int view = static_cast<int>(t / g.rows) + first_output;
         const int sequence_output_view = view + g.add_projections;
 
         const int z_spot = z_spot_for_output_row(g, row);
@@ -231,9 +232,9 @@ __global__ void rebin_kernel(const float* input, float* output, Geometry g,
         const int i1 = min(i0 + 1, g.input_channels * g.phi_spot_count - 1);
         const float t_beta = intermediate - i0;
         const float a = sample_intermediate(input, g, sequence_output_view,
-            raw_row, z_spot, i0);
+            raw_row, z_spot, i0, first_raw, raw_views);
         const float b = sample_intermediate(input, g, sequence_output_view,
-            raw_row, z_spot, i1);
+            raw_row, z_spot, i1, first_raw, raw_views);
         output[index] = a + t_beta * (b - a);
     }
 }
@@ -261,43 +262,6 @@ __global__ void crop_kernel(const float* padded, float* output, int channels,
         const int u = static_cast<int>(index % channels);
         const size_t row = index / channels;
         output[index] = padded[row * padded_channels + start + u];
-    }
-}
-
-__device__ float freect_r(float t)
-{
-    if (fabsf(t) < 1e-6f) return 0.5f;
-    return sinf(t) / t + (cosf(t) - 1.f) / (t * t);
-}
-
-__global__ void build_freect_filter_kernel(float* filter, int length,
-    float spacing, FreeCtFilterConfig config)
-{
-    for (int u = blockIdx.x * blockDim.x + threadIdx.x; u < length;
-         u += gridDim.x * blockDim.x) {
-        // 官方先在 [-N/2,N/2) 生成，再 fftshift；等价于以下循环索引。
-        const int n = u <= length / 2 ? u : u - length;
-        const float t = CUDA_PI * config.cutoff_c * static_cast<float>(n);
-        const float center = config.apodization_a * freect_r(t);
-        const float side = 0.5f * (1.f - config.apodization_a) *
-            (freect_r(t + CUDA_PI) + freect_r(t - CUDA_PI));
-        filter[u] = (config.cutoff_c * config.cutoff_c / (2.f * spacing)) *
-            (center + side);
-    }
-}
-
-__global__ void multiply_filter_kernel(cufftComplex* data,
-    const cufftComplex* filter, int complex_channels, int batch, float scale,
-    size_t count)
-{
-    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-         index < count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
-        const int k = static_cast<int>(index % complex_channels);
-        const cufftComplex a = data[index];
-        const cufftComplex b = filter[k];
-        data[index] = make_cuFloatComplex(
-            scale * (a.x * b.x - a.y * b.y),
-            scale * (a.x * b.y + a.y * b.x));
     }
 }
 
@@ -331,7 +295,8 @@ __device__ float sample_rebinned(const float* data, const Geometry& g,
 
 __global__ void backproject_kernel(const float* filtered, float* volume,
     int nx, int ny, int nz, float dx, float dy, float dz,
-    float ox, float oy, float oz, Geometry g, float flat, size_t count)
+    float ox, float oy, float oz, Geometry g, float flat, size_t count,
+    int first_phase, int phases, bool packed, bool add)
 {
     for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
@@ -351,7 +316,10 @@ __global__ void backproject_kernel(const float* filtered, float* volume,
         const int half_turn = max(1, g.views_per_turn / 2);
         // FreeCT W(q)：同一半圈相位的多圈观测先按 W(q) 归一化，随后
         // 对半圈内各相位按 dtheta 积分。
-        for (int phase = 0; phase < half_turn; ++phase) {
+        const int phase_end = phases < 0 ? half_turn : first_phase + phases;
+        Geometry sample_geometry = g;
+        if (packed) sample_geometry.views = (g.views / half_turn) * phases;
+        for (int phase = first_phase; phase < phase_end; ++phase) {
             float weighted = 0.f;
             float weights = 0.f;
             for (int view = phase; view < g.views; view += half_turn) {
@@ -373,12 +341,13 @@ __global__ void backproject_kernel(const float* filtered, float* volume,
                 // principal row 显式进入行映射，因此非零 V offset 不再被丢弃。
                 const float row = g.central_row + q *
                     fminf(g.central_row, static_cast<float>(g.rows - 1) - g.central_row);
-                weighted += w * sample_rebinned(filtered, g, view, row, p_index);
+                const int sample_view = packed ? (view / half_turn) * phases + phase - first_phase : view;
+                weighted += w * sample_rebinned(filtered, sample_geometry, sample_view, row, p_index);
                 weights += w;
             }
             if (weights > 1e-6f) result += weighted / weights;
         }
-        volume[index] = result * g.angle_step;
+        volume[index] = (add ? volume[index] : 0.f) + result * g.angle_step;
     }
 }
 
@@ -402,7 +371,7 @@ void launch_rebin(const float* input, float* output, const Geometry& geometry,
     const size_t count = static_cast<size_t>(geometry.views) * geometry.rows *
         geometry.output_channels;
     const auto launch = policy.make1D(count);
-    rebin_kernel<<<launch.grid, launch.block, 0, stream>>>(input, output, geometry, count);
+    rebin_kernel<<<launch.grid, launch.block, 0, stream>>>(input, output, geometry, count, 0, 0, geometry.raw_views);
     YK_CUDA_KERNEL_CHECK();
 }
 
@@ -426,27 +395,6 @@ void launch_crop(const float* padded, float* output, int channels, int padded_ch
     YK_CUDA_KERNEL_CHECK();
 }
 
-void launch_build_freect_filter(float* spatial_filter, int length,
-    float sample_spacing, const FreeCtFilterConfig& config,
-    const SKernelLaunchPolicy& policy, cudaStream_t stream)
-{
-    const auto launch = policy.make1D(static_cast<size_t>(length));
-    build_freect_filter_kernel<<<launch.grid, launch.block, 0, stream>>>(
-        spatial_filter, length, sample_spacing, config);
-    YK_CUDA_KERNEL_CHECK();
-}
-
-void launch_multiply_filter(cufftComplex* data, const cufftComplex* filter,
-    int complex_channels, int batch, float scale,
-    const SKernelLaunchPolicy& policy, cudaStream_t stream)
-{
-    const size_t count = static_cast<size_t>(complex_channels) * batch;
-    const auto launch = policy.make1D(count);
-    multiply_filter_kernel<<<launch.grid, launch.block, 0, stream>>>(data, filter,
-        complex_channels, batch, scale, count);
-    YK_CUDA_KERNEL_CHECK();
-}
-
 void launch_backproject(const float* filtered, float* volume,
     int nx, int ny, int nz, float dx, float dy, float dz,
     float ox, float oy, float oz, const Geometry& geometry,
@@ -455,7 +403,32 @@ void launch_backproject(const float* filtered, float* volume,
     const size_t count = static_cast<size_t>(nx) * ny * nz;
     const auto launch = policy.make1D(count);
     backproject_kernel<<<launch.grid, launch.block, 0, stream>>>(filtered, volume,
-        nx, ny, nz, dx, dy, dz, ox, oy, oz, geometry, redundancy_flat, count);
+        nx, ny, nz, dx, dy, dz, ox, oy, oz, geometry, redundancy_flat, count, 0, -1, false, false);
+    YK_CUDA_KERNEL_CHECK();
+}
+
+void launch_rebin_range(const float* input, float* output, const Geometry& geometry,
+    int first_output, int output_views, int first_raw, int raw_views,
+    const SKernelLaunchPolicy& policy, cudaStream_t stream)
+{
+    const size_t count = size_t(output_views) * geometry.rows * geometry.output_channels;
+    const auto launch = policy.make1D(count);
+    rebin_kernel<<<launch.grid, launch.block, 0, stream>>>(input, output, geometry,
+        count, first_output, first_raw, raw_views);
+    YK_CUDA_KERNEL_CHECK();
+}
+
+void launch_backproject_phases(const float* filtered, float* volume,
+    int nx, int ny, int nz, float dx, float dy, float dz,
+    float ox, float oy, float oz, const Geometry& geometry,
+    float redundancy_flat, int first_phase, int phases, bool clear,
+    const SKernelLaunchPolicy& policy, cudaStream_t stream)
+{
+    const size_t count = size_t(nx) * ny * nz;
+    const auto launch = policy.make1D(count);
+    backproject_kernel<<<launch.grid, launch.block, 0, stream>>>(filtered, volume,
+        nx, ny, nz, dx, dy, dz, ox, oy, oz, geometry, redundancy_flat, count,
+        first_phase, phases, true, !clear);
     YK_CUDA_KERNEL_CHECK();
 }
 

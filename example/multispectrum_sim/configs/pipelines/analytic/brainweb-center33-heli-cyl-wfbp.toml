@@ -140,6 +140,5 @@ slice_prefix = "../../../outputs/images/brainweb-center33-heli-cyl-wfbp-pitch4"
 [reconstruction.analytic]
 pipeline = "wfbp"
 filter = "ramlak"
-wfbp_cutoff = 1.0
-wfbp_apodization = 1.0
+cutoff = 0.5
 chunk_views = 3600

@@ -342,29 +342,30 @@ namespace yk::spectral {
                 for (const char* key : { "pipeline", "filter" })
                     if (a->contains(key) && !(*a)[key].is_string())
                         throw std::runtime_error(std::string("reconstruction.analytic.") + key + " 必须为字符串");
-                for (const char* key : { "wfbp_cutoff", "wfbp_apodization", "chunk_views" })
+                for (const char* key : { "cutoff", "gain", "butterworth_order", "kaiser_beta", "tukey_alpha", "chunk_views" })
                     if (a->contains(key) && !(*a)[key].is_number())
                         throw std::runtime_error(std::string("reconstruction.analytic.") + key + " 必须为数值");
                 auto& rc = c.reconstruction.analytic;
                 rc.pipeline = (*a)["pipeline"].value_or(std::string("fdk"));
                 rc.filter = (*a)["filter"].value_or(std::string(rc.pipeline == "wfbp" ? "ramlak" : "shepp-logan"));
-                rc.wfbp_cutoff = (*a)["wfbp_cutoff"].value_or(1.0);
-                rc.wfbp_apodization = (*a)["wfbp_apodization"].value_or(1.0);
+                if(a->contains("wfbp_cutoff") || a->contains("wfbp_apodization"))
+                    throw std::runtime_error("Use shared analytic.filter/cutoff; wfbp coefficient settings were removed");
+                rc.cutoff=(*a)["cutoff"].value_or(.5); rc.gain=(*a)["gain"].value_or(1.);
+                rc.butterworth_order=(*a)["butterworth_order"].value_or(2.);
+                rc.kaiser_beta=(*a)["kaiser_beta"].value_or(8.6);
+                rc.tukey_alpha=(*a)["tukey_alpha"].value_or(.5);
                 rc.chunk_views = (*a)["chunk_views"].value_or(32);
                 if (rc.pipeline != "fdk" && rc.pipeline != "wfbp")
                     throw std::runtime_error("analytic.pipeline 仅支持 fdk/wfbp");
                 if (rc.filter != "ramlak" && rc.filter != "ram-lak" &&
                     rc.filter != "shepp-logan" && rc.filter != "cosine" &&
-                    rc.filter != "hann" && rc.filter != "hamming")
+                    rc.filter != "hann" && rc.filter != "hamming" && rc.filter != "blackman" &&
+                    rc.filter != "butterworth" && rc.filter != "kaiser" && rc.filter != "tukey")
                     throw std::runtime_error("未知 analytic.filter: " + rc.filter);
-                if (rc.pipeline != "wfbp" &&
-                    (a->contains("wfbp_cutoff") || a->contains("wfbp_apodization")))
-                    throw std::runtime_error("wfbp_* 滤波参数只适用于 wfbp");
-                if (rc.pipeline == "wfbp" && rc.filter != "ramlak" && rc.filter != "ram-lak")
-                    throw std::runtime_error("wFBP 使用 FreeCT ramp 核，filter 必须为 ramlak");
-                if (rc.chunk_views <= 0 || !std::isfinite(rc.wfbp_cutoff) || rc.wfbp_cutoff <= 0 || rc.wfbp_cutoff > 1 ||
-                    !std::isfinite(rc.wfbp_apodization) || rc.wfbp_apodization < 0 || rc.wfbp_apodization > 1)
-                    throw std::runtime_error("analytic 的 chunk_views/wfbp 参数无效");
+                if (rc.chunk_views<=0 || !std::isfinite(rc.cutoff) || rc.cutoff<=0 || rc.cutoff>.5 ||
+                    !std::isfinite(rc.gain) || rc.gain<=0 || !std::isfinite(rc.butterworth_order) || rc.butterworth_order<=0 ||
+                    !std::isfinite(rc.kaiser_beta) || rc.kaiser_beta<0 || !std::isfinite(rc.tukey_alpha) || rc.tukey_alpha<0 || rc.tukey_alpha>1)
+                    throw std::runtime_error("Invalid shared analytic filter settings");
             }
             if (i) {
                 auto& rc = c.reconstruction.iterative;

@@ -1,8 +1,10 @@
+#include "MultiSpecFpStage.hpp"
 #include <windows.h>
 
 #include "ImGuiProjection.hpp"
 #include "ProjectionUiConfig.hpp"
 #include "LibraryReconstructor.hpp"
+#include "SimLogger.hpp"
 #include "ReconstructionDisplay.hpp"
 #include "WaterReference.hpp"
 #include "SpectralProjectionPipeline.hpp"
@@ -94,6 +96,7 @@ void number(const char* label, double& value)
         bool reconstruct=false, auto_reconstruct=false, opacity_changed=false;
         float opacity_scale=.03f;
         int result_mode=0;
+        bool relative_mode=false,relative_changed=false;
         bool drawer_open=false,drawer_changed=false;
         bool select_image_page=true;
         bool result_changed=false,slices_changed=false,window_changed=false,auto_window=false,load_reconstruction=false;
@@ -404,44 +407,69 @@ void number(const char* label, double& value)
             if(ImGui::Combo("Method",&method,"FDK\0Algebraic iterative\0Statistical\0WFBP (helical)\0")){
                 r.type=method==2?"statistical":method==1?"iterative":"analytic";
                 r.analytic.pipeline=method==3?"wfbp":"fdk";
-                if(method==3)r.analytic.filter="ramlak";
+
             }
             if(method==0||method==3){
                 if(method==3){
                     ImGui::TextWrapped("WFBP: analytic helical reconstruction. Uses the complete projection sequence.");
                     if(draft.geometry.kind!=GeometryKind::FlatHelical)ImGui::TextWrapped("Select Flat helical in Geometry to use WFBP.");
-                    number("WFBP cutoff (0, 1]",r.analytic.wfbp_cutoff);
-                    number("WFBP apodization [0, 1]",r.analytic.wfbp_apodization);
-                    ImGui::TextUnformatted("Filter: FreeCT ramp");
+
                 }else{
                     ImGui::TextWrapped("FDK: Flat circular / Planar / Tilted. For Flat helical select WFBP or an iterative method.");
-                    int filter=r.analytic.filter=="ramlak"?0:r.analytic.filter=="shepp-logan"?1:2;
-                    if(ImGui::Combo("Filter",&filter,"ramlak\0shepp-logan\0hann\0"))r.analytic.filter=filter==0?"ramlak":filter==1?"shepp-logan":"hann";
                     integer("Chunk views",r.analytic.chunk_views);
                 }
+                const char* filters[]={"ramlak","shepp-logan","cosine","hann","hamming","blackman","butterworth","kaiser","tukey"};
+                if(ImGui::BeginCombo("Filter",r.analytic.filter.c_str())) {
+                    for(const auto* name:filters) {
+                        bool selected=r.analytic.filter==name;
+                        if(ImGui::Selectable(name,selected))r.analytic.filter=name;
+                        if(selected)ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                number("Cutoff (0, 0.5] cycles/sample",r.analytic.cutoff);
+                number("Filter gain",r.analytic.gain);
+                if(r.analytic.filter=="butterworth")number("Butterworth order",r.analytic.butterworth_order);
+                if(r.analytic.filter=="kaiser")number("Kaiser beta",r.analytic.kaiser_beta);
+                if(r.analytic.filter=="tukey")number("Tukey alpha",r.analytic.tukey_alpha);
             }else if(method==1){
                 const char* algorithms[]={"sirt","ossart","cgls","tigre_sart","tigre_os_sart","tigre_sart_tv","tigre_os_sart_tv","sart","tigre_sirt"};
-                int index=0;for(int i=0;i<9;++i)if(r.iterative.algorithm==algorithms[i])index=i;
-                if(ImGui::Combo("Algorithm",&index,"sirt\0ossart\0cgls\0tigre_sart\0tigre_os_sart\0tigre_sart_tv\0tigre_os_sart_tv\0sart\0tigre_sirt\0")){
-                    r.iterative.algorithm=algorithms[index];if(index!=1&&index!=4&&index!=6)r.iterative.subsets=1;
-                    if(index!=0&&index!=1&&index!=7)r.iterative.regularization.plugin="none";}
+                bool listed=false;for(const auto* algorithm:algorithms)listed=listed || r.iterative.algorithm==algorithm;
+                if(ImGui::BeginCombo("Algorithm",listed?r.iterative.algorithm.c_str():"Choose supported algorithm")){
+                    for(const auto* algorithm:algorithms){
+                        const bool selected=r.iterative.algorithm==algorithm;
+                        if(ImGui::Selectable(algorithm,selected)){
+                            r.iterative.algorithm=algorithm;
+                            if(r.iterative.algorithm!="ossart" && r.iterative.algorithm!="tigre_os_sart" && r.iterative.algorithm!="tigre_os_sart_tv")r.iterative.subsets=1;
+                        }
+                        if(selected)ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                const bool internal_regularization=r.iterative.algorithm=="sirt" || r.iterative.algorithm=="sart" || r.iterative.algorithm=="ossart";
+                if(!internal_regularization)r.iterative.regularization.plugin="none";
+                if(!listed)ImGui::TextWrapped("This UI supports TV plugins with internal SIRT / SART / OS-SART only. Choose an algorithm from the list before reconstructing.");
                 integer("Iterations",r.iterative.iterations);number("Relaxation",r.iterative.relaxation);
-                if(index==1||index==4||index==6)integer("Subsets",r.iterative.subsets);
+                if(r.iterative.algorithm=="ossart" || r.iterative.algorithm=="tigre_os_sart" || r.iterative.algorithm=="tigre_os_sart_tv")integer("Subsets",r.iterative.subsets);
                 ImGui::Checkbox("Non negative",&r.iterative.non_negative);
-                if(index==5||index==6){integer("TV iterations",r.iterative.tv_iterations);number("TV alpha",r.iterative.tv_alpha);}
-                if(index==0||index==1||index==7){
+                if(r.iterative.algorithm=="tigre_sart_tv" || r.iterative.algorithm=="tigre_os_sart_tv"){
+                    ImGui::SeparatorText("TIGRE TV");
+                    integer("TV iterations",r.iterative.tv_iterations);number("TV alpha",r.iterative.tv_alpha);
+                }
+                if(internal_regularization){
+                    ImGui::SeparatorText("Internal regularization");
                     auto& tv=r.iterative.regularization;
                     int plugin=tv.plugin=="huber_tv_prox"?2:tv.plugin=="smoothed_tv"?1:0;
                     if(ImGui::Combo("Regularization",&plugin,"None\0Smoothed TV\0Huber TV Prox\0")){
                         tv.plugin=plugin==2?"huber_tv_prox":plugin==1?"smoothed_tv":"none";
-                        if(plugin&&tv.strength==0)tv.strength=.002;
+                        if(plugin&&tv.strength==0)tv.strength=plugin==2?1e-4:.002;
                     }
                     if(plugin){
-                        number("TV strength",tv.strength);integer("TV inner steps",tv.inner_iterations);
+                        number("TV strength",tv.strength);if(plugin!=2)integer("TV inner steps",tv.inner_iterations);
                         int dims=tv.dimensions==2?0:1;
                         if(ImGui::Combo("TV dimensions",&dims,"2D slices\0Full 3D\0"))tv.dimensions=dims?3:2;
-                        number("TV strength reduction",tv.strength_reduction);
-                        if(plugin==2){number("Huber delta",tv.huber_delta);number("Prox step (0 = auto)",tv.step_size);}
+                        if(plugin!=2)number("TV strength reduction",tv.strength_reduction);
+                        if(plugin==2){number("Huber delta",tv.huber_delta);ImGui::TextWrapped("Prox solver accuracy is managed automatically.");}
                         else number("TV epsilon",tv.epsilon);
                         ImGui::TextWrapped("Applied after every full angle sweep. Uses GPU volume buffers.");
                     }
@@ -564,6 +592,11 @@ void number(const char* label, double& value)
             ImGui::TextWrapped("Changes are drafts until Calculate is pressed.");
             ImGui::SetNextItemWidth(-130);
             if(ImGui::SliderFloat("Volume opacity",&opacity_scale,0,1,"%.3f",ImGuiSliderFlags_Logarithmic))opacity_changed=true;
+            relative_mode=view.relativeGeometryMode();
+            ImGui::BeginDisabled(!view.relativeGeometryAvailable());
+            if(ImGui::Checkbox("Gantry fixed (relative)",&relative_mode))relative_changed=true;
+            ImGui::EndDisabled();
+            if(!view.relativeGeometryAvailable())ImGui::TextWrapped("Relative mode requires a rigid source-detector trajectory.");
             auto body=[&](auto draw_content){
                 ImGui::BeginChild("Parameter content",{0,-140},false);
                 if(!message.empty()){
@@ -681,7 +714,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         yk::visualization::LiveView view({ options.texture_max_size, options.max_fps, false, false, options.snapshot_directory.string() });
         if (!view.installGui([&](int w, int h, bool enabled, const std::string& status) { ui.draw(w, h, enabled, status, view); }))
             throw std::runtime_error("Build with BUILD_VTK_VISUALIZATION=ON and BUILD_IMGUI_GUI=ON");
-        SpectralProjectionPipeline pipeline(std::make_unique<primary_detail::CudaProjectionBackend>());
+        SpectralProjectionPipeline pipeline(primary_detail::makeCudaProjectionSourceRegistry().create("projection.source.multi_spec_fp"));
         pipeline.setVisualization(&view);
         XcomAttenuationProvider attenuation({});
         std::optional<SimulationConfig> computed_config, reconstructed_config;
@@ -716,7 +749,16 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             std::vector<TaskProgress> progress_history;
             ui.reconstruction_running=true;ui.progress_completed=ui.progress_total=0;
             auto task=std::async(std::launch::async,[checked,&progress_mutex,&progress_state,&progress_history]{std::string diagnostic;
-                const auto callback=[&](TaskProgress value){std::lock_guard<std::mutex> lock(progress_mutex);progress_state=value;progress_history.push_back(value);};
+                std::string logged_phase;
+                const auto callback=[&](TaskProgress value){
+                    {std::lock_guard<std::mutex> lock(progress_mutex);progress_state=value;progress_history.push_back(value);}
+                    // Use the existing completion callback; logging must not add GPU synchronization.
+                    if(value.phase!=logged_phase || value.phase=="Iterative updates"){
+                        std::ostringstream line;line<<"[reconstruction] "<<value.phase;
+                        if(value.total>0)line<<" "<<value.completed<<"/"<<value.total;
+                        SimLogger::instance().info(line.str());logged_phase=value.phase;
+                    }
+                };
                 const bool ok=reconstructWithLibraryFdk(checked,checked.reconstruction.input_projection_file,checked.reconstruction.output_volume_file,checked.reconstruction.slice_prefix,diagnostic,callback);
                 return std::make_pair(ok,diagnostic);});
             const auto started=std::chrono::steady_clock::now();
@@ -761,10 +803,8 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             constexpr double colors[][3]={{.75,.85,1},{1,.65,.25},{.85,.35,.4},{.4,.85,.6},{.8,.6,.95},{.85,.85,.35}};
             for(size_t i=0;i<projection.materials.size();++i){const auto& m=projection.materials[i];const auto* color=colors[i%6];
                 volume.materials.push_back({m.label,m.name,{color[0],color[1],color[2],m.density_g_cm3<.01?0.:.15}});}
-            std::vector<yk::visualization::Point> sources,centers;
-            for(const auto& frame:frames){sources.push_back(frame.source);centers.push_back(frame.detector_center);}
             view.setVolumeOpacityScale(config.visualization.volume_opacity_scale);
-            view.setVolume(volume);view.setTrajectory(sources,centers);view.setGeometryPreview(frames.front());
+            view.setVolume(volume);view.setTrajectory(frames);view.setGeometryPreview(frames.front());
             ui.result_mode=0;ui.select_image_page=true;
             ui.histogram(loaded_labels);ui.spectrum(spectrum);labels=std::move(loaded_labels);
             ui.requested_frame=-1;
@@ -786,6 +826,21 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         try {loadResources(ui.draft);}
         catch(const std::exception& e){ui.message=e.what();view.setEditingEnabled(true);view.setStatus("Could not load TOML resources. Correct paths or load another TOML.");if(smoke||chain_smoke)throw;}
         if(ui.message.empty())ui.message=initial.source_config_file.string();
+        if(std::getenv("YK_IMGUI_RELATIVE_SMOKE")) {
+            if(!view.relativeGeometryAvailable())throw std::runtime_error("Rigid gantry relative mode unavailable");
+            view.setRelativeGeometryMode(true); // Loaded preview, with no cached projections.
+            view.setRelativeGeometryMode(false);
+            const auto frames=buildDisplayGeometry(ui.draft);
+            const std::vector<float> pixels(16,1.f);
+            view.update(frames.front(),4,4,pixels,"Relative geometry smoke",true);
+            view.update(frames.back(),4,4,pixels,"Relative geometry smoke",true);
+            view.setRelativeGeometryMode(true);
+            if(!view.selectFrame(frames.front().view) || !view.selectFrame(frames.back().view))
+                throw std::runtime_error("Relative cached frame navigation failed");
+            view.setRelativeGeometryMode(false);
+            view.setRelativeGeometryMode(true);
+            view.saveSnapshot();return true;
+        }
         if(std::getenv("YK_IMGUI_LOAD_SMOKE")) {
             auto trial=initial;
             const GeometryKind kinds[]={GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::PlanarSourceOrbit,GeometryKind::NikonTilted};
@@ -813,6 +868,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         while (view.isOpen()) {
             view.pollGui();
             try {
+                if(ui.relative_changed){ui.relative_changed=false;view.setRelativeGeometryMode(ui.relative_mode);}
                 if(ui.drawer_changed){ui.drawer_changed=false;view.setImageDrawer(ui.drawer_open);}
                 if(ui.result_changed){ui.result_changed=false;view.showReconstruction(ui.result_mode==1);}
                 if(ui.slices_changed){ui.slices_changed=false;view.setReconstructionSlices(ui.recon_slices);}

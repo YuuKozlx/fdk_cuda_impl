@@ -22,10 +22,19 @@ struct AlgebraicRegularizationConfig {
     std::string plugin_id;
     float huber_delta = 1e-3f, step_size = 0.f;
     bool non_negative = true;
+    float prox_relative_tolerance = 0.f; // zero preserves fixed-step internal tests
+    int prox_check_interval = 10;
     bool require_prox = false;
     float lower_bound = -std::numeric_limits<float>::max(), upper_bound = std::numeric_limits<float>::max();
     bool gradient_only = false; // statistical solvers own their volume workspaces
 };
+inline void configureAutomaticHuberProx(AlgebraicRegularizationConfig& c){
+    if(c.plugin_id=="huber_tv"||c.plugin_id=="huber_tv_prox"){
+        c.inner_iterations=1000;c.step_size=0;c.strength_reduction=1;
+        c.prox_relative_tolerance=1e-4f;c.prox_check_interval=10;
+    }
+}
+struct ProxStatistics {int iterations=0;double relative_stationarity=0;bool converged=false,iteration_limit=false;};
 struct AlgebraicRegularizationContext {
     int outer_iteration = 0, completed_subset_updates = 0;
     float data_update_l2 = std::numeric_limits<float>::quiet_NaN(), data_relaxation = 1.f;
@@ -47,6 +56,7 @@ public:
     virtual bool value(const float*, double&) { return false; }
     virtual bool gradient(const float*, float*) { return false; }
     virtual double gradientLipschitz() const { return 0; }
+    virtual ProxStatistics proxStatistics() const { return {}; }
     virtual bool requiresDataUpdateNorm() const { return false; }
     virtual size_t workspaceBytes(const SReconstructionParams&, const AlgebraicRegularizationConfig&) const { return 0; }
 };

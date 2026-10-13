@@ -219,7 +219,14 @@ namespace yk::spectral {
         system.reconstruction.tigre.tv_alpha_reduction = static_cast<float>(iterative.tv_alpha_reduction);
         system.reconstruction.tigre.maximum_update_ratio = static_cast<float>(iterative.maximum_update_ratio);
         system.reconstruction.tigre.non_negative = iterative.non_negative;
-        system.reconstruction.fdk.filter = filter;
+        system.reconstruction.fdk.filter.type = filter;
+        auto& shared=system.reconstruction.fdk.filter;
+        shared.cutoff=float(config.reconstruction.analytic.cutoff);
+        shared.gain=float(config.reconstruction.analytic.gain);
+        shared.butterworth_order=float(config.reconstruction.analytic.butterworth_order);
+        shared.kaiser_beta=float(config.reconstruction.analytic.kaiser_beta);
+        shared.tukey_alpha=float(config.reconstruction.analytic.tukey_alpha);
+        system.reconstruction.wfbp.filter=shared;
         return system;
     }
 

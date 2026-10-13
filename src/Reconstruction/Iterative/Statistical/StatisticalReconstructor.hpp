@@ -71,6 +71,7 @@ public:
             c.lower_bound = cfg.constraints.lower_bound;
             c.upper_bound = cfg.constraints.upper_bound;
             c.non_negative = cfg.constraints.lower_bound >= 0;
+            configureAutomaticHuberProx(c);
             const auto rc = regularizer_->capabilities();
             if ((required.regularization_value && !rc.value) || (required.regularization_gradient && !rc.gradient) || (required.regularization_prox && !rc.prox)) {
                 error_ = "regularizer capabilities do not satisfy optimizer";

@@ -1,5 +1,7 @@
 #include "common/YkTimingWatchdog.hpp"
 #include "LibraryReconstructor.hpp"
+#include "recon/postprocess/PostprocessPipeline.hpp"
+#include "image/ImageStages.hpp"
 
 #include "LibraryGeometry.hpp"
 #include "ReconstructionPreprocessor.hpp"
@@ -30,63 +32,6 @@ void check(bool condition, const std::string& message)
 void timedRead(std::ifstream& input,char* data,std::streamsize bytes){
     YK::diagnostics::TimingSpan watch("reconstruction.read","bytes="+std::to_string(bytes));input.read(data,bytes);
 }
-void timedWrite(std::ofstream& output,const char* data,std::streamsize bytes){
-    YK::diagnostics::TimingSpan watch("reconstruction.write","bytes="+std::to_string(bytes));output.write(data,bytes);
-}
-
-void writeLe16(std::ofstream& out, std::uint16_t value)
-{
-    const char bytes[2] = {static_cast<char>(value & 0xffu),
-        static_cast<char>((value >> 8u) & 0xffu)};
-    out.write(bytes, 2);
-}
-
-void writeLe32(std::ofstream& out, std::uint32_t value)
-{
-    const char bytes[4] = {static_cast<char>(value & 0xffu),
-        static_cast<char>((value >> 8u) & 0xffu),
-        static_cast<char>((value >> 16u) & 0xffu),
-        static_cast<char>((value >> 24u) & 0xffu)};
-    out.write(bytes, 4);
-}
-
-// 写 Windows 常见的 8-bit 灰度 BMP。图像只是诊断输出，原始 float32
-// 体数据仍是数值比较和后处理的唯一依据。
-void writeBmp(const std::filesystem::path& path, int width, int height,
-    const std::vector<float>& values, float low, float high)
-{
-    check(width > 0 && height > 0 && values.size() ==
-        static_cast<std::size_t>(width) * height, "切片尺寸无效");
-    if (!(high > low)) high = low + 1.f;
-    const std::size_t row_bytes = (static_cast<std::size_t>(width) + 3u) & ~3u;
-    const std::uint32_t pixel_bytes = static_cast<std::uint32_t>(row_bytes * height);
-    std::ofstream out(path, std::ios::binary);
-    check(static_cast<bool>(out), "无法创建切片图像: " + path.string());
-    writeLe16(out, 0x4d42u);
-    writeLe32(out, 14u + 40u + 256u * 4u + pixel_bytes);
-    writeLe16(out, 0); writeLe16(out, 0);
-    writeLe32(out, 14u + 40u + 256u * 4u);
-    writeLe32(out, 40u); writeLe32(out, static_cast<std::uint32_t>(width));
-    writeLe32(out, static_cast<std::uint32_t>(height));
-    writeLe16(out, 1); writeLe16(out, 8); writeLe32(out, 0);
-    writeLe32(out, pixel_bytes); writeLe32(out, 2835); writeLe32(out, 2835);
-    writeLe32(out, 256); writeLe32(out, 0);
-    for (std::uint32_t i = 0; i < 256; ++i) {
-        const char color[4] = {static_cast<char>(i), static_cast<char>(i),
-            static_cast<char>(i), 0};
-        out.write(color, 4);
-    }
-    std::vector<char> row(row_bytes, 0);
-    for (int y = height - 1; y >= 0; --y) {
-        for (int x = 0; x < width; ++x) {
-            const float t = std::clamp((values[static_cast<std::size_t>(y) * width + x] - low) /
-                (high - low), 0.f, 1.f);
-            row[static_cast<std::size_t>(x)] = static_cast<char>(std::lround(t * 255.f));
-        }
-        out.write(row.data(), static_cast<std::streamsize>(row.size()));
-    }
-    check(static_cast<bool>(out), "写入切片图像失败: " + path.string());
-}
 
 YK::EFdkFilter parseFilter(const std::string& name)
 {
@@ -95,6 +40,10 @@ YK::EFdkFilter parseFilter(const std::string& name)
     if (name == "hann") return YK::EFdkFilter::Hann;
     if (name == "hamming") return YK::EFdkFilter::Hamming;
     if (name == "shepp-logan") return YK::EFdkFilter::SheppLogan;
+    if (name == "blackman") return YK::EFdkFilter::Blackman;
+    if (name == "butterworth") return YK::EFdkFilter::Butterworth;
+    if (name == "kaiser") return YK::EFdkFilter::Kaiser;
+    if (name == "tukey") return YK::EFdkFilter::Tukey;
     throw std::runtime_error("未知滤波核: " + name);
 }
 
@@ -114,27 +63,6 @@ YK::EPipeline parsePipeline(const std::string& name)
     throw std::runtime_error("未知重建管线: " + name);
 }
 
-void writeSlices(const std::filesystem::path& prefix, const std::vector<float>& volume,
-    int nx, int ny, int nz)
-{
-    float low = std::numeric_limits<float>::infinity();
-    float high = -std::numeric_limits<float>::infinity();
-    for (float v : volume) if (std::isfinite(v)) { low = std::min(low, v); high = std::max(high, v); }
-    check(std::isfinite(low) && std::isfinite(high), "重建体没有有限数值");
-    const int z = nz / 2, y = ny / 2, x = nx / 2;
-    std::vector<float> axial(static_cast<std::size_t>(nx) * ny);
-    std::vector<float> coronal(static_cast<std::size_t>(nx) * nz);
-    std::vector<float> sagittal(static_cast<std::size_t>(ny) * nz);
-    for (int yy = 0; yy < ny; ++yy) for (int xx = 0; xx < nx; ++xx)
-        axial[static_cast<std::size_t>(yy) * nx + xx] = volume[(static_cast<std::size_t>(z) * ny + yy) * nx + xx];
-    for (int zz = 0; zz < nz; ++zz) for (int xx = 0; xx < nx; ++xx)
-        coronal[static_cast<std::size_t>(zz) * nx + xx] = volume[(static_cast<std::size_t>(zz) * ny + y) * nx + xx];
-    for (int zz = 0; zz < nz; ++zz) for (int yy = 0; yy < ny; ++yy)
-        sagittal[static_cast<std::size_t>(zz) * ny + yy] = volume[(static_cast<std::size_t>(zz) * ny + yy) * nx + x];
-    writeBmp(prefix.string() + "-axial.bmp", nx, ny, axial, low, high);
-    writeBmp(prefix.string() + "-coronal.bmp", nx, nz, coronal, low, high);
-    writeBmp(prefix.string() + "-sagittal.bmp", ny, nz, sagittal, low, high);
-}
 
 } // namespace
 
@@ -142,7 +70,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
     const std::filesystem::path& projection_file,
     const std::filesystem::path& volume_file,
     const std::filesystem::path& slice_prefix,
-    std::string& diagnostic,TaskProgressCallback progress)
+    std::string& diagnostic,TaskProgressCallback progress,PostprocessConfigurer configure_postprocess)
 {
     YK::diagnostics::TimingSpan total_watch("reconstruction.run",config.reconstruction.iterative.algorithm);
     YK::IReconstructionSession* session = nullptr;
@@ -198,10 +126,6 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             YK::EProjectionModel::Joseph, parseFilter(config.reconstruction.analytic.filter),
             GeometryUse::Reconstruction);
         if(statistical)check(YK::estimateStatisticalWorkspace(system,statistical_workspace),"Cannot estimate statistical workspace for requested modules");
-        if (wfbp) {
-            system.reconstruction.wfbp.filter_cutoff = static_cast<float>(config.reconstruction.analytic.wfbp_cutoff);
-            system.reconstruction.wfbp.filter_apodization = static_cast<float>(config.reconstruction.analytic.wfbp_apodization);
-        }
         if(statistical){const auto& s=config.reconstruction.statistical;
             std::cout<<" optimizer="<<s.optimizer.type<<" iterations="<<s.optimizer.iterations<<" regularization="<<s.regularization.plugin
                 <<" strength="<<s.regularization.strength<<" shape="<<s.regularization.shape<<" adjoint=approximate";
@@ -211,9 +135,8 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 << " subsets=" << config.reconstruction.iterative.subsets;
         }
         std::cout << "reconstruction=" << pipeline_name
-            << " filter=" << (wfbp ? "freect-ramp" : config.reconstruction.analytic.filter);
-        if (wfbp) std::cout << " cutoff=" << config.reconstruction.analytic.wfbp_cutoff
-            << " apodization=" << config.reconstruction.analytic.wfbp_apodization
+            << " filter=" << config.reconstruction.analytic.filter;
+        if (wfbp) std::cout << " cutoff=" << config.reconstruction.analytic.cutoff
             << " full_input_bytes=" << projection_elements * sizeof(float)
             << " chunk_views=not-applicable";
         std::cout << std::endl;
@@ -270,6 +193,7 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
 
 
         std::vector<float> volume(volume_elements, 0.f);
+        std::shared_ptr<float> device_result;
         if (fdk && !cyl_fdk && !nonstandard_fdk) {
             std::vector<float> chunk;
             const int chunk_views = std::min(g.views,
@@ -377,7 +301,9 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
                 check(session->execute(request), std::string("YKCBCT 迭代重建执行失败: ") + session->lastErrorMessage());
                 if(YK::diagnostics::timingEnabled()&&cudaDeviceSynchronize()!=cudaSuccess)throw std::runtime_error("reconstruction profiling synchronization failed");
                 }
-                cudaCheck(cudaMemcpy(volume.data(), d_volume, volume.size() * sizeof(float), cudaMemcpyDeviceToHost), "下载迭代重建体失败");
+                int result_device=0;cudaCheck(cudaGetDevice(&result_device),"获取重建设备失败");
+                float* completed_volume=d_volume;d_volume=nullptr;
+                device_result=std::shared_ptr<float>(completed_volume,[result_device](float* p){int old=0;cudaGetDevice(&old);cudaSetDevice(result_device);cudaFree(p);cudaSetDevice(old);});
             } catch (...) {
                 if (d_projection) cudaFree(d_projection);
                 if (d_volume) cudaFree(d_volume);
@@ -386,22 +312,30 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
             cudaFree(d_projection);
             cudaFree(d_volume);
         }
-        if(progress)progress({"Saving reconstruction",0,1});
-        if (const auto parent = volume_file.parent_path(); !parent.empty())
-            std::filesystem::create_directories(parent);
-        std::ofstream output(volume_file, std::ios::binary);
-        check(static_cast<bool>(output), "无法创建重建体输出: " + volume_file.string());
-        timedWrite(output,reinterpret_cast<const char*>(volume.data()),
-            static_cast<std::streamsize>(volume.size() * sizeof(float)));
-        check(static_cast<bool>(output), "写入重建体失败");
-        if (config.reconstruction.save_slices)
-            writeSlices(slice_prefix, volume, g.reconstruction_volume_x,
-                g.reconstruction_volume_y, g.reconstruction_volume_z);
         YK::ReconstructionSessionFactory::destroy(session);
-        session = nullptr;
+        session=nullptr;
+        postprocess::Volume result;
+        result.grid.dimensions={g.reconstruction_volume_x,g.reconstruction_volume_y,g.reconstruction_volume_z};
+        result.grid.spacing_mm={g.reconstruction_voxel_x_mm,g.reconstruction_voxel_y_mm,g.reconstruction_voxel_z_mm};
+        const double center[]={g.reconstruction_offset_x_mm,g.reconstruction_offset_y_mm,g.reconstruction_offset_z_mm};
+        for(int i=0;i<3;++i)result.grid.origin_mm[i]=center[i]-.5*(result.grid.dimensions[i]-1)*result.grid.spacing_mm[i];
+        result.elements=volume.size();result.host_data=volume.data();
+        if(device_result){result.device_owner=std::move(device_result);result.device_data=result.device_owner.get();result.location=postprocess::Location::Device;}
+        image::VolumeTransfer transfer;
+        image::Workspace image_workspace(image::Location::Device);
+        postprocess::Context context;context.transfer=&transfer;context.image_workspace=&image_workspace;
+        context.volume_file=volume_file;context.slice_prefix=slice_prefix;context.progress=progress;
+        context.original_projection_file=projection_file;context.reconstruction_projection_file=reconstruction_input;
+        context.source_config_file=config.source_config_file;
+        postprocess::Pipeline postprocessing;
+        if(configure_postprocess)configure_postprocess(postprocessing);
+        // Keep the existing attenuation RAW contract for display and numerical comparison.
+        postprocessing.appendExporter(postprocess::makeRawFloatExporter());
+        if(config.reconstruction.save_slices)postprocessing.appendExporter(postprocess::makeOrthogonalBmpExporter());
+        postprocessing.run(result,context);
         if(progress)progress({"Completed",1,1});
         diagnostic = pipeline_name +
-            " 重建完成，输出体素=" + std::to_string(volume.size());
+            " 重建完成，输出体素=" + std::to_string(result.elements);
         return true;
     } catch (const std::exception& e) {
         if (session) YK::ReconstructionSessionFactory::destroy(session);

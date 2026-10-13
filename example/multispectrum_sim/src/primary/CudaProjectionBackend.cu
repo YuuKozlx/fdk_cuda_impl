@@ -1,3 +1,5 @@
+#include "MultiSpecFpStage.hpp"
+#include "pipeline/BuiltinPluginInfo.hpp"
 #include "common/YkTimingWatchdog.hpp"
 #include "CudaProjectionBackend.hpp"
 #include "DisplayGeometry.hpp"
@@ -371,3 +373,11 @@ void CudaProjectionBackend::reset() noexcept {
     impl_.reset();
 }
 } // namespace yk::spectral::primary_detail
+
+namespace yk::spectral::primary_detail {
+ProjectionSourceRegistry makeCudaProjectionSourceRegistry(){
+    ProjectionSourceRegistry registry;
+    registry.add(pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::MultiSpecFp),[]{return std::make_unique<MultiSpecFpStage>(std::make_unique<CudaProjectionBackend>());});
+    return registry;
+}
+}

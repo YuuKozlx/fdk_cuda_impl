@@ -51,8 +51,9 @@ endif()
 if(TARGET YKCBCT)
     target_sources(multispectrum_sim PRIVATE
         src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/ReconstructionPreprocessor.cpp
+        src/recon/postprocess/PostprocessPipeline.cpp src/recon/postprocess/OutputStages.cpp
         src/recon/preprocess/ProjectionCache.cpp
-        src/CudaPrimaryProjector.cu src/SpectralProjectionPipeline.cpp
+        src/CudaPrimaryProjector.cu src/SpectralProjectionPipeline.cpp src/MultiSpecFpStage.cpp
         src/primary/CudaProjectionBackend.cu src/primary/DetectorSignal.cpp
         src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
         src/CudaFasksScatter.cu)
@@ -135,7 +136,7 @@ if(BUILD_TESTING)
         endforeach()
         add_executable(multispectrum_pipeline_test tests/test_projection_pipeline.cpp tests/test_device_signal_stages.cpp
             src/primary/CudaProjectionBackend.cu src/LibraryGeometry.cpp
-            src/SpectralProjectionPipeline.cpp src/SpectralModel.cpp src/SimLogger.cpp
+            src/SpectralProjectionPipeline.cpp src/MultiSpecFpStage.cpp src/SpectralModel.cpp src/SimLogger.cpp
             src/primary/ProjectionStages.cpp src/primary/ProjectionOutput.cpp
             src/primary/DetectorSignal.cpp src/FasksRuntimeModel.cpp src/CudaFasksScatter.cu)
         target_include_directories(multispectrum_pipeline_test PRIVATE include
@@ -364,4 +365,126 @@ if(BUILD_TESTING AND TARGET YKCBCT)
         target_compile_options(multispectrum_statistical_test PRIVATE /utf-8)
     endif()
     add_test(NAME multispectrum_statistical COMMAND multispectrum_statistical_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_relative_geometry_test tests/test_relative_geometry.cpp)
+    target_compile_features(multispectrum_relative_geometry_test PRIVATE cxx_std_17)
+    add_test(NAME multispectrum_relative_geometry COMMAND multispectrum_relative_geometry_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_postprocess_test tests/test_postprocess.cpp src/recon/postprocess/PostprocessPipeline.cpp src/recon/postprocess/OutputStages.cpp src/SimLogger.cpp)
+    target_include_directories(multispectrum_postprocess_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    if(MSVC)
+        target_compile_options(multispectrum_postprocess_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_postprocess COMMAND multispectrum_postprocess_test "${CMAKE_CURRENT_BINARY_DIR}/postprocess-tests")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_stage_runtime_test tests/test_stage_runtime.cpp)
+    target_include_directories(multispectrum_stage_runtime_test PRIVATE include)
+    add_test(NAME multispectrum_stage_runtime COMMAND multispectrum_stage_runtime_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(multispectrum_plugin_metadata_test tests/test_plugin_metadata.cpp)
+    target_include_directories(multispectrum_plugin_metadata_test PRIVATE include)
+    add_test(NAME multispectrum_plugin_metadata COMMAND multispectrum_plugin_metadata_test)
+endif()
+
+if(TARGET YKCBCT)
+    add_library(multispectrum_image_processing STATIC
+        src/image/ImageProcessing.cpp src/image/ImageKernels.cu src/image/ImageStages.cpp)
+    target_include_directories(multispectrum_image_processing PUBLIC include)
+    target_link_libraries(multispectrum_image_processing PUBLIC multispectrum_device_pool CUDA::cudart)
+    set_property(TARGET multispectrum_image_processing PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    if(MSVC)
+        target_compile_options(multispectrum_image_processing PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+    endif()
+    target_link_libraries(multispectrum_sim PRIVATE multispectrum_image_processing)
+    if(TARGET multispectrum_preprocessing_test)
+        target_link_libraries(multispectrum_preprocessing_test PRIVATE multispectrum_image_processing)
+    endif()
+    if(BUILD_TESTING)
+        add_executable(multispectrum_image_test tests/test_image_processing.cpp
+            src/recon/postprocess/PostprocessPipeline.cpp src/SimLogger.cpp)
+        target_include_directories(multispectrum_image_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+        target_link_libraries(multispectrum_image_test PRIVATE multispectrum_image_processing)
+        if(MSVC)
+            target_compile_options(multispectrum_image_test PRIVATE /utf-8)
+        endif()
+        add_test(NAME multispectrum_image_processing COMMAND multispectrum_image_test)
+    endif()
+endif()
+
+add_library(multispectrum_intensity_stages STATIC
+    src/recon/postprocess/stages/IntensityOps.cpp
+    src/recon/postprocess/stages/correction/HuTransforms.cpp
+    src/recon/postprocess/stages/calibration/HuCalibration.cpp
+    src/recon/postprocess/stages/segmentation/HuThresholds.cpp)
+target_include_directories(multispectrum_intensity_stages PUBLIC include)
+if(TARGET YKCBCT)
+    # Explicitly built experiment helper; no additional application/runtime dependency.
+    add_executable(multispectrum_bone_bhc_singlepass EXCLUDE_FROM_ALL
+        app/experiments/IdealBoneCorrection.cu src/config/SimConfig.cpp src/config/SpectrumSource.cpp
+        src/WaterReference.cpp src/XcomAttenuationProvider.cpp src/SimLogger.cpp
+        src/recon/preprocess/BeamHardeningFit.cpp)
+    target_include_directories(multispectrum_bone_bhc_singlepass PRIVATE include src
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    target_link_libraries(multispectrum_bone_bhc_singlepass PRIVATE
+        nist_xcom_core spek_spectrum::core multispectrum_device_pool CUDA::cudart)
+    set_property(TARGET multispectrum_bone_bhc_singlepass PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    if(MSVC)
+        target_compile_options(multispectrum_bone_bhc_singlepass PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/utf-8> $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+    endif()
+    add_executable(multispectrum_bone_bhc_prepare EXCLUDE_FROM_ALL
+        app/experiments/PrepareBoneBhc.cpp src/config/SimConfig.cpp src/config/SpectrumSource.cpp
+        src/WaterReference.cpp src/XcomAttenuationProvider.cpp
+        src/recon/postprocess/PostprocessPipeline.cpp src/recon/postprocess/OutputStages.cpp src/SimLogger.cpp)
+    target_include_directories(multispectrum_bone_bhc_prepare PRIVATE include
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    target_link_libraries(multispectrum_bone_bhc_prepare PRIVATE multispectrum_intensity_stages
+        multispectrum_image_processing nist_xcom_core spek_spectrum::core)
+    if(MSVC)
+        target_compile_options(multispectrum_bone_bhc_prepare PRIVATE /utf-8)
+    endif()
+endif()
+if(MSVC)
+    target_compile_options(multispectrum_intensity_stages PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+endif()
+if(TARGET YKCBCT)
+    target_sources(multispectrum_intensity_stages PRIVATE src/recon/postprocess/stages/IntensityKernels.cu)
+    target_compile_definitions(multispectrum_intensity_stages PRIVATE YK_INTENSITY_CUDA=1)
+    target_link_libraries(multispectrum_intensity_stages PRIVATE multispectrum_device_pool CUDA::cudart)
+    set_property(TARGET multispectrum_intensity_stages PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+endif()
+foreach(intensity_consumer IN ITEMS multispectrum_sim multispectrum_postprocess_test multispectrum_image_test)
+    if(TARGET ${intensity_consumer})
+        target_link_libraries(${intensity_consumer} PRIVATE multispectrum_intensity_stages)
+    endif()
+endforeach()
+if(BUILD_TESTING)
+    add_executable(multispectrum_intensity_test tests/test_intensity_stages.cpp
+        src/recon/postprocess/PostprocessPipeline.cpp src/SimLogger.cpp)
+    target_include_directories(multispectrum_intensity_test PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    target_link_libraries(multispectrum_intensity_test PRIVATE multispectrum_intensity_stages)
+    if(TARGET YKCBCT)
+        target_link_libraries(multispectrum_intensity_test PRIVATE multispectrum_image_processing)
+        target_compile_definitions(multispectrum_intensity_test PRIVATE YK_INTENSITY_CUDA=1)
+    endif()
+    if(MSVC)
+        target_compile_options(multispectrum_intensity_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME multispectrum_intensity_stages COMMAND multispectrum_intensity_test)
 endif()

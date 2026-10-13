@@ -1,3 +1,4 @@
+#include "MultiSpecFpStage.hpp"
 #include "SpectralProjectionPipeline.hpp"
 #include "../src/primary/ProjectionStages.hpp"
 #include "../src/primary/CudaProjectionBackend.hpp"
@@ -23,12 +24,12 @@ void testDeviceSignalStages(){
     d.afterglow.enabled=true;d.afterglow.p=.3;d.afterglow.weights={.4,.6};d.afterglow.time_constants_ms={2,10};
     d.afterglow.frame_time_ms=2;d.afterglow.exposure_time_ms=1;
     d.das.enabled=true;d.das.gain_electrons_per_keV=10;d.das.offset_electrons=5;d.das.saturation_electrons=1800;d.das.adc_lsb_electrons=.5;
-    primary_detail::CudaProjectionBackend backend;const size_t n=size_t(g.detector_u)*g.detector_v;
-    Storage storage(n);ProjectionStageContext context{c,backend};
+    MultiSpecFpStage source(std::make_unique<primary_detail::CudaProjectionBackend>());const size_t n=size_t(g.detector_u)*g.detector_v;
+    Storage storage(n);ProjectionStageContext context{c,source};
     for(auto initialization:{"zero","steady_state"}){
         d.afterglow.initialization=initialization;
         auto cpu=primary_detail::makeProjectionStages(c),gpu=primary_detail::makeCudaProjectionStages(c);
-        for(auto& stage:cpu)stage->prepare(c);for(auto& stage:gpu)stage->prepare(c);
+        for(auto& stage:cpu)stage->prepare(context);for(auto& stage:gpu)stage->prepare(context);
         for(int view=0;view<5;++view){ProjectionFrame host,device;host.resize(g.detector_u,g.detector_v);device.resize(g.detector_u,g.detector_v);
             host.view=device.view=view;device.location=ProjectionMemoryLocation::Device;device.device=storage.frame(n);
             for(size_t p=0;p<n;++p){host.signal_energy[p]=float((p*7)%37+view*11);host.reference_energy[p]=float(150+(p%13)+view);}
@@ -44,7 +45,7 @@ void testDeviceSignalStages(){
     // CUDA electronic noise: deterministic for a view and statistically Gaussian.
     c.projection.detector_postprocess={};d.das.enabled=true;d.das.gain_electrons_per_keV=10;d.das.electronic_noise_std_electrons=20;
     g.detector_u=65536;g.detector_v=1;const size_t count=65536;Storage noise(count);
-    auto stages=primary_detail::makeCudaProjectionStages(c);for(auto& stage:stages)stage->prepare(c);
+    auto stages=primary_detail::makeCudaProjectionStages(c);for(auto& stage:stages)stage->prepare(context);
     ProjectionFrame f;f.width=int(count);f.height=1;f.location=ProjectionMemoryLocation::Device;f.device=noise.frame(count);
     std::vector<float> input(count,100),first(count),second(count);
     for(int repeat=0;repeat<2;++repeat){check(cudaMemcpy(f.device.signal,input.data(),count*sizeof(float),cudaMemcpyHostToDevice));stages[0]->process(f,context);

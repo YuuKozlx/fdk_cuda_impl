@@ -183,7 +183,7 @@ int main_system_reconstruction_four_geometries()
     static_flat.flat_detector = sampleFlatDetector();
     static_flat.volume = sampleVolume();
     SReconstructionSpec static_flat_reconstruction{};
-    static_flat_reconstruction.fdk.filter = EFdkFilter::SheppLogan;
+    static_flat_reconstruction.fdk.filter.type = EFdkFilter::SheppLogan;
     static_flat_reconstruction.fdk.parker.mode = EParkerMode::Auto;
 
     SSystemConfig static_cyl{};
@@ -195,7 +195,7 @@ int main_system_reconstruction_four_geometries()
     SReconstructionSpec static_cyl_reconstruction{};
     // 当前 Cyl analytic FDK 使用柱面采样修正的离散 Ram-Lak，尚未实现
     // Shepp-Logan 窗；这里的 Shepp-Logan 指四条路径共用的输入模体。
-    static_cyl_reconstruction.fdk.filter = EFdkFilter::RamLak;
+    static_cyl_reconstruction.fdk.filter.type = EFdkFilter::RamLak;
 
     SSystemConfig helical_flat{};
     helical_flat.detector = EDetectorKind::Flat;

@@ -33,6 +33,7 @@
 
 #if YKCBCT_HAS_HELICAL
 #include "Reconstruction/Analytic/Helical/WFBP/YkWfbpPipeline.hpp"
+#include "Filter/YkAnalyticFilterSettings.hpp"
 #endif
 
 namespace YK {
@@ -40,16 +41,9 @@ namespace {
 
 enum class ENonStandardKind { None, PlanarSourceOrbit, NikonTilted };
 
-SFilterKernelDesc makeFilterDesc(const SFdkAlgoParams& ap)
+SFilterKernelDesc makeFilterDesc(const SAnalyticFilterParams& ap)
 {
-    SFilterKernelDesc d{};
-    d.kind = static_cast<EFilterKernel>(ap.filter);
-    d.cutoff = ap.cutoff;
-    d.gain = ap.gain;
-    d.order = ap.butterworth_order;
-    d.beta = ap.kaiser_beta;
-    d.tukey_alpha = ap.tukey_alpha;
-    return d;
+    return Filter::analyticFilterDesc(ap);
 }
 
 CylFpBp::EIterativeForwardModel makeCylForwardModel(ETask task)
@@ -140,10 +134,10 @@ public:
                 config.source_to_detector_mm = params_.scan.sdd_mm;
                 ok = cyl_fdk_.prepare(geometry_.volumeGeometry(), params_.scan.Nu,
                     params_.scan.Nv, geometry_.cylGeometry(), config,
-                    makeFilterDesc(reconstruction_.fdk), resources_.stream(), device_);
+                    makeFilterDesc(reconstruction_.fdk.filter), resources_.stream(), device_);
                 break;
             }
-            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
+            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk.filter);
             // geometry 非空时，它是唯一的几何/角度真源。圆轨迹 angles 只在
             // geometry 为空时用于构造同一份完整 geometry。
             ok = geometry_.hasExternalGeometry()
@@ -156,12 +150,12 @@ public:
             break;
         case EPipeline::XFDK:
             if (!geometry_.hasExternalGeometry()) break;
-            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
+            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk.filter);
             ok = xfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
             break;
         case EPipeline::CFDK:
             if (!geometry_.hasExternalGeometry()) break;
-            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
+            params_.reconstruction.filter = makeFilterDesc(reconstruction_.fdk.filter);
             ok = cfdk_.prepare(params_, geometry_.allGeometry(), resources_.stream(), device_);
             break;
         case EPipeline::Statistical: {
@@ -240,8 +234,7 @@ public:
             Helical::Wfbp::Config c{};
             c.input_detector = cylindrical_ ? Helical::Wfbp::EInputDetector::CylindricalArc : Helical::Wfbp::EInputDetector::FlatPanel;
             c.redundancy_flat = reconstruction_.wfbp.redundancy_flat;
-            c.filter.cutoff_c = reconstruction_.wfbp.filter_cutoff;
-            c.filter.apodization_a = reconstruction_.wfbp.filter_apodization;
+            c.filter = reconstruction_.wfbp.filter;
             if(cylindrical_){
                 if(geometry_.cylGeometry().empty())break;
                 ok = wfbp_.prepare(geometry_.volumeGeometry(),params_.scan.Nu,params_.scan.Nv,
@@ -359,6 +352,7 @@ public:
             c.epsilon = regularization->epsilon;
             c.strength_reduction = regularization->strength_reduction;
             c.non_negative = regularization->non_negative;
+            Iter::configureAutomaticHuberProx(c);
             if (!tv_plugin_.prepare(params_, c, resources_.stream(), device_)) {
                 YK_LOGE("[Session] Invalid TV plugin or regularization parameters.");
                 release(); return false;
@@ -490,7 +484,7 @@ private:
         params.volume.centerX_mm = volume.center.x;
         params.volume.centerY_mm = volume.center.y;
         params.volume.centerZ_mm = volume.center.z;
-        params.reconstruction.filter = makeFilterDesc(reconstruction_.fdk);
+        params.reconstruction.filter = makeFilterDesc(reconstruction_.fdk.filter);
         return true;
     }
 
@@ -794,7 +788,19 @@ private:
 #if YKCBCT_HAS_HELICAL
         if (r.K != params_.scan.NAng || !r.projection.data || !r.volume.data)
             return false;
-        // Host 适配统一复用 Session 分配器；仍为全量执行，不表示支持分包。
+        // The public API accepts the full scan. A large Host input is uploaded
+        // in halo-complete rebin batches rather than duplicated in full on GPU.
+        if(wfbp_.usesBatchedWorkspace()) {
+            float* output=r.volume.location==EMemoryLocation::Device?r.volume.data:ensureVolumeScratch_();
+            if(!output) return false;
+            const bool ok=r.projection.location==EMemoryLocation::Host?
+                wfbp_.reconstructHost(r.projection.data,output):wfbp_.reconstruct(r.projection.data,output);
+            if(ok && r.volume.location==EMemoryLocation::Host)
+                YK_CUDA_CHECK(cudaMemcpyAsync(r.volume.data,output,volumeBytes_(),cudaMemcpyDeviceToHost,resources_.stream()));
+            YK_CUDA_CHECK(cudaStreamSynchronize(resources_.stream()));
+            return ok;
+        }
+        // Resident workspace uses Session staging for Host buffers.
         const size_t bytes = static_cast<size_t>(r.K) * params_.scan.Nu *
             params_.scan.Nv * sizeof(float);
         YK_LOGI("[Session] WFBP full input={} bytes, volume={} bytes; workspace additional",

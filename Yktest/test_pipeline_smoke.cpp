@@ -2265,7 +2265,7 @@ int main_fdk_system_request_smoke()
         make_float3(2.f, -1.f, 3.f)};
     SReconstructionSpec reconstruction{};
     reconstruction.fdk.parker.mode = EParkerMode::Auto;
-    reconstruction.fdk.filter = EFdkFilter::Hann;
+    reconstruction.fdk.filter.type = EFdkFilter::Hann;
 
     cudaStream_t stream = nullptr;
     bool ok = checkCuda(cudaStreamCreate(&stream), "create system FDK stream");

@@ -13,8 +13,8 @@ void openOutput(std::ofstream& stream, const std::filesystem::path& path) {
     if (!stream) throw std::runtime_error("cannot open projection output: " + path.string());
 }
 }
-void EnergyProjectionOutput::prepare(const SimulationConfig& c,
-    const std::filesystem::path& output) {
+void EnergyProjectionOutput::prepare(const ProjectionOutputContext& context) {
+    const auto& c=context.config;const auto& output=context.output_file;
     reset();
     config_ = c.projection; output_ = output;
     width_ = c.geometry.parameters.detector_u; height_ = c.geometry.parameters.detector_v;
@@ -30,7 +30,7 @@ void EnergyProjectionOutput::writeBuffer(std::ofstream& stream,
         static_cast<std::streamsize>(buffer.size() * sizeof(float)));
     if (!stream) throw std::runtime_error("projection output write failed");
 }
-void EnergyProjectionOutput::write(const ProjectionFrame& frame) {
+void EnergyProjectionOutput::write(const ProjectionFrame& frame,const ProjectionOutputContext&) {
     if (frame.domain != ProjectionSignalDomain::EnergyKeV ||
         frame.location != ProjectionMemoryLocation::Host ||
         frame.width != width_ || frame.height != height_ || frame.view != written_ ||

@@ -114,12 +114,12 @@ void output(const std::filesystem::path& directory) {
     c.projection.save_metadata=true;c.projection.energy_output_file=directory/"energy.raw";
     c.projection.air_output_file=directory/"air.raw";
     EnergyProjectionOutput sink; const auto path=directory/"attenuation.raw";
-    sink.prepare(c,path);
+    sink.prepare({c,path});
     ProjectionFrame f;f.width=2;f.height=1;f.view=0;
     f.signal_energy={50,25};f.reference_energy={100,100};
-    sink.write(f);
+    sink.write(f,{c,path});
     f.view=1;f.signal_energy={100,50};f.reference_energy={200,200};
-    sink.write(f);sink.finish();
+    sink.write(f,{c,path});sink.finish();
     std::ifstream in(path,std::ios::binary);float values[2];in.read(reinterpret_cast<char*>(values),sizeof(values));
     require(bool(in),"attenuation output read");
     near(values[0],std::log(2.0),1e-6,"negative log pixel 0");
@@ -131,8 +131,8 @@ void output(const std::filesystem::path& directory) {
     std::ifstream metadata(c.projection.air_output_file.string()+".json");
     const std::string text((std::istreambuf_iterator<char>(metadata)),{});
     require(text.find("\"frames\": 2")!=std::string::npos,"air metadata frame count");
-    sink.reset();sink.prepare(c,path);f.domain=ProjectionSignalDomain::PhotonCounts;
-    rejects([&]{sink.write(f);},"count signal to energy sink");
+    sink.reset();sink.prepare({c,path});f.domain=ProjectionSignalDomain::PhotonCounts;
+    rejects([&]{sink.write(f,{c,path});},"count signal to energy sink");
     rejects([&]{sink.finish();},"incomplete output");
     sink.reset();
 }

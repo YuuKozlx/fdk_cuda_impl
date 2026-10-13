@@ -16,7 +16,7 @@ bool CudaPrimaryProjector::run(const SimulationConfig& c,
             return runInteractiveProjection(c,labels,model,output,error);
 #endif
         SpectralProjectionPipeline pipeline(
-            std::make_unique<primary_detail::CudaProjectionBackend>());
+            primary_detail::makeCudaProjectionSourceRegistry().create("projection.source.multi_spec_fp"));
         return pipeline.run(c, labels, model, output, error);
     } catch (const std::exception& e) { error = e.what(); return false; }
 }

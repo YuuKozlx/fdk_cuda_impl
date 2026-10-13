@@ -1,3 +1,4 @@
+#include "pipeline/BuiltinPluginInfo.hpp"
 #include "ProjectionStages.hpp"
 #include "DetectorSignal.hpp"
 #include "CudaFasksScatter.hpp"
@@ -8,13 +9,14 @@ namespace yk::spectral::primary_detail {
 namespace {
 class EnergyStage : public IProjectionStage {
 public:
-    ProjectionSignalDomain domain() const override { return ProjectionSignalDomain::EnergyKeV; }
+    pipeline::Contract<ProjectionSignalDomain> contract()const override{return {ProjectionSignalDomain::EnergyKeV,ProjectionSignalDomain::EnergyKeV};}
 };
 class ScatterStage final : public EnergyStage {
 public:
-    const char* name() const override { return "scatter"; }
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CpuScatter);}
     ProjectionStagePhase phase() const override { return ProjectionStagePhase::Scatter; }
-    void prepare(const SimulationConfig& c) override {
+    void prepare(const ProjectionStageContext& context) override {
+        const auto& c=context.config;
         const auto& g = c.geometry.parameters;
         model_ = std::make_unique<FasksRuntimeModel>(c.projection.scatter.model_file);
         scatter_ = std::make_unique<CudaFasksScatter>(g.detector_u, g.detector_v,
@@ -32,18 +34,17 @@ private:
 };
 class QuantumStage final : public EnergyStage {
 public:
-    const char* name() const override { return "scatter_noise"; }
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CpuQuantum);}
     ProjectionStagePhase phase() const override { return ProjectionStagePhase::QuantumNoise; }
     void process(ProjectionFrame& f, const ProjectionStageContext& c) override {
-        if (c.config.projection.scatter.enabled) c.backend.sampleScatterNoise(f);
+        if (c.config.projection.scatter.enabled) c.source.sampleScatterNoise(f);
         else f.signal_energy = f.sampled_primary_energy;
     }
 };
 class CrosstalkStage final : public EnergyStage {
 public:
-    CrosstalkStage(CrosstalkConfig config, ProjectionStagePhase phase,
-        const char* name) : config_(std::move(config)), phase_(phase), name_(name) {}
-    const char* name() const override { return name_; }
+    CrosstalkStage(CrosstalkConfig config, ProjectionStagePhase phase) : config_(std::move(config)), phase_(phase) {}
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(phase_==ProjectionStagePhase::OpticalCrosstalk?pipeline::BuiltinPlugin::CpuOptical:pipeline::BuiltinPlugin::CpuElectronic);}
     ProjectionStagePhase phase() const override { return phase_; }
     void process(ProjectionFrame& f, const ProjectionStageContext&) override {
         applyCrosstalkSignal(f.signal_energy, f.width, f.height, config_);
@@ -54,13 +55,12 @@ public:
 private:
     CrosstalkConfig config_;
     ProjectionStagePhase phase_;
-    const char* name_;
 };
 class AfterglowStage final : public EnergyStage {
 public:
     explicit AfterglowStage(DetectorPostprocessConfig::AfterglowConfig config)
         : config_(std::move(config)) {}
-    const char* name() const override { return "afterglow"; }
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CpuAfterglow);}
     ProjectionStagePhase phase() const override { return ProjectionStagePhase::Afterglow; }
     void process(ProjectionFrame& f, const ProjectionStageContext&) override {
         applyAfterglowSignal(f.signal_energy, config_, object_state_);
@@ -77,7 +77,7 @@ class DasStage final : public EnergyStage {
 public:
     explicit DasStage(DetectorPostprocessConfig::DasConfig config)
         : config_(std::move(config)), random_(config_.noise_seed) {}
-    const char* name() const override { return "das"; }
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::CpuDas);}
     ProjectionStagePhase phase() const override { return ProjectionStagePhase::Readout; }
     void process(ProjectionFrame& f, const ProjectionStageContext&) override {
         applyDasSignal(f.signal_energy, config_, random_);
@@ -96,11 +96,11 @@ std::vector<std::unique_ptr<IProjectionStage>> makeProjectionStages(const Simula
     const auto& d = p.detector_postprocess;
     if (d.optical_crosstalk.enabled)
         stages.push_back(std::make_unique<CrosstalkStage>(d.optical_crosstalk,
-            ProjectionStagePhase::OpticalCrosstalk, "optical_crosstalk"));
+            ProjectionStagePhase::OpticalCrosstalk));
     if (d.afterglow.enabled) stages.push_back(std::make_unique<AfterglowStage>(d.afterglow));
     if (d.electronic_crosstalk.enabled)
         stages.push_back(std::make_unique<CrosstalkStage>(d.electronic_crosstalk,
-            ProjectionStagePhase::ElectronicCrosstalk, "electronic_crosstalk"));
+            ProjectionStagePhase::ElectronicCrosstalk));
     if (d.das.enabled) stages.push_back(std::make_unique<DasStage>(d.das));
     return stages;
 }

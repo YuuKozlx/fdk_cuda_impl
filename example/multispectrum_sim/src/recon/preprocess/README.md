@@ -8,11 +8,11 @@
 - `BeamHardeningFit.cpp`：小规模 CPU 水板标定拟合。逐像素应用在 CUDA 完成。
 - `DeviceMemoryPool.cpp`：进程内、按 CUDA 设备隔离、线程安全的缓冲池。无 VTK 依赖。
 
-外部入口 `prepareReconstructionProjection()` 保留兼容，内部调用 `Pipeline`。原来的校正数值定义不变：恢复 `air*exp(-log)`，散射正值下限 `air*1e-8`，转对数比例下限 `FLT_MIN`，BHC 使用双精度多项式并按配置截断；多项式溢出必须报错，不能被截断掩盖。
+应用入口 `prepareReconstructionProjection()` 内部调用 `Pipeline`。原来的校正数值定义不变：恢复 `air*exp(-log)`，散射正值下限 `air*1e-8`，转对数比例下限 `FLT_MIN`，BHC 使用双精度多项式并按配置截断；多项式溢出必须报错，不能被截断掩盖。
 
 ## 插件约定
 
-实现 `IStage` 后通过 `Pipeline::append(std::unique_ptr<IStage>)` 加入，执行位置在内置校正链之后。阶段声明 `inputDomain/outputDomain`（LogAttenuation 或 EnergySignal）以及 `inputLocation/outputLocation`（Host 或 Device，默认 Device）。前处理输出必须为 LogAttenuation，域不匹配在读取帧前报错。
+实现 `IStage` 后通过 `Pipeline::append(std::unique_ptr<IStage>)` 加入，执行位置在内置校正链之后。阶段通过统一的 `contract()` 声明输入/输出数值域（LogAttenuation 或 EnergySignal）及 Host/Device 位置；内置校正明确声明 Device。前处理输出必须为 LogAttenuation，域不匹配在读取帧前报错。
 
 `prepare()` 每次任务一次，用于常量上传和工作区准备；`process()` 每帧一次；`reset() noexcept` 在成功及异常退出时调用。reset 必须可处理尚未准备或准备到一半的对象，不得依赖保存过的 Context。
 
@@ -39,3 +39,7 @@ Context 和 Frame 均为借用对象，只在回调期间使用。Pipeline 本�
 ## 验证
 
 `multispectrum_preprocessing` 验证多项式、EID 水板拟合、引导零散射、Host/Device 权威状态及传输次数、0～16 阶数值、溢出后重试、池重复初始化、活动缓冲隔离和 VTK 显存预算。`multispectrum_scatter` 对比设备固定校正和引导接口的实际模型结果；`multispectrum_adaptive_scatter` 验证自适应迭代及设备掩码分位数。构建后从 `out/build/viewer-integrated/example/multispectrum_sim` 运行相应 CTest。
+
+## 公共执行层
+
+处理与输出使用 [统一流水线契约](../../../include/pipeline/README.md)。`IStage` 是公共有类型接口的专用实例，旧的独立输入/输出域和位置方法已删除。状态标记由执行器管理，插件不应修改；辅助输入要求通过 `validateContext()` 检查。

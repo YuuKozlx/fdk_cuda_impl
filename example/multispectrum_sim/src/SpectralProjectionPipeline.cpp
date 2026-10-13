@@ -37,13 +37,14 @@ void ProjectionFrame::resize(int columns, int rows)
     reference_energy.resize(pixels);
     object_mask.resize(pixels);
 }
-SpectralProjectionPipeline::SpectralProjectionPipeline(std::unique_ptr<IProjectionBackend> backend)
-    : backend_(std::move(backend))
+SpectralProjectionPipeline::SpectralProjectionPipeline(std::unique_ptr<IProjectionSource> source)
+    : source_(std::move(source))
 {
-    if (!backend_)
-        throw std::invalid_argument("projection backend is required");
+    if (!source_)
+        throw std::invalid_argument("projection source stage is required");
 }
 SpectralProjectionPipeline::~SpectralProjectionPipeline() = default;
+const pipeline::PluginInfo& SpectralProjectionPipeline::sourceInfo()const noexcept{return source_->info();}
 void SpectralProjectionPipeline::addStage(std::unique_ptr<IProjectionStage> stage)
 {
     if (running_ || !stage)
@@ -64,7 +65,7 @@ void SpectralProjectionPipeline::setVisualization(yk::visualization::LiveView* v
 }
 bool SpectralProjectionPipeline::run(const SimulationConfig& c,
     const std::vector<std::uint8_t>& labels, const SpectralTransmissionModel& model,
-    const std::filesystem::path& output_file, std::string& error)
+    const std::filesystem::path& output_file, std::string& error,TaskProgressCallback progress)
 {
     if (running_) {
         error = "projection pipeline is already running";
@@ -72,7 +73,7 @@ bool SpectralProjectionPipeline::run(const SimulationConfig& c,
     }
     YK::diagnostics::TimingSpan total_watch("projection.run",std::to_string(c.geometry.parameters.views)+" views");
     error.clear();
-    auto builtins = backend_->supportsDeviceFrames()?primary_detail::makeCudaProjectionStages(c):primary_detail::makeProjectionStages(c);
+    auto builtins = (source_->contract().output_location==pipeline::Location::Device)?primary_detail::makeCudaProjectionStages(c):primary_detail::makeProjectionStages(c);
     std::vector<IProjectionStage*> stages;
     for (auto& stage : builtins)
         stages.push_back(stage.get());
@@ -83,22 +84,8 @@ bool SpectralProjectionPipeline::run(const SimulationConfig& c,
     });
     primary_detail::EnergyProjectionOutput energy_output;
     IProjectionOutputSink& output = sink_ ? *sink_ : energy_output;
-    running_ = true;
-    // Reset all modules and device resources on both success and failure.
-    struct Cleanup {
-        IProjectionBackend& backend;
-        std::vector<IProjectionStage*>& stages;
-        bool& running;
-        IProjectionOutputSink& output;
-        ~Cleanup()
-        {
-            for (auto it = stages.rbegin(); it != stages.rend(); ++it)
-                (*it)->reset();
-            backend.reset();
-            output.reset();
-            running = false;
-        }
-    } cleanup { *backend_, stages, running_, output };
+    pipeline::RunScope run_scope(running_);
+    auto cleanup=pipeline::onExit([&]{output.reset();pipeline::resetReverse(stages);source_->reset();});
     try {
 #ifdef YK_SPECTRAL_VTK
         std::unique_ptr<yk::visualization::LiveView> owned_display;
@@ -127,71 +114,68 @@ bool SpectralProjectionPipeline::run(const SimulationConfig& c,
         if (c.visualization.enabled)
             throw std::runtime_error("live display requires a build with BUILD_VTK_VISUALIZATION=ON");
 #endif
-        if (backend_->outputDomain() != output.domain())
+        if (!output.acceptsDomain(source_->contract().output_domain))
             throw std::runtime_error("projection backend and output sink signal domains do not match");
-        for (auto* stage : stages) {
-            if (stage->domain() != backend_->outputDomain())
-                throw std::runtime_error(std::string("unsupported signal or memory domain for stage: ") + stage->name());
-            stage->reset();
-            {YK::diagnostics::TimingSpan watch("projection.stage.prepare",stage->name());stage->prepare(c);}
-        }
-        {YK::diagnostics::TimingSpan watch("projection.backend.prepare");backend_->prepare(c,labels,model);}
+        ProjectionStageContext context {c,*source_};
+        auto domain=source_->contract().output_domain;
+        for(auto* stage:stages){domain=pipeline::advanceDomain(domain,stage->contract(),stage->info().name.c_str());stage->validateContext(context);}
+        if(!output.acceptsDomain(domain))throw std::runtime_error("projection final stage domain does not match output sink");
+        for(auto* stage:stages){stage->reset();
+            YK::diagnostics::TimingSpan watch("projection.stage.prepare",stage->info().name.c_str());stage->prepare(context);}
+        {YK::diagnostics::TimingSpan watch("projection.source.prepare");source_->prepare({c,labels,model});}
         const auto& g = c.geometry.parameters;
         if (g.views <= 0)
             throw std::runtime_error("projection pipeline requires positive views");
 #ifdef YK_SPECTRAL_VTK
         if (display) {
-            std::vector<yk::visualization::Point> sources, centers;
-            sources.reserve(g.views);
-            centers.reserve(g.views);
-            for (int view = 0; view < g.views; ++view) {
-                const auto pose = backend_->geometryForDisplay(view);
-                sources.push_back(pose.source);
-                centers.push_back(pose.detector_center);
-            }
-            display->setTrajectory(sources, centers);
+            std::vector<yk::visualization::FrameGeometry> frames;
+            frames.reserve(g.views);
+            for (int view = 0; view < g.views; ++view)
+                frames.push_back(source_->geometryForDisplay(view));
+            display->setTrajectory(frames);
         }
 #endif
-        const int batch_capacity=std::min(g.views,backend_->batchCapacity());
+        const int batch_capacity=std::min(g.views,source_->batchCapacity());
         if(batch_capacity<1)throw std::runtime_error("invalid backend batch capacity");
         std::vector<ProjectionFrame> frames(batch_capacity);
-        for(auto& frame:frames){frame.domain=backend_->outputDomain();frame.resize(g.detector_u,g.detector_v);}
-        output.prepare(c, output_file);
-        ProjectionStageContext context { c, *backend_ };
+        const ProjectionOutputContext output_context{c,output_file};
+        output.prepare(output_context);
         using Clock = std::chrono::steady_clock;
         auto elapsed = [](Clock::time_point start) {
             return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
         };
         std::vector<double> stage_ms(stages.size(), 0.0);
         double primary_ms = 0.0, transfer_ms=0.0,normalize_ms=0.0,output_ms = 0.0, display_ms = 0.0;
+        pipeline::Progress progress_report(progress,"Projection simulation",g.views);progress_report.start();
         const auto start = Clock::now();
         for(int first=0;first<g.views;first+=batch_capacity){
-            const int count=std::min(batch_capacity,g.views-first);frames.resize(count);
-            auto batch_tick=Clock::now();{YK::diagnostics::TimingSpan watch("projection.primary", "first="+std::to_string(first)+" count="+std::to_string(count));backend_->projectBatch(first,count,frames);backend_->synchronize();}
+            const int count=std::min(batch_capacity,g.views-first);
+            auto batch_tick=Clock::now();{YK::diagnostics::TimingSpan watch("projection.primary", "first="+std::to_string(first)+" count="+std::to_string(count));source_->generate(first,count,frames);source_->synchronize();}
             primary_ms+=elapsed(batch_tick);
-            if(frames.size()!=size_t(count))throw std::runtime_error("backend returned an incomplete projection batch");
-            for(auto& frame:frames){
-                if(frame.domain!=backend_->outputDomain()||frame.width!=g.detector_u||frame.height!=g.detector_v)throw std::runtime_error("backend returned an incompatible projection frame");
-                if(frame.location==ProjectionMemoryLocation::Host){frame.signal_energy=frame.expected_primary_energy;frame.reference_energy=frame.air_energy;frame.photon_counts.reference_channel_counts=frame.photon_counts.air_channel_counts;}
+            for(size_t i=0;i<stages.size();++i){auto* stage=stages[i];
+                YK::diagnostics::TimingSpan stage_watch(std::string("projection.stage.")+stage->info().name.c_str(),std::string(stage->info().name.c_str())+" first="+std::to_string(first)+" count="+std::to_string(count));
+                const auto timing=pipeline::execute(stage->info().name.c_str(),stage->contract(),frames.data(),frames.size(),
+                    [&](pipeline::Location location){auto* storage=frames.data();const auto size=frames.size();source_->ensureLocation(frames,location);
+                        if(storage!=frames.data() || size!=frames.size())throw std::runtime_error("backend changed stage batch storage during transfer");},
+                    [&](ProjectionFrame& frame){stage->process(frame,context);stage->processAir(frame,context);frame.logarithm_valid=false;},
+                    [&]{source_->synchronize();});
+                transfer_ms+=timing.transfer_ms;stage_ms[i]+=timing.process_ms;
             }
-            for(size_t i=0;i<stages.size();++i){auto* stage=stages[i];auto transfer_tick=Clock::now();backend_->ensureLocation(frames,stage->location());transfer_ms+=elapsed(transfer_tick);auto stage_tick=Clock::now();
-                YK::diagnostics::TimingSpan stage_watch(std::string("projection.stage.")+stage->name(),std::string(stage->name())+" first="+std::to_string(first)+" count="+std::to_string(count));
-                for(auto& frame:frames){stage->process(frame,context);stage->processAir(frame,context);frame.logarithm_valid=false;
-                    if(frame.domain!=stage->domain()||frame.location!=stage->location())throw std::runtime_error(std::string("stage changed signal or memory domain: ")+stage->name());}
-                backend_->synchronize();stage_ms[i]+=elapsed(stage_tick);
-            }
-            auto normalize_tick=Clock::now();backend_->finalizeBatch(frames);backend_->synchronize();normalize_ms+=elapsed(normalize_tick);
-            auto transfer_tick=Clock::now();backend_->ensureLocation(frames,ProjectionMemoryLocation::Host);transfer_ms+=elapsed(transfer_tick);
+            auto normalize_tick=Clock::now();source_->finalizeBatch(frames);source_->synchronize();normalize_ms+=elapsed(normalize_tick);
+            auto transfer_tick=Clock::now();source_->ensureLocation(frames,ProjectionMemoryLocation::Host);transfer_ms+=elapsed(transfer_tick);
             for(int slot=0;slot<count;++slot){const int view=first+slot;auto& frame=frames[slot];auto tick=Clock::now();
             tick = Clock::now();
-            {YK::diagnostics::TimingSpan watch("projection.output.write","view="+std::to_string(view));output.write(frame);}
+            {YK::diagnostics::TimingSpan watch("projection.output.write","view="+std::to_string(view));const pipeline::Contract<ProjectionSignalDomain> output_contract{frame.domain,frame.domain,output.inputLocation(),output.inputLocation()};
+                pipeline::execute(output.info().name.c_str(),output_contract,&frame,1,
+                    [&](pipeline::Location location){source_->ensureLocation(frames,location);},
+                    [&](const ProjectionFrame& value){output.write(value,output_context);},[]{});}
             output_ms += elapsed(tick);
 #ifdef YK_SPECTRAL_VTK
             if (display && display->isOpen()) {
                 const auto display_start = Clock::now();
                 if (frame.domain != ProjectionSignalDomain::EnergyKeV)
                     throw std::runtime_error("live display currently requires energy-integrating frames");
-                const auto geometry = backend_->geometryForDisplay(view);
+                const auto geometry = source_->geometryForDisplay(view);
                 const std::vector<float>* values = &frame.signal_energy;
                 std::vector<float> custom_logarithm;
                 if (sink_) {
@@ -219,6 +203,7 @@ bool SpectralProjectionPipeline::run(const SimulationConfig& c,
                 display_ms += elapsed(display_start);
             }
 #endif
+            progress_report.advance();
             if (view == 0 || view + 1 == g.views || (view + 1) % 10 == 0)
                 std::cerr << "projection frame " << view + 1 << "/" << g.views << std::endl;
 #ifdef YK_SPECTRAL_VTK
@@ -236,7 +221,7 @@ bool SpectralProjectionPipeline::run(const SimulationConfig& c,
                << "projection_pipeline_timing_ms total=" << elapsed(start)
                << " primary_compute=" << primary_ms <<" transfer_boundaries="<<transfer_ms<<" normalization="<<normalize_ms;
         for (size_t i = 0; i < stages.size(); ++i)
-            timing << " " << stages[i]->name() << "=" << stage_ms[i];
+            timing << " " << stages[i]->info().name.c_str() << "=" << stage_ms[i];
         timing << " output=" << output_ms << " display_and_cache=" << display_ms;
         SimLogger::instance().info(timing.str());
 #ifdef YK_SPECTRAL_VTK

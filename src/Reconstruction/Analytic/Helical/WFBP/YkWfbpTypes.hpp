@@ -6,6 +6,7 @@
 #include "global/YkKernelLaunchPolicy.hpp"
 #include "YKCBCT/geometry/YkGeometryBuilderTypes.hpp"
 #include "YKCBCT/geometry/YkProjectionGeometry.hpp"
+#include "YKCBCT/algorithms/analytic/YkAnalyticFilterParams.hpp"
 
 namespace YK { namespace Helical { namespace Wfbp {
 
@@ -40,13 +41,6 @@ struct InputGeometry {
     int views_per_turn = 0;
 };
 
-struct FreeCtFilterConfig {
-    // FreeCT generate_filter() 中的 c（截止比例）与 a（窗混合比例）。
-    // c=1,a=1 对应官方默认的全带宽 ramp。
-    float cutoff_c = 1.f;
-    float apodization_a = 1.f;
-};
-
 struct Config {
     EInputDetector input_detector = EInputDetector::FlatPanel;
     // angle_list/views_per_rot 始终描述原始交错采集帧；FreeCT 重排后的
@@ -73,7 +67,7 @@ struct Config {
     float anode_angle_rad = 0.f;
     bool reverse_row_interleave = false;
 
-    FreeCtFilterConfig filter = {};
+    SAnalyticFilterParams filter = {};
     SKernelLaunchPolicy launch = {};
 };
 

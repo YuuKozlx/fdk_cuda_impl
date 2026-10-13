@@ -2,6 +2,7 @@
 #include "global/YkMem3d.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -47,6 +48,20 @@ void checkBuffers(yk::spectral::GeometryKind kind) {
         auto dv = memory.allocateDevice3D<float>(g.volume_x,g.volume_y,g.volume_z,0,false);
         cudaCheck(cudaMemcpy(dp.data(),input.data(),np*sizeof(float),cudaMemcpyHostToDevice));
         for (int round = 0; round < 3; ++round) {
+            if (round == 1) {
+#ifdef _WIN32
+                _putenv_s("YK_WFBP_BATCHED", "1");
+#else
+                setenv("YK_WFBP_BATCHED", "1", 1);
+#endif
+                const bool initialized = session->initialize(system);
+#ifdef _WIN32
+                _putenv_s("YK_WFBP_BATCHED", "");
+#else
+                unsetenv("YK_WFBP_BATCHED");
+#endif
+                require(initialized, "phase-batched wFBP initialize failed");
+            }
             if (round == 2) session->reset();
             for (int combination = 0; combination < 4; ++combination) {
                 const bool device_input = combination & 1, device_output = combination & 2;
@@ -71,6 +86,37 @@ void checkBuffers(yk::spectral::GeometryKind kind) {
                 std::cout << "round="<<round<<" combination="<<combination<<" max_diff="<<max_diff<<'\n';
             }
         }
+        // Public enum selection must affect WFBP, and common gain must have
+        // the same linear meaning as in FDK. No TOML coefficient aliases.
+        std::vector<float> hann;
+        for (auto filter : { YK::EFdkFilter::RamLak, YK::EFdkFilter::SheppLogan,
+                YK::EFdkFilter::Cosine, YK::EFdkFilter::Hann, YK::EFdkFilter::Hamming,
+                YK::EFdkFilter::Blackman, YK::EFdkFilter::Butterworth,
+                YK::EFdkFilter::Kaiser, YK::EFdkFilter::Tukey }) {
+            auto selected=system;
+            selected.reconstruction.wfbp.filter.type=filter;
+            require(session->initialize(selected),"enum WFBP filter initialize failed");
+            YK::SExecutionRequest r;
+            r.projection={input.data(),YK::EMemoryLocation::Host,np};
+            r.volume={output.data(),YK::EMemoryLocation::Host,nv};r.view_count=g.views;
+            require(session->execute(r),session->lastErrorMessage());
+            require(std::all_of(output.begin(),output.end(),[](float x){return std::isfinite(x);}),"nonfinite enum filter output");
+            if(filter==YK::EFdkFilter::Hann) hann=output;
+        }
+        require(!hann.empty(),"Hann result missing");
+        double change=0;
+        for(size_t i=0;i<nv;++i)change=std::max(change,std::abs(double(hann[i])-reference[i]));
+        require(change>1e-7,"window enum was ignored");
+        auto doubled=system; doubled.reconstruction.wfbp.filter.type=YK::EFdkFilter::Hann;
+        doubled.reconstruction.wfbp.filter.gain=2;
+        require(session->initialize(doubled),"shared filter gain initialize failed");
+        YK::SExecutionRequest gain_request;
+        gain_request.projection={input.data(),YK::EMemoryLocation::Host,np};
+        gain_request.volume={output.data(),YK::EMemoryLocation::Host,nv}; gain_request.view_count=g.views;
+        require(session->execute(gain_request),session->lastErrorMessage());
+        double gain_error=0,peak=0;
+        for(size_t i=0;i<nv;++i){gain_error=std::max(gain_error,std::abs(double(output[i])-2*hann[i]));peak=std::max(peak,std::abs(double(hann[i])));}
+        require(gain_error<=1e-6+peak*1e-5,"common gain semantics mismatch");
         YK::SExecutionRequest partial;
         partial.projection={input.data(),YK::EMemoryLocation::Host,np};
         partial.volume={output.data(),YK::EMemoryLocation::Host,nv};

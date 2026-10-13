@@ -177,10 +177,11 @@ out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot
 `[reconstruction.iterative]`。材料路径积分固定调用公共 `ForwardProjection`；示例接入
 `flat_cbct + fdk` 和 `cyl_helical + wfbp`，迭代重建支持 `sart_tv` 和 `os_sart_tv`。
 其他组合在配置读取时拒绝。BrainWeb 示例要求顶层 DLL 构建，独立 CPU 构建不能运行这些配置。
-FDK 的 filter 支持 ramlak/ram-lak、shepp-logan、cosine、hann、hamming；拼写错误直接拒绝。
-wFBP 的 filter 仅接受 ramlak/ram-lak，它表示 FreeCT ramp 核；使用
-`wfbp_cutoff`（默认 1，范围 (0,1]）和 `wfbp_apodization`（默认 1，范围 [0,1]）调节核。
-这些参数在 FDK 配置中会被拒绝，运行日志打印实际选择。
+FDK 与 WFBP 共用 `SAnalyticFilterParams`、既有 `EFdkFilter` 枚举和公共滤波实现。
+`filter` 支持 ramlak/ram-lak、shepp-logan、cosine、hann、hamming、blackman、butterworth、kaiser、tukey。
+`cutoff` 统一使用 cycles/sample，范围 (0,0.5]，0.5 为完整 Nyquist 带宽；`gain` 默认 1。
+Butterworth/Kaiser/Tukey 分别使用 `butterworth_order`、`kaiser_beta`、`tukey_alpha`。
+旧 `wfbp_cutoff` 和 `wfbp_apodization` 已移除，读取时会明确报错，不静默映射。
 
 wFBP 仍为全量执行，`chunk_views` 对它无效。示例提交 Host 投影和 Host 体积，
 Session 用库内 MemoryController 管理设备暂存，并在返回前完成下载。
@@ -585,7 +586,7 @@ UI Reconstruction 的 Method 增加 Statistical：分别设置数据项、正则
 可选 Smoothed TV / Huber TV / Tikhonov / Standard TV；两项正则超参数为目标权重 strength 和形状 shape，Tikhonov 不使用 shape。
 统计 lambda 与旧代数 TV 的下降步长或 Prox gamma 不能直接互换数值。
 正则化的组合策略和内层求解参数由库内部决定，UI/TOML 不提供这些调试项。
-默认 Huber-TV 在带正则代数重建中采用近端求解，内部默认 20 次内迭代、自动安全步长；strength=0 保持无正则行为。普通 GD 仍采用联合梯度，不改算法定义。
+默认 Huber-TV 在带正则代数重建中采用近端求解，内部自动安全步长与收敛停止，安全上限 1000 步；strength=0 保持无正则行为。普通 GD 仍采用联合梯度，不改算法定义。
 旧实验 TOML 中的 composition 表会被忽略，重新保存时移除。Standard TV 需选择带正则代数重建。
 权重文件为空使用 W=I；非空权重 RAW 必须与投影同形状，内容为非负、有限的 float32 精度权重。
 文件读取采用独立批缓冲，SDK 调用者也可使投影及 W 常驻设备。
@@ -644,6 +645,184 @@ UI/TOML 的 TIGRE OS 和普通 ossart 都使用 subsets 表示子集数量。TIG
 TIGRE POCS 默认每外轮将数据松弛乘 0.99，普通 TIGRE SART/SIRT/OS-SART 默认不衰减；该族使用 0.1 mm⁻¹ 的逆行权重上限保护短路径。
 
 ImGui 的 Reconstruction / Method 提供 WFBP (helical)，用于规范平板螺旋的解析重建。
-选择后可控制 WFBP cutoff 与 apodization，使用 FreeCT ramp 滤波；加载和保存 TOML 保留这些参数。
+选择后与 FDK 共用 Filter 下拉框、cutoff、gain；参数化窗只显示自己的形状参数。加载和保存 TOML 保留同一套声明。
 对应配置为 geometry.kind=flat_helical、reconstruction.type=analytic、reconstruction.analytic.pipeline=wfbp，filter=ramlak。
 WFBP 当前消费完整投影序列，重排和 FFT 工作区较大；不使用 FDK 的 chunk_views 分包逻辑。UI 的整幅完成进度与 FDK/迭代的分阶段进度区分。
+
+### 几何相对显示
+
+ImGui 界面顶部的 `Gantry fixed (relative)` 可切换为机架固定的观察坐标系。以扫描首帧为参考，源、探测器、光束及其局部坐标系保持固定，模体及模体坐标系按扫描轨迹反向运动。圆扫描反向旋转，螺旋扫描同时反向平移；原有模体姿态与位置偏置仍保留。橙色轨迹切换为模体中心的相对运动轨迹。
+
+此开关只改变显示，不改变计算几何、投影贴图或重建结果，不需要重新计算。源与探测器必须构成刚性机架；不满足该条件的轨迹会禁用开关，避免显示失真。重新加载配置后仍以新扫描首帧为参考。
+
+ImGui 的内部正则插件配置仅在内部 `sirt`、`sart`、`ossart` 下显示。CGLS 与所有 TIGRE 算法隐藏这组正则插件并清除插件选择。TIGRE 自带的 `tigre_sart_tv`、`tigre_os_sart_tv` 仍可选择，并显示它们自己的 TV 迭代步数与 alpha 参数；不与内部正则插件绑定。
+
+### 重建后处理
+
+重建后的处理和导出通过独立的 `recon/postprocess` 流水线管理，包含处理 Stage、只读 Exporter 和工厂 Registry。当前已接入原有 RAW/三视图 BMP 导出，并提供可选的 HU 转换 Stage；DICOM、降噪、骨硬化和 MAR 算法尚未实现。数据位置与数值域检查及扩展方式见 [后处理插件说明](src/recon/postprocess/README.md)。
+
+### 统一流水线基础层
+
+多能前投、重建前处理及后处理已直接采用同一个有类型 Stage/Output 契约与执行器，统一数据位置、数值域转换、生命周期、进度、计时和工厂。物理阶段排序、空气参考和三维体积等业务差异仍由各自接口表达，详见 [统一流水线说明](include/pipeline/README.md)。
+
+三条流水线的 Stage/Exporter 强制通过 IPlugin::info() 提供静态自描述；FactoryRegistry 支持不实例化插件的 list()/find(id) 查询。内置描述目录与参数说明详见 [插件自描述与查询](include/pipeline/README.md)。
+
+多能前投已作为注册的 `MultiSpecFpStage` 源阶段接入：配置/体积/材料/能谱准备、批次生成、输出校验及 Backend 生命周期由源统一管理；现有融合 kernel、批次显存预算和设备驻留保持不变。源 ID 为 `projection.source.multi_spec_fp`，可查询注册描述和 Pipeline::sourceInfo()。
+
+
+## 通用图像处理 Stage
+
+投影与体积的升降采样、均值、高斯、双边、自引导滤波现提供 CPU/CUDA 实现；体积可选逐层二维或空间三维处理。API、显存生命周期、投影重采样的几何要求和实测结果见 [图像处理 Stage](include/image/README.md)。当前为 C++ 接口，尚未增加 TOML 或 UI 滤波面板。
+
+
+## HU 转换、标定、校正与分割
+
+支持可变水／空气基准的 μ↔HU 转换、空气／水双材料 ROI 标定、线性 HU 校正和带命名标签的多阈值分割，均有 CPU/CUDA Stage。标定与校正分别位于独立目录，结果可跨任务复用。见 [接口、公式及示例](include/recon/postprocess/stages/README.md)。
+
+## BrainWeb 骨束硬化校正实验
+
+`scripts/brainweb_bone_bhc_experiment.py` 提供可复现的分割—重投影实验；当前是离线实验编排，尚未注册为骨 BHC Stage，也未增加 UI 开关。已有应用和默认重建行为不变。
+
+先构建 `multispectrum_bone_bhc_prepare` 目标（默认不构建），它通过正式 CUDA μ→HU / 阈值分割 Stage 处理**第一次重建的结果**。Python/NumPy 仅负责实验编排、模型差值及指标统计；绘图改为仓库的 C++ / Matplot++ 工具 `multispectrum_plot_bone_bhc`，不再使用 Matplotlib。绘图工具可直接读取已有结果目录，单独运行时完全不需要 Python。Matplot++ 仍需要 Gnuplot 后端，见前面的可选绘图构建说明；也可用 `plot/CMakeLists.txt` 独立构建，不必重新编译 CUDA 库。应用本身没有增加 Python 运行依赖。
+
+在仓库根目录运行，输出目录必须不存在：
+
+```powershell
+cmake --build out/build/viewer-integrated --target multispectrum_bone_bhc_prepare -j4
+out/vtk-env/Scripts/python.exe example/multispectrum_sim/scripts/brainweb_bone_bhc_experiment.py `
+  --exe out/build/viewer-integrated/example/multispectrum_sim/multispectrum_sim.exe `
+  --prepare out/build/viewer-integrated/example/multispectrum_sim/multispectrum_bone_bhc_prepare.exe `
+  --plotter <multispectrum_plot_bone_bhc.exe的路径> `
+  --labels <已有的brainweb-normal-1mm-center33-181x217x33-u8.raw> `
+  --output <新的G盘结果目录>
+```
+
+实验固定采用本地 BrainWeb 中心 33 层，体积 181×217×33、1 mm；圆扫描 360 帧，探测器 512×96、0.945×1.26 mm；SID 709 mm、SDD 1143.699951 mm。120 kVp / 2 mm Al 能谱，单条射线采样，关闭散射、量子噪声及探测器附加效应。水校正沿用三阶水板拟合，参考能量 70 keV。HU 使用库中 XCOM 查询的水衰减 0.019285194762051105 mm⁻¹。
+
+分割阈值预设为 −500 / 300 HU，输出空气、水等效软组织、骨三类；模型密度分别为 0.001205、1.03、1.61 g/cm³，骨使用 `tissue.ncat_skull`。不利用原始标签替代重建分割，不对结果施加平滑。能谱和骨材料组成仍假设已知，且与模拟测量匹配；这比真实未知材料条件理想。
+
+设 `Q` 为相同的水校正，`M` 为上述重建分割模型，校正公式为：
+
+```text
+p_corrected = Q(p_measured) + P_mono70(M) - Q(P_poly(M))
+```
+
+最终重建关闭水校正，避免对已校正的投影重复处理。流程属于分割重投影的模型差值校正，可参考 [Modelling the physics in iterative reconstruction for transmission computed tomography](https://pmc.ncbi.nlm.nih.gov/articles/PMC3725149/)。本实验没有另外拟合骨多项式或读取参考单能投影参与校正。
+
+2026-10-13 RTX 3070 Laptop 实测，以下 RMSE 是**相对同几何、同 FDK 的 70 keV 单能重建**，用于隔离束硬化影响，不等于相对真实连续物体的总误差。评估 z 索引 [8,25)，避开有限体积上下边缘；“内部”使用 26 邻域腐蚀一体素，“含边界”不腐蚀。
+
+| 区域 RMSE / HU | 未校正 | 仅水校正 | 水＋骨校正 |
+| --- | ---: | ---: | ---: |
+| 软组织内部 | 60.76 | 5.38 | 1.14 |
+| 骨内部 | 174.17 | 57.30 | 2.57 |
+| 全组织，含边界 | 97.93 | 25.75 | 3.72 |
+| 骨，含边界 | 204.52 | 83.83 | 4.31 |
+
+分割骨 Dice 0.876（完整 33 层）。初始水校正前投＋重建约 3.40 s；额外的分割、模型双前投、水校正、再次重建共约 7.39 s，含独立进程启动和 RAW 文件读写，不代表集成后纯 GPU 耗时。
+
+结果包含各步 `run.toml`、RAW、日志、`comparison-matplot.png`、`segmentation-matplot.png`、`metrics.json` 和 `timings.json`。`bone-bhc/run.toml` 是已校正投影的重建配置，**不执行整套骨校正**；完整复现使用上面的脚本。校正结果是 μ（mm⁻¹），图中转换成 HU 显示。重绘命令为 `multispectrum_plot_bone_bhc.exe <结果目录>`，不会重新仿真或改动 RAW。
+
+该基础实验验证了中心层、已知能谱与骨材料条件下的可行性；全头螺旋实验见后文，材料或能谱失配、金属、不同阈值的稳健性尚未验证。仍存在与单能参考共有的采样/FDK 误差，不能将其误认为束硬化或降噪效果。
+
+### 包含散射及探测器效应的流程
+
+给脚本增加 `--physics-config <头部TOML>`，会读取其中的能谱、散射模型、焦点、随机射线采样、量子噪声、探测器响应/串扰/余晖/DAS 和散射校正参数。默认处理 `--labels` 的**完整体积**，输入完整 BrainWeb 时为 181×217×181；保持 360 帧圆扫描和 FDK，探测器高度按体积范围增大（完整头部为 512×320），**不直接执行该 TOML 原来的螺旋几何**。只有显式给出 `--center-z` 才截取该位置附近 33 层；`--display-z` 只选择主对比图层面，不改变计算体积。输出仍写入新的实验目录，不修改传入 TOML 或它的原始输出。当前该选项要求散射施加和散射校正都开启。
+
+链路是：多能测量（含物理效应）→ 恢复能量信号 → 迭代散射校正 → 水 BHC → 初次重建 → HU 分割 → 模型多能/单能重投影差值 → 再次重建。模型重投影关闭散射和随机噪声，但保留确定性的焦点采样、串扰和余晖；没有通过重复加噪声生成校正量。单能参考仅用于评估，不是测量输入，也不参与校正。现有前处理尚未提供余晖和串扰反校正。
+
+另存 `water-only` 分支展示不校正散射、只做水 BHC 的结果，使用独立输入文件以免覆盖散射＋水校正缓存。目录 `water-bhc` 在此模式下实际为“散射＋水 BHC”，图标题明确区分。
+
+2026-10-13 首轮中心 33 层试验使用用户的 `brainweb-fullchain-new.toml` 物理配置：120 kVp、6 mm Al、119 能量点、FASKS v4 散射、固定 5 次迭代/阻尼 0.7 校正、量子噪声、焦点与散焦、两种串扰、余晖和 DAS；探测器响应仍按该配置关闭。评估方式与上面的基础实验相同（下表不是完整体积结果）：
+
+| RMSE / HU | 未校正 | 仅水 BHC | 散射＋水 BHC | 再加骨校正 |
+| --- | ---: | ---: | ---: | ---: |
+| 软组织内部 | 80.53 | 103.74 | 19.85 | 19.32 |
+| 骨内部 | 92.48 | 140.78 | 36.70 | 26.86 |
+| 全组织，含边界 | 79.13 | 97.64 | 31.03 | 29.33 |
+| 骨，含边界 | 102.64 | 148.31 | 45.57 | 54.06 |
+
+结论：散射校正必须在骨校正之前；这个案例里只做水 BHC 反而变差。骨校正在内部和整体区域改善，但骨边界仍有过校正，不能直接设为默认方案。将确定性成像效应加入校正模型后，含边界骨 RMSE 从初版 55.63 降为 54.06 HU，仍高于不加骨校正的 45.57 HU。此结果只验证现有散射模型的施加/校正闭环；施加和校正共用同一 FASKS 模型，并不代表已通过独立蒙特卡洛或实测散射标定验证。
+
+### 完整体积与骨间条纹检查
+
+后续使用**完整 181×217×181 标签体积**，360 帧、512×320 探测器，按上述完整物理链重新计算。`--display-z 26` 只将主对比图选到颅底骨集中层；前投、分割、模型重投影及最终重建均处理全部 181 层。没有给重建结果应用平滑。此数据的下边界在颅底附近，没有完整下颌与牙列，因此不能声称验证了完整下巴的去伪影效果。
+
+除了整体误差，逐层用“非空气且非骨”的标签掩模腐蚀两体素，避免骨边缘主导统计。对相对同几何单能 FDK 的**误差图**做 sigma=2 像素的 XY 高斯分解（只用于分析，不改变重建）：低频误差反映缓变暗带/条纹及偏差，高频误差包含噪声、细节和采样误差，不能直接等同纯量子噪声。区域 RMS 按有效体素数加权。
+
+| 指标 / HU | 散射＋水 BHC | 再加骨校正 |
+| --- | ---: | ---: |
+| 全体积软组织低频误差 RMS | 7.43 | 4.66 |
+| 颅底 z=[8,48) 低频误差 RMS | 9.86 | 5.21 |
+| 同区低频误差空间变化量 | 9.52 | 4.56 |
+| 同区高频误差变化量 | 30.72 | 30.12 |
+| 全组织（含 z 边缘）整体 RMSE | 38.46 | 35.56 |
+
+完整三视图显示骨间成片暗带减弱，斑点大多保留；并非所有位置都改善，顶部 z=162…178 的低频误差变大。结论是本配置下骨校正有去缓变伪影价值，但没有明显降噪效果，也不应直接启用为默认。上面的中心 33 层结果和本次完整体积结果不能混用：散射场、投影覆盖和重建边界均不同。
+
+输出新增 `artifact-by-slice-matplot.png`（全部 181 层曲线）、`whole-volume-orthogonal-matplot.png`（轴/冠/矢三视图与误差图）。`metrics.json` 的 `artifact_by_slice` 和 `regional_artifacts` 保存统计及掩模定义。仿真测量＋散射/水校正＋初次重建约 14.69 s，骨校正额外流程约 18.89 s；Matplot++/Gnuplot 四张图导出约 122.37 s，计时单独记录，不计入校正计算性能。
+
+完整体积复现时，`--labels` 指定 `brainweb_normal_1mm_181x217x181_uint8.raw`，加上 `--physics-config <头部TOML> --display-z 26`，省略 `--center-z`。Windows 绘图构建目录还生成 `plot-bone-bhc.cmd`，自动设置已配置的 Gnuplot 路径，可以直接传入结果目录重绘，不需要 Python。原生绘图支持 `--label-overview <完整标签RAW> <PNG>` 查看骨分布定位图。
+
+### 螺旋 OS-SART 全体积实验
+
+`scripts/brainweb_helical_bone_bhc.py` 接续已经完成的螺旋基线，直接保留基线 TOML 的扫描几何、OS-SART 和 TV 参数，不使用上面圆扫描脚本的固定几何。实验目录首先需要 `water-bhc/run.toml`、`water-bhc/reconstruction.raw` 和 `water-bhc/projection.raw.corrected.raw`。先用正式程序运行基线配置，再执行：
+
+```text
+python scripts/brainweb_helical_bone_bhc.py --exe <multispectrum_sim.exe> --prepare <multispectrum_bone_bhc_prepare.exe> --plotter <multispectrum_plot_bone_bhc.exe> --output <实验目录>
+```
+
+本轮参数为 SID/SDD=709/1143 mm、探测器 1024×256 / 0.6 mm、5 周×500 帧、40 mm/周、起始 z=-100 mm；重建 512×512×400 / 0.5 mm，OS-SART 10 次外迭代、50 子集。保留 Huber-TV 近端强度 `1e-4`、delta `5e-5`；原 TOML 的 `inner_iterations=20` 等字段也不改动，但 Huber-TV 内部实际使用自动步长与收敛判定，并非固定执行 20 步。脚本没有修改算法默认值。
+
+模型重投影的标签、尺寸、间距和位置来自重建网格；原始 BrainWeb 181×217×181 / 1 mm 标签仅用于测量、独立单能参考及评估。评估标签按物理坐标最近邻采样到重建网格，越界为空气。全部 400 层参与统计；颅底采用物理 z=[-82,-42) mm，误差分析高斯 sigma=2 mm。投影差值以 16 帧分块处理，避免同时载入多份 2.44 GiB 投影。
+
+只计算散射＋水校正、增加骨校正、相同重建参数的单能参考三组；`comparison_cases` 指定原生绘图的对应列。单能参考不参与校正。该脚本是实验编排工具，尚不是正式的骨校正 Stage 或 UI 功能；再次执行会重新计算后续步骤，因此请保留独立实验目录。
+
+2026-10-13 此螺旋配置实测，全部 400 层软组织低频误差 RMS 从 6.49 降至 3.45 HU，颅底从 8.55 降至 2.70 HU；全组织含界面 RMSE 从 24.83 降至 19.00 HU，骨内部从 44.88 降至 9.57 HU。这些误差的参考依然是**相同 TV 的单能重建**，不能用来证明细节没有被平滑。
+
+针对过度平滑，额外复用 `bone-corrected.raw`，只将 TV 强度从 `1e-4` 降到 `1e-5`，其余重建参数不变，另存于 `bone-bhc-tv-1e-5`，不覆盖基线配置。中央 z=[-19.75,39.75] mm 的原始灰白质标签腐蚀 1 mm 后，材料本身对比度为 3.99 HU，原强度结果仅剩 0.88 HU，弱 TV 为 3.84 HU；单能参照使用原强度时也只有 0.96 HU。白质区域空间标准差从 0.66 升到 3.95 HU，反映细节恢复伴随更大波动，不能将此统计直接当作纯噪声标准差。
+
+`multispectrum_plot_bone_bhc.exe --tv-comparison <实验目录>` 用原生 Matplot++ 生成 `tv-strength-matplot.png`，显示中央层面的中心 256×256 像素细节，WL=35、WW=80 HU，不降低体积采样；包含强 TV、弱 TV、强 TV 的单能重建以及原始材料衰减参照。原始材料参照未经重建，只用于显示细节上限，和带成像模糊的重建不完全等价。
+
+Windows 下 `multispectrum_plot_bone_bhc.exe --bone-window <实验目录>` 快速导出同窗比较的原生 BMP：窗宽/窗位为 1500/500 HU 和 1000/700 HU，列为散射＋水 BHC、再加骨 BHC、同 TV 的单能参照；层面为 `display_z`、后移 24 和 48 层。`bone-detail-ww1000-wl700.bmp` 放大颅底局部，使用原始像素重复显示，不插值或修改体积。`bone-window.json` 保存窗口及裁剪参数。此诊断图直接采用 Windows 原生位图导出，避免高分辨率多图经 Gnuplot 导出的长时间等待，不引入新的第三方库。
+
+骨窗对比中，骨内部灰度更接近单能参照且更均匀；小骨轮廓和边缘没有明显锐化。原始标签体素为 1 mm、骨只有单一材料/密度，没有连续的骨小梁密度纹理，重建网格的 0.5 mm 间距不会增加输入本身的信息量。
+
+### 理想单遍骨校正与 WFBP / 5 mAs 验证
+
+新实验将 `mAs_per_view` 设为 5，保留 2500 帧、1024×256 / 0.6 mm 平板、5 周 / 40 mm 每周步进、512×512×400 / 0.5 mm 重建网格；重建改为 WFBP，默认 Ram-Lak（共享 cutoff=0.5、gain=1），没有 TV 或额外降噪。测量端仍包含散射、焦点/散焦、量子噪声、串扰、余晖和 DAS，随后先做散射＋水 BHC。
+
+`multispectrum_bone_bhc_singlepass` 是显式构建的实验 CUDA 工具，不依赖仓库外源码。它复用内部扫描几何、姿态变换和 Siddon 材料路径遍历。每个像素只发一条中心射线并遍历一次，得到空气、水等效软组织和骨路径；共享这些路径计算原能谱下的能量积分和 70 keV 目标单能值。再用**正式前处理的同一水板拟合函数和钳位范围**计算 `delta=mono-Q(poly)`，直接输出 `bone-corrected.raw` 和 `model-residual.raw`。模型端不施加焦点、随机像素采样、串扰、余晖、DAS、噪声或散射；这属于简化模型，实测中未逆校正的非理想效应仍可能造成边界失配。
+
+```text
+cmake --build <集成构建目录> --target multispectrum_bone_bhc_singlepass
+multispectrum_bone_bhc_singlepass --self-test
+python scripts/brainweb_helical_bone_bhc.py --exe <multispectrum_sim.exe> --prepare <multispectrum_bone_bhc_prepare.exe> --plotter <multispectrum_plot_bone_bhc.exe> --singlepass <multispectrum_bone_bhc_singlepass.exe> --native-images --output <已完成基线的实验目录>
+```
+
+`--self-test` 用解析路径检查空气、纯水、纯骨和混合路径，并使用非恒等水多项式核对 GPU 校正值。单能参照仍是独立评估支路，使用原始标签和相同 WFBP 参数，不参与分割或校正。`singlepass.json` 记录拟合系数、参考能量、输入路径、批次容量、修正范围及耗时。
+
+2026-10-13 RTX 3070 Laptop：2500 帧单遍校正 GPU 核心 12.61 s，文件读写及处理 27.57 s，含进程启动 29.97 s；再次 WFBP 重建约 21.40 s。相对同几何单能 WFBP，颅底低频误差 RMS 从 8.91 降至 3.24 HU，全体积骨区域（含界面）RMSE 从 49.89 降至 31.42 HU，骨内部从 49.51 降至 21.14 HU。高频误差变化量在颅底为 18.05→17.96 HU，说明该校正主要减少缓变暗带，没有明显降噪效果。单能参照仍存在细条纹，不能把所有残余条纹都视为束硬化；此结果也不能与原 OS-SART＋强 TV / 1 mAs 的指标直接作算法优劣比较。
+
+Windows 下 `--artifact-window` 原生导出轴、冠、矢三视图（WW=250、WL=25 HU），覆盖原始体积范围，不限制统计层数。`--native-images` 同时导出骨窗和暗带窗口，避免 Gnuplot 多图导出的长时间等待。
+
+本次同时修复 WFBP 的大工作区问题：根据显存预算自动选择批量工作区，在 Host 暂存滤波结果，GPU 分批完成带完整插值邻域的重排/FFT，然后按半圈相位组打包所有圈的观测反投。每个相位的 W(q) 分子/分母仍使用完整观测，未裁掉有效扫描或降低尺寸。公共 Session 仍一次提交完整扫描，不表示可以外部逐帧调用 WFBP。保留至少 512 MiB 或 20% 总显存的预算余量；大尺寸 FFS 飞焦点重建暂不走此批量路径。平板/圆柱、Host/Device 输入输出、重复执行和 reset 与常驻路径的回归最大差约 7.5e-8。
+
+该结果可用 `multispectrum_bone_bhc_prepare --bilateral <重建TOML> <重建RAW> <独立输出目录>` 做一次后处理双边滤波。调用正式 Stage 链：μ→HU→CUDA Bilateral→HU→μ→RAW 导出；按 BHC 参考能量的水衰减转换 HU。当前实验参数为逐层 XY、5×5 邻域、空间 sigma=0.75 mm、灰度 sigma=30 HU，Z 层间不混合；输出仍是 mm^-1，尺寸、间距、原点与方向保持不变，并写出 `.grid` 和 `bilateral.json`。输出与输入同路径时明确拒绝，原始 RAW 保留。
+
+512×512×400 实测双边 Stage 约 918 ms，转换及导出链共约 1.70 s，仅一次上传和下载。观察到颗粒感减轻、骨轮廓大体保留，宽条纹仍有残余；显示平滑不等于进一步完成了骨硬化校正。`multispectrum_plot_bone_bhc.exe --bilateral-window <实验目录>` 输出同窗的原图／双边结果／未滤波单能参照，以及骨细节和冠矢状面图。此选项是实验后处理工具，尚未添加 UI/TOML 滤波开关。
+
+### 共享解析滤波设置
+
+FDK/WFBP 的 SDK 设置分别位于 `reconstruction.fdk.filter` 与 `reconstruction.wfbp.filter`，类型完全相同；通过 `.type=EFdkFilter::Hann` 选择窗，不再用浮点 apodization 宣称窗类型。FDK 的 Parker 设置仍归 FDK，WFBP 的 redundancy_flat、重排和螺旋加权仍归 WFBP。
+
+公共 `Filter::analyticFilterDesc` 统一映射参数，公共核生成器和 `FrequencyFilter` 处理窗函数、有限离散 ramp、物理间距及 IFFT 归一化。WFBP 保留二倍通道重排与零填充，并使用公共有限离散 Ram-Lak 基核，避免复制窗函数或频域卷积代码。SDK 结构声明有所调整，应用应与新头文件一同重编译。
+
+```toml
+[reconstruction.analytic]
+pipeline = "wfbp"
+filter = "hann"
+cutoff = 0.5
+gain = 1.0
+```
+
+把 pipeline 改为 fdk 即复用相同窗配置。WFBP 的公共执行仍要求完整投影序列；此声明不改变扫描几何或启用逐帧流式调用。

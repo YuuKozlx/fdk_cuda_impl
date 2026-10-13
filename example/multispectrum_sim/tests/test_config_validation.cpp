@@ -11,7 +11,7 @@ int main() {
         {
             std::ofstream f(path);
             f << "schema_version=2\n[workflow]\nmode='reconstruct'\n"
-                 "[geometry]\nkind='cyl_helical'\n"
+                 "[geometry]\nkind='" << (reconstruction.find("pipeline='fdk'")!=std::string::npos?"flat_cbct":"cyl_helical") << "'\n"
                  "[reconstruction]\ninput_projection_file='input.raw'\n" << reconstruction;
         }
         bool accepted = false;
@@ -101,13 +101,18 @@ int main() {
                 throw std::runtime_error("absolute spectrum was not parsed correctly");
         }
         test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nfilter='ramlak'\n", true);
-        test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nfilter='hann'\n", false);
+        test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nfilter='hann'\n", true);
         test("type='analytic'\n[reconstruction.analytic]\npipeline='fdk'\nfilter='ramlka'\n", false);
         test("type='analytic'\n[reconstruction.analytic]\npipeline='fdk'\nfilter=123\n", false);
         test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nwfbp_cutoff='1.0'\n", false);
         test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nwfbp_cutoff=nan\n", false);
         test("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nwfbp_apodization=1.1\n", false);
-        test("type='analytic'\n[reconstruction.analytic]\npipeline='fdk'\nwfbp_cutoff=1.0\n", false);
+        test("type='analytic'\n[reconstruction.analytic]\npipeline='fdk'\ncutoff=0.4\nfilter='hamming'\n", true);
+        for(const char* window:{"ramlak","shepp-logan","cosine","hann","hamming","blackman","butterworth","kaiser","tukey"}) {
+            test(std::string("type='analytic'\n[reconstruction.analytic]\npipeline='wfbp'\nfilter='")+window+"'\ncutoff=0.5\n",true);
+        }
+        test("type='analytic'\n[reconstruction.analytic]\ncutoff=0.6\n",false);
+        test("type='analytic'\n[reconstruction.analytic]\nfilter='kaiser'\nkaiser_beta=-1\n",false);
         test("type='analytic'\n", false);
         test("type='analytic'\n[reconstruction.analytic]\npipeline='unknown'\n", false);
         test("type='iterative'\n[reconstruction.iterative]\nalgorithm='tigre_sart'\niterations=5\n", true);

@@ -1,3 +1,4 @@
+#include "MultiSpecFpStage.hpp"
 #include "../src/primary/CudaProjectionBackend.hpp"
 #include "../src/primary/ProjectionGeometry.cuh"
 #include "SpectralProjectionPipeline.hpp"
@@ -301,7 +302,7 @@ int main(int argc, char** argv)
             fs::create_directories(dir);
             std::string error;
             c.visualization.enabled = false;
-            SpectralProjectionPipeline pipeline(std::make_unique<primary_detail::CudaProjectionBackend>());
+            SpectralProjectionPipeline pipeline(primary_detail::makeCudaProjectionSourceRegistry().create("projection.source.multi_spec_fp"));
             require(pipeline.run(c, labels, model, dir / "disabled.raw", error), error.c_str());
             c.visualization.enabled = true;
             c.visualization.texture_max_size = 32;
@@ -396,7 +397,7 @@ int main(int argc, char** argv)
         reuse.setParameters({ { "Source X (mm)", 0, -100, 100 } });
         c.geometry.kind = GeometryKind::FlatCbct;
         c.visualization.enabled = true;
-        SpectralProjectionPipeline repeated(std::make_unique<primary_detail::CudaProjectionBackend>());
+        SpectralProjectionPipeline repeated(primary_detail::makeCudaProjectionSourceRegistry().create("projection.source.multi_spec_fp"));
         repeated.setVisualization(&reuse);
         std::string recompute_error;
         reuse.setEditingEnabled(false);

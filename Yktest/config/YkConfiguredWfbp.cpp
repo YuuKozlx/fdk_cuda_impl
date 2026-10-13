@@ -212,10 +212,19 @@ Case parseCase(const toml::table& table, const std::filesystem::path& base)
         "anode_angle_deg", 0.0) * kPi / 180.0);
     a.reverse_row_interleave = optional<bool>(wfbp,
         "reverse_row_interleave", false);
-    a.filter.cutoff_c = static_cast<float>(optional<double>(wfbp,
-        "filter_cutoff", 1.0));
-    a.filter.apodization_a = static_cast<float>(optional<double>(wfbp,
-        "filter_apodization", 1.0));
+    if(wfbp.contains("filter_cutoff") || wfbp.contains("filter_apodization"))
+        throw std::runtime_error("Use wfbp.filter/cutoff; numeric apodization settings were removed");
+    const std::string window=optional<std::string>(wfbp,"filter","ramlak");
+    const char* names[]={"none","ramlak","shepp-logan","cosine","hann","hamming","blackman","butterworth","kaiser","tukey"};
+    bool known=false;
+    for(int k=0;k<10;++k) if(window==names[k]) { a.filter.type=static_cast<EFdkFilter>(k); known=true; }
+    if(!known) throw std::runtime_error("Unknown WFBP filter enum: "+window);
+    a.filter.cutoff=float(optional<double>(wfbp,"cutoff",.5));
+    a.filter.gain=float(optional<double>(wfbp,"gain",1.));
+    a.filter.butterworth_order=float(optional<double>(wfbp,"butterworth_order",2.));
+    a.filter.kaiser_beta=float(optional<double>(wfbp,"kaiser_beta",8.6));
+    a.filter.tukey_alpha=float(optional<double>(wfbp,"tukey_alpha",.5));
+
 
     if (const auto* pwls = table["pwls"].as_table()) {
         result.pwls.iterations = static_cast<int>(optional<int64_t>(*pwls,

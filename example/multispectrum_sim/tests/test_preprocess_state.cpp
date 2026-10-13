@@ -1,4 +1,7 @@
+#include "pipeline/BuiltinPluginInfo.hpp"
+#include "image/ImageStages.hpp"
 #include "recon/preprocess/PreprocessPipeline.hpp"
+#include "../examples/PolynomialBhcStage.hpp"
 #include "cuda/DeviceMemoryPool.hpp"
 #include <fstream>
 #include <cmath>
@@ -17,10 +20,8 @@ class Probe final : public IStage {
 
   public:
     Probe(Location l, bool add = false) : location_(l), add_(add) {}
-    const char *name() const override { return "State probe"; }
-    Domain inputDomain() const override { return Domain::LogAttenuation; }
-    Domain outputDomain() const override { return Domain::LogAttenuation; }
-    Location inputLocation() const override { return location_; }
+    const yk::spectral::pipeline::PluginInfo& info()const noexcept override{static const yk::spectral::pipeline::PluginInfo p{"test.preprocessstage","State probe","Test-only plugin","",yk::spectral::pipeline::PluginKind::PreprocessStage};return p;}
+    pipeline::Contract<Domain> contract()const override{return {Domain::LogAttenuation,Domain::LogAttenuation,location_,location_};}
     void prepare(const Context &) override {}
     void process(Frame &f, const Context &) override {
         require(f.location == location_, "wrong authoritative location at stage entry");
@@ -104,6 +105,29 @@ void testPreprocessState(const std::filesystem::path &root) {
     auto result = read(output);
     for (size_t i = 0; i < values.size(); ++i)
         require(result[i] == values[i] + 2, "stale device copy survived CPU stage modification");
+    // A complete custom CPU Stage using the shared contract and the real pipeline.
+    bh.enabled=false;
+    Pipeline example;
+    example.append(std::make_unique<examples::PolynomialBhcStage>(std::vector<double>{0,1,.02},0,.8));
+    require(example.run(config,input,output,diagnostic),diagnostic.c_str());
+    result=read(output);
+    for(size_t i=0;i<values.size();++i){
+        const double p=values[i];const double expected=std::clamp(p+.02*p*p,0.,.8);
+        require(std::abs(result[i]-expected)<1e-7,"example BHC polynomial/clamp mismatch");
+    }
+    require(example.statistics().image_uploads==0 && example.statistics().image_downloads==0,"CPU example unexpectedly transferred frame signals");
+    require(example.run(config,input,output,diagnostic),"example stage could not be reused");
+    bh.enabled=true;
+    {
+        image::Options filter;filter.operation=image::Operation::Mean;
+        Pipeline images;images.append(image::makeProjectionStage(filter));images.append(image::makeProjectionStage(filter));
+        require(images.run(config,input,output,diagnostic),diagnostic.c_str());
+        require(images.statistics().image_uploads==2&&images.statistics().image_downloads==2,"image stages introduced extra PCIe transfers");
+        image::Image reference;reference.grid.dimensions={3,2,1};reference.batches=2;reference.domain=image::Domain::Projection;reference.data=const_cast<float*>(values.data());
+        image::Workspace cpu(image::Location::Host);image::process(reference,filter,cpu);image::process(reference,filter,cpu);
+        const auto actual=read(output);for(size_t i=0;i<actual.size();++i)require(std::abs(actual[i]-reference.data[i])<1.e-6,"projection image stage numerical mismatch");
+        require(cuda_resources::devicePoolStatistics().active_bytes==0,"image stage retained scratch after pipeline reset");
+    }
     // Compare the CUDA polynomial against double Horner, including clamp endpoints.
     for (int degree = 0; degree <= 16; ++degree) {
         bh.coefficients.resize(degree + 1);

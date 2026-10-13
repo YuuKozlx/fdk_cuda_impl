@@ -2,6 +2,7 @@
 #include "Reconstruction/Iterative/Common/kernels/YkTvRegularizationLaunch.cuh"
 #include "Reconstruction/Iterative/Regularization/RegularizerPlugin.hpp"
 #include "YKCBCT/interface/YkReconstructionApi.hpp"
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -221,12 +222,59 @@ void checkTigreTvDirections() {
         cudaFree(x);cudaFree(g);
     }
 }
-int main()
+
+void checkAutomaticProx(){
+    Grid grid{16,12,8,3};grid.hx=grid.hy=grid.hz=1;grid.delta=5e-5;
+    const auto p=params(grid);std::vector<float> input(grid.n(),.02f),observed(grid.n()),fixed(grid.n());
+    float *x=nullptr,*out=nullptr;ck(cudaMalloc(&x,grid.n()*4)==cudaSuccess&&cudaMalloc(&out,grid.n()*4)==cudaSuccess,"auto buffers");
+    AlgebraicRegularizationConfig c;c.plugin_id="huber_tv_prox";c.strength=1e-4;c.huber_delta=float(grid.delta);
+    configureAutomaticHuberProx(c);ck(c.inner_iterations==1000&&c.step_size==0,"automatic policy");
+    auto automatic=createRegularizerPlugin(c.plugin_id);ck(automatic->prepare(p,c,nullptr,0),"auto prepare");
+    cudaMemcpy(x,input.data(),grid.n()*4,cudaMemcpyHostToDevice);ck(automatic->prox(x,out,c.strength),"constant auto prox");
+    ck(automatic->proxStatistics().converged&&automatic->proxStatistics().iterations==0,"constant did not stop immediately");
+    for(size_t i=0;i<input.size();++i)input[i]=.02f+.001f*float(std::sin(i*.71));
+    cudaMemcpy(x,input.data(),grid.n()*4,cudaMemcpyHostToDevice);ck(automatic->prox(x,out,c.strength),"noisy auto prox");
+    cudaMemcpy(observed.data(),out,grid.n()*4,cudaMemcpyDeviceToHost);
+    const auto stats=automatic->proxStatistics();ck(stats.iterations>0&&stats.iterations<=1000&&stats.converged!=stats.iteration_limit,"auto termination flags");
+    std::vector<double> u(observed.begin(),observed.end()),z(input.begin(),input.end()),grad;energy(u,grid,&grad);
+    double norm=0,residual=0;for(size_t i=0;i<u.size();++i){double r=u[i]-std::max(0.,u[i]-(u[i]-z[i]+c.strength*grad[i]));residual+=r*r;norm+=z[i]*z[i];}
+    ck(std::abs(std::sqrt(residual/norm)-stats.relative_stationarity)<2e-6,"GPU stationarity differs from independent CPU");
+    auto fixed_config=c;fixed_config.prox_relative_tolerance=0;fixed_config.inner_iterations=stats.iterations;
+    auto reference=createRegularizerPlugin(c.plugin_id);ck(reference->prepare(p,fixed_config,nullptr,0),"fixed reference prepare");ck(reference->prox(x,out,c.strength),"fixed reference prox");cudaMemcpy(fixed.data(),out,grid.n()*4,cudaMemcpyDeviceToHost);
+    for(size_t i=0;i<u.size();++i)ck(std::abs(fixed[i]-observed[i])<1e-7,"auto stopping changes update formula");
+    automatic->reset();ck(automatic->prox(x,out,c.strength),"auto reset");ck(automatic->proxStatistics().iterations==stats.iterations,"auto reset step count changed");
+    // Hitting a strict one-step budget must not be reported as convergence.
+    c.inner_iterations=1;c.prox_relative_tolerance=1e-8;ck(automatic->prepare(p,c,nullptr,0)&&automatic->prox(x,out,c.strength),"one-step prox");
+    ck(automatic->proxStatistics().iteration_limit&&!automatic->proxStatistics().converged,"iteration cap falsely reports convergence");
+    cudaFree(x);cudaFree(out);
+}
+
+void benchmarkProx(){
+    Grid grid{256,256,200,3};float *x=nullptr,*out=nullptr;cudaMalloc(&x,grid.n()*4);cudaMalloc(&out,grid.n()*4);
+    std::vector<float> input(grid.n());
+    for(double spacing:{1.2,.5})for(bool noisy:{false,true}){
+        grid.hx=grid.hy=grid.hz=spacing;grid.delta=5e-5;
+        for(size_t i=0;i<input.size();++i)input[i]=.02f+(noisy?.002f*(float((unsigned(i)*1664525U+1013904223U)&1023)/1023-.5f):0);
+        cudaMemcpy(x,input.data(),grid.n()*4,cudaMemcpyHostToDevice);
+        for(int mode:{20,100,0}){
+            AlgebraicRegularizationConfig c;c.plugin_id="huber_tv_prox";c.strength=1e-4;c.huber_delta=float(grid.delta);c.inner_iterations=mode?mode:100;
+            if(!mode)configureAutomaticHuberProx(c);
+            auto plugin=createRegularizerPlugin(c.plugin_id);ck(plugin->prepare(params(grid),c,nullptr,0),"benchmark prepare");
+            double milliseconds=0;ProxStatistics stats;
+            for(int repeat=0;repeat<4;++repeat){cudaDeviceSynchronize();auto started=std::chrono::steady_clock::now();ck(plugin->prox(x,out,c.strength),"benchmark prox");cudaDeviceSynchronize();double elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();if(repeat)milliseconds+=elapsed;stats=plugin->proxStatistics();}
+            std::cout<<"BENCH spacing="<<spacing<<" noisy="<<noisy<<" mode="<<(mode?std::to_string(mode):"auto")<<" ms="<<milliseconds/3<<" steps="<<stats.iterations<<" residual="<<stats.relative_stationarity<<" converged="<<stats.converged<<" limit="<<stats.iteration_limit<<'\n';
+        }
+    }
+    cudaFree(x);cudaFree(out);
+}
+int main(int argc,char** argv)
 {
     try {
+        if(argc==2&&std::string(argv[1])=="--benchmark"){benchmarkProx();return 0;}
         for (Grid g : { Grid { 5, 4, 3, 3 }, Grid { 5, 4, 3, 2 }, Grid { 1, 4, 2, 3 }, Grid { 1, 1, 1, 3 } })
             checkGrid(g);
         checkTigreTvDirections();
+        checkAutomaticProx();
         checkRegistryAndAbi();
         std::cout << "Huber TV gradient/prox, registry and full-sweep insertion passed\n";
         return 0;
