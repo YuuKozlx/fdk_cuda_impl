@@ -1,0 +1,5 @@
+@echo off
+setlocal
+set "PATH=@PLOT_GNUPLOT_DIRECTORY@;%PATH%"
+"%~dp0multispectrum_plot_bone_bhc.exe" %*
+exit /b %errorlevel%

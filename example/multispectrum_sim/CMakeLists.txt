@@ -427,6 +427,37 @@ add_library(multispectrum_intensity_stages STATIC
     src/recon/postprocess/stages/calibration/HuCalibration.cpp
     src/recon/postprocess/stages/segmentation/HuThresholds.cpp)
 target_include_directories(multispectrum_intensity_stages PUBLIC include)
+if(TARGET YKCBCT)
+    # Explicitly built experiment helper; no additional application/runtime dependency.
+    add_executable(multispectrum_bone_bhc_singlepass EXCLUDE_FROM_ALL
+        app/experiments/IdealBoneCorrection.cu src/config/SimConfig.cpp src/config/SpectrumSource.cpp
+        src/WaterReference.cpp src/XcomAttenuationProvider.cpp src/SimLogger.cpp
+        src/recon/preprocess/BeamHardeningFit.cpp)
+    target_include_directories(multispectrum_bone_bhc_singlepass PRIVATE include src
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    target_link_libraries(multispectrum_bone_bhc_singlepass PRIVATE
+        nist_xcom_core spek_spectrum::core multispectrum_device_pool CUDA::cudart)
+    set_property(TARGET multispectrum_bone_bhc_singlepass PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    if(MSVC)
+        target_compile_options(multispectrum_bone_bhc_singlepass PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/utf-8> $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+    endif()
+    add_executable(multispectrum_bone_bhc_prepare EXCLUDE_FROM_ALL
+        app/experiments/PrepareBoneBhc.cpp src/config/SimConfig.cpp src/config/SpectrumSource.cpp
+        src/WaterReference.cpp src/XcomAttenuationProvider.cpp
+        src/recon/postprocess/PostprocessPipeline.cpp src/recon/postprocess/OutputStages.cpp src/SimLogger.cpp)
+    target_include_directories(multispectrum_bone_bhc_prepare PRIVATE include
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
+    target_link_libraries(multispectrum_bone_bhc_prepare PRIVATE multispectrum_intensity_stages
+        multispectrum_image_processing nist_xcom_core spek_spectrum::core)
+    if(MSVC)
+        target_compile_options(multispectrum_bone_bhc_prepare PRIVATE /utf-8)
+    endif()
+endif()
 if(MSVC)
     target_compile_options(multispectrum_intensity_stages PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
