@@ -37,7 +37,7 @@ cmake --install out/build/core --prefix install/core
 - [模体生成器](example/phantom_generator/README.zh-CN.md)。
 - [几何标定工具](tools/cbct_calibration/README.zh-CN.md)。
 - [VTK 几何与体数据查看器原型](tools/geometry_viewer/README.zh-CN.md)：可单独构建，默认关闭，支持六种几何、帧切换、RAW 体绘制与文件导出。
-- [多能前投实时显示层](visualization/README.zh-CN.md)：独立可选模块，显示实际材料体、姿态与偏移，并将同帧投影贴到探测器上。
+- [多能前投实时显示层](example/multispectrum_sim/visualization/README.zh-CN.md)：多能谱示例的可选模块，显示实际材料体、姿态与偏移，并将同帧投影贴到探测器上。
 
 这些目录各自维护使用说明；本体库文档不承诺其应用层 TOML 与 Yktest TOML 相同。第三方授权与来源保留在 `LICENSES/`、`thirdparty/` 及相关源码中。
 
@@ -46,4 +46,4 @@ cmake --install out/build/core --prefix install/core
 公共 API、几何、算法开放状态、构建或测试入口发生变化时，同一变更必须更新对应文档。一个事实只在一份详细文档中定义，其他位置链接引用。测试结果必须注明代码版本、构建配置、硬件、输入和指标；历史结果不能作为当前版本通过验证的证据。
 
 可选多能前投界面：同时开启 `BUILD_MULTISPECTRUM_SIM`、`BUILD_VTK_VISUALIZATION` 和 `BUILD_IMGUI_GUI`，
-提供 Windows 原生 ImGui + VTK 界面，支持四种平板扫描、标签体/材料与能谱设置；详见 `visualization/README.zh-CN.md`。
+提供 Windows 原生 ImGui + VTK 界面，支持四种平板扫描、标签体/材料与能谱设置；详见 `example/multispectrum_sim/visualization/README.zh-CN.md`。

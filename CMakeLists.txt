@@ -50,6 +50,10 @@ option(BUILD_IMGUI_GUI "构建 Windows ImGui/VTK 多能前投界面" OFF)
 if(BUILD_IMGUI_GUI AND NOT BUILD_VTK_VISUALIZATION)
     message(FATAL_ERROR "BUILD_IMGUI_GUI requires BUILD_VTK_VISUALIZATION=ON")
 endif()
+if(BUILD_VTK_VISUALIZATION AND NOT BUILD_MULTISPECTRUM_SIM)
+    message(FATAL_ERROR
+        "BUILD_VTK_VISUALIZATION belongs to multispectrum_sim and requires BUILD_MULTISPECTRUM_SIM=ON")
+endif()
 
 # ============================================================================
 # 工具链和全局默认值
@@ -219,10 +223,6 @@ endif()
 
 if(BUILD_DLLTEST)
     add_subdirectory(dlltest)
-endif()
-
-if(BUILD_VTK_VISUALIZATION)
-    add_subdirectory(visualization)
 endif()
 
 if(BUILD_MULTISPECTRUM_SIM)

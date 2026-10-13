@@ -1,4 +1,16 @@
 cmake_minimum_required(VERSION 3.24)
+set(YKCBCT_VTK_ROOT "" CACHE PATH
+    "Root of a native VTK C++ SDK (contains include, lib and bin)")
+if(NOT YKCBCT_VTK_ROOT AND DEFINED ENV{YKCBCT_VTK_ROOT})
+    set(YKCBCT_VTK_ROOT "$ENV{YKCBCT_VTK_ROOT}")
+endif()
+if(YKCBCT_VTK_ROOT)
+    if(NOT EXISTS "${YKCBCT_VTK_ROOT}/lib/cmake")
+        message(FATAL_ERROR
+            "YKCBCT_VTK_ROOT does not contain lib/cmake: ${YKCBCT_VTK_ROOT}")
+    endif()
+    list(PREPEND CMAKE_PREFIX_PATH "${YKCBCT_VTK_ROOT}")
+endif()
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(YKCBCTGeometryViewer LANGUAGES CXX)
     find_package(CUDAToolkit REQUIRED)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../visualization/LiveView.hpp"
+#include "../visualization/LiveView.hpp"
 #include "SpectralModel.hpp"
 #include "config/SimConfig.hpp"
 #include "pipeline/Stage.hpp"

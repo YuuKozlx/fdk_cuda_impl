@@ -1,4 +1,4 @@
-#include "../../../visualization/RelativeGeometry.hpp"
+#include "../visualization/RelativeGeometry.hpp"
 #include <iostream>
 using namespace yk::visualization;
 void require(bool v, const char* s)

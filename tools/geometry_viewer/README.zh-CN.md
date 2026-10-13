@@ -22,32 +22,27 @@
 
 ```powershell
 cmake -S tools/geometry_viewer -B out/build/vtk-viewer -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release -DVTK_DIR=G:/path/to/vtk/lib/cmake/vtk-9.6
+  -DCMAKE_BUILD_TYPE=Release `
+  -DYKCBCT_VTK_ROOT=F:/docker-mcgpu/mcgpu-modern/deploy/windows-x64-md-release
 cmake --build out/build/vtk-viewer --parallel 4
 ```
 
-将 VTK 的运行 DLL 目录设置为 `$env:VTK_RUNTIME_DIR` 或加入 PATH。上面的 VTK_DIR 为占位路径，须替换为含 vtk-config.cmake 的实际目录。
+`YKCBCT_VTK_ROOT` 指向直接包含 `include/`、`lib/` 和 `bin/` 的原生 C++ SDK 根目录，也可设置为同名环境变量。运行脚本会自动使用该根目录下的 `bin/`；仍可用 `$env:VTK_RUNTIME_DIR` 单独覆盖 DLL 目录。
 
 主工程也可以显式打开 `-DBUILD_VTK_VIEWER=ON`，并只构建 geometry_viewer 目标；默认 OFF 时不会寻找 VTK，不改变主 DLL 的安装/导出依赖。
 
-### 本机实验环境
+### 本机原生 SDK
 
-本原型实际使用 VTK 9.6.2 的预编译包及配套 C++ Wheel SDK，避免本机从源码构建整个 VTK。SDK 用于头文件/CMake/链接，运行库使用配套安装包；官方说明见 [Wheel SDKs](https://docs.vtk.org/en/latest/advanced/wheel_sdks.html)。本机包和输出全部在忽略的 out/ 下，未写入全局 Python 或主工作区。
+本原型使用本地编译的 VTK 9.6.2 原生 C++ SDK：Windows x64、MSVC 19.44、Release、动态 `/MD` 运行库，且 `python_wrapping=false`。它包含当前查看器和多能谱实时显示所需的全部 VTK 模块，不依赖 Python、pip 或 wheel。
 
 ```powershell
-python -m venv out/vtk-env
-out/vtk-env/Scripts/python.exe -m pip install vtk==9.6.2
-Invoke-WebRequest https://vtk.org/files/wheel-sdks/vtk-wheel-sdk-9.6.2-cp312-cp312-win_amd64.tar.xz `
-  -OutFile out/vtk-sdk.tar.xz
-New-Item -ItemType Directory -Path out/vtk-sdk -Force
-tar -xf out/vtk-sdk.tar.xz -C out/vtk-sdk
+$env:YKCBCT_VTK_ROOT = 'F:/docker-mcgpu/mcgpu-modern/deploy/windows-x64-md-release'
 cmake -S tools/geometry_viewer -B out/build/vtk-viewer -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DVTK_DIR="$PWD/out/vtk-sdk/vtk-wheel-sdk-9.6.2-cp312-cp312-win_amd64/vtk-9.6.2.data/headers/cmake"
+  -DCMAKE_BUILD_TYPE=Release
 cmake --build out/build/vtk-viewer --parallel 4
 ```
 
-此包路径特定于 Windows x64 / Python 3.12。其他环境使用对应开发包，不应硬改成相同路径。运行辅助脚本会优先使用 VTK_RUNTIME_DIR；未设置时寻找本工作树 out/vtk-env 的 vtk.libs。
+该绝对路径只用于本机命令示例，不写入生成目标或源码。换机器时设置新的 `YKCBCT_VTK_ROOT` 即可。
 
 ## 查看和导出
 
@@ -113,12 +108,6 @@ SourceOrbit 中源单独运动、探测器固定，两者没有共同的刚体�
 
 2026-10-11，Windows / MSVC 19.44 / CUDA Toolkit 12.6 / VTK 9.6.2：独立 C++ 构建及主工程可选目标构建均通过。六种模型的实际离屏渲染、源坐标、柱面半径、VTI/VTM 读回、非零体积中心和非等体素 RAW 布局均通过检查；错误尺寸/视图/距离/pitch 会拒绝。局部轴检查覆盖原点、单位长度、正交/右手性、源射线方向、探测器法向及不同帧更新；模型切换、帧滑条和体数据/局部轴开关使用真实 VTK 回调进行检查。
 
-```powershell
-$env:PATH = "$PWD/out/vtk-env/Lib/site-packages/vtk.libs;" + $env:PATH
-out/vtk-env/Scripts/python.exe tools/geometry_viewer/tests/verify_exports.py `
-  --exe out/build/vtk-viewer/geometry_viewer.exe --output out/viewer-checks
-```
-
-报告为 out/viewer-checks/verification.json，截图为同目录六份 PNG。这是可运行原型，尚未承诺读取现有应用 TOML、接收实时重建数据或 CUDA/VTK 零拷贝互操作。
+原生 SDK 不提供 VTK Python 包，因此正式构建与运行验证不依赖 `tests/verify_exports.py`。该脚本仅保留为可选的独立文件读回检查；安装额外 Python VTK 环境时才使用。查看器本身可直接输出六种几何的 PNG、VTI 和 VTM。这是可运行原型，尚未承诺读取现有应用 TOML、接收实时重建数据或 CUDA/VTK 零拷贝互操作。
 
 相对模式检查见 tests/verify_relative.py：五种刚体几何的第 0/30/61 帧，验证源/探测器固定、模体姿态、统一刚体变换、射线到体素距离不变、非零体积中心与非等体素，以及 VTI Direction 读回和真实 M 回调。报告位于 out/viewer-relative-checks/relative-verification.json。

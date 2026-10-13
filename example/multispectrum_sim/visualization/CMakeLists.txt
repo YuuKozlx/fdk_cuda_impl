@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.24)
 option(BUILD_VTK_VISUALIZATION_TESTS "Build generated CUDA projection/display fixtures" OFF)
+set(YKCBCT_VTK_ROOT "" CACHE PATH
+    "Root of a native VTK C++ SDK (contains include, lib and bin)")
+if(NOT YKCBCT_VTK_ROOT AND DEFINED ENV{YKCBCT_VTK_ROOT})
+    set(YKCBCT_VTK_ROOT "$ENV{YKCBCT_VTK_ROOT}")
+endif()
+if(YKCBCT_VTK_ROOT)
+    if(NOT EXISTS "${YKCBCT_VTK_ROOT}/lib/cmake")
+        message(FATAL_ERROR
+            "YKCBCT_VTK_ROOT does not contain lib/cmake: ${YKCBCT_VTK_ROOT}")
+    endif()
+    list(PREPEND CMAKE_PREFIX_PATH "${YKCBCT_VTK_ROOT}")
+endif()
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(YKCBCTVisualization LANGUAGES CXX)
     if(BUILD_VTK_VISUALIZATION_TESTS)
@@ -12,6 +24,8 @@ find_package(VTK 9.3 REQUIRED COMPONENTS
     InteractionStyle InteractionWidgets IOImage IOXML RenderingAnnotation
     RenderingCore RenderingOpenGL2 RenderingVolumeOpenGL2)
 add_library(ykcbct_visualization STATIC LiveViewWindow.cpp ParameterInspector.cpp)
+get_filename_component(YKCBCT_REPOSITORY_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     option(BUILD_IMGUI_GUI "Build the Windows ImGui/VTK projection interface" OFF)
 endif()
@@ -19,7 +33,7 @@ if(BUILD_IMGUI_GUI)
     if(NOT WIN32)
         message(FATAL_ERROR "The initial ImGui/VTK input bridge supports Windows only")
     endif()
-    set(IMGUI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/imgui")
+    set(IMGUI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../thirdparty/imgui")
     add_library(yk_imgui STATIC
         "${IMGUI_ROOT}/imgui.cpp" "${IMGUI_ROOT}/imgui_draw.cpp"
         "${IMGUI_ROOT}/imgui_tables.cpp" "${IMGUI_ROOT}/imgui_widgets.cpp"
@@ -35,7 +49,9 @@ if(BUILD_IMGUI_GUI)
 endif()
 
 target_compile_features(ykcbct_visualization PUBLIC cxx_std_17)
-target_include_directories(ykcbct_visualization PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(ykcbct_visualization
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+    PRIVATE "${YKCBCT_REPOSITORY_ROOT}/src")
 target_link_libraries(ykcbct_visualization PRIVATE ${VTK_LIBRARIES})
 if(MSVC)
     target_compile_options(ykcbct_visualization PRIVATE /utf-8 /Zc:__cplusplus /W3)
@@ -43,7 +59,7 @@ endif()
 vtk_module_autoinit(TARGETS ykcbct_visualization MODULES ${VTK_LIBRARIES})
 
 if(BUILD_VTK_VISUALIZATION_TESTS)
-    get_filename_component(SPECTRAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../example/multispectrum_sim" ABSOLUTE)
+    get_filename_component(SPECTRAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
     add_executable(spectral_live_test
         "${SPECTRAL_ROOT}/tests/test_live_visualization.cpp"
         "${SPECTRAL_ROOT}/src/primary/CudaProjectionBackend.cu"
@@ -55,7 +71,7 @@ if(BUILD_VTK_VISUALIZATION_TESTS)
         "${SPECTRAL_ROOT}/src/FasksRuntimeModel.cpp"
         "${SPECTRAL_ROOT}/src/CudaFasksScatter.cu"
         "${SPECTRAL_ROOT}/src/primary/CudaSignalStages.cu"
-        "${SPECTRAL_ROOT}/src/recon/preprocess/DeviceMemoryPool.cpp"
+        "${SPECTRAL_ROOT}/src/cuda/DeviceMemoryPool.cpp"
         "${SPECTRAL_ROOT}/src/primary/ProjectionStages.cpp"
         "${SPECTRAL_ROOT}/src/primary/ProjectionOutput.cpp"
         "${SPECTRAL_ROOT}/src/primary/DetectorSignal.cpp")

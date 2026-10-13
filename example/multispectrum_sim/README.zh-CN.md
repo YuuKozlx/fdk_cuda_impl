@@ -393,7 +393,7 @@ ctest --test-dir out/docker-test/example/multispectrum_sim -R multispectrum_proj
 ```
 ## 可选实时显示
 
-主工程启用 `BUILD_VTK_VISUALIZATION=ON` 并提供 VTK C++ 包后，在 TOML 增加 `[visualization] enabled=true`，即可边前投边显示实际材料标签体、源/探测器姿态与偏移和当前帧投影贴图。体数据保留原分辨率，仅显示贴图可降采样；关闭显示时计算和输出不变。显示模块独立位于 `visualization/`，不依赖 geometry_viewer 工具源码。构建、配置及自生成验证见 [实时显示层说明](../../visualization/README.zh-CN.md)。
+主工程启用 `BUILD_VTK_VISUALIZATION=ON` 并提供 VTK C++ 包后，在 TOML 增加 `[visualization] enabled=true`，即可边前投边显示实际材料标签体、源/探测器姿态与偏移和当前帧投影贴图。体数据保留原分辨率，仅显示贴图可降采样；关闭显示时计算和输出不变。显示模块位于本示例的 `visualization/`，不依赖 geometry_viewer 工具源码。构建、配置及自生成验证见 [实时显示层说明](visualization/README.zh-CN.md)。
 
 ## 可选 ImGui 前投界面
 
@@ -402,7 +402,7 @@ ctest --test-dir out/docker-test/example/multispectrum_sim -R multispectrum_proj
 第一版支持 Flat 圆扫描、Flat 螺旋扫描、Planar CT、Tilted CT。
 可在界面导入 Raw uint8 标签体、编辑尺寸/间距/材料映射、导入或生成能谱、修改几何和效果开关，
 保存/加载 TOML。按计算按钮后先计算全批，完成后再通过底部滑条浏览。
-计算使用界面/TOML 设置的每像素射线数；体积不降采样。更多说明见 `visualization/README.zh-CN.md`。
+计算使用界面/TOML 设置的每像素射线数；体积不降采样。更多说明见 [实时显示层说明](visualization/README.zh-CN.md)。
 
 启动界面：`multispectrum_sim --gui [config.toml]`。不传配置路径时先弹出 TOML 文件选择窗口。
 加载后参数自动填充，同时读取标签体、材料和能谱并显示三维场景；点击 Calculate all views 后才开始计算投影。

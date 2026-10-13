@@ -1,6 +1,6 @@
 #include "WaterReference.hpp"
 #include "XcomAttenuationProvider.hpp"
-#include "../../../visualization/FloatVolume.hpp"
+#include "../visualization/FloatVolume.hpp"
 #include <cmath>
 #include <iostream>
 void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}

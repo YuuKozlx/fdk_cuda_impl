@@ -5,6 +5,7 @@ param(
     [int]$Frame = 0,
     [switch]$GantryFixed,
     [string]$VtkRuntimeDirectory = $env:VTK_RUNTIME_DIR,
+    [string]$VtkSdkRoot = $env:YKCBCT_VTK_ROOT,
     [string]$Screenshot = '',
     [string]$ExportDirectory = '',
     [Parameter(ValueFromRemainingArguments=$true)]
@@ -17,8 +18,10 @@ if (!(Test-Path -LiteralPath $viewerExecutable)) {
     throw 'Build the standalone viewer first; see tools/geometry_viewer/README.zh-CN.md.'
 }
 if ([string]::IsNullOrWhiteSpace($VtkRuntimeDirectory)) {
-    $viewerLocalRuntime = Join-Path $viewerRoot 'out/vtk-env/Lib/site-packages/vtk.libs'
-    if (Test-Path -LiteralPath $viewerLocalRuntime) { $VtkRuntimeDirectory = $viewerLocalRuntime }
+    if (![string]::IsNullOrWhiteSpace($VtkSdkRoot)) {
+        $viewerNativeRuntime = Join-Path $VtkSdkRoot 'bin'
+        if (Test-Path -LiteralPath $viewerNativeRuntime) { $VtkRuntimeDirectory = $viewerNativeRuntime }
+    }
 }
 $viewerSavedPath = $env:PATH
 try {

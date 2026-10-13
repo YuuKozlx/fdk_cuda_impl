@@ -1,4 +1,4 @@
-#include "../src/common/YkTimingWatchdog.hpp"
+#include "common/YkTimingWatchdog.hpp"
 #include "LiveView.hpp"
 #include "RelativeGeometry.hpp"
 #include "ParameterPanel.hpp"

@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.24)
 project(multispectrum_sim LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(BUILD_VTK_VISUALIZATION "构建多能前投实时 VTK 显示层" OFF)
+option(BUILD_IMGUI_GUI "构建 Windows ImGui/VTK 多能前投界面" OFF)
+if(BUILD_IMGUI_GUI AND NOT BUILD_VTK_VISUALIZATION)
+    message(FATAL_ERROR "BUILD_IMGUI_GUI requires BUILD_VTK_VISUALIZATION=ON")
+endif()
+if(BUILD_VTK_VISUALIZATION)
+    add_subdirectory(visualization)
+endif()
 option(MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER
     "Build the optional experimental CUDA adaptive scatter solver plugin" OFF)
 if(MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER)
@@ -68,6 +76,13 @@ if(TARGET YKCBCT)
         target_sources(multispectrum_sim PRIVATE src/InteractiveProjection.cpp)
         target_link_libraries(multispectrum_sim PRIVATE ykcbct_visualization)
         target_compile_definitions(multispectrum_sim PRIVATE YK_SPECTRAL_VTK=1)
+        if(WIN32)
+            add_custom_command(TARGET multispectrum_sim POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_RUNTIME_DLLS:multispectrum_sim>
+                    $<TARGET_FILE_DIR:multispectrum_sim>
+                COMMAND_EXPAND_LISTS)
+        endif()
         if(TARGET yk_imgui)
             target_sources(multispectrum_sim PRIVATE src/ImGuiProjection.cpp src/ProjectionUiConfig.cpp src/DisplayGeometry.cpp src/ReconstructionDisplay.cpp)
             target_link_libraries(multispectrum_sim PRIVATE yk_imgui comdlg32)
@@ -77,6 +92,8 @@ if(TARGET YKCBCT)
     # Refresh the runtime even when DLL exports/import-library contents do not
     # change and Ninja correctly leaves the executable itself untouched.
     add_custom_target(multispectrum_runtime_sync
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:multispectrum_sim>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:YKCBCT> $<TARGET_FILE_DIR:multispectrum_sim>
         DEPENDS YKCBCT)

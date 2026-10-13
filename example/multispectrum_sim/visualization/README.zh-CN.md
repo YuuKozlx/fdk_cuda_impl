@@ -4,7 +4,7 @@
 
 ## 构建与使用
 
-在现有主工程配置中增加 `-DBUILD_VTK_VISUALIZATION=ON -DVTK_DIR=<VTK CMake 包目录>`，保持 `BUILD_MULTISPECTRUM_SIM=ON`，然后构建 `multispectrum_sim`。`BUILD_VTK_VIEWER` 是独立工具开关，不影响实时显示。
+在现有主工程配置中增加 `-DBUILD_VTK_VISUALIZATION=ON -DYKCBCT_VTK_ROOT=<原生 VTK SDK 根目录>`，保持 `BUILD_MULTISPECTRUM_SIM=ON`，然后构建 `multispectrum_sim`。SDK 根目录应直接包含 `include/`、`lib/` 和 `bin/`；也可通过同名环境变量提供。当前验证使用 `F:/docker-mcgpu/mcgpu-modern/deploy/windows-x64-md-release` 中的 VTK 9.6.2、MSVC 19.44、Release/MD C++ SDK，不需要 Python 或 wheel。Windows 构建会把目标依赖的 VTK DLL 复制到 `multispectrum_sim.exe` 所在目录，无需额外配置 Python 环境。`BUILD_VTK_VIEWER` 是独立工具开关，不影响实时显示。
 
 在多能前投 TOML 中增加：
 
@@ -56,9 +56,10 @@ hold_open = true
 以本目录独立配置：
 
 ```powershell
-cmake -S visualization -B out/build/vtk-live -G Ninja `
+cmake -S example/multispectrum_sim/visualization -B out/build/vtk-live -G Ninja `
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86 `
-  -DBUILD_VTK_VISUALIZATION_TESTS=ON -DVTK_DIR=<VTK CMake 包目录>
+  -DBUILD_VTK_VISUALIZATION_TESTS=ON `
+  -DYKCBCT_VTK_ROOT=F:/docker-mcgpu/mcgpu-modern/deploy/windows-x64-md-release
 cmake --build out/build/vtk-live
 out/build/vtk-live/spectral_live_test.exe out/live-checks
 ```
