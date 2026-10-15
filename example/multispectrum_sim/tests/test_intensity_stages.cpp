@@ -54,6 +54,45 @@ struct Data {
 };
 void test(Location location)
 {
+    // Independent affine oracle over configurable reference anchors and values
+    // spanning air, water, bone and values outside the calibrated interval.
+    for (double waterMu : { .01, .02, .04 })
+        for (double airMu : { 0., .0001 })
+            for (double waterHu : { 0., 30. }) {
+                MuHuReference ref { waterMu, airMu, waterHu, -1000 };
+                std::vector<float> source;
+                for (int k = 0; k < 513; ++k)
+                    source.push_back(float(airMu + (waterMu - airMu) * (-.2 + 3.4 * k / 512)));
+                Data d(source, Domain::AttenuationMmInv);
+                Pipeline toHu;
+                toHu.append(makeMuToHuStage(ref, location));
+                toHu.run(d.volume, d.context);
+                d.download();
+                for (size_t k = 0; k < source.size(); ++k) {
+                    double expected = -1000 + (source[k] - airMu) * (waterHu + 1000) / (waterMu - airMu);
+                    require(std::abs(d.volume.host_data[k] - expected) < .0005, "reference matrix forward mismatch");
+                }
+                Pipeline toMu;
+                toMu.append(makeHuToMuStage(ref, location));
+                toMu.run(d.volume, d.context);
+                d.download();
+                for (size_t k = 0; k < source.size(); ++k)
+                    require(std::abs(d.volume.host_data[k] - source[k]) < 2e-8, "reference matrix roundtrip mismatch");
+            }
+    for (double air : { -1200., -900., -500. })
+        for (double water : { -100., 0., 200. }) {
+            auto fit = fitAirWaterHu(air, water);
+            Data d({ float(air), float(water), float((air + water) / 2) }, Domain::HounsfieldUnits);
+            Pipeline p;
+            p.append(makeHuCorrectionStage(fit.coefficients, location));
+            p.run(d.volume, d.context);
+            d.download();
+            for (int k = 0; k < 3; ++k)
+                require(std::abs(d.volume.host_data[k] - (k == 0 ? -1000 : k == 1 ? 0
+                                                                                  : -500))
+                        < .0002,
+                    "calibration matrix anchor mismatch");
+        }
     const MuHuReference reference { .025, .0001, 20, -980 };
     std::vector<float> original = { -.01f, 0.f, .0001f, .01255f, .025f, .05f };
     Data conversion(original, Domain::AttenuationMmInv);
@@ -187,6 +226,31 @@ void test(Location location)
         double hu = 1000 * (double(i ? .02f : .002f) / .02 - 1), mu = .02 * ((1.1 * hu + 15) / 1000 + 1);
         require(std::abs(full.volume.host_data[i] - mu) < 1.e-8, "full HU correction chain value wrong");
     }
+    // Thresholds without labels generate stable interval IDs, including the
+    // immediately adjacent float values on either side of an exact threshold.
+    Data boundary({ std::nextafter(200.f, -INFINITY), 200.f,
+                      std::nextafter(200.f, INFINITY) },
+        Domain::HounsfieldUnits);
+    Pipeline automaticLabels;
+    automaticLabels.append(makeHuThresholdStage({ { 200 }, {} }, location));
+    automaticLabels.run(boundary.volume, boundary.context);
+    boundary.download();
+    require(boundary.volume.host_data[0] == 0 && boundary.volume.host_data[1] == 1 && boundary.volume.host_data[2] == 1, "adjacent threshold values classified incorrectly");
+    Data nanLabels({ 3, std::numeric_limits<float>::quiet_NaN() }, Domain::HounsfieldUnits);
+    rejects([&] { automaticLabels.run(nanLabels.volume, nanLabels.context); });
+    nanLabels.download();
+    require(nanLabels.volume.host_data[0] == 3 && nanLabels.volume.domain == Domain::HounsfieldUnits,
+        "failed segmentation published partial labels");
+    for (const auto roi : { CalibrationRoi { { -1, 0, 0 }, { 1, 1, 1 } },
+             CalibrationRoi { { 0, 0, 0 }, { 0, 1, 1 } },
+             CalibrationRoi { { 0, 0, 0 }, { 5, 1, 1 } } }) {
+        Data invalidRoi(measured, Domain::HounsfieldUnits);
+        invalidRoi.volume.grid.dimensions = { 4, 2, 1 };
+        Pipeline p;
+        p.append(makeAirWaterHuCalibrationStage(roi, water, result, {}, location));
+        rejects([&] { p.run(invalidRoi.volume, invalidRoi.context); });
+        require(!result->valid, "invalid ROI retained stale calibration");
+    }
     std::cout << (location == Location::Host ? "CPU" : "CUDA") << " intensity stages passed\n";
 }
 int main()
@@ -206,6 +270,13 @@ int main()
         rejects([] { makeHuThresholdStage({ {}, { { 16777217, "too large" } } }, Location::Host); });
         rejects([] { fitAirWaterHu(0, 0); });
         rejects([] { fitAirWaterHu(10, 0); });
+        rejects([] { fitAirWaterHu(-900, -899.5); });
+        require(fitAirWaterHu(-900, -899).valid, "minimum HU gap rejected");
+        rejects([] { fitAirWaterHu(NAN, 0); });
+        rejects([] { fitAirWaterHu(-1000, INFINITY); });
+        rejects([] { fitAirWaterHu(-1000, 0, { 0, -1000, 1 }); });
+        rejects([] { makeHuThresholdStage({ { NAN }, {} }, Location::Host); });
+        rejects([] { makeHuThresholdStage({ { 1 }, { { 2, "a" }, { 2, "b" } } }, Location::Host); });
         auto nonstandard = fitAirWaterHu(-800, 200, { -950, 50, 1 });
         require(nonstandard.coefficients.scale == 1 && nonstandard.coefficients.offset == -150, "custom calibration targets ignored");
         for (const auto& p : intensityPluginDescriptions())
