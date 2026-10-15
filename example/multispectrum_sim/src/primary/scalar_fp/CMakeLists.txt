@@ -1,0 +1,8 @@
+add_library(multispectrum_scalar_fp STATIC Geometry.cpp Launch.cu)
+target_include_directories(multispectrum_scalar_fp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../../include")
+target_link_libraries(multispectrum_scalar_fp PUBLIC CUDA::cudart)
+target_compile_features(multispectrum_scalar_fp PUBLIC cxx_std_17)
+set_property(TARGET multispectrum_scalar_fp PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+if(MSVC)
+    target_compile_options(multispectrum_scalar_fp PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8> $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+endif()
