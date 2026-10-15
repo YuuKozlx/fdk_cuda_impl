@@ -1,5 +1,5 @@
 #pragma once
-#include "SpectralTransport.cuh"
+#include "MaterialPaths.cuh"
 
 namespace yk::spectral::primary_detail {
 // One central ray and one Siddon material traversal per detector pixel.
@@ -9,7 +9,7 @@ __global__ void idealBoneCorrectionKernel(DeviceGeometry g,
     const unsigned char* labels, const int* map, const double* mu,
     const double* weights, const double* mono_mu, const double* coefficients,
     int coefficient_count, double low, double high, int first_view,
-    const float* measured, float* corrected, float* residual)
+    const float* measured, float* corrected, float* residual, float* model_poly = nullptr)
 {
     const int pixel = int(blockIdx.x) * int(blockDim.x) + int(threadIdx.x);
     const int pixels = g.nu * g.nv;
@@ -36,7 +36,7 @@ __global__ void idealBoneCorrectionKernel(DeviceGeometry g,
         transmission += weights[e] * exp(-exponent);
     }
     const double poly = -log(fmax(transmission, 1e-30));
-    double water = 0;
+    double water = coefficient_count == 0 ? poly : 0;
     for (int j = coefficient_count - 1; j >= 0; --j)
         water = __dadd_rn(__dmul_rn(water, poly), coefficients[j]);
     water = fmin(fmax(water, low), high);
@@ -44,5 +44,7 @@ __global__ void idealBoneCorrectionKernel(DeviceGeometry g,
     const float delta = float(mono - water);
     residual[index] = delta;
     corrected[index] = measured[index] + delta;
+    if (model_poly)
+        model_poly[index] = float(poly);
 }
 } // namespace yk::spectral::primary_detail

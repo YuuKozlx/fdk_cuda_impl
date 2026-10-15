@@ -7,6 +7,9 @@
 #include "SpectralModel.hpp"
 #include "XcomAttenuationProvider.hpp"
 #include "ProjectionSimulator.hpp"
+#ifdef YK_MULTISPECTRUM_CUDA_PRIMARY
+#include "recon/bhc/BoneBhcStage.hpp"
+#endif
 #include <iomanip>
 #include <iostream>
 #include <filesystem>
@@ -55,6 +58,12 @@ int main(int argc, char** argv)
 
     try {
         const auto total_start = std::chrono::steady_clock::now();
+#ifdef YK_MULTISPECTRUM_CUDA_PRIMARY
+        if (argc == 3 && std::string_view(argv[1]) == "--bone-bhc") {
+            yk::spectral::bone_bhc::runBoneBhcJob(std::filesystem::u8path(argv[2]));
+            return 0;
+        }
+#endif
         if (argc == 2 && std::string_view(argv[1]) == "--list-materials") {
             listBuiltinMaterials();
             return 0;
@@ -89,6 +98,7 @@ int main(int argc, char** argv)
             std::cerr << "用法: multispectrum_sim <config.toml>\n"
                 << "   或: multispectrum_sim --validate-config <config.toml>\n"
                 << "   或: multispectrum_sim --profile-preprocess <config.toml>\n"
+                << "   或: multispectrum_sim --bone-bhc <job.json> (CUDA build)\n"
                 << "   或: multispectrum_sim --export-spectrum <config.toml> <output.spec>\n"
                 << "   或: multispectrum_sim --gui [config.toml] (ImGui build)\n"
                 << "   或: multispectrum_sim --list-materials\n"

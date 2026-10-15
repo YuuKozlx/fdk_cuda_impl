@@ -54,7 +54,7 @@ void selfTest()
     DeviceBuffer<unsigned char> labels(64);
     DeviceBuffer<int> device_map(256);
     DeviceBuffer<double> device_mu(6), device_mono(3), device_weights(2), device_coefficients(3);
-    DeviceBuffer<float> measured(3), corrected(3), residual(3);
+    DeviceBuffer<float> measured(3), corrected(3), residual(3), model_poly(3);
     device_map.upload(map.data(), 256);
     device_mu.upload(mu, 6);
     device_mono.upload(mono, 3);
@@ -85,8 +85,18 @@ void selfTest()
         const double expected = .15 * water_path + .4 * bone_path - (.05 + 1.1 * p + .02 * p * p);
         if (std::abs(delta[1] - expected) > 2e-6 || std::abs(result[1] - (5 + expected)) > 2e-6)
             throw std::runtime_error("Ideal bone correction CUDA/analytic mismatch, test=" + std::to_string(test));
+        detail::idealBoneCorrectionKernel<<<1, 32>>>(g, labels.data, device_map.data, device_mu.data,
+            device_weights.data, device_mono.data, nullptr, 0, -100, 100, 0,
+            measured.data, corrected.data, residual.data, model_poly.data);
+        checkCuda(cudaGetLastError());
+        float model[3];
+        checkCuda(cudaMemcpy(result, corrected.data, sizeof(result), cudaMemcpyDeviceToHost));
+        checkCuda(cudaMemcpy(model, model_poly.data, sizeof(model), cudaMemcpyDeviceToHost));
+        if (std::abs(model[1] - p) > 2e-6 ||
+            std::abs(result[1] - (5 + .15 * water_path + .4 * bone_path - p)) > 2e-6)
+            throw std::runtime_error("iBHC uncorrected-log CUDA/analytic mismatch");
     }
-    std::cout << "singlepass_tests=4 passed (air, water, bone, mixed; nonlinear water polynomial)\n";
+    std::cout << "singlepass_tests=8 passed (air, water, bone, mixed; water polynomial and raw-log iBHC)\n";
 }
 int main(int argc, char** argv)
 {

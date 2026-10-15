@@ -2,6 +2,16 @@ cmake_minimum_required(VERSION 3.24)
 project(multispectrum_sim LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_library(multispectrum_bone_bhc STATIC src/recon/bhc/BoneBhcStage.cpp)
+target_include_directories(multispectrum_bone_bhc PUBLIC include)
+if(MSVC)
+    target_compile_options(multispectrum_bone_bhc PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
+endif()
+if(BUILD_TESTING)
+    add_executable(multispectrum_bone_bhc_test tests/test_bone_bhc.cpp)
+    target_link_libraries(multispectrum_bone_bhc_test PRIVATE multispectrum_bone_bhc)
+    add_test(NAME multispectrum_bone_bhc COMMAND multispectrum_bone_bhc_test "${CMAKE_CURRENT_BINARY_DIR}/bone-bhc-tests")
+endif()
 option(BUILD_VTK_VISUALIZATION "构建多能前投实时 VTK 显示层" OFF)
 option(BUILD_IMGUI_GUI "构建 Windows ImGui/VTK 多能前投界面" OFF)
 if(BUILD_IMGUI_GUI AND NOT BUILD_VTK_VISUALIZATION)
@@ -47,7 +57,7 @@ target_include_directories(nist_xcom_core PUBLIC "${SPECTRAL_XCOM_ROOT}")
 target_compile_definitions(nist_xcom_core PUBLIC XCOM_C_API_STATIC)
 add_executable(multispectrum_sim app/main.cpp src/SimLogger.cpp src/config/SimConfig.cpp src/SpectralModel.cpp src/FasksRuntimeModel.cpp src/XcomAttenuationProvider.cpp src/ProjectionSimulator.cpp)
 target_include_directories(multispectrum_sim PRIVATE
-    include "${SPECTRAL_XCOM_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
+    include src "${SPECTRAL_XCOM_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../src/util")
 target_link_libraries(multispectrum_sim PRIVATE nist_xcom_core)
@@ -58,6 +68,7 @@ endif()
 # 在线多能谱前投由示例自身的 CUDA kernel 完成；YKCBCT DLL 只提供重建后端。
 if(TARGET YKCBCT)
     target_sources(multispectrum_sim PRIVATE
+        src/recon/bhc/BoneBhcJob.cpp
         src/LibraryGeometry.cpp src/LibraryReconstructor.cpp src/ReconstructionPreprocessor.cpp
         src/recon/postprocess/PostprocessPipeline.cpp src/recon/postprocess/OutputStages.cpp
         src/recon/preprocess/ProjectionCache.cpp
@@ -69,6 +80,7 @@ if(TARGET YKCBCT)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
     target_link_libraries(multispectrum_sim PRIVATE YKCBCT)
+    target_link_libraries(multispectrum_sim PRIVATE multispectrum_bone_bhc)
     target_link_libraries(multispectrum_sim PRIVATE CUDA::cufft)
     target_compile_definitions(multispectrum_sim PRIVATE
         YK_MULTISPECTRUM_CUDA_PRIMARY=1)
@@ -457,6 +469,10 @@ if(TARGET YKCBCT)
     target_link_libraries(multispectrum_bone_bhc_singlepass PRIVATE
         nist_xcom_core spek_spectrum::core multispectrum_device_pool CUDA::cudart)
     set_property(TARGET multispectrum_bone_bhc_singlepass PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    if(BUILD_TESTING)
+        add_dependencies(multispectrum_bone_bhc_test multispectrum_bone_bhc_singlepass)
+        add_test(NAME multispectrum_bone_bhc_physics COMMAND multispectrum_bone_bhc_singlepass --self-test)
+    endif()
     if(MSVC)
         target_compile_options(multispectrum_bone_bhc_singlepass PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:/utf-8> $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
@@ -516,6 +532,13 @@ if(TARGET YKCBCT)
     add_library(multispectrum_two_material_bhc STATIC src/recon/preprocess/correction/TwoMaterialBhcStage.cu)
     target_include_directories(multispectrum_two_material_bhc PUBLIC include)
     target_link_libraries(multispectrum_two_material_bhc PUBLIC multispectrum_two_material_calibration multispectrum_device_pool CUDA::cudart)
+    target_sources(multispectrum_bone_bhc PRIVATE src/recon/bhc/BoneBhcAlgorithms.cu)
+    target_include_directories(multispectrum_bone_bhc PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/nlohmann/include")
+    target_link_libraries(multispectrum_bone_bhc PUBLIC multispectrum_two_material_bhc multispectrum_device_pool CUDA::cudart)
+    set_property(TARGET multispectrum_bone_bhc PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    if(MSVC)
+        target_compile_options(multispectrum_bone_bhc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
+    endif()
     set_property(TARGET multispectrum_two_material_bhc PROPERTY CUDA_RUNTIME_LIBRARY Shared)
     add_executable(multispectrum_bone_bhc_2dcal EXCLUDE_FROM_ALL
         app/experiments/TwoMaterialBoneCorrection.cu src/config/SimConfig.cpp src/config/SpectrumSource.cpp
