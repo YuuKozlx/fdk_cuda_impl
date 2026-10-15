@@ -1,0 +1,2 @@
+#pragma once
+#define QUICK_PLOT_GNUPLOT R"(@GNUPLOT_EXECUTABLE@)"
