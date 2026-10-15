@@ -224,6 +224,124 @@ void boneWindowComparison(const fs::path& dir, const std::array<int, 3>& dims,
 int main(int argc, char** argv)
 {
     try {
+        if(argc==3 && std::string(argv[1])=="--low-al-curves") {
+            const fs::path root=argv[2];
+            const auto ref=readJson(root/"analytic-reference.json");
+            const auto fit=readJson(root/"fitted-segmentation/fit.json");
+            const auto weights=ref.at("energy_weights").get<std::vector<double>>();
+            const auto mu1=ref.at("first").at("mu_mm").get<std::vector<double>>();
+            const auto mu2=ref.at("second").at("mu_mm").get<std::vector<double>>();
+            const auto coef=fit.at("coefficients_a_b_c_d_f").get<std::vector<double>>();
+            auto analytic=[&](double pmma,double al){double sum=0;for(size_t e=0;e<weights.size();++e)sum+=weights[e]*std::exp(-mu1[e]*pmma-mu2[e]*al);return -std::log(sum);};
+            auto empirical=[&](double pmma,double al){return -std::log(coef[0]*std::exp(-coef[1]*pmma-coef[2]*al)+(1-coef[0])*std::exp(-coef[3]*pmma-coef[4]*al));};
+            std::ofstream csv(root/"low-al-curves.csv");csv.precision(12);csv<<"pmma_mm,al_mm,analytic_p,fitted_p,difference\n";
+            auto fig=matplot::figure(true);fig->size(1800,1000);
+            int column=0;
+            for(double pmma:{0.,50.,150.}){
+                std::vector<double> length,truth,estimate,error,zero;
+                for(int i=0;i<=500;++i){const double al=i*.02,pa=analytic(pmma,al),pf=empirical(pmma,al);
+                    length.push_back(al);truth.push_back(pa);estimate.push_back(pf);error.push_back(pf-pa);zero.push_back(0);
+                    csv<<pmma<<','<<al<<','<<pa<<','<<pf<<','<<pf-pa<<'\n';}
+                auto ax=matplot::subplot(2,3,column);ax->font_size(12);
+                auto p1=matplot::plot(length,truth,"-");p1->color("blue");p1->line_width(2);p1->display_name("Analytic spectrum");matplot::hold(matplot::on);
+                auto p2=matplot::plot(length,estimate,"--");p2->color("red");p2->line_width(2);p2->display_name("Phantom fit");
+                matplot::legend();matplot::xlabel("Al thickness L (mm)");matplot::ylabel("p = -ln(I/I0)");matplot::xlim({0,10});
+                matplot::title("PMMA = "+std::to_string(int(pmma))+" mm / total p");
+                auto below=matplot::subplot(2,3,column+3);below->font_size(12);
+                matplot::plot(length,error)->color("red");matplot::hold(matplot::on);matplot::plot(length,zero,"k--");
+                matplot::xlabel("Al thickness L (mm)");matplot::ylabel("Fitted p - analytic p");matplot::xlim({0,10});matplot::ylim({-.022,.004});
+                matplot::title("Absolute log-projection difference");++column;
+            }
+            save(root/"low-al-pl-comparison.png");
+            auto zoom=matplot::figure(true);zoom->size(1200,760);
+            std::vector<double> length,truth,estimate;
+            for(int i=0;i<=200;++i){const double al=i*.005;length.push_back(al);truth.push_back(analytic(0,al));estimate.push_back(empirical(0,al));}
+            auto p1=matplot::plot(length,truth,"-");p1->color("blue");p1->line_width(2);p1->display_name("Analytic spectrum");matplot::hold(matplot::on);
+            auto p2=matplot::plot(length,estimate,"--");p2->color("red");p2->line_width(2);p2->display_name("Phantom fit");matplot::legend();
+            matplot::xlabel("Al thickness L (mm)");matplot::ylabel("p = -ln(I/I0)");matplot::title("Thin Al zoom: 0-1 mm, PMMA = 0 mm");
+            save(root/"low-al-pl-zoom.png");return 0;
+        }
+        if(argc==4 && std::string(argv[1])=="--calibration-error") {
+            const auto m=readJson(argv[2]);
+            const auto x=m.at("x_mm").get<std::vector<std::vector<double>>>();
+            const auto y=m.at("y_mm").get<std::vector<std::vector<double>>>();
+            auto f=matplot::figure(true);f->size(1550,720);
+            for(int i=0;i<2;++i){auto ax=matplot::subplot(1,2,i);ax->font_size(12);
+                const auto z=m.at(i?"correction_error":"response_error").get<std::vector<std::vector<double>>>();
+                matplot::contourf(x,y,z,25);matplot::colorbar();ax->color_box_range(-.02,.02);
+                matplot::xlabel("PMMA thickness (mm)");matplot::ylabel("Al thickness (mm)");
+                matplot::title(i?"Correction error: same linear target":"Fitted minus spectral log response");
+            }
+            save(fs::absolute(argv[3]));return 0;
+        }
+        if(argc==4 && std::string(argv[1])=="--calibration-coverage") {
+            const auto report=readJson(argv[2]);
+            auto f=matplot::figure(true);f->size(1550,720);
+            for(int panel=0;panel<2;++panel){
+                auto ax=matplot::subplot(1,2,panel);ax->font_size(12);
+                const auto h=report.at(panel?"counts_training":"counts_all").get<std::vector<std::vector<int>>>();
+                std::vector<double> x,y,c,emptyX,emptyY;
+                for(size_t b=0;b<h.size();++b)for(size_t w=0;w<h[b].size();++w){
+                    if(h[b][w]){x.push_back((w+.5)*5);y.push_back((b+.5)*2);c.push_back(std::log10(h[b][w]));}
+                    else{emptyX.push_back((w+.5)*5);emptyY.push_back((b+.5)*2);}
+                }
+                auto points=matplot::scatter(x,y,7,c);points->marker("s");points->marker_face(true);
+                matplot::hold(matplot::on);
+                if(!emptyX.empty()){auto holes=matplot::scatter(emptyX,emptyY,5);holes->marker("x");holes->marker_color("red");}
+                ax->color_box_range(0,5);
+                matplot::colorbar();matplot::xlim({0,225});matplot::ylim({0,52});
+                matplot::xlabel("PMMA path (mm)");matplot::ylabel("Al path (mm)");
+                matplot::title(panel?"Training views: log10(count), red X = empty":"All views: log10(count), red X = empty");
+            }
+            save(fs::absolute(argv[3]));return 0;
+        }
+        if (argc == 4 && std::string(argv[1]) == "--calibration-map") {
+            const auto m=readJson(argv[2]);
+            const int columns=m.at("projection_columns");
+            const double boneStep=m.at("bone_step_mm"),muW=m.at("target_water_mu_mm"),muB=m.at("target_bone_mu_mm");
+            const auto values=m.at("target_log").get<std::vector<double>>();
+            const auto minimum=m.at("minimum_log").get<std::vector<double>>();
+            const auto step=m.at("log_step").get<std::vector<double>>();
+            const double xmax=(values[columns-1]-values[0])/muW;
+            const double ymax=(minimum.size()-1)*boneStep;
+            // Recover the calibrated response from the stored monotone inverse table.
+            auto response=[&](double water,double bone){
+                const int row=int(std::lround(bone/boneStep));const double target=muW*water+muB*bone;
+                auto begin=values.begin()+size_t(row)*columns;
+                const int k=std::clamp(int(std::upper_bound(begin,begin+columns,target)-begin)-1,0,columns-2);
+                return minimum[row]+step[row]*(k+(target-begin[k])/(begin[k+1]-begin[k]));
+            };
+            std::vector<std::vector<double>> x(41,std::vector<double>(61)),y=x,poly=x,delta=x;
+            for(int b=0;b<41;++b)for(int w=0;w<61;++w){
+                x[b][w]=w*xmax/60.;y[b][w]=b*ymax/40.;poly[b][w]=response(x[b][w],y[b][w]);
+                delta[b][w]=muW*x[b][w]+muB*y[b][w]-poly[b][w];
+            }
+            auto f=matplot::figure(true);f->size(1500,660);
+            for(int i=0;i<2;++i){auto ax=matplot::subplot(1,2,i);ax->font_size(13);
+                matplot::contourf(x,y,i?delta:poly,20);matplot::colorbar();
+                matplot::xlabel("First-material thickness (mm)");matplot::ylabel("Second-material thickness (mm)");
+                matplot::title(i?"Linear target minus polychromatic log projection":"Calibrated polychromatic log projection");
+            }
+            save(fs::absolute(argv[3]));return 0;
+        }
+        if(argc==3 && std::string(argv[1])=="--phantom-profiles") {
+            const fs::path root=argv[2];const std::array<int,3> dims={320,320,32};
+            const auto before=readSlice<float>(root/"uncorrected.raw",dims);
+            const auto after=readSlice<float>(root/"corrected.raw",dims);
+            const auto fit=readJson(root/"applied/calibration.json");
+            const double pmma=fit.at("target_water_mu_mm");
+            std::vector<double> x,a,b,ideal;
+            // Average a narrow central band to expose cupping without image filtering.
+            for(int u=15;u<225;++u){double va=0,vb=0;for(int y=155;y<165;++y){va+=before[y*320+u];vb+=after[y*320+u];}
+                x.push_back(u-159.5);a.push_back(va/10);b.push_back(vb/10);ideal.push_back(pmma);}
+            auto f=matplot::figure(true);f->size(1200,700);
+            matplot::plot(x,a)->display_name("Uncorrected polychromatic / FDK");matplot::hold(matplot::on);
+            matplot::plot(x,b)->display_name("Loaded empirical table / FDK");
+            matplot::plot(x,ideal,"--")->display_name("Fitted zero-thickness PMMA slope");
+            matplot::legend();matplot::xlabel("x (mm)");matplot::ylabel("Reconstructed coefficient (1/mm)");
+            matplot::title("PMMA profile: empirical PMMA/Al calibration; no assigned mono energy");
+            save(root/"pmma-profile.png");return 0;
+        }
         if (argc == 4 && std::string(argv[1]) == "--label-overview") {
             const fs::path input(argv[2]);
             const auto bytes = fs::file_size(input);
