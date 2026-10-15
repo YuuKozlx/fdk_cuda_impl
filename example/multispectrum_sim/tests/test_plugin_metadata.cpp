@@ -38,7 +38,7 @@ int main()
             require(ids.insert(info.id).second, "duplicate built-in ID");
             require(findBuiltinPluginInfo(info.id) == &info, "catalog lookup mismatch");
         }
-        require(ids.size() == 55, "missing built-in descriptors");
+        require(ids.size() == 57, "missing built-in descriptors");
         require(builtinPluginInfo(BuiltinPlugin::MultiSpecFp).id=="projection.source.multi_spec_fp", "multi-spectrum source ID mismatch");
         require(!findBuiltinPluginInfo("unknown"), "unknown catalog ID found");
         const auto& bhc = builtinPluginInfo(BuiltinPlugin::Bhc);

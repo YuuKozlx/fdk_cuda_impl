@@ -1,6 +1,8 @@
 #pragma once
 #include "recon/bhc/BoneBhcStage.hpp"
 #include "PluginInfo.hpp"
+#include "recon/postprocess/stages/correction/EmpiricalBoneCorrection.hpp"
+#include "recon/preprocess/correction/EmpiricalBhcStage.hpp"
 #include "recon/preprocess/correction/TwoMaterialBhcStage.hpp"
 #include "image/ImagePluginInfo.hpp"
 #include "recon/postprocess/stages/IntensityPluginInfo.hpp"
@@ -67,6 +69,8 @@ inline const std::vector<PluginInfo>& builtinPluginDescriptions()
             PluginKind::ProjectionSource, "forward_projection", { "spectral", "source", "batch" },
             { { "rays_per_pixel", "Rays per pixel", "Monte Carlo ray samples per detector pixel.", ParameterType::Integer, "1" } });
         result.push_back(preprocess::twoMaterialBhcInfo());
+        result.push_back(preprocess::empiricalBhcInfo());
+        result.push_back(postprocess::ebhcVolumeInfo());
         result.push_back(bone_bhc::boneBhcInfo());
         const auto& images=image::pluginDescriptions();
         result.insert(result.end(),images.begin(),images.end());
