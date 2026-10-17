@@ -213,9 +213,21 @@ struct LiveView::Impl {
     vtkNew<vtkImageActor> sagittal_actor;
     vtkNew<vtkImageData> sagittal_image;
     vtkNew<vtkTextActor> sagittal_title;
+    vtkNew<vtkRenderer> oblique_renderer;
+    vtkNew<vtkImageActor> oblique_actor;
+    vtkNew<vtkImageData> oblique_image;
+    vtkNew<vtkTextActor> oblique_title;
     FloatVolume reconstruction;
+    MprReslicer reslicer;
+    MprSettings mpr;
+    std::array<MprPlane,4> mpr_planes;
+    std::array<FloatSlice,4> mpr_slices;
+    bool mpr_dirty=true,reconstruction_workspace=false;
+    int single_mpr_panel=-1;
+    std::array<vtkRenderer*,4> mprRenderers() const {return {axial_renderer,coronal_renderer,sagittal_renderer,oblique_renderer};}
     std::array<int,3> reconstruction_slices{};
     std::array<double,2> reconstruction_window{};
+    std::array<double,2> reconstruction_auto_window{}; // Cached in original attenuation units.
     bool reconstruction_shown=false;
     double water_reference_mm_inv=0;
     vtkNew<vtkImageActor> energy_actor, attenuation_actor;
@@ -280,6 +292,12 @@ struct LiveView::Impl {
         window->AddRenderer(attenuation_renderer);
         window->AddRenderer(sagittal_renderer);
         window->AddRenderer(axial_renderer);window->AddRenderer(coronal_renderer);
+        window->AddRenderer(oblique_renderer);
+        oblique_renderer->SetBackground(.035,.045,.06);oblique_renderer->SetInteractive(false);oblique_renderer->DrawOff();
+        oblique_renderer->GetActiveCamera()->ParallelProjectionOn();
+        oblique_renderer->AddActor(oblique_actor);oblique_renderer->AddViewProp(oblique_title);
+        oblique_title->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        oblique_title->SetPosition(.03,.90);oblique_title->GetTextProperty()->SetFontSize(18);
         axial_renderer->SetBackground(.075,.10,.145);coronal_renderer->SetBackground(.075,.10,.145);
         axial_renderer->AddActor(axial_actor);coronal_renderer->AddActor(coronal_actor);
         axial_renderer->AddViewProp(axial_title);coronal_renderer->AddViewProp(coronal_title);
@@ -463,8 +481,8 @@ struct LiveView::Impl {
             title->SetInput((std::string(name) + " (not provided)").c_str());
             return;
         }
-        auto rgb = gray(values);
-        if(white>black){for(size_t i=0;i<values.size();++i){const auto value=static_cast<unsigned char>(std::clamp((double(values[i])-black)/(white-black),0.,1.)*255.);
+        auto rgb = white>black?std::vector<unsigned char>(values.size()*3):gray(values);
+        if(white>black){for(size_t i=0;i<values.size();++i){const auto value=static_cast<unsigned char>(std::isfinite(values[i])?std::clamp((double(values[i])-black)/(white-black),0.,1.)*255.:0);
             rgb[i*3]=rgb[i*3+1]=rgb[i*3+2]=value;}}
         image->SetSpacing(spacing[0],spacing[1],1);
         image->SetDimensions(w, h, 1);
@@ -478,40 +496,62 @@ struct LiveView::Impl {
         c->SetPosition((w - 1) * spacing[0] * .5, (h - 1) * spacing[1] * .5, 1000);
         c->SetFocalPoint((w - 1) * spacing[0] * .5, (h - 1) * spacing[1] * .5, 0);
         c->SetViewUp(0, 1, 0);
-        r->ResetCamera();
+        const auto* viewport=r->GetViewport();const auto* size=window->GetSize();
+        const double aspect=std::max(1.,size[0]*(viewport[2]-viewport[0]))/std::max(1.,size[1]*(viewport[3]-viewport[1]));
+        c->SetParallelScale(1.10*std::max(h*spacing[1]*.5,w*spacing[0]*.5/aspect));
+        r->ResetCameraClippingRange();
         auto range = std::minmax_element(values.begin(), values.end());
         std::ostringstream label;
         label << name << " | " << item << " " << view << "\nrange " << *range.first << " .. " << *range.second;
         title->SetInput(label.str().c_str());
     }
     void layoutResults() {
+        const bool workspace=gui_active&&image_drawer_open&&reconstruction_shown&&reconstruction_workspace;
+        renderer->SetDraw(!workspace);
         if(gui_active)renderer->GetActiveCamera()->SetWindowCenter(image_drawer_open?.5:0,0);
         if(auto* style=SceneStyle::SafeDownCast(interactor->GetInteractorStyle()))style->obstruction_left=gui_active && image_drawer_open?.65:1.;
         if(gui_active && !image_drawer_open){
-            for(auto* r:{energy_renderer.GetPointer(),attenuation_renderer.GetPointer(),axial_renderer.GetPointer(),coronal_renderer.GetPointer(),sagittal_renderer.GetPointer()})r->DrawOff();
+            for(auto* r:{energy_renderer.GetPointer(),attenuation_renderer.GetPointer(),axial_renderer.GetPointer(),coronal_renderer.GetPointer(),sagittal_renderer.GetPointer(),oblique_renderer.GetPointer()})r->DrawOff();
             return;
         }
-        const double right=gui_active?.65:.72;
+        const double right=gui_active?(workspace?.30:.65):.72;
         const auto* size=window->GetSize();
-        const double top=gui_active?std::max(.5,1.-56./std::max(1,size[1])):1.;
+        const double top=gui_active?std::max(.5,1.-90./std::max(1,size[1])):1.;
         energy_renderer->SetViewport(right,top/2,1,top);attenuation_renderer->SetViewport(right,0,1,top/2);
-        const double bottom=gui_active?std::min(.3,166./std::max(1,size[1])):0;
-        const double row=(top-bottom)/3;
-        axial_renderer->SetViewport(right,bottom+2*row,1,top);coronal_renderer->SetViewport(right,bottom+row,1,bottom+2*row);sagittal_renderer->SetViewport(right,bottom,1,bottom+row);
+        const double bottom=gui_active?std::min(.42,354./std::max(1,size[1])):0;
+        const double middle=(top+bottom)*.5,center=(right+1)*.5;
+        axial_renderer->SetViewport(right,middle,center,top);coronal_renderer->SetViewport(center,middle,1,top);
+        sagittal_renderer->SetViewport(right,bottom,center,middle);oblique_renderer->SetViewport(center,bottom,1,middle);
         energy_renderer->SetDraw(!reconstruction_shown);attenuation_renderer->SetDraw(!reconstruction_shown);
         axial_renderer->SetDraw(reconstruction_shown);coronal_renderer->SetDraw(reconstruction_shown);sagittal_renderer->SetDraw(reconstruction_shown);
+        oblique_renderer->SetDraw(reconstruction_shown);
+        if(single_mpr_panel>=0&&single_mpr_panel<4&&reconstruction_shown){
+            const auto panels=mprRenderers();for(int i=0;i<4;++i){panels[i]->SetDraw(i==single_mpr_panel);if(i==single_mpr_panel)panels[i]->SetViewport(right,bottom,1,top);}}
+        const auto panels=mprRenderers();
+        for(int i=0;i<4;++i)if(mpr_slices[i].width>0){const auto* vp=panels[i]->GetViewport();const auto& s=mpr_slices[i];
+            double aspect=std::max(1.,size[0]*(vp[2]-vp[0]))/std::max(1.,size[1]*(vp[3]-vp[1]));
+            panels[i]->GetActiveCamera()->SetParallelScale(1.10*std::max(s.height*s.spacing[1]*.5,s.width*s.spacing[0]*.5/aspect));}
         for(auto* title:{energy_title.GetPointer(),attenuation_title.GetPointer()}){title->SetPosition(.03,.88);title->GetTextProperty()->SetFontSize(20);}
     }
     void reconstructionPanels() {
         if(reconstruction.values.empty() || !reconstruction_shown)return;
-        auto draw=[&](int axis,vtkRenderer* r,vtkImageActor* actor,vtkImageData* image,vtkTextActor* title,const char* name){
-            auto slice=extractFloatSlice(reconstruction,axis,reconstruction_slices[axis]);
+        if(mpr_dirty){
+            for(int i=0;i<4;++i){mpr_planes[i]=makeMprPlane(reconstruction,mpr,i);
+                mpr_slices[i]=i==3||!mprReferenceIsOrthogonal(mpr)?reslicer.slice(mpr_planes[i],mpr.interpolation):extractFloatSlice(reconstruction,i==0?2:i==1?1:0,reconstruction_slices[i==0?2:i==1?1:0]);}
+            mpr_dirty=false;
+        }
+        auto draw=[&](int panel_index,vtkRenderer* r,vtkImageActor* actor,vtkImageData* image,vtkTextActor* title,const char* name){
+            auto slice=mpr_slices[panel_index];
             if(water_reference_mm_inv>0)for(auto& value:slice.values)value=float(attenuationToHu(value,water_reference_mm_inv));
-            const auto caption=std::string(name)+(water_reference_mm_inv>0?" (HU)":" (mm^-1)");
-            panel(r,actor,image,title,slice.values,slice.width,slice.height,caption.c_str(),reconstruction_slices[axis],"slice",slice.spacing,reconstruction_window[0],reconstruction_window[1]);};
-        draw(2,axial_renderer,axial_actor,axial_image,axial_title,"Axial XY");
+            const auto caption=std::string(panel_index<3&&!mprReferenceIsOrthogonal(mpr)?"Linked ":"")+name+(water_reference_mm_inv>0?" (HU)":" (mm^-1)");
+            panel(r,actor,image,title,slice.values,slice.width,slice.height,caption.c_str(),panel_index==3?0:reconstruction_slices[panel_index==0?2:panel_index==1?1:0],panel_index==3?"oblique":"slice",slice.spacing,reconstruction_window[0],reconstruction_window[1]);
+            const auto label=caption+(panel_index==3?"":("  #"+std::to_string(reconstruction_slices[panel_index==0?2:panel_index==1?1:0])));
+            title->SetInput(label.c_str());title->SetPosition(.025,.91);title->GetTextProperty()->SetFontSize(16);
+        };
+        draw(0,axial_renderer,axial_actor,axial_image,axial_title,"Axial XY");
         draw(1,coronal_renderer,coronal_actor,coronal_image,coronal_title,"Coronal XZ");
-        draw(0,sagittal_renderer,sagittal_actor,sagittal_image,sagittal_title,"Sagittal YZ");
+        draw(2,sagittal_renderer,sagittal_actor,sagittal_image,sagittal_title,"Sagittal YZ");
+        draw(3,oblique_renderer,oblique_actor,oblique_image,oblique_title,"Oblique MPR");
     }
     void save()
     {
@@ -683,7 +723,8 @@ void LiveView::invalidateResults()
 {
     auto& p = *impl_;
     p.frames.clear();
-    p.reconstruction.values.clear();p.reconstruction_shown=false;
+    p.reslicer.clear();p.reconstruction.values.clear();p.reconstruction_shown=false;p.mpr_dirty=true;
+    for(auto& s:p.mpr_slices)s={};
     p.axial_actor->VisibilityOff();p.coronal_actor->VisibilityOff();p.sagittal_actor->VisibilityOff();
     p.axial_title->SetInput("Axial XY: run reconstruction");p.coronal_title->SetInput("Coronal XZ: run reconstruction");p.sagittal_title->SetInput("Sagittal YZ: run reconstruction");
     p.layoutResults();
@@ -702,13 +743,15 @@ void LiveView::invalidateResults()
 }
 void LiveView::setReconstruction(FloatVolume volume) {
     validateFloatVolume(volume);
-    auto& p=*impl_;p.water_reference_mm_inv=0;p.reconstruction_window=automaticFloatWindow(volume);
+    auto& p=*impl_;p.water_reference_mm_inv=0;p.reconstruction_auto_window=automaticFloatWindow(volume);p.reconstruction_window=p.reconstruction_auto_window;
+    p.reslicer.clear();p.mpr={};p.mpr_dirty=true;
     for(int i=0;i<3;++i)p.reconstruction_slices[i]=volume.dimensions[i]/2;
-    p.reconstruction=std::move(volume);showReconstruction(true);
+    p.mpr.indices=p.reconstruction_slices;
+    p.reconstruction=std::move(volume);p.reslicer.setInput(p.reconstruction);showReconstruction(true);
 }
 void LiveView::setReconstructionCtReference(double water) {
     if(!std::isfinite(water)||water<=0)throw std::invalid_argument("invalid CT water reference");
-    auto& p=*impl_;const auto window=automaticFloatWindow(p.reconstruction);
+    auto& p=*impl_;const auto window=p.reconstruction_auto_window;
     p.water_reference_mm_inv=water;
     p.reconstruction_window={attenuationToHu(window[0],water),attenuationToHu(window[1],water)};
     p.reconstructionPanels();
@@ -718,17 +761,84 @@ void LiveView::showReconstruction(bool show) {
     auto& p=*impl_;p.reconstruction_shown=show;
     p.layoutResults();
     if(show)p.reconstructionPanels();
-    else{p.axial_actor->VisibilityOff();p.coronal_actor->VisibilityOff();p.sagittal_actor->VisibilityOff();}
+    else{p.axial_actor->VisibilityOff();p.coronal_actor->VisibilityOff();p.sagittal_actor->VisibilityOff();p.oblique_actor->VisibilityOff();}
 
 }
 void LiveView::setImageDrawer(bool open){impl_->image_drawer_open=open;impl_->layoutResults();}
 void LiveView::setReconstructionSlices(const std::array<int,3>& indices) {
     auto& p=*impl_;if(p.reconstruction.values.empty())return;
     for(int i=0;i<3;++i)p.reconstruction_slices[i]=std::clamp(indices[i],0,p.reconstruction.dimensions[i]-1);
+    p.mpr.indices=p.reconstruction_slices;p.mpr_dirty=true;
     p.reconstructionPanels();
+}
+void LiveView::setReconstructionMpr(const MprSettings& settings){
+    auto& p=*impl_;if(p.reconstruction.values.empty())return;
+    if(p.mpr.indices==settings.indices&&p.mpr.rotation_deg==settings.rotation_deg&&p.mpr.offset_mm==settings.offset_mm&&p.mpr.interpolation==settings.interpolation&&p.mpr.reference_axes==settings.reference_axes&&p.mpr.reference_roll_deg==settings.reference_roll_deg)return;
+    makeMprPlane(p.reconstruction,settings,3); // Validate before changing state.
+    for(int i=0;i<3;++i)makeMprPlane(p.reconstruction,settings,i);
+    p.mpr=settings;for(int a=0;a<3;++a)p.mpr.indices[a]=std::clamp(p.mpr.indices[a],0,p.reconstruction.dimensions[a]-1);
+    p.reconstruction_slices=p.mpr.indices;p.mpr_dirty=true;p.reconstructionPanels();
+}
+void LiveView::setReconstructionWorkspace(bool expanded,int single_panel){
+    if(single_panel< -1||single_panel>3)throw std::invalid_argument("Invalid MPR layout");
+    auto& p=*impl_;p.reconstruction_workspace=expanded;p.single_mpr_panel=single_panel;p.layoutResults();
+}
+void LiveView::resetReconstructionWindow(){
+    auto& p=*impl_;if(p.reconstruction.values.empty())return;
+    auto range=p.reconstruction_auto_window;
+    if(p.water_reference_mm_inv>0)for(auto& v:range)v=attenuationToHu(v,p.water_reference_mm_inv);
+    setReconstructionWindow(range[0],range[1]);
+}
+std::array<double,4> LiveView::reconstructionPanelRect(int panel)const{
+    if(panel<0||panel>3)throw std::out_of_range("MPR panel");
+    const auto& p=*impl_;auto* r=p.mprRenderers()[panel];if(!r->GetDraw())return {};
+    const auto* vp=r->GetViewport();const auto* size=p.window->GetSize();
+    return {vp[0]*size[0],(1-vp[3])*size[1],vp[2]*size[0],(1-vp[1])*size[1]};
+}
+std::array<double,2> LiveView::reconstructionCrosshair(int panel)const{
+    if(panel<0||panel>3)throw std::out_of_range("MPR panel");
+    const auto& p=*impl_;const auto& plane=p.mpr_planes[panel];double u=0,v=0;
+    for(int a=0;a<3;++a){double delta=p.mpr.indices[a]*p.reconstruction.spacing[a]-plane.center[a];u+=delta*plane.u[a];v+=delta*plane.v[a];}
+    auto* r=p.mprRenderers()[panel];r->SetWorldPoint(u-plane.start[0],v-plane.start[1],0,1);r->WorldToDisplay();
+    const auto* point=r->GetDisplayPoint();return {point[0],p.window->GetSize()[1]-point[1]};
+}
+std::vector<MprReferenceLine> LiveView::reconstructionReferenceLines(int panel)const{
+    if(panel<0||panel>=3||!hasReconstruction())return {};
+    const auto& active=impl_->mpr_planes[panel];const auto center=reconstructionCrosshair(panel);
+    std::vector<MprReferenceLine> lines;
+    for(int i=0;i<3;++i)if(i!=panel){
+        const auto direction=cross(active.normal,impl_->mpr_planes[i].normal);double x=0,y=0;
+        for(int a=0;a<3;++a){x+=direction[a]*active.u[a];y-=direction[a]*active.v[a];}
+        const double length=std::hypot(x,y);
+        if(length>1e-8)lines.push_back({i,center,{x/length,y/length}});
+    }
+    return lines;
+}
+std::array<double,3> LiveView::reconstructionPlaneNormal(int panel)const{
+    if(panel<0||panel>3)throw std::out_of_range("MPR panel");return impl_->mpr_planes[panel].normal;
+}
+std::optional<std::array<int,3>> LiveView::pickReconstruction(int panel,double x,double y)const{
+    if(panel<0||panel>3||!hasReconstruction())return std::nullopt;
+    const auto& p=*impl_;const auto box=reconstructionPanelRect(panel);
+    if(x<box[0]||x>=box[2]||y<box[1]||y>=box[3])return std::nullopt;
+    auto* r=p.mprRenderers()[panel];r->SetDisplayPoint(x,p.window->GetSize()[1]-y,0);r->DisplayToWorld();
+    const auto* world=r->GetWorldPoint();const auto& plane=p.mpr_planes[panel];
+    const double u=world[0]/world[3]/plane.spacing[0],v=world[1]/world[3]/plane.spacing[1];
+    if(u<0||v<0||u>plane.width-1||v>plane.height-1)return std::nullopt;
+    // Reject clicks in the oblique plane's empty bounding-box corners.
+    for(int a=0;a<3;++a){const double mm=plane.center[a]+plane.u[a]*(plane.start[0]+u*plane.spacing[0])+plane.v[a]*(plane.start[1]+v*plane.spacing[1]);
+        if(mm< -1e-5||mm>(p.reconstruction.dimensions[a]-1)*p.reconstruction.spacing[a]+1e-5)return std::nullopt;}
+    return mprPick(p.reconstruction,plane,u,v);
+}
+std::array<double,3> LiveView::reconstructionCursorWorld()const{return mprWorldPosition(impl_->reconstruction,impl_->mpr.indices);}
+double LiveView::reconstructionCursorValue()const{
+    const auto& p=*impl_;if(p.reconstruction.values.empty())return 0;
+    const auto& i=p.mpr.indices;double value=p.reconstruction.values[(size_t(i[2])*p.reconstruction.dimensions[1]+i[1])*p.reconstruction.dimensions[0]+i[0]];
+    return p.water_reference_mm_inv>0?attenuationToHu(value,p.water_reference_mm_inv):value;
 }
 void LiveView::setReconstructionWindow(double low,double high) {
     if(!std::isfinite(low)||!std::isfinite(high)||high<=low)throw std::invalid_argument("window high must exceed window low");
+    if(impl_->reconstruction_window==std::array<double,2>{low,high})return;
     impl_->reconstruction_window={low,high};impl_->reconstructionPanels();
 }
 std::array<double,2> LiveView::reconstructionWindow()const{return impl_->reconstruction_window;}

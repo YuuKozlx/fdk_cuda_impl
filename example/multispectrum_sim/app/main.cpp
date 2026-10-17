@@ -1,3 +1,5 @@
+#include "examples/DataExamples.hpp"
+#include "io/MatLabelVolume.hpp"
 #include "ReconstructionPreprocessor.hpp"
 #include "config/SimConfig.hpp"
 #ifdef YK_SPECTRAL_IMGUI
@@ -15,6 +17,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <chrono>
+#include <optional>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -58,6 +61,22 @@ int main(int argc, char** argv)
 
     try {
         const auto total_start = std::chrono::steady_clock::now();
+        if (argc == 2 && std::string_view(argv[1]) == "--list-examples") {
+            for(const auto& info:yk::spectral::examples::clientExamples().list())
+                std::cout<<info.id<<"\t"<<info.name<<"\t"<<info.description<<'\n';
+            return 0;
+        }
+        const bool builtin = argc == 4 && (std::string_view(argv[1]) == "--example" || std::string_view(argv[1]) == "--gui-example");
+        std::optional<yk::spectral::examples::ExampleResult> example;
+        if(builtin) example=yk::spectral::examples::clientExamples().create(argv[2])->generate({std::filesystem::u8path(argv[3])});
+#ifdef YK_SPECTRAL_IMGUI
+        if(builtin && std::string_view(argv[1]) == "--gui-example"){
+            std::string error;
+            if(!yk::spectral::runImGuiProjection(example->config,example->config.projection.output_file,error,&example->labels,argv[2]))
+                throw std::runtime_error(error);
+            return 0;
+        }
+#endif
 #ifdef YK_MULTISPECTRUM_CUDA_PRIMARY
         if (argc == 3 && std::string_view(argv[1]) == "--bone-bhc") {
             yk::spectral::bone_bhc::runBoneBhcJob(std::filesystem::u8path(argv[2]));
@@ -94,20 +113,22 @@ int main(int argc, char** argv)
         const bool validate_config = argc == 3 &&
             std::string(argv[1]) == "--validate-config";
         const bool profile_preprocess=argc==3&&std::string(argv[1])=="--profile-preprocess";
-        if (argc != 2 && !validate_config && !profile_preprocess) {
+        if (argc != 2 && !validate_config && !profile_preprocess && !builtin) {
             std::cerr << "用法: multispectrum_sim <config.toml>\n"
                 << "   或: multispectrum_sim --validate-config <config.toml>\n"
                 << "   或: multispectrum_sim --profile-preprocess <config.toml>\n"
                 << "   或: multispectrum_sim --bone-bhc <job.json> (CUDA build)\n"
                 << "   或: multispectrum_sim --export-spectrum <config.toml> <output.spec>\n"
                 << "   或: multispectrum_sim --gui [config.toml] (ImGui build)\n"
+                << "   或: multispectrum_sim --list-examples\n"
+                << "   或: multispectrum_sim --example <id> <output-directory> | --gui-example <id> <output-directory>\n"
                 << "   或: multispectrum_sim --list-materials\n"
                 << "   或: multispectrum_sim --material-info <id-or-alias>\n";
             return 2;
         }
         const std::filesystem::path config_path =
             (validate_config||profile_preprocess) ? argv[2] : argv[1];
-        auto config = yk::spectral::loadConfig(config_path);
+        auto config = builtin ? example->config : yk::spectral::loadConfig(config_path);
         if (validate_config) {
             std::cout << "valid_config=" << config_path.string() << '\n';
             return 0;
@@ -149,7 +170,8 @@ int main(int argc, char** argv)
             return 0;
         }
         auto spectrum = yk::spectral::loadProjectionSpectrum(config.projection);
-        auto labels = yk::spectral::loadLabelVolume(config.projection.label_volume);
+        const auto& grid=config.geometry.parameters;
+        auto labels = builtin ? std::move(example->labels) : yk::spectral::readClientLabels(config.projection.label_volume,{grid.volume_x,grid.volume_y,grid.volume_z});
         yk::spectral::XcomAttenuationProvider attenuation({});
         yk::spectral::SpectralTransmissionModel model(
             config.projection.materials, spectrum, attenuation, config.projection.detector_response);

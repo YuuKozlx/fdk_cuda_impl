@@ -1,3 +1,14 @@
+#include "ui/VolumePanel.hpp"
+#include "ui/EffectsPanel.hpp"
+#include "ui/SpectrumPanel.hpp"
+#include "ui/ScanPanel.hpp"
+#include "ui/ReconstructionPanel.hpp"
+#include "ui/ReconstructionViewerPanel.hpp"
+#include "config/ReconstructionGeometry.hpp"
+#include "calibration/GeometryCalibrationStage.hpp"
+#include "cbct_calibration/io.hpp"
+#include "examples/DataExamples.hpp"
+#include "io/MatLabelVolume.hpp"
 #include "MultiSpecFpStage.hpp"
 #include <windows.h>
 
@@ -27,87 +38,72 @@
 
 namespace yk::spectral {
 namespace {
-    constexpr double degrees = 57.29577951308232;
-    std::filesystem::path chooseFile(bool save, const wchar_t* filter)
-    {
-        std::array<wchar_t, 32768> buffer {};
-        OPENFILENAMEW info {};
-        info.lStructSize = sizeof(info);
-        info.lpstrFile = buffer.data();
-        info.nMaxFile = DWORD(buffer.size());
-        info.lpstrFilter = filter;
-        info.nFilterIndex = 1;
-        info.Flags = OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
-        info.hwndOwner = GetActiveWindow();
-        if (save ? GetSaveFileNameW(&info) : GetOpenFileNameW(&info))
-            return buffer.data();
-        return {};
-    }
-    void stringInput(const char* name, std::string& text)
-    {
-        std::array<char, 2048> b {};
-        std::copy_n(text.c_str(), std::min(text.size(), b.size() - 1), b.data());
-        if (ImGui::InputText(name, b.data(), b.size()))
-            text = b.data();
-    }
-    void pathInput(const char* name, std::filesystem::path& path, const wchar_t* filter)
-    {
-        ImGui::PushID(name);
-        std::string s = path.generic_string();
-        stringInput(name, s);
-        path = s;
-        if (ImGui::Button("Browse...")) {
-            const auto selected = chooseFile(false, filter);
-            if (!selected.empty())
-                path = selected;
-        }
-        ImGui::PopID();
-    }
-    std::string shortLabel(std::string text,float width) {
-    if(ImGui::CalcTextSize(text.c_str()).x<=width)return text;
-    while(!text.empty() && ImGui::CalcTextSize((text+"...").c_str()).x>width){
-        std::size_t start=text.size()-1;
-        while(start>0 && (static_cast<unsigned char>(text[start])&0xc0)==0x80)--start;
-        text.resize(start);
-    }
-    return text+"...";
-}
-void number(const char* label, double& value)
-    {
-        ImGui::SetNextItemWidth(-185);
-        ImGui::InputDouble(label, &value, 0, 0, "%.6g");
-    }
-    void integer(const char* label, int& value)
-    {
-        ImGui::SetNextItemWidth(-185);
-        ImGui::InputInt(label, &value);
-    }
-    void angle(const char* label, double& value)
-    {
-        double d = value * degrees;
-        number(label, d);
-        value = d / degrees;
-    }
+    using namespace ui;
     struct UiState {
         SimulationConfig draft;
         std::vector<float> spectrum_plot;
         std::string message;
         bool calculate = false, load = false, save = false, preview = false, export_spectrum = false;
+        bool calibration_window=false,calibrate_geometry=false,nominal_reconstruction=false,corrected_reconstruction=false;
+        calibration::Context calibration_context;
+        calibration::Data calibration_data;
+        std::optional<SimulationConfig> calibration_input;
+        std::string calibration_message, known_example_id;
+        double nominal_sid=440,nominal_sdd=770;
+        bool create_example=false; int example_index=0;
+        bool example_window=false, help_window=false;
+        int requested_settings=-1;
+        std::vector<examples::Parameter> example_parameters;
+        std::string example_error;
+        void bindCalibrationExample(const std::string& id,const std::vector<examples::Parameter>& parameters){
+            known_example_id=id;
+            if(id.rfind("bead-",0)!=0)return;
+            std::map<std::string,double> values;for(const auto& p:parameters)values[p.id]=p.value;
+            auto& c=calibration_context.config;
+            using Kind=cbct::calibration::PipelineConfig::PhantomKind;
+            c.phantom_kind=id=="bead-line"?Kind::SingleRow:id=="bead-spiral"?Kind::Spiral:Kind::DoubleRing;
+            if(c.phantom_kind==Kind::SingleRow){c.row_beads=int(values.at("count"));c.row_spacing_mm=values.at("spacing");}
+            else if(c.phantom_kind==Kind::Spiral){
+                c.spiral_beads=int(values.at("count"));c.spiral_radius_mm=values.at("radius");
+                c.spiral_spacing_mm=values.at("spacing");c.spiral_step_deg=values.at("angle_step");
+                c.spiral_marker_mm={values.at("radius"),0,values.at("marker_z")};
+            }else{
+                auto& f=c.phantom;
+                f.beads_per_ring=int(values.at("count"));f.upper_radius_mm=values.at("radius");f.lower_radius_mm=values.at("lower_radius");
+                f.ring_half_spacing_mm=values.at("separation")/2;f.lower_phase_deg=values.at("phase");
+                f.markers_for_numbering_only=id=="bead-cylinder-marker";
+                f.marker_points_mm={{values.at("radius"),0,values.at("marker_z")}};
+                if(id=="bead-cylinder-marker")f.marker_points_mm.push_back({values.at("radius"),0,-values.at("marker_z")});
+                else if(id=="bead-sync-6" || id=="bead-sync-12"){
+                    double a=values.at("marker2_angle")/degrees;
+                    f.marker_points_mm.emplace_back(values.at("radius")*std::cos(a),values.at("radius")*std::sin(a),values.at("marker2_z"));
+                }
+            }
+            nominal_sid=draft.geometry.parameters.sid_mm;nominal_sdd=draft.geometry.parameters.sdd_mm;
+        }
+        void chooseExample(int index){
+            example_index=index;
+            example_parameters=examples::clientExamples().create(builtin_examples[index].id)->parameters();
+            example_error.clear();example_window=!example_parameters.empty();
+            create_example=example_parameters.empty();
+        }
+        const std::vector<pipeline::PluginInfo> builtin_examples=examples::clientExamples().list();
+        bool reconstruction_geometry_initialized=false;
         bool reconstruct=false, auto_reconstruct=false, opacity_changed=false;
+        bool scan_type_changed=false;
         float opacity_scale=.03f;
         int result_mode=0;
         bool relative_mode=false,relative_changed=false;
         bool drawer_open=false,drawer_changed=false;
         bool select_image_page=true;
-        bool result_changed=false,slices_changed=false,window_changed=false,auto_window=false,load_reconstruction=false;
-        std::array<int,3> recon_dimensions{},recon_slices{};
+        bool result_changed=false,load_reconstruction=false,browse_reconstruction=false;
+        ui::ReconstructionViewerPanel viewer;
         bool select_results=false;
-        double window_low=0,window_high=1;
         WaterReference ct_reference;
         bool reconstruction_running=false;
         int progress_completed=0,progress_total=0;
-        ImGuiTextFilter material_filter;
-        int material_category=0;
+
+
         bool show_beam = true, show_trajectory = true;
         int requested_frame = -1, shown_frame = 0;
         std::array<std::uint64_t, 256> counts {};
@@ -123,483 +119,191 @@ void number(const char* label, double& value)
             for (auto p : points)
                 spectrum_plot.push_back(float(p.fluence_per_keV_cm2_mAs_at_1m));
         }
-        void scan()
-        {
-            const GeometryKind kinds[] = { GeometryKind::FlatCbct, GeometryKind::FlatHelical, GeometryKind::PlanarSourceOrbit, GeometryKind::NikonTilted };
-            int index = 0;
-            for (int i = 0; i < 4; ++i)
-                if (draft.geometry.kind == kinds[i])
-                    index = i;
-            auto& g = draft.geometry.parameters;
-            if (ImGui::Combo("Scan type", &index, "Flat circular\0Flat helical\0Planar CT\0Tilted CT\0")) {
-                draft.geometry.kind = kinds[index];
-                if (index == 1 && g.pitch_mm_per_turn == 0)
-                    g.pitch_mm_per_turn = 100;
-                if (index == 2) {
-                    if (g.planar_detector_y_mm <= 0)
-                        g.planar_detector_y_mm = std::max(g.sdd_mm - g.sid_mm, 1.0);
-                    if (g.source_orbit_radius_mm <= 0)
-                        g.source_orbit_radius_mm = g.sid_mm;
-                    g.reconstruction_detector_u = g.detector_u;
-                    g.reconstruction_detector_v = g.detector_v;
-                }
-                if (index >= 2)
-                    draft.projection.detector_response.enabled = false;
-            }
-            integer("Views", g.views);
-            integer("Views / turn", g.views_per_turn);
-            angle("Start angle (deg)", g.start_angle_rad);
-            integer("Direction (+/-1)", g.rotation_direction);
-            if (index == 1) {
-                number("Pitch (mm / turn)", g.pitch_mm_per_turn);
-                number("Start Z (mm)", g.start_z_mm);
-            }
-            if (index >= 2)
-                angle("Scan range (deg)", g.scan_range_rad);
-            if (index == 2) {
-                number("Detector Y (mm)", g.planar_detector_y_mm);
-                number("Source orbit R (mm)", g.source_orbit_radius_mm);
-                number("Source lateral (mm)", g.source_lateral_offset_mm);
-            }
-            if (index == 3) {
-                angle("Axis tilt (deg)", g.nikon_tilt_rad);
-                angle("Azimuth (deg)", g.nikon_tilt_axis_azimuth_rad);
-                number("Pivot X (mm)", g.rotation_axis_pivot_x_mm);
-                number("Pivot Y (mm)", g.rotation_axis_pivot_y_mm);
-                number("Pivot Z (mm)", g.rotation_axis_pivot_z_mm);
-            }
-            if (ImGui::CollapsingHeader("Detector", ImGuiTreeNodeFlags_DefaultOpen)) {
-                integer("Columns", g.detector_u);
-                integer("Rows", g.detector_v);
-                number("Pixel U (mm)", g.pixel_u_mm);
-                number("Pixel V (mm)", g.pixel_v_mm);
-                number("SID (mm)", g.sid_mm);
-                number("SDD (mm)", g.sdd_mm);
-                number("Offset U (mm)", g.offset_u_mm);
-                number("Offset N (mm)", g.offset_n_mm);
-                number("Offset V (mm)", g.offset_v_mm);
-                angle("Tilt U (deg)", g.tilt_u_rad);
-                angle("Tilt V (deg)", g.tilt_v_rad);
-                angle("Tilt N (deg)", g.tilt_n_rad);
-            }
-            if (ImGui::CollapsingHeader("Source")) {
-                number("Source X (mm)", g.source_offset_x_mm);
-                number("Source Y (mm)", g.source_offset_y_mm);
-                number("Source Z (mm)", g.source_offset_z_mm);
-            }
-        }
-        void builtinPicker(MaterialSpec& material) {
-            const auto* selected=findBuiltinMaterial(material.preset);
-            const std::string preview=selected?std::string(selected->display_name)+" ["+selected->category+"]":material.preset;
-            const float popup_width=std::clamp(ImGui::GetContentRegionAvail().x,240.f,430.f);
-            ImGui::SetNextItemWidth(-100);
-            ImGui::SetNextWindowSizeConstraints({popup_width,0},{popup_width,480});
-            const auto preview_short=shortLabel(preview,popup_width-150);
-            if(ImGui::BeginCombo("Material",preview_short.c_str(),ImGuiComboFlags_HeightLargest)){
-                material_filter.Draw("Search",-1);
-                ImGui::SetNextItemWidth(-85);
-                ImGui::Combo("Category",&material_category,"All\0Tissue\0Element\0Compound\0Mixture\0");
-                const char* categories[]={"","tissue","element","compound","mixture"};
-                ImGui::BeginChild("Material list",{0,260},false);
-                int shown=0;
-                for(auto* info=builtinMaterialsBegin();info!=builtinMaterialsEnd();++info){
-                    if(material_category && std::string_view(info->category)!=categories[material_category])continue;
-                    const std::string searchable=std::string(info->id)+" "+info->display_name+" "+info->aliases;
-                    if(!material_filter.PassFilter(searchable.c_str()))continue;
-                    ++shown;ImGui::PushID(info->id);
-                    const std::string full_label=std::string(info->display_name)+" ["+info->category+"]";
-                    const auto label=shortLabel(full_label,ImGui::GetContentRegionAvail().x-10);
-                    if(ImGui::Selectable(label.c_str(),selected && std::string_view(info->id)==selected->id)){
-                        selectBuiltinMaterial(material,info->id);ImGui::CloseCurrentPopup();}
-                    if(ImGui::IsItemHovered()){
-                        ImGui::BeginTooltip();ImGui::PushTextWrapPos(ImGui::GetFontSize()*24);
-                        ImGui::TextWrapped("%s",info->display_name);ImGui::TextWrapped("%s",info->id);
-                        ImGui::Text("Default density: %.6g g/cm3",info->density_g_cm3);
-                        ImGui::TextWrapped("Element mass fractions: %s",info->composition);ImGui::PopTextWrapPos();ImGui::EndTooltip();}
-                    ImGui::PopID();
-                }
-                if(!shown)ImGui::TextUnformatted("No matching materials");
-                ImGui::EndChild();
-                ImGui::Text("%d matching / %d builtin materials",shown,int(builtinMaterialsEnd()-builtinMaterialsBegin()));
-                ImGui::EndCombo();
-            }
-            selected=findBuiltinMaterial(material.preset);
-            if(selected){
-                ImGui::TextWrapped("ID: %s",selected->id);
-                ImGui::Text("Default density: %.6g g/cm3",selected->density_g_cm3);
-                if(ImGui::SmallButton("Use default density"))material.density_g_cm3=selected->density_g_cm3;
-            }
-        }
-        void volume()
-        {
-            auto& g = draft.geometry.parameters;
-            ImGui::TextWrapped("Raw uint8 labels, order Z/Y/X. Full voxel resolution is retained.");
-            pathInput("Label volume", draft.projection.label_volume, L"Raw labels\0*.raw;*.bin\0All files\0*.*\0\0");
-            integer("Size X", g.volume_x);
-            integer("Size Y", g.volume_y);
-            integer("Size Z", g.volume_z);
-            number("Voxel X (mm)", g.voxel_x_mm);
-            number("Voxel Y (mm)", g.voxel_y_mm);
-            number("Voxel Z (mm)", g.voxel_z_mm);
-            if (ImGui::CollapsingHeader("Object pose", ImGuiTreeNodeFlags_DefaultOpen)) {
-                number("Object X (mm)", g.phantom_offset_x_mm);
-                number("Object Y (mm)", g.phantom_offset_y_mm);
-                number("Object Z (mm)", g.phantom_offset_z_mm);
-                angle("Object Rx (deg)", g.phantom_rotation_x_rad);
-                angle("Object Ry (deg)", g.phantom_rotation_y_rad);
-                angle("Object Rz (deg)", g.phantom_rotation_z_rad);
-            }
-            ImGui::SeparatorText("Label -> material");
-            ImGui::TextWrapped("Label 0 may be unmapped background. Every other label needs a material. Histogram reflects the loaded volume.");
-            auto& materials = draft.projection.materials;
-            for (size_t i = 0; i < materials.size(); ++i) {
-                ImGui::PushID(int(i));
-                auto& m = materials[i];
-                if (ImGui::TreeNodeEx("Material", ImGuiTreeNodeFlags_DefaultOpen, "Label %d: %s", int(m.label), m.name.c_str())) {
-                    int label = int(m.label);
-                    if (ImGui::InputInt("Label", &label))
-                        m.label = std::uint8_t(std::clamp(label, 0, 255));
-                    ImGui::Text("Voxels: %llu", static_cast<unsigned long long>(counts[m.label]));
-                    stringInput("Name", m.name);
-                    int mode=m.preset.empty()?1:0;
-                    if(ImGui::Combo("Material source",&mode,"Builtin list\0Chemical formula\0")){
-                        if(mode==0)selectBuiltinMaterial(m,"compound.water");
-                        else{m.preset.clear();m.formula="H2O";}
-                    }
-                    if(mode==0)builtinPicker(m);
-                    else{stringInput("Formula",m.formula);ImGui::TextWrapped("Formula uses atom counts, e.g. H2O. Density is specified separately.");}
-                    number("Density (g/cm3)", m.density_g_cm3);
-                    const bool remove = ImGui::Button("Remove material");
-                    ImGui::TreePop();
-                    if (remove) {
-                        materials.erase(materials.begin() + i);
-                        ImGui::PopID();
-                        break;
-                    }
-                }
-                ImGui::PopID();
-            }
-            if (materials.size() < 32 && ImGui::Button("Add material")) {
-                MaterialSpec m;
-                m.label = 1;
-                for (const auto& x : materials)
-                    if (m.label <= x.label)
-                        m.label = x.label + 1;
-                selectBuiltinMaterial(m,"compound.water");
-                materials.push_back(m);
-            }
-        }
-        void energy()
-        {
-            auto& sp = draft.projection.spectrum;
-            int mode = sp.source == "generated" ? 1 : 0;
-            if (ImGui::Combo("Spectrum source", &mode, "Import file\0Generate locally\0")) {
-                sp.source = mode ? "generated" : "file";
-                if (mode)
-                    draft.projection.spectrum_file.clear();
-            }
-            if (mode == 0)
-                pathInput("Spectrum file", draft.projection.spectrum_file, L"Spectrum\0*.spec;*.csv;*.txt\0All files\0*.*\0\0");
-            else {
-                int model = sp.model == "spekcalc" ? 1 : 0;
-                if (ImGui::Combo("Model", &model, "spekpy-v1\0spekcalc\0"))
-                    sp.model = model ? "spekcalc" : "spekpy-v1";
-                number("Tube voltage (kVp)", sp.kvp);
-                number("Anode angle (deg)", sp.anode_angle_deg);
-                number("Bin width (keV)", sp.bin_width_keV);
-                for (size_t i = 0; i < sp.filters.size(); ++i) {
-                    ImGui::PushID(int(i));
-                    auto& f = sp.filters[i];
-                    stringInput("Filter element", f.material);
-                    number("Thickness (mm)", f.thickness_mm);
-                    if (f.atomic_number) {
-                        integer("Atomic number", f.atomic_number);
-                        number("Filter density", f.density_g_cm3);
-                    }
-                    const bool remove = ImGui::Button("Remove filter");
-                    ImGui::PopID();
-                    if (remove) {
-                        sp.filters.erase(sp.filters.begin() + i);
-                        break;
-                    }
-                }
-                if (ImGui::Button("Add Al filter"))
-                    sp.filters.push_back({ "Al", 2.0 });
-            }
-            number("mAs / view", draft.projection.mAs_per_view);
-            if (ImGui::Button("Preview spectrum"))
-                preview = true;
-            ImGui::SameLine();
-            if (ImGui::Button("Export spectrum"))
-                export_spectrum = true;
-            if (!spectrum_plot.empty()) {
-                ImGui::PlotLines("Fluence", spectrum_plot.data(), int(spectrum_plot.size()), 0, nullptr, 0, FLT_MAX, { 0, 130 });
-                ImGui::Text("%d energy bins", int(spectrum_plot.size()));
-            }
-            ImGui::TextWrapped("Fluence: photons / (keV cm2 mAs) at 1 m. Exposure and distance are applied once by the projection backend.");
-        }
-        void effects()
-        {
-            auto& p = draft.projection;
-            ImGui::Checkbox("Geometry flux", &p.geometry_flux.enabled);
-            ImGui::Checkbox("Quantum noise", &p.quantum_noise.enabled);
-            ImGui::SetNextItemWidth(-185);ImGui::InputScalar("Noise seed",ImGuiDataType_U32,&p.quantum_noise.seed);
-            ImGui::SeparatorText("Projection batches");
-            integer("Batch views",p.batching.views);
-            integer("Batch buffer MiB",p.batching.max_buffer_mib);
-            ImGui::TextWrapped("Defaults: automatic batches up to 256 MiB (64-view safety limit). Actual batch size adapts to available GPU memory and reserves space for VTK. Set views to 1 for comparison.");
-            ImGui::SeparatorText("Ray sampling");
-            integer("Rays / pixel",p.sampling.samples_per_pixel);
-            ImGui::SetNextItemWidth(-185);ImGui::InputScalar("Sampling seed",ImGuiDataType_U32,&p.sampling.seed);
-            ImGui::TextWrapped("1..4096 rays per pixel. Higher sampling improves focal/pixel averaging and increases calculation time.");
-            ImGui::Checkbox("Finite normal focus", &p.focal_spot.enabled);
-            if (p.focal_spot.enabled) {
-                number("Normal U (mm)", p.focal_spot.normal_size_u_mm);
-                number("Normal V (mm)", p.focal_spot.normal_size_v_mm);
-            } else {
-                ImGui::TextDisabled("Normal emission uses a point source.");
-            }
-            ImGui::Checkbox("Defocus", &p.focal_spot.defocus_enabled);
-            if (p.focal_spot.defocus_enabled) {
-                number("Defocus U (mm)", p.focal_spot.defocus_size_u_mm);
-                number("Defocus V (mm)", p.focal_spot.defocus_size_v_mm);
-                number("Defocus fraction", p.focal_spot.epsilon);
-            }
-            ImGui::Checkbox("Scatter", &p.scatter.enabled);
-            if (p.scatter.enabled) {
-                pathInput("Scatter model", p.scatter.model_file, L"Scatter model\0*.json\0All files\0*.*\0\0");
-                int kernel = p.scatter.kernel.mode == "segmented" ? 1 : 0;
-                if (ImGui::Combo("Scatter kernel evaluation", &kernel, "All bins\0Segmented\0"))
-                    p.scatter.kernel.mode = kernel ? "segmented" : "all";
-                if (kernel) {
-                    integer("Scatter kernel segments", p.scatter.kernel.segments);
-                    ImGui::TextWrapped("At least 2 segments. Fewer kernels reduce FFT work; kernel shapes are interpolated from the model.");
-                }
-            }
-            ImGui::Checkbox("Optical crosstalk", &p.detector_postprocess.optical_crosstalk.enabled);
-            ImGui::Checkbox("Electronic crosstalk", &p.detector_postprocess.electronic_crosstalk.enabled);
-            ImGui::Checkbox("Afterglow", &p.detector_postprocess.afterglow.enabled);
-            if (p.detector_postprocess.afterglow.enabled){
-                auto& a=p.detector_postprocess.afterglow;
-                number("Afterglow fraction",a.p);
-                int init=a.initialization=="steady_state"?1:0;
-                if(ImGui::Combo("Initial state",&init,"Zero\0Steady state\0"))a.initialization=init?"steady_state":"zero";
-                number("Frame time (ms)",a.frame_time_ms);number("Exposure (ms)",a.exposure_time_ms);
-                if(a.weights.empty()){a.weights={1};a.time_constants_ms={2};}
-                for(size_t i=0;i<a.weights.size();++i){ImGui::PushID(int(i));
-                    ImGui::Text("Temporal component %d",int(i)+1);number("Weight",a.weights[i]);
-                    if(i<a.time_constants_ms.size())number("Time constant (ms)",a.time_constants_ms[i]);
-                    const bool remove=ImGui::SmallButton("Remove component");ImGui::PopID();
-                    if(remove && a.weights.size()>1){a.weights.erase(a.weights.begin()+i);if(i<a.time_constants_ms.size())a.time_constants_ms.erase(a.time_constants_ms.begin()+i);break;}}
-                if(ImGui::Button("Add component")){a.weights.push_back(0);a.time_constants_ms.push_back(2);}
-                ImGui::SameLine();if(ImGui::Button("Normalize weights")){double sum=0;for(double weight:a.weights)sum+=weight;if(sum>0)for(auto& weight:a.weights)weight/=sum;}
-                ImGui::TextWrapped("Weights must sum to 1. Exposure time must not exceed frame time.");
-            }
-            ImGui::Checkbox("DAS / electronic noise", &p.detector_postprocess.das.enabled);
-            if (p.detector_postprocess.das.enabled)
-                number("Noise std (electrons)", p.detector_postprocess.das.electronic_noise_std_electrons);
-            ImGui::TextWrapped("Crosstalk kernels and detector layers retain settings from TOML. Sampling uses Rays / pixel above.");
-        }
+        void scan(){scan_type_changed=ui::ScanPanel::draw(draft)||scan_type_changed;}
+        ui::VolumePanel volume_panel;
+        void volume(){volume_panel.draw(draft,counts);}
+        void energy(){ui::SpectrumPanel::draw(draft,spectrum_plot,preview,export_spectrum);}
+        void effects(){ui::EffectsPanel::draw(draft);}
         void reconstruction() {
-            auto& r=draft.reconstruction;auto& g=draft.geometry.parameters;
-            ImGui::Checkbox("Reconstruct after projection",&auto_reconstruct);
-            int method=r.type=="statistical"?2:r.type=="iterative"?1:r.analytic.pipeline=="wfbp"?3:0;
-            if(ImGui::Combo("Method",&method,"FDK\0Algebraic iterative\0Statistical\0WFBP (helical)\0")){
-                r.type=method==2?"statistical":method==1?"iterative":"analytic";
-                r.analytic.pipeline=method==3?"wfbp":"fdk";
-
-            }
-            if(method==0||method==3){
-                if(method==3){
-                    ImGui::TextWrapped("WFBP: analytic helical reconstruction. Uses the complete projection sequence.");
-                    if(draft.geometry.kind!=GeometryKind::FlatHelical)ImGui::TextWrapped("Select Flat helical in Geometry to use WFBP.");
-
-                }else{
-                    ImGui::TextWrapped("FDK: Flat circular / Planar / Tilted. For Flat helical select WFBP or an iterative method.");
-                    integer("Chunk views",r.analytic.chunk_views);
-                }
-                const char* filters[]={"ramlak","shepp-logan","cosine","hann","hamming","blackman","butterworth","kaiser","tukey"};
-                if(ImGui::BeginCombo("Filter",r.analytic.filter.c_str())) {
-                    for(const auto* name:filters) {
-                        bool selected=r.analytic.filter==name;
-                        if(ImGui::Selectable(name,selected))r.analytic.filter=name;
-                        if(selected)ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
-                number("Cutoff (0, 0.5] cycles/sample",r.analytic.cutoff);
-                number("Filter gain",r.analytic.gain);
-                if(r.analytic.filter=="butterworth")number("Butterworth order",r.analytic.butterworth_order);
-                if(r.analytic.filter=="kaiser")number("Kaiser beta",r.analytic.kaiser_beta);
-                if(r.analytic.filter=="tukey")number("Tukey alpha",r.analytic.tukey_alpha);
-            }else if(method==1){
-                const char* algorithms[]={"sirt","ossart","cgls","tigre_sart","tigre_os_sart","tigre_sart_tv","tigre_os_sart_tv","sart","tigre_sirt"};
-                bool listed=false;for(const auto* algorithm:algorithms)listed=listed || r.iterative.algorithm==algorithm;
-                if(ImGui::BeginCombo("Algorithm",listed?r.iterative.algorithm.c_str():"Choose supported algorithm")){
-                    for(const auto* algorithm:algorithms){
-                        const bool selected=r.iterative.algorithm==algorithm;
-                        if(ImGui::Selectable(algorithm,selected)){
-                            r.iterative.algorithm=algorithm;
-                            if(r.iterative.algorithm!="ossart" && r.iterative.algorithm!="tigre_os_sart" && r.iterative.algorithm!="tigre_os_sart_tv")r.iterative.subsets=1;
-                        }
-                        if(selected)ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
-                const bool internal_regularization=r.iterative.algorithm=="sirt" || r.iterative.algorithm=="sart" || r.iterative.algorithm=="ossart";
-                if(!internal_regularization)r.iterative.regularization.plugin="none";
-                if(!listed)ImGui::TextWrapped("This UI supports TV plugins with internal SIRT / SART / OS-SART only. Choose an algorithm from the list before reconstructing.");
-                integer("Iterations",r.iterative.iterations);number("Relaxation",r.iterative.relaxation);
-                if(r.iterative.algorithm=="ossart" || r.iterative.algorithm=="tigre_os_sart" || r.iterative.algorithm=="tigre_os_sart_tv")integer("Subsets",r.iterative.subsets);
-                const char* fp_values[]={"auto","siddon","joseph","footprint"};
-                int fp_index=0;for(int i=0;i<4;++i)if(r.iterative.forward_projector==fp_values[i])fp_index=i;
-                if(ImGui::Combo("Forward projector",&fp_index,"Auto\0Siddon\0Joseph\0Separable footprint\0"))r.iterative.forward_projector=fp_values[fp_index];
-                const char* bp_values[]={"auto","fdk_pseudo_matched","siddon_ray","joseph","joseph_v3","footprint"};
-                int bp_index=0;for(int i=0;i<6;++i)if(r.iterative.back_projector==bp_values[i])bp_index=i;
-                if(ImGui::Combo("Backprojector",&bp_index,"Auto\0FDK pseudo matched\0Siddon ray driven\0Joseph matched\0Joseph V3 fast\0Separable footprint\0"))r.iterative.back_projector=bp_values[bp_index];
-                ImGui::Checkbox("Non negative",&r.iterative.non_negative);
-                if(r.iterative.algorithm=="tigre_sart_tv" || r.iterative.algorithm=="tigre_os_sart_tv"){
-                    ImGui::SeparatorText("TIGRE TV");
-                    integer("TV iterations",r.iterative.tv_iterations);number("TV alpha",r.iterative.tv_alpha);
-                }
-                if(internal_regularization){
-                    ImGui::SeparatorText("Internal regularization");
-                    auto& tv=r.iterative.regularization;
-                    int plugin=tv.plugin=="huber_tv_prox"?2:tv.plugin=="smoothed_tv"?1:0;
-                    if(ImGui::Combo("Regularization",&plugin,"None\0Smoothed TV\0Huber TV Prox\0")){
-                        tv.plugin=plugin==2?"huber_tv_prox":plugin==1?"smoothed_tv":"none";
-                        if(plugin&&tv.strength==0)tv.strength=plugin==2?1e-4:.002;
-                    }
-                    if(plugin){
-                        number("TV strength",tv.strength);if(plugin!=2)integer("TV inner steps",tv.inner_iterations);
-                        int dims=tv.dimensions==2?0:1;
-                        if(ImGui::Combo("TV dimensions",&dims,"2D slices\0Full 3D\0"))tv.dimensions=dims?3:2;
-                        if(plugin!=2)number("TV strength reduction",tv.strength_reduction);
-                        if(plugin==2){number("Huber delta",tv.huber_delta);ImGui::TextWrapped("Prox solver accuracy is managed automatically.");}
-                        else number("TV epsilon",tv.epsilon);
-                        ImGui::TextWrapped("Applied after every full angle sweep. Uses GPU volume buffers.");
-                    }
-                }
-            }else{
-                auto& s=r.statistical;
-                ImGui::SeparatorText("Data fidelity");
-                ImGui::TextUnformatted("Weighted least squares");
-                const char* fp_values[]={"auto","siddon","joseph","footprint"};
-                int fp_index=0;for(int i=0;i<4;++i)if(s.forward_projector==fp_values[i])fp_index=i;
-                if(ImGui::Combo("Forward projector",&fp_index,"Auto\0Siddon\0Joseph\0Separable footprint\0"))s.forward_projector=fp_values[fp_index];
-                const char* bp_values[]={"auto","fdk_pseudo_matched","siddon_ray","joseph","joseph_v3","footprint"};
-                int bp_index=0;for(int i=0;i<6;++i)if(s.back_projector==bp_values[i])bp_index=i;
-                if(ImGui::Combo("Backprojector",&bp_index,"Auto\0FDK pseudo matched\0Siddon ray driven\0Joseph matched\0Joseph V3 fast\0Separable footprint\0"))s.back_projector=bp_values[bp_index];
-                number("Data scale",s.data_fidelity.scale);
-                ImGui::Checkbox("Mean data term",&s.data_fidelity.normalize_by_ray_count);
-                pathInput("Weights (optional)",s.data_fidelity.weights_file,L"Weights\0*.raw\0All files\0*.*\0\0");
-                ImGui::TextWrapped("Empty weights file uses W=I. Weight RAW must match projection dimensions and contain nonnegative float32 values.");
-                ImGui::SeparatorText("Regularization");
-                auto& reg=s.regularization;
-                int plugin=reg.plugin=="smoothed_tv"?1:(reg.plugin=="huber_tv"||reg.plugin=="huber_tv_prox")?2:reg.plugin=="tikhonov"?3:reg.plugin=="tv"?4:0;
-                if(ImGui::Combo("Penalty",&plugin,"None\0Smoothed TV\0Huber TV\0Tikhonov\0Standard TV\0"))reg.plugin=plugin==1?"smoothed_tv":plugin==2?"huber_tv":plugin==3?"tikhonov":plugin==4?"tv":"none";
-                if(plugin){number("Penalty weight",reg.strength);
-                    if(plugin==1||plugin==2)number(plugin==1?"TV smooth scale":"Huber threshold",reg.shape);
-                    if(plugin!=3){int dims=reg.dimensions==2?0:1;if(ImGui::Combo("Penalty dimensions",&dims,"2D slices\0Full 3D\0"))reg.dimensions=dims?3:2;}}
-                else reg.strength=0;
-                ImGui::SeparatorText("Optimizer");
-                int update=(s.optimizer.type=="raw_gradient_descent"||s.optimizer.type=="gradient_descent")?1:0;
-                if(ImGui::Combo("Data update",&update,"Regularized algebraic (SIRT)\0Gradient descent\0")){s.optimizer.type=update?"gradient_descent":"regularized_algebraic";}
-                ImGui::TextWrapped(update?"One full-batch gradient update per iteration.":"One normalized full-view SIRT update per sweep. Zero penalty matches internal SIRT.");
-                integer(update?"GD iterations":"Algebraic sweeps",s.optimizer.iterations);number(update?"GD step (0 = auto)":"Penalty step (0 = auto)",s.optimizer.step_size);
-                if(update||(plugin!=2&&plugin!=4))ImGui::Checkbox(update?"Objective backtracking":"Penalty backtracking",&s.optimizer.backtracking);
-                if(s.optimizer.backtracking&&(update||(plugin!=2&&plugin!=4))){integer("Maximum backtracking",s.optimizer.max_backtracking);number("Step shrink",s.optimizer.step_shrink);}
-                number("Relative update tolerance",s.optimizer.relative_tolerance);integer("Minimum iterations",s.optimizer.minimum_iterations);
-                ImGui::Checkbox("Non negative volume",&s.non_negative);
-                ImGui::TextWrapped("Regularization integration is selected internally. FISTA is not yet available.");
-                if(update&&plugin==4)ImGui::TextWrapped("Standard TV is available with Regularized algebraic.");
-            }
-            ImGui::SeparatorText("Output grid");
-            integer("Recon X",g.reconstruction_volume_x);integer("Recon Y",g.reconstruction_volume_y);integer("Recon Z",g.reconstruction_volume_z);
-            number("Recon voxel X",g.reconstruction_voxel_x_mm);number("Recon voxel Y",g.reconstruction_voxel_y_mm);number("Recon voxel Z",g.reconstruction_voxel_z_mm);
-            pathInput("Input projection",r.input_projection_file,L"Projection\0*.raw\0All files\0*.*\0\0");
-            std::string path=r.output_volume_file.generic_string();stringInput("Output volume",path);r.output_volume_file=path;
-            ImGui::Checkbox("Save orthogonal slices",&r.save_slices);path=r.slice_prefix.generic_string();stringInput("Slice prefix",path);r.slice_prefix=path;
-            ImGui::SeparatorText("Corrections");
-            auto& pp=r.preprocessing;ImGui::Checkbox("Enable preprocessing",&pp.enabled);
-            if(pp.enabled)ImGui::TextWrapped("Corrected projections are saved beside the input and reused when correction inputs and settings match.");
-            if(r.type=="iterative" && r.iterative.algorithm=="tigre_sart")
-                ImGui::TextWrapped("SART updates one view at a time. One iteration is a complete sweep over all views; large volumes can take several minutes per sweep.");
-            if(pp.enabled){auto& bh=pp.beam_hardening;ImGui::Checkbox("Beam hardening correction",&bh.enabled);
-                if(bh.enabled){ImGui::Checkbox("Fit water plate",&bh.fit_from_water_plate);integer("Polynomial order",bh.order);
-                    number("Clamp min",bh.clamp_min);number("Clamp max",bh.clamp_max);
-                    ImGui::TextWrapped("Clamp bounds apply to corrected line integrals, not geometric length.");
-                    number("Reference (keV)",bh.reference_energy_keV);
-                    if(bh.fit_from_water_plate){number("Water max (mm)",bh.water_plate_max_mm);integer("Water samples",bh.water_plate_samples);}
-                    else{
-                        if(bh.order>=1&&bh.order<=16)bh.coefficients.resize(size_t(bh.order)+1,0);
-                        for(size_t i=0;i<bh.coefficients.size();++i){const auto label="Coefficient c"+std::to_string(i);number(label.c_str(),bh.coefficients[i]);}
-                        pathInput("BHC spectrum",bh.spectrum_file,L"Spectrum\0*.spec;*.csv;*.txt\0All files\0*.*\0\0");
-                    }}
-                if(ImGui::Checkbox("Scatter correction",&pp.scatter.enabled) && pp.scatter.enabled){
-                    if(pp.scatter.air_projection_file.empty())pp.scatter.air_projection_file=draft.projection.air_output_file;
-                    if(pp.scatter.model_file.empty())pp.scatter.model_file=draft.projection.scatter.model_file;
-                }
-                if(pp.scatter.enabled){
-                    auto& sc=pp.scatter;
-                    pathInput("Correction air",sc.air_projection_file,L"Air projection\0*.raw\0All files\0*.*\0\0");
-                    pathInput("Correction model",sc.model_file,L"Scatter model\0*.json\0All files\0*.*\0\0");
-                    if(ImGui::Button("Use forward scatter inputs")){sc.air_projection_file=draft.projection.air_output_file;sc.model_file=draft.projection.scatter.model_file;}
-                    int solver=sc.solver.type=="adaptive_experimental"?1:0;
-                    if(ImGui::Combo("Solver",&solver,"Fixed\0Adaptive (experimental)\0"))sc.solver.type=solver?"adaptive_experimental":"fixed";
-                    if(!solver){integer("Correction iterations",sc.correction.iterations);number("Damping",sc.correction.damping);}
-                    else{
-                        auto& a=sc.solver.adaptive;
-                        integer("Adaptive iterations",a.iterations);number("Initial damping",a.initial_damping);number("Minimum damping",a.min_damping);number("Damping decay",a.damping_decay);
-                        if(ImGui::CollapsingHeader("Transmission guard")){
-                            number("Low quantile",a.transmission_guard.low_quantile);number("Risk threshold",a.transmission_guard.risk_threshold);number("Positivity margin",a.transmission_guard.positivity_margin);}
-#ifndef YK_SPECTRAL_ADAPTIVE_SCATTER
-                        ImGui::TextWrapped("This build requires MULTISPECTRUM_ENABLE_EXPERIMENTAL_ADAPTIVE_SCATTER=ON to run adaptive correction.");
-#endif
-                    }
-                    number("Scatter scale",sc.correction.scatter_scale);number("Mask threshold",sc.correction.object_mask_threshold);
-                    ImGui::Checkbox("Scatter guidance",&sc.guide.enabled);
-                    if(sc.guide.enabled){number("Guide sigma U (px)",sc.guide.sigma_u_pixels);number("Guide sigma V (px)",sc.guide.sigma_v_pixels);}
-                    int kernel=sc.kernel.mode=="segmented"?1:0;
-                    if(ImGui::Combo("Kernel evaluation",&kernel,"All bins\0Segmented\0"))sc.kernel.mode=kernel?"segmented":"all";
-                    if(kernel)integer("Kernel segments",sc.kernel.segments);
-                    ImGui::TextWrapped("Correction uses processed air and energy-compatible calibration. Paths are checked before reconstruction.");
-                }
-            }
-            if(ImGui::Button("Run reconstruction",{-1,32}))reconstruct=true;
-            ImGui::TextWrapped("For the current computed projection, reconstruction uses its saved scan geometry. Output grid and reconstruction settings use this page.");
+            ui::ReconstructionPanel::draw(draft,auto_reconstruct,reconstruction_geometry_initialized);
         }
         void results(yk::visualization::LiveView& view){
-            ImGui::TextWrapped("Use the permanent Projections / Reconstruction tabs above the right image area.");
+            ImGui::TextWrapped("Open Projections or Reconstruction from the View menu.");
             if(view.hasReconstruction()){
-                if(ImGui::SliderInt("Axial Z",&recon_slices[2],0,recon_dimensions[2]-1))slices_changed=true;
-                if(ImGui::SliderInt("Coronal Y",&recon_slices[1],0,recon_dimensions[1]-1))slices_changed=true;
-                if(ImGui::SliderInt("Sagittal X",&recon_slices[0],0,recon_dimensions[0]-1))slices_changed=true;
-                double width=window_high-window_low,level=(window_high+window_low)/2;
-                ImGui::SetNextItemWidth(-185);
-                const bool width_changed=ImGui::InputDouble("Window width (HU)",&width,10,100,"%.1f");
-                ImGui::SetNextItemWidth(-185);
-                const bool level_changed=ImGui::InputDouble("Window level (HU)",&level,10,100,"%.1f");
-                if(width_changed||level_changed){window_low=level-width/2;window_high=level+width/2;window_changed=true;}
-                ImGui::Text("Water reference: %.3f keV",ct_reference.energy_keV);
-                ImGui::Text("mu water: %.7f mm^-1",ct_reference.mu_water_mm_inv);
-                if(ImGui::Button("Auto window"))auto_window=true;
+                ImGui::Text("Grid: %d x %d x %d",viewer.recon_dimensions[0],viewer.recon_dimensions[1],viewer.recon_dimensions[2]);
+                ImGui::Text("Voxel: %.3f / %.3f / %.3f mm",viewer.spacing[0],viewer.spacing[1],viewer.spacing[2]);
+                if(ImGui::Button("Open MPR workspace")){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;viewer.expanded=true;viewer.layout_changed=true;}
+                ImGui::TextWrapped("Four linked views, oblique plane, HU window presets and mouse controls are available in the image viewer.");
                 ImGui::TextWrapped("CT display uses HU = 1000 * (mu / mu_water - 1). Reference energy matches BHC. Original attenuation values are retained; windowing only affects display.");
             }else ImGui::TextWrapped("Reconstruct first, or load the saved output volume below.");
             if(ImGui::Button("Load saved reconstruction"))load_reconstruction=true;
         }
         void draw(int width, int height, bool enabled, const std::string& status, yk::visualization::LiveView& view)
         {
-            ImGui::SetNextWindowPos({ 0, 0 });
-            ImGui::SetNextWindowSize({ float(width) * .30f, float(height) });
-            ImGui::Begin("Projection setup", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+            float menu_height=ImGui::GetFrameHeight();
+            if(ImGui::BeginMainMenuBar()){
+                menu_height=ImGui::GetWindowHeight();
+                if(ImGui::BeginMenu("File")){
+                    if(ImGui::MenuItem("Open configuration...",nullptr,false,enabled))load=true;
+                    if(ImGui::MenuItem("Save configuration...",nullptr,false,enabled))save=true;
+                    ImGui::Separator();
+                    if(ImGui::MenuItem("Volume and materials...",nullptr,false,enabled))requested_settings=1;
+                    if(ImGui::MenuItem("Load reconstruction...",nullptr,false,enabled))browse_reconstruction=true;
+                    if(ImGui::MenuItem("Export spectrum...",nullptr,false,enabled))export_spectrum=true;
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Settings",enabled)){
+                    const char* pages[]={"Scan geometry","Volume and materials","Spectrum","Physical effects","Reconstruction","Results"};
+                    for(int i=0;i<6;++i)if(ImGui::MenuItem(pages[i]))requested_settings=i;
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Compute",enabled)){
+                    if(ImGui::MenuItem("Forward projection"))calculate=true;
+                    if(ImGui::MenuItem("Reconstruction"))reconstruct=true;
+                    if(ImGui::MenuItem("Preview spectrum"))preview=true;
+                    ImGui::Separator();
+                    ImGui::MenuItem("Reconstruct after projection",nullptr,&auto_reconstruct);
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("View",enabled)){
+                    if(ImGui::MenuItem("Projection images",nullptr,drawer_open&&result_mode==0)){drawer_open=true;drawer_changed=true;result_mode=0;result_changed=true;select_image_page=true;}
+                    if(ImGui::MenuItem("Reconstruction images",nullptr,drawer_open&&result_mode==1)){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;}
+                    if(ImGui::MenuItem("MPR workspace",nullptr,drawer_open&&result_mode==1&&viewer.expanded,view.hasReconstruction())){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;viewer.expanded=true;viewer.layout_changed=true;}
+                    if(ImGui::MenuItem("Close image drawer",nullptr,false,drawer_open)){drawer_open=false;drawer_changed=true;}
+                    relative_mode=view.relativeGeometryMode();
+                    if(ImGui::MenuItem("Gantry fixed",nullptr,&relative_mode,view.relativeGeometryAvailable()))relative_changed=true;
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Example",enabled)){
+                    if(ImGui::MenuItem("Phantom calibration (experimental)..."))calibration_window=true;
+                    ImGui::Separator();
+                    for(const auto* category:{"Water phantoms","Geometry calibration","ICRP145","BrainWeb"}){
+                        if(ImGui::BeginMenu(category)){
+                            for(int i=0;i<int(builtin_examples.size());++i){
+                                const auto& item=builtin_examples[i];
+                                const auto group=item.id.rfind("water-",0)==0?"Water phantoms":item.id.rfind("bead-",0)==0?"Geometry calibration":item.category.c_str();
+                                if(std::string_view(category)==group && ImGui::MenuItem(item.name.c_str()))chooseExample(i);
+                            }
+                            ImGui::EndMenu();
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Help")){
+                    if(ImGui::MenuItem("Workflow guide"))help_window=true;
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMainMenuBar();
+            }
+            if(example_window){
+                ImGui::SetNextWindowSize({620,650},ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos({float(width)*.5f,float(height)*.5f},ImGuiCond_Appearing,{.5f,.5f});
+                if(ImGui::Begin("Phantom parameters",&example_window)){
+                    ImGui::BeginDisabled(!enabled);
+                    ImGui::TextWrapped("%s",builtin_examples[example_index].name.c_str());
+                    ImGui::TextWrapped("Generates a new setup in memory. Current projections and reconstruction will be cleared.");
+                    const auto preset=examples::clientExamples().create(builtin_examples[example_index].id)->scanPreset();
+                    ImGui::TextWrapped("Scan preset: %s",preset.name.c_str());
+                    ImGui::Text("SID %.0f / SDD %.0f mm | %d views (%d / turn)",preset.sid_mm,preset.sdd_mm,preset.views,preset.views_per_turn);
+                    ImGui::Text("Detector %d x %d | %.3f x %.3f mm | %s + Hann",preset.detector_u,preset.detector_v,preset.pixel_u_mm,preset.pixel_v_mm,preset.reconstruction.c_str());
+                    if(preset.pitch_mm_per_turn>0)ImGui::Text("Travel %.0f mm / turn | start Z %.0f mm",preset.pitch_mm_per_turn,preset.start_z_mm);
+                    ImGui::TextWrapped("120 kVp, 2 mm Al. Noise and scatter off. Generate applies ALL setup parameters.");
+                    ImGui::BeginChild("Phantom fields",{0,-110},true);
+                    std::string group;
+                    for(auto& parameter:example_parameters){
+                        if(group!=parameter.group){group=parameter.group;ImGui::SeparatorText(group.c_str());}
+                        ImGui::PushID(parameter.id.c_str());
+                        ImGui::SetNextItemWidth(150);
+                        if(parameter.integer){int value=int(parameter.value);if(ImGui::InputInt(parameter.name.c_str(),&value))parameter.value=value;}
+                        else ImGui::InputDouble(parameter.name.c_str(),&parameter.value,0,0,"%.3f");
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    if(!example_error.empty()){ImGui::TextWrapped("%s",example_error.c_str());}
+                    if(ImGui::Button("Generate and load",{170,32})){create_example=true;example_error.clear();}
+                    ImGui::SameLine();
+                    if(ImGui::Button("Restore defaults"))chooseExample(example_index);
+                    ImGui::SameLine();
+                    if(ImGui::Button("Cancel"))example_window=false;
+                    ImGui::EndDisabled();
+                }
+                ImGui::End();
+            }
+            if(calibration_window){
+                ImGui::SetNextWindowSize({690,720},ImGuiCond_FirstUseEver);
+                if(ImGui::Begin("Phantom calibration (experimental)",&calibration_window)){
+                    ImGui::BeginDisabled(!enabled);
+                    ImGui::TextWrapped("Set non-ideal detector/source offsets and tilts in Settings > Scan, then Compute > Forward projection. Calibration below uses that saved projection stack.");
+                    ImGui::TextWrapped("Full circular flat CBCT. Uses measured negative-log projections and known phantom dimensions.");
+                    auto& c=calibration_context.config;
+                    using Kind=cbct::calibration::PipelineConfig::PhantomKind;
+                    int kind=int(c.phantom_kind);
+                    if(ImGui::Combo("Phantom family",&kind,"Double rings\0Marked spiral\0Single row (limited)\0")){
+                        c.phantom_kind=Kind(kind);calibration_data={};calibration_input.reset();
+                    }
+                    if(c.phantom_kind==Kind::SingleRow){
+                        integer("Bead count",c.row_beads);number("Spacing (mm)",c.row_spacing_mm);
+                        ImGui::TextWrapped("Five-parameter fit: SID, SDD, detector U/V and in-plane rotation. Out-of-plane detector tilt must be negligible. The line must be off the rotation axis. Nominal distances initialize the fit.");
+                    }else if(c.phantom_kind==Kind::Spiral){
+                        integer("Bead count",c.spiral_beads);number("Radius (mm)",c.spiral_radius_mm);
+                        number("Axial spacing (mm)",c.spiral_spacing_mm);number("Angular step (deg)",c.spiral_step_deg);
+                        number("Marker X (mm)",c.spiral_marker_mm.x());number("Marker Y (mm)",c.spiral_marker_mm.y());number("Marker Z (mm)",c.spiral_marker_mm.z());
+                    }else{
+                    ImGui::SeparatorText("Known phantom dimensions");
+                    ImGui::Checkbox("Use markers for numbering only",&c.phantom.markers_for_numbering_only);
+                    ImGui::InputInt("Beads per ring",&c.phantom.beads_per_ring);
+                    number("Upper radius (mm)",c.phantom.upper_radius_mm);number("Lower radius (mm)",c.phantom.lower_radius_mm);
+                    number("Half ring separation (mm)",c.phantom.ring_half_spacing_mm);number("Lower phase (deg)",c.phantom.lower_phase_deg);
+                    int markers=int(c.phantom.marker_points_mm.size());
+                    if(ImGui::SliderInt("Markers",&markers,0,2))c.phantom.marker_points_mm.resize(markers,cbct::calibration::Point3(50,0,70));
+                    for(size_t i=0;i<c.phantom.marker_points_mm.size();++i){
+                        ImGui::PushID(int(i));ImGui::Text("Marker %d",int(i)+1);
+                        number("X (mm)",c.phantom.marker_points_mm[i].x());number("Y (mm)",c.phantom.marker_points_mm[i].y());number("Z (mm)",c.phantom.marker_points_mm[i].z());
+                        ImGui::PopID();
+                    }
+                    }
+                    ImGui::SeparatorText("Detection and fit");
+                    ImGui::InputFloat("Threshold (-log)",&c.tracker.threshold,0,0,"%.2f");
+                    ImGui::InputInt("Minimum component pixels",&c.tracker.min_pixels);
+                    number("Tracking gate (pixels)",c.tracker.gate_radius_px);
+                    ImGui::InputInt("Maximum fit iterations",&c.joint_max_iterations);
+                    number("Accepted RMSE (pixels)",calibration_context.maximum_rmse_px);
+                    number("Nominal SID (mm)",nominal_sid);number("Nominal SDD (mm)",nominal_sdd);
+                    if(ImGui::Button("Calibrate current projections"))calibrate_geometry=true;
+                    if(!calibration_message.empty())ImGui::TextWrapped("%s",calibration_message.c_str());
+                    if(calibration_data.result){
+                        const auto& r=*calibration_data.result;
+                        ImGui::TextWrapped("Model: %s",r.model.c_str());
+                        ImGui::Text("Last fit: RMSE %.4f px | max %.4f px | %s",r.joint_rmse_px,r.max_point_error_px,r.joint_converged?"converged":"NOT converged");
+                        ImGui::Text("SID %.3f / SDD %.3f | U %.3f / V %.3f mm",r.machine.sid_mm,r.machine.sdd_mm,r.machine.offset_u_mm,r.machine.offset_v_mm);
+                        ImGui::TextWrapped("Correction uses fitted geometry, not pixel warping. Source and normal offsets are gauge-fixed. Corrected volume is in the fitted scanner frame.");
+                    }
+                    ImGui::BeginDisabled(!calibration_input);
+                    if(ImGui::Button("Reconstruct with nominal geometry"))nominal_reconstruction=true;
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!calibration_data.corrected);
+                    if(ImGui::Button("Reconstruct with calibrated geometry"))corrected_reconstruction=true;
+                    ImGui::EndDisabled();
+                    ImGui::EndDisabled();
+                }
+                ImGui::End();
+            }
+            if(help_window){
+                ImGui::SetNextWindowSize({520,300},ImGuiCond_FirstUseEver);
+                if(ImGui::Begin("Workflow guide",&help_window)){
+                    ImGui::TextWrapped("1. File > Open configuration, or Example > choose a built-in phantom.");
+                    ImGui::TextWrapped("2. Settings selects the parameter workspace: scan, materials, spectrum, effects or reconstruction.");
+                    ImGui::TextWrapped("3. Compute > Forward projection. Geometry and parameter edits take effect on the next computation.");
+                    ImGui::TextWrapped("4. Compute > Reconstruction. View opens projections or reconstructed slices in the image drawer.");
+                    ImGui::TextWrapped("Built-in phantoms use memory resources. File > Save configuration explicitly exports TOML and the label volume.");
+                }
+                ImGui::End();
+            }
+            ImGui::SetNextWindowPos({ 0, menu_height });
+            ImGui::SetNextWindowSize({ float(width) * .30f, float(height)-menu_height });
+            ImGui::Begin("Parameter workspace", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
             ImGui::BeginDisabled(!enabled);
-            if (ImGui::Button("Load TOML"))
-                load = true;
-            ImGui::SameLine();
-            if (ImGui::Button("Save TOML"))
-                save = true;
-            ImGui::TextWrapped("Changes are drafts until Calculate is pressed.");
+            if(ImGui::CollapsingHeader("View settings")){
             ImGui::SetNextItemWidth(-130);
             if(ImGui::SliderFloat("Volume opacity",&opacity_scale,0,1,"%.3f",ImGuiSliderFlags_Logarithmic))opacity_changed=true;
             relative_mode=view.relativeGeometryMode();
@@ -607,6 +311,8 @@ void number(const char* label, double& value)
             if(ImGui::Checkbox("Gantry fixed (relative)",&relative_mode))relative_changed=true;
             ImGui::EndDisabled();
             if(!view.relativeGeometryAvailable())ImGui::TextWrapped("Relative mode requires a rigid source-detector trajectory.");
+            }
+            ImGui::Spacing();
             auto body=[&](auto draw_content){
                 ImGui::BeginChild("Parameter content",{0,-140},false);
                 if(!message.empty()){
@@ -615,26 +321,26 @@ void number(const char* label, double& value)
                 draw_content();ImGui::EndChild();
             };
             if (ImGui::BeginTabBar("Settings")) {
-                if (ImGui::BeginTabItem("Scan")) {
+                if (ImGui::BeginTabItem("Scan",nullptr,requested_settings==0?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
                     body([&]{scan();});
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Volume")) {
+                if (ImGui::BeginTabItem("Volume",nullptr,requested_settings==1?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
                     body([&]{volume();});
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Spectrum")) {
+                if (ImGui::BeginTabItem("Spectrum",nullptr,requested_settings==2?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
                     body([&]{energy();});
                     ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Effects")) {
+                if (ImGui::BeginTabItem("Effects",nullptr,requested_settings==3?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
                     body([&]{effects();});
                     ImGui::EndTabItem();
                 }
                 const auto recon_flags=!view.hasReconstruction() && (std::getenv("YK_IMGUI_RECON_SMOKE")||std::getenv("YK_IMGUI_CHAIN_SMOKE"))?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None;
-                if(ImGui::BeginTabItem("Recon",nullptr,recon_flags)){body([&]{reconstruction();});ImGui::EndTabItem();}
-                if(ImGui::BeginTabItem("Results",nullptr,select_results?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)){body([&]{results(view);});ImGui::EndTabItem();}
-                select_results=false;
+                if(ImGui::BeginTabItem("Recon",nullptr,requested_settings==4?ImGuiTabItemFlags_SetSelected:recon_flags)){body([&]{reconstruction();});ImGui::EndTabItem();}
+                if(ImGui::BeginTabItem("Results",nullptr,(select_results||requested_settings==5)?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)){body([&]{results(view);});ImGui::EndTabItem();}
+                select_results=false;requested_settings=-1;
                 ImGui::EndTabBar();
             }
             const float action_width=(ImGui::GetContentRegionAvail().x-ImGui::GetStyle().ItemSpacing.x)/2;
@@ -656,8 +362,9 @@ void number(const char* label, double& value)
 
             ImGui::End();
             if(drawer_open){
-            ImGui::SetNextWindowPos({float(width)*.65f,0});
-            ImGui::SetNextWindowSize({float(width)*.35f,56});
+            const float image_left=viewer.expanded&&result_mode==1?.30f:.65f;
+            ImGui::SetNextWindowPos({float(width)*image_left,menu_height});
+            ImGui::SetNextWindowSize({float(width)*(1-image_left),56});
             ImGui::Begin("Image pages",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoScrollbar);
             if(ImGui::Button("Close")){drawer_open=false;drawer_changed=true;}
             ImGui::SameLine();
@@ -673,30 +380,23 @@ void number(const char* label, double& value)
             select_image_page=false;
             ImGui::End();
             if(result_mode==1 && view.hasReconstruction()){
-                ImGui::SetNextWindowPos({float(width)*.65f,float(height)-166});ImGui::SetNextWindowSize({float(width)*.35f,166});
-                ImGui::Begin("Reconstruction drawer controls",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoScrollbar);
+                viewer.imageInteractions(view,enabled);
+                ImGui::SetNextWindowPos({float(width)*image_left,float(height)-354});ImGui::SetNextWindowSize({float(width)*(1-image_left),354});
+                ImGui::Begin("Reconstruction drawer controls",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize);
                 ImGui::BeginDisabled(!enabled);
-                const float cell=(ImGui::GetContentRegionAvail().x-2*ImGui::GetStyle().ItemSpacing.x)/3;
-                ImGui::SetNextItemWidth(cell-24);if(ImGui::SliderInt("X",&recon_slices[0],0,recon_dimensions[0]-1))slices_changed=true;
-                ImGui::SameLine();ImGui::SetNextItemWidth(cell-24);if(ImGui::SliderInt("Y",&recon_slices[1],0,recon_dimensions[1]-1))slices_changed=true;
-                ImGui::SameLine();ImGui::SetNextItemWidth(cell-24);if(ImGui::SliderInt("Z",&recon_slices[2],0,recon_dimensions[2]-1))slices_changed=true;
-                double ww=window_high-window_low,wl=(window_high+window_low)/2;
-                const float half=(ImGui::GetContentRegionAvail().x-ImGui::GetStyle().ItemSpacing.x)/2;
-                ImGui::SetNextItemWidth(half-42);const bool cw=ImGui::InputDouble("WW",&ww,0,0,"%.1f");
-                ImGui::SameLine();ImGui::SetNextItemWidth(half-42);const bool cl=ImGui::InputDouble("WL",&wl,0,0,"%.1f");
-                if(cw||cl){window_low=wl-ww/2;window_high=wl+ww/2;window_changed=true;}
-                if(ImGui::Button("Auto window"))auto_window=true;ImGui::SameLine();ImGui::Text("%.1f keV | HU",ct_reference.energy_keV);
+                viewer.controls(view,ct_reference);
                 ImGui::EndDisabled();ImGui::End();
             }
             }else{
-                ImGui::SetNextWindowPos({float(width)-310,12});ImGui::SetNextWindowSize({298,98});
+                ImGui::SetNextWindowPos({float(width)-310,menu_height+12});ImGui::SetNextWindowSize({298,98});
                 ImGui::Begin("Image drawer handle",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoScrollbar);
                 if(ImGui::Button("Projection images",{-1,32})){drawer_open=true;drawer_changed=true;result_mode=0;result_changed=true;select_image_page=true;}
                 if(ImGui::Button("Reconstruction images",{-1,32})){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;}
                 ImGui::End();
             }
+            if(!(drawer_open&&result_mode==1&&viewer.expanded)){
             ImGui::SetNextWindowPos({ float(width) * .30f, float(height) * .90f });
-            ImGui::SetNextWindowSize({ float(width) * .70f, float(height) * .10f });
+            ImGui::SetNextWindowSize({ float(width) * (drawer_open?.35f:.70f), float(height) * .10f });
             ImGui::Begin("Scan browsing", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
             ImGui::BeginDisabled(!enabled || view.cachedFrameCount() == 0);
             int frame = view.displayedFrame();
@@ -706,18 +406,31 @@ void number(const char* label, double& value)
             ImGui::EndDisabled();
             ImGui::Text("Drag 3D view to rotate. B: beam, T: trajectory.");
             ImGui::End();
+            }
         }
     };
 }
-bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::path& output, std::string& error)
+bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::path& output, std::string& error, const std::vector<std::uint8_t>* initial_labels, const std::string& example_id)
 {
     try {
         UiState ui;
         ui.draft = initial;
+        if(!example_id.empty())ui.bindCalibrationExample(example_id,examples::clientExamples().create(example_id)->parameters());
         ui.auto_reconstruct=initial.runsReconstruction();
+        ui.reconstruction_geometry_initialized=initial.reconstruction.geometry_override.enabled || !initial.source_config_file.empty();
         ui.opacity_scale=float(initial.visualization.volume_opacity_scale);
         ui.draft.projection.output_file = output;
 
+        std::vector<std::uint8_t> builtin_labels = initial_labels ? *initial_labels : std::vector<std::uint8_t>{};
+        auto builtin_grid = initial.geometry.parameters;
+        auto readLabels = [&](const SimulationConfig& config) {
+            const auto& g=config.geometry.parameters;
+            if(!config.projection.label_volume.empty()) return readClientLabels(config.projection.label_volume,{g.volume_x,g.volume_y,g.volume_z});
+            if(builtin_labels.empty()) throw std::runtime_error("Choose a built-in example or load a volume");
+            if(g.volume_x!=builtin_grid.volume_x || g.volume_y!=builtin_grid.volume_y || g.volume_z!=builtin_grid.volume_z)
+                throw std::runtime_error("Built-in volume dimensions are fixed; reload the example to restore them");
+            return builtin_labels;
+        };
         auto current = ui.draft;
         std::vector<std::uint8_t> labels;
         auto& options = initial.visualization;
@@ -732,16 +445,21 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             auto volume=loadReconstructionDisplay(config.reconstruction.output_volume_file,config.geometry.parameters);
             const auto reference=resolveWaterReference(config);
             ui.ct_reference=reference;
-            ui.recon_dimensions=volume.dimensions;
-            for(int i=0;i<3;++i)ui.recon_slices[i]=volume.dimensions[i]/2;
+            ui.viewer.reset(volume);
             view.setReconstruction(std::move(volume));
             view.setReconstructionCtReference(reference.mu_water_mm_inv);
-            const auto window=view.reconstructionWindow();ui.window_low=window[0];ui.window_high=window[1];
+            const auto window=view.reconstructionWindow();ui.viewer.window_low=window[0];ui.viewer.window_high=window[1];
             view.setImageDrawer(true);ui.drawer_open=true;ui.drawer_changed=false;ui.result_mode=1;ui.select_image_page=true;ui.result_changed=false;ui.select_results=true;reconstructed_config=config;
         };
-        auto runReconstruction=[&](const SimulationConfig& projection_config) {
+        auto runReconstruction=[&](const SimulationConfig& projection_config, const char* output_suffix="") {
             auto config=projection_config;
             config.reconstruction=ui.draft.reconstruction;
+            if(*output_suffix){
+                config.reconstruction.geometry_override.enabled=false;
+                config.reconstruction.input_projection_file=projection_config.projection.output_file;
+                config.reconstruction.output_volume_file=projection_config.projection.output_file.string()+output_suffix+".raw";
+                config.reconstruction.slice_prefix=projection_config.projection.output_file.string()+output_suffix;
+            }
             const auto& grid=ui.draft.geometry.parameters;auto& g=config.geometry.parameters;
             g.reconstruction_volume_x=grid.reconstruction_volume_x;g.reconstruction_volume_y=grid.reconstruction_volume_y;g.reconstruction_volume_z=grid.reconstruction_volume_z;
             g.reconstruction_voxel_x_mm=grid.reconstruction_voxel_x_mm;g.reconstruction_voxel_y_mm=grid.reconstruction_voxel_y_mm;g.reconstruction_voxel_z_mm=grid.reconstruction_voxel_z_mm;
@@ -750,8 +468,11 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             config.projection.scatter.enabled=false; // Forward scatter is not executed by reconstruction.
             if(config.reconstruction.output_volume_file.empty())throw std::runtime_error("Set a reconstruction output volume path");
             const auto validation=std::filesystem::path(output.string()+".recon-validation.toml");
-            saveProjectionUiConfig(config,validation,WorkflowMode::Reconstruct);
-            auto checked=loadConfig(validation);checked.source_config_file=projection_config.source_config_file;
+            auto checked=config;
+            if(!config.projection.label_volume.empty()){
+                saveProjectionUiConfig(config,validation,WorkflowMode::Reconstruct);
+                checked=loadConfig(validation);checked.source_config_file=projection_config.source_config_file;
+            }
             for(const auto& path:{checked.reconstruction.output_volume_file,checked.reconstruction.slice_prefix})
                 if(!path.parent_path().empty())std::filesystem::create_directories(path.parent_path());
             view.setEditingEnabled(false);view.setStatus("Running reconstruction...");
@@ -794,12 +515,12 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             displayReconstruction(checked);
             ui.message="Reconstruction displayed and saved: "+checked.reconstruction.output_volume_file.string();
             view.setStatus("Reconstruction complete. Projection browsing is available.");
-            saveProjectionUiConfig(checked,checked.reconstruction.output_volume_file.string()+".toml",WorkflowMode::Reconstruct);
+            if(!checked.projection.label_volume.empty()) saveProjectionUiConfig(checked,checked.reconstruction.output_volume_file.string()+".toml",WorkflowMode::Reconstruct);
         };
         auto loadResources=[&](const SimulationConfig& config) {
             view.setEditingEnabled(false);
-            view.setStatus("Loading TOML volume, materials, spectrum and trajectory...");
-            auto loaded_labels=loadLabelVolume(config.projection.label_volume);
+            view.setStatus("Loading volume, materials, spectrum and trajectory...");
+            auto loaded_labels=readLabels(config);
             validateProjectionUiInputs(config,loaded_labels);
             auto projection=config.projection;projection.spectrum.export_file.clear();
             auto spectrum=loadProjectionSpectrum(projection);
@@ -829,13 +550,41 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                 catch(const std::exception& e){ui.message=std::string("Saved reconstruction could not be loaded: ")+e.what();}
             }
         };
+        auto refreshScanPreview=[&]{
+            const auto frames=buildDisplayGeometry(ui.draft);
+            if(computed_config && ui.draft.reconstruction.input_projection_file.lexically_normal()==computed_config->projection.output_file.lexically_normal())
+                ui.draft.reconstruction.input_projection_file.clear();
+            computed_config.reset();reconstructed_config.reset();
+            view.setTrajectory(frames);view.setGeometryPreview(frames.front());
+            ui.requested_frame=-1;ui.shown_frame=0;
+            ui.calibration_data={};ui.calibration_input.reset();ui.calibration_message.clear();
+            ui.message="Scan type changed. Geometry preview updated; calculate new projections before reconstruction.";
+            view.setStatus("Geometry ready. Press Calculate to generate projections.");
+        };
         bool success = true; // Closing a loaded setup without calculating is normal.
         const bool smoke = std::getenv("YK_IMGUI_SMOKE") != nullptr;
         const bool chain_smoke=std::getenv("YK_IMGUI_CHAIN_SMOKE")!=nullptr;
-        ui.calculate = smoke || chain_smoke;
+        const bool calibration_smoke=std::getenv("YK_IMGUI_CALIBRATION_SMOKE")!=nullptr;
+        ui.calculate = smoke || chain_smoke || calibration_smoke;
+        if(calibration_smoke){
+            ui.calibration_window=true;
+            auto& g=ui.draft.geometry.parameters;
+            g.reconstruction_volume_x=g.reconstruction_volume_y=256;g.reconstruction_volume_z=320;
+            g.reconstruction_voxel_x_mm=g.reconstruction_voxel_y_mm=g.reconstruction_voxel_z_mm=.6;
+        }
         try {loadResources(ui.draft);}
         catch(const std::exception& e){ui.message=e.what();view.setEditingEnabled(true);view.setStatus("Could not load TOML resources. Correct paths or load another TOML.");if(smoke||chain_smoke)throw;}
         if(ui.message.empty())ui.message=initial.source_config_file.string();
+        if(const auto* mpr_file=std::getenv("YK_IMGUI_MPR_VOLUME")){
+            auto config=ui.draft;config.reconstruction.output_volume_file=mpr_file;
+            displayReconstruction(config);ui.viewer.expanded=true;view.setReconstructionWorkspace(true);
+            if(std::getenv("YK_IMGUI_MPR_SMOKE")){
+                ui.viewer.mpr.indices=ui.viewer.recon_slices;yk::visualization::setMprRotation(ui.viewer.mpr,{20,-15,35});
+                view.setReconstructionMpr(ui.viewer.mpr);view.setReconstructionWindow(-160,240);
+                ui.viewer.window_low=-160;ui.viewer.window_high=240;
+                for(int i=0;i<3;++i)view.pollGui();view.saveSnapshot();return true;
+            }
+        }
         if(std::getenv("YK_IMGUI_RELATIVE_SMOKE")) {
             if(!view.relativeGeometryAvailable())throw std::runtime_error("Rigid gantry relative mode unavailable");
             view.setRelativeGeometryMode(true); // Loaded preview, with no cached projections.
@@ -852,16 +601,35 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             view.saveSnapshot();return true;
         }
         if(std::getenv("YK_IMGUI_LOAD_SMOKE")) {
-            auto trial=initial;
-            const GeometryKind kinds[]={GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::PlanarSourceOrbit,GeometryKind::NikonTilted};
+            const GeometryKind kinds[]={GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::PlanarSourceOrbit,GeometryKind::NikonTilted};
             for(auto kind:kinds){
-                trial.geometry.kind=kind;auto& g=trial.geometry.parameters;
-                g.pitch_mm_per_turn=100;g.planar_detector_y_mm=g.sdd_mm-g.sid_mm;
-                g.source_orbit_radius_mm=g.sid_mm;g.reconstruction_detector_u=g.detector_u;g.reconstruction_detector_v=g.detector_v;g.nikon_tilt_rad=15/degrees;
-                loadResources(trial);
+                const auto old=buildDisplayGeometry(ui.draft);
+                if(view.relativeGeometryAvailable())view.setRelativeGeometryMode(true);
+                const std::vector<float> pixels(16,1.f);
+                view.update(old.front(),4,4,pixels,"Old computed frame",true);
+                view.update(old.back(),4,4,pixels,"Old computed frame",true);
+                yk::visualization::FloatVolume volume;volume.dimensions={2,2,2};volume.spacing={1,1,1};volume.values.assign(8,.02f);
+                view.setReconstruction(std::move(volume));
+                computed_config=ui.draft;reconstructed_config=ui.draft;
+                ui.draft.reconstruction.input_projection_file=ui.draft.projection.output_file;
+                setProjectionUiScanType(ui.draft,kind);
+                ui.draft.geometry.parameters.nikon_tilt_rad=15/degrees;
+                refreshScanPreview();
+                if(computed_config || reconstructed_config || view.hasReconstruction() || view.cachedFrameCount()!=0 || !ui.draft.reconstruction.input_projection_file.empty())
+                    throw std::runtime_error("Scan switching retained old projection/reconstruction state");
+                loadResources(ui.draft);
+                const auto& g=ui.draft.geometry.parameters;
+                const auto orbit=buildDisplayGeometry(ui.draft);
+                const double travel=orbit.back().source[2]-orbit.front().source[2];
+                if(kind==GeometryKind::FlatCbct && std::abs(travel)>1e-4)throw std::runtime_error("Circular preview consumed stale helical pitch");
+                if(kind==GeometryKind::FlatHelical && g.views>1 && std::abs(travel)<1e-4)throw std::runtime_error("Helical preview has no Z travel");
                 if(view.cachedFrameCount()!=0 || labels.empty() || ui.spectrum_plot.empty())
                     throw std::runtime_error("TOML resource load did not complete independently of projection");
             }
+            const auto external=std::filesystem::path(ui.draft.projection.output_file.string()+".external");
+            computed_config=ui.draft;ui.draft.reconstruction.input_projection_file=external;
+            refreshScanPreview();
+            if(ui.draft.reconstruction.input_projection_file!=external)throw std::runtime_error("Scan preview erased independent external projection input");
             view.saveSnapshot();
             return true;
         }
@@ -878,25 +646,94 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         while (view.isOpen()) {
             view.pollGui();
             try {
+                if(ui.scan_type_changed){
+                    ui.scan_type_changed=false;
+                    refreshScanPreview();
+                }
                 if(ui.relative_changed){ui.relative_changed=false;view.setRelativeGeometryMode(ui.relative_mode);}
                 if(ui.drawer_changed){ui.drawer_changed=false;view.setImageDrawer(ui.drawer_open);}
                 if(ui.result_changed){ui.result_changed=false;view.showReconstruction(ui.result_mode==1);}
-                if(ui.slices_changed){ui.slices_changed=false;view.setReconstructionSlices(ui.recon_slices);}
-                if(ui.window_changed){ui.window_changed=false;view.setReconstructionWindow(ui.window_low,ui.window_high);}
-                if(ui.auto_window){ui.auto_window=false;const auto indices=ui.recon_slices;
-                    displayReconstruction(reconstructed_config?*reconstructed_config:ui.draft);ui.recon_slices=indices;view.setReconstructionSlices(indices);}
+                if(ui.viewer.layout_changed){ui.viewer.layout_changed=false;view.setReconstructionWorkspace(ui.viewer.expanded,ui.viewer.single_panel);}
+                if(ui.viewer.slices_changed){ui.viewer.slices_changed=false;ui.viewer.mpr.indices=ui.viewer.recon_slices;view.setReconstructionMpr(ui.viewer.mpr);}
+                if(ui.viewer.window_changed){ui.viewer.window_changed=false;view.setReconstructionWindow(ui.viewer.window_low,ui.viewer.window_high);}
+                if(ui.viewer.auto_window){ui.viewer.auto_window=false;view.resetReconstructionWindow();const auto range=view.reconstructionWindow();ui.viewer.window_low=range[0];ui.viewer.window_high=range[1];}
                 if(ui.load_reconstruction){ui.load_reconstruction=false;displayReconstruction(ui.draft);view.setStatus("Saved reconstruction loaded and displayed.");}
+                if(ui.browse_reconstruction){ui.browse_reconstruction=false;
+                    const auto path=ui::chooseFile(false,L"Float32 volume (*.raw)\0*.raw\0All files\0*.*\0\0");
+                    if(!path.empty()){auto config=ui.draft;config.reconstruction.output_volume_file=path;displayReconstruction(config);
+                        view.setStatus("Reconstruction loaded. Grid metadata is used when present; HU reference follows the current configuration.");}}
                 if(ui.opacity_changed){ui.opacity_changed=false;ui.draft.visualization.volume_opacity_scale=ui.opacity_scale;view.setVolumeOpacityScale(ui.opacity_scale);}
                 if(ui.reconstruct){ui.reconstruct=false;
                     auto config=ui.draft;
+                    if(config.reconstruction.input_projection_file.empty())throw std::runtime_error("Calculate new projections or select a reconstruction input file first.");
                     if(computed_config && config.reconstruction.input_projection_file.lexically_normal()==computed_config->projection.output_file.lexically_normal())config.geometry=computed_config->geometry;
                     runReconstruction(config);
                 }
-                if (ui.load) {
+                if(ui.calibrate_geometry){
+                    ui.calibrate_geometry=false;ui.calibration_data={};ui.calibration_input.reset();ui.calibration_message.clear();
+                    if(!ui.known_example_id.empty() && ui.known_example_id.rfind("bead-",0)!=0)
+                        throw std::runtime_error("Choose a bead calibration phantom, not a water cylinder.");
+                    auto input=computed_config?*computed_config:ui.draft;
+                    auto context=ui.calibration_context;const auto& g=input.geometry.parameters;
+                    context.full_circle=input.geometry.kind==GeometryKind::FlatCbct && g.views==g.views_per_turn;
+                    if(!context.full_circle)throw std::runtime_error("Calibration requires a single full circular flat scan");
+                    context.config.tracker.raw_path=input.projection.output_file;
+                    context.config.tracker.views=g.views;context.config.tracker.image={g.detector_v,g.detector_u};context.config.pixel={g.pixel_u_mm,g.pixel_v_mm};
+                    context.nominal=calibration::nominalGeometry(input.geometry);
+                    context.nominal.parameters.sid_mm=ui.nominal_sid;context.nominal.parameters.sdd_mm=ui.nominal_sdd;
+                    context.config.initial_sid_mm=ui.nominal_sid;context.config.initial_sdd_mm=ui.nominal_sdd;
+                    ui.calibration_input=input;ui.calibration_context=context;
+                    view.setEditingEnabled(false);view.setStatus("Detecting beads and fitting geometry...");
+                    auto task=std::async(std::launch::async,[context]{
+                        calibration::Data data;calibration::GeometryCalibrationStage stage;
+                        stage.process(data,context);data.domain=stage.contract().output_domain;return data;
+                    });
+                    const auto started=std::chrono::steady_clock::now();
+                    while(task.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready){
+                        view.setStatus("Geometry calibration: "+std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now()-started).count())+" s");
+                        view.pollGui();std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    }
+                    ui.calibration_data=task.get();ui.calibration_input=input;
+                    ui.calibration_context=context;
+                    const auto report=std::filesystem::path(input.projection.output_file.string()+".geometry-calibration.json");
+                    cbct::calibration::writeCalibrationJson(report,*ui.calibration_data.result);
+                    ui.calibration_message="Report: "+report.string();
+                    try{calibration::GeometryCorrectionStage correction;correction.process(ui.calibration_data,context);ui.calibration_data.domain=correction.contract().output_domain;}
+                    catch(const std::exception& e){ui.calibration_message+=" | ";ui.calibration_message+=e.what();}
+                    view.setEditingEnabled(true);view.setStatus("Geometry calibration finished. Review the fit before reconstruction.");
+                    if(calibration_smoke){
+                        std::cout<<"calibration_rmse_px="<<ui.calibration_data.result->joint_rmse_px<<" converged="<<ui.calibration_data.result->joint_converged<<std::endl;
+                        if(!ui.calibration_data.corrected)throw std::runtime_error(ui.calibration_message);
+                        auto nominal=input;nominal.geometry=context.nominal;runReconstruction(nominal,".nominal");
+                        auto corrected=input;corrected.geometry=*ui.calibration_data.corrected;runReconstruction(corrected,".calibrated");
+                        return true;
+                    }
+                }
+                if(ui.nominal_reconstruction || ui.corrected_reconstruction){
+                    const bool corrected=ui.corrected_reconstruction;ui.nominal_reconstruction=ui.corrected_reconstruction=false;
+                    if(!ui.calibration_input || (corrected&&!ui.calibration_data.corrected))throw std::runtime_error("Run a valid calibration first");
+                    auto input=*ui.calibration_input;
+                    input.geometry=corrected?*ui.calibration_data.corrected:ui.calibration_context.nominal;
+                    runReconstruction(input,corrected?".calibrated":".nominal");
+                }
+                if (ui.load || ui.create_example) {
                     ui.load = false;
-                    const auto file = chooseFile(false, L"Configuration\0*.toml\0All files\0*.*\0\0");
-                    if (!file.empty()) {
-                        auto loaded = loadConfig(file, false);
+                    const bool create=ui.create_example;ui.create_example=false;
+                    std::filesystem::path file;
+                    std::optional<examples::ExampleResult> generated;
+                    if(create){
+                        const auto id=ui.builtin_examples[ui.example_index].id;
+                        const auto stamp=std::chrono::system_clock::now().time_since_epoch().count();
+                        const auto directory=std::filesystem::current_path()/"out"/"examples"/(id+"-"+std::to_string(stamp));
+                                                examples::ExampleRequest request{directory};
+                        for(const auto& p:ui.example_parameters)request.parameters[p.id]=p.value;
+                        try{generated=examples::clientExamples().create(id)->generate(request);}
+                        catch(const std::exception& e){ui.example_error=e.what();throw;}
+                    }else file=chooseFile(false, L"Configuration\0*.toml\0All files\0*.*\0\0");
+                    if (generated || !file.empty()) {
+                        auto loaded = generated ? generated->config : loadConfig(file, false);
+                        if(generated){builtin_grid=loaded.geometry.parameters;builtin_labels=std::move(generated->labels);}
+                        else builtin_labels.clear();
                         if (loaded.geometry.kind == GeometryKind::CylCbct || loaded.geometry.kind == GeometryKind::CylHelical)
                             throw std::runtime_error("Choose one of the four flat-detector scans");
                         ui.auto_reconstruct=loaded.runsReconstruction();
@@ -906,8 +743,12 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                         loaded.visualization.offscreen = false;
                         loaded.visualization.hold_open = true;
                         ui.draft = std::move(loaded);
+                        ui.reconstruction_geometry_initialized=!generated || ui.draft.reconstruction.geometry_override.enabled;
                         ui.opacity_scale=float(ui.draft.visualization.volume_opacity_scale);
-                        computed_config.reset();
+                        computed_config.reset();reconstructed_config.reset();view.invalidateResults();
+                        ui.known_example_id=generated?ui.builtin_examples[ui.example_index].id:"";
+                        ui.calibration_data={};ui.calibration_input.reset();ui.calibration_message.clear();
+                        if(generated)ui.bindCalibrationExample(ui.builtin_examples[ui.example_index].id,ui.example_parameters);
                         ui.message.clear();
                         try {loadResources(ui.draft);}
                         catch(const std::exception& e){
@@ -916,14 +757,23 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                             ui.message=e.what();
                             std::cerr<<"TOML resource load failed: "<<file<<": "<<e.what()<<std::endl;
                         }
-                        if(ui.message.empty())ui.message = "Loaded: " + file.string();
+                        if(ui.message.empty() && generated){ui.example_window=false;ui.requested_settings=0;}
+                        if(ui.message.empty())ui.message = generated ? "Example and scan preset applied: "+examples::clientExamples().create(ui.builtin_examples[ui.example_index].id)->scanPreset().name : "Loaded: " + file.string();
                     }
                 }
                 if (ui.save) {
                     ui.save = false;
                     const auto file = chooseFile(true, L"Configuration\0*.toml\0All files\0*.*\0\0");
                     if (!file.empty()) {
-                        saveProjectionUiConfig(ui.draft, file,ui.auto_reconstruct?WorkflowMode::ProjectAndReconstruct:WorkflowMode::Project);
+                        auto exported=ui.draft;
+                        if(exported.projection.label_volume.empty()){
+                            auto raw=file;raw.replace_extension(".labels-"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".mat");
+                            const auto data=readLabels(exported);
+                            const auto& g=exported.geometry.parameters;
+                            writeMatLabels(raw,{g.volume_x,g.volume_y,g.volume_z},data);
+                            exported.projection.label_volume=std::filesystem::absolute(raw);
+                        }
+                        saveProjectionUiConfig(exported, file,ui.auto_reconstruct?WorkflowMode::ProjectAndReconstruct:WorkflowMode::Project);
                         ui.message = "Saved configuration: " + file.string();
                     }
                 }
@@ -956,6 +806,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                     view.setEditingEnabled(false);
                     view.setStatus("Validating inputs and preparing spectrum...");
                     ui.message.clear();
+                    ui.calibration_data={};ui.calibration_input.reset();ui.calibration_message.clear();
                     auto trial = ui.draft;
                     trial.workflow.mode = WorkflowMode::Project;
                     trial.visualization.enabled = true;
@@ -963,15 +814,18 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                     trial.visualization.offscreen = false;
                     trial.visualization.hold_open = true;
                     const auto validation_file = std::filesystem::absolute(std::filesystem::path(output.string() + ".imgui-validation.toml"));
-                    saveProjectionUiConfig(trial, validation_file);
-                    auto checked = loadConfig(validation_file);
+                    auto checked = trial;
+                    if(!trial.projection.label_volume.empty()){
+                        saveProjectionUiConfig(trial, validation_file);
+                        checked=loadConfig(validation_file);
+                    }
                     checked.source_config_file = trial.source_config_file;
-                    auto trial_labels = loadLabelVolume(checked.projection.label_volume);
+                    auto trial_labels = readLabels(checked);
                     validateProjectionUiInputs(checked, trial_labels);
                     auto spectrum = loadProjectionSpectrum(checked.projection);
                     if (spectrum.size() > 256)
                         throw std::runtime_error("CUDA preview supports at most 256 energy bins; increase bin width");
-                    if(ui.auto_reconstruct && !smoke){
+                    if(ui.auto_reconstruct && !smoke && !checked.projection.label_volume.empty()){
                         auto chain=checked;chain.reconstruction=ui.draft.reconstruction;
                         chain.reconstruction.input_projection_file=checked.projection.output_file;
                         const auto chain_validation=std::filesystem::path(output.string()+".chain-validation.toml");
@@ -992,24 +846,26 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                         computed_config=current;
                         ui.draft.reconstruction.input_projection_file=current.projection.output_file;
                         const auto saved = std::filesystem::path(current.projection.output_file.string() + ".imgui.toml");
-                        saveProjectionUiConfig(current, saved,ui.auto_reconstruct && !smoke?WorkflowMode::ProjectAndReconstruct:WorkflowMode::Project);
+                        if(!current.projection.label_volume.empty()) saveProjectionUiConfig(current, saved,ui.auto_reconstruct && !smoke?WorkflowMode::ProjectAndReconstruct:WorkflowMode::Project);
                         if(ui.auto_reconstruct && !smoke){
                             auto reconstruction=current;reconstruction.reconstruction.input_projection_file=current.projection.output_file;
                             ui.draft.reconstruction.input_projection_file=current.projection.output_file;
                             runReconstruction(reconstruction);
                         }
                     }
+                    if(calibration_smoke){if(!success)throw std::runtime_error(error);ui.calibrate_geometry=true;}
                     if(chain_smoke){view.saveSnapshot();return success;}
                     if (smoke) {
                         view.saveSnapshot();
                         if (!success)
                             return false;
-                        if (++smoke_mode == 4)
+                        if (++smoke_mode == 6)
                             return true;
-                        ui.draft.geometry.kind = smoke_mode == 1 ? GeometryKind::FlatHelical : smoke_mode == 2 ? GeometryKind::PlanarSourceOrbit
-                                                                                                               : GeometryKind::NikonTilted;
+                        const GeometryKind sequence[]={GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::FlatCbct,
+                            GeometryKind::FlatHelical,GeometryKind::PlanarSourceOrbit,GeometryKind::NikonTilted};
+                        setProjectionUiScanType(ui.draft,sequence[smoke_mode]);
+                        ui.scan_type_changed=true;
                         auto& g = ui.draft.geometry.parameters;
-                        g.pitch_mm_per_turn = 100;
                         g.planar_detector_y_mm = g.sdd_mm - g.sid_mm;
                         g.source_orbit_radius_mm = g.sid_mm;
                         g.reconstruction_detector_u = g.detector_u;
@@ -1020,9 +876,10 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                 }
             } catch (const std::exception& e) {
                 ui.message = e.what();
+                if(ui.calibration_window)ui.calibration_message=e.what();
                 view.setEditingEnabled(true);
                 view.setStatus("Operation failed. See the message above.");
-                if (smoke) {
+                if (smoke || calibration_smoke) {
                     error = e.what();
                     return false;
                 }

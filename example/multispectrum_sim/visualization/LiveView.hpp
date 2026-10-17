@@ -1,9 +1,11 @@
 #pragma once
 #include "FloatVolume.hpp"
+#include "Mpr.hpp"
 #include <array>
 #include <functional>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +45,10 @@ struct EditableParameter {
     double value = 0, minimum = 0, maximum = 1;
     bool integral = false;
 };
+struct MprReferenceLine {
+    int panel=0;
+    std::array<double,2> center{},direction{}; // Screen pixels, direction is normalized.
+};
 // Call on the window-owning thread. Inputs are copied; no retained producer pointers.
 // Camera interaction never changes physical scene geometry.
 class LiveView {
@@ -61,6 +67,17 @@ public:
     void showReconstruction(bool);
     void setImageDrawer(bool open);
     void setReconstructionSlices(const std::array<int,3>&);
+    void setReconstructionMpr(const MprSettings&);
+    void setReconstructionWorkspace(bool expanded,int single_panel=-1);
+    void resetReconstructionWindow();
+    // Pixel rectangles use the GUI's top-left origin. No patient orientation is inferred.
+    std::array<double,4> reconstructionPanelRect(int panel) const;
+    std::array<double,2> reconstructionCrosshair(int panel) const;
+    std::vector<MprReferenceLine> reconstructionReferenceLines(int panel) const;
+    std::array<double,3> reconstructionPlaneNormal(int panel) const;
+    std::optional<std::array<int,3>> pickReconstruction(int panel,double x,double y) const;
+    std::array<double,3> reconstructionCursorWorld() const;
+    double reconstructionCursorValue() const;
     void setReconstructionWindow(double low,double high);
     std::array<double,2> reconstructionWindow() const;
     void setRelativeGeometryMode(bool);

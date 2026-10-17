@@ -4,7 +4,7 @@
 
 ## 构建与使用
 
-在现有主工程配置中增加 `-DBUILD_VTK_VISUALIZATION=ON -DYKCBCT_VTK_ROOT=<原生 VTK SDK 根目录>`，保持 `BUILD_MULTISPECTRUM_SIM=ON`，然后构建 `multispectrum_sim`。SDK 根目录应直接包含 `include/`、`lib/` 和 `bin/`；也可通过同名环境变量提供。当前验证使用 `F:/docker-mcgpu/mcgpu-modern/deploy/windows-x64-md-release` 中的 VTK 9.6.2、MSVC 19.44、Release/MD C++ SDK，不需要 Python 或 wheel。Windows 构建会把目标依赖的 VTK DLL 复制到 `multispectrum_sim.exe` 所在目录，无需额外配置 Python 环境。`BUILD_VTK_VIEWER` 是独立工具开关，不影响实时显示。
+完整客户端按 [构建、SDK 与运行](../../../doc/build-ui.md) 操作。主工程用 `YKCBCT_SDK_ROOT` 统一查找 VTK 和 matio；单独编译本显示层时可用 `YKCBCT_VTK_ROOT` 指定 VTK SDK。SDK 根目录应直接包含 `include/`、`lib/` 和 `bin/`。验证环境为 VTK 9.6.2、MSVC 19.44、Release/MD，不需要 Python 或 wheel。Windows 构建会把目标依赖的 VTK DLL 复制到 `multispectrum_sim.exe` 所在目录。`BUILD_VTK_VIEWER` 是独立工具开关，不影响实时显示。
 
 在多能前投 TOML 中增加：
 
@@ -59,7 +59,7 @@ hold_open = true
 cmake -S example/multispectrum_sim/visualization -B out/build/vtk-live -G Ninja `
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86 `
   -DBUILD_VTK_VISUALIZATION_TESTS=ON `
-  -DYKCBCT_VTK_ROOT=F:/docker-mcgpu/mcgpu-modern/deploy/windows-x64-md-release
+  -DYKCBCT_VTK_ROOT="$env:YKCBCT_SDK_ROOT"
 cmake --build out/build/vtk-live
 out/build/vtk-live/spectral_live_test.exe out/live-checks
 ```
@@ -73,6 +73,10 @@ out/build/vtk-live/spectral_live_test.exe out/live-checks
 显示优化：交互重算期间保留全部显示缓存，但三维场景只绘制首帧和末帧，进度画面最多每 250 ms 刷新。贴图与两个投影面板合并为一次区域采样，并复用输出模块已计算的衰减图。浏览时保持完整体数据，不做体素降采样；日志单独记录 display_and_cache 耗时。
 
 ## ImGui 界面（Windows 第一版）
+
+圆扫描与螺旋扫描切换后立即更新轨迹预览，并清除旧图像缓存。切换保持扫描范围的 Z 中心、帧数和角度采样；圆扫描的 Orbit Z 是固定高度，螺旋的 Start Z 是起始高度。螺距只参与螺旋正投，圆扫描忽略保留的螺距值。解析重建随轨道切换 FDK/WFBP，迭代算法及 TV 参数保持原值。已经计算过的投影需要按新轨道重新计算，不能沿用旧缓存直接重建。
+
+切换回归覆盖：四种轨道之间 12 个方向的下拉框模拟鼠标交互、192 个参数转换用例、正反转与正负螺距的 CUDA 源/探测器位置检查，以及带投影/重建缓存和相对显示模式的切换。`YK_IMGUI_SMOKE` 使用小数据连续实际正投六次，路径为圆→螺旋→圆→螺旋→Planar→Tilted；不代表所有重建算法或大体积图像质量均已验证。
 
 顶层构建同时设置 `BUILD_VTK_VISUALIZATION=ON`、`BUILD_MULTISPECTRUM_SIM=ON`
 和 `BUILD_IMGUI_GUI=ON`。关闭 ImGui 选项时保持原纯 VTK 界面。

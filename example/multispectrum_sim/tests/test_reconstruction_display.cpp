@@ -25,9 +25,11 @@ int main(){try{
     values.push_back(std::numeric_limits<float>::quiet_NaN());write();rejected=false;try{loadReconstructionDisplay(file,grid);}catch(const std::exception&){rejected=true;}require(rejected,"nonfinite volume accepted");
     values.assign(12,.02f);write();
     image::Grid outputGrid;outputGrid.dimensions={2,3,2};outputGrid.spacing_mm={.75,1.5,3};
+    outputGrid.origin_mm={4,5,6};outputGrid.direction={0,-1,0,1,0,0,0,0,1};
     image::writeGridMetadata(file,outputGrid);
     const auto resampled=loadReconstructionDisplay(file,grid);
     require(resampled.dimensions==outputGrid.dimensions&&resampled.spacing==outputGrid.spacing_mm,"display ignored resampled output grid");
+    require(resampled.origin==outputGrid.origin_mm&&resampled.direction==outputGrid.direction,"display discarded physical grid coordinates");
     std::filesystem::remove(image::gridMetadataPath(file));
     std::filesystem::remove(file);std::cout<<"Reconstruction load, three orientations and spacing passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

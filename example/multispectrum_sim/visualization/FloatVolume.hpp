@@ -15,6 +15,8 @@ struct FloatVolume {
     std::array<int,3> dimensions{};
     std::array<double,3> spacing{1,1,1};
     std::vector<float> values; // [z][y][x], x fastest, original reconstruction grid.
+    std::array<double,3> origin{}; // World position of voxel (0,0,0), mm.
+    std::array<double,9> direction{1,0,0,0,1,0,0,0,1}; // Row-major grid axes -> world.
 };
 struct FloatSlice {
     int width=0,height=0;
@@ -27,6 +29,11 @@ inline void validateFloatVolume(const FloatVolume& volume){
         count>std::numeric_limits<std::size_t>::max()/std::size_t(volume.dimensions[i]))throw std::runtime_error("invalid reconstruction grid");
         count*=volume.dimensions[i];}
     if(volume.values.size()!=count)throw std::runtime_error("reconstruction volume size mismatch");
+    for(double v:volume.origin)if(!std::isfinite(v))throw std::runtime_error("nonfinite reconstruction origin");
+    for(double v:volume.direction)if(!std::isfinite(v))throw std::runtime_error("nonfinite reconstruction direction");
+    for(int a=0;a<3;++a)for(int b=0;b<3;++b){double dot=0;
+        for(int r=0;r<3;++r)dot+=volume.direction[r*3+a]*volume.direction[r*3+b];
+        if(std::abs(dot-(a==b?1.:0.))>1e-5)throw std::runtime_error("reconstruction direction must be orthonormal");}
     for(float value:volume.values)if(!std::isfinite(value))throw std::runtime_error("nonfinite reconstruction value");
 }
 // Axis is the fixed coordinate: 2=XY axial, 1=XZ coronal, 0=YZ sagittal.

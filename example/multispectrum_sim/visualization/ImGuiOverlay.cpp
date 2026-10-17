@@ -1,3 +1,4 @@
+#include "ImGuiTheme.hpp"
 #include <windows.h>
 
 #include "ImGuiOverlay.hpp"
@@ -63,27 +64,7 @@ struct ImGuiOverlay::Impl {
             if (GetFileAttributesW(L"C:/Windows/Fonts/segoeui.ttf") != INVALID_FILE_ATTRIBUTES)
                 ImGui::GetIO().Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf",20);
             else ImGui::GetIO().Fonts->AddFontDefault(&font);
-            ImGui::StyleColorsDark();
-            auto& style=ImGui::GetStyle();
-            style.WindowPadding={14,12};style.FramePadding={10,6};style.ItemSpacing={8,8};style.ItemInnerSpacing={8,6};
-            style.WindowRounding=8;style.ChildRounding=6;style.FrameRounding=6;style.PopupRounding=8;style.GrabRounding=6;style.TabRounding=6;
-            style.ScrollbarRounding=8;style.ScrollbarSize=13;style.GrabMinSize=12;
-            style.WindowBorderSize=0;style.ChildBorderSize=0;style.FrameBorderSize=0;style.PopupBorderSize=1;
-            auto* color=style.Colors;
-            color[ImGuiCol_Text]={.90f,.93f,.97f,1};color[ImGuiCol_TextDisabled]={.48f,.55f,.65f,1};
-            color[ImGuiCol_WindowBg]={.065f,.09f,.135f,1};color[ImGuiCol_ChildBg]={.065f,.09f,.135f,1};color[ImGuiCol_PopupBg]={.085f,.12f,.175f,1};
-            color[ImGuiCol_Border]={.22f,.29f,.39f,.55f};
-            color[ImGuiCol_TitleBg]={.065f,.09f,.135f,1};color[ImGuiCol_TitleBgActive]=color[ImGuiCol_TitleBg];
-            color[ImGuiCol_FrameBg]={.115f,.16f,.225f,1};color[ImGuiCol_FrameBgHovered]={.16f,.225f,.31f,1};color[ImGuiCol_FrameBgActive]={.18f,.27f,.37f,1};
-            color[ImGuiCol_Button]={.12f,.23f,.34f,1};color[ImGuiCol_ButtonHovered]={.16f,.34f,.46f,1};color[ImGuiCol_ButtonActive]={.15f,.42f,.53f,1};
-            color[ImGuiCol_Header]={.12f,.18f,.265f,1};color[ImGuiCol_HeaderHovered]={.15f,.26f,.36f,1};color[ImGuiCol_HeaderActive]={.15f,.33f,.43f,1};
-            color[ImGuiCol_CheckMark]={.34f,.79f,.86f,1};color[ImGuiCol_SliderGrab]={.29f,.68f,.77f,1};color[ImGuiCol_SliderGrabActive]={.42f,.87f,.93f,1};
-            color[ImGuiCol_Tab]={.085f,.125f,.19f,1};color[ImGuiCol_TabHovered]={.15f,.30f,.41f,1};
-            color[ImGuiCol_TabSelected]={.12f,.23f,.33f,1};color[ImGuiCol_TabSelectedOverline]={.34f,.79f,.86f,1};
-            color[ImGuiCol_TabDimmed]=color[ImGuiCol_Tab];color[ImGuiCol_TabDimmedSelected]=color[ImGuiCol_TabSelected];
-            color[ImGuiCol_Separator]={.22f,.29f,.39f,.6f};
-            color[ImGuiCol_ScrollbarBg]={.065f,.09f,.135f,1};color[ImGuiCol_ScrollbarGrab]={.23f,.30f,.4f,1};
-            color[ImGuiCol_ScrollbarGrabHovered]={.3f,.4f,.51f,1};color[ImGuiCol_ScrollbarGrabActive]={.34f,.5f,.62f,1};
+            yk::visualization::applyClientTheme();
             platform_ready=ImGui_ImplWin32_InitForOpenGL(hwnd);
             renderer_ready=platform_ready && ImGui_ImplOpenGL3_Init("#version 150");
             if(!platform_ready || !renderer_ready) throw std::runtime_error("cannot initialize ImGui backends");
