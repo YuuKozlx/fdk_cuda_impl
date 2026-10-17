@@ -1,0 +1,269 @@
+# Full ICRP145 composition and sex-specific density; no MC-GPU proxy grouping.
+# Organ labels follow map.xlsx unique organ_ID row order.
+# Explicit erratum: organ_ID=20000 (BB), voxel_id=169: source medium 51 -> 2.
+# The source calls BB soft_tissue with density 1.031; Annex B assigns BB to medium 2.
+
+[[materials]]
+preset = "icrp145.air_outside"
+density_g_cm3 = 0.001205
+voxel_ids = [0]
+
+[[materials]]
+preset = "icrp145.female.1"
+density_g_cm3 = 1.035
+voxel_ids = [1, 2]
+
+[[materials]]
+preset = "icrp145.female.2"
+density_g_cm3 = 1.031
+voxel_ids = [3, 4, 5, 6, 8, 9, 10, 11, 12, 16, 18, 19, 20, 21, 22, 23, 24, 25, 85, 144, 147, 148, 151, 157, 161, 162, 163, 169]
+
+[[materials]]
+preset = "icrp145.female.3"
+density_g_cm3 = 1.05
+voxel_ids = [13, 14, 15, 159, 160]
+
+[[materials]]
+preset = "icrp145.female.4"
+density_g_cm3 = 1.06
+voxel_ids = [26, 27, 120]
+
+[[materials]]
+preset = "icrp145.female.5"
+density_g_cm3 = 1.904
+voxel_ids = [28, 32, 35, 37, 39, 41, 45, 48, 50, 52, 54, 56, 58, 60, 62, 64, 66]
+
+[[materials]]
+preset = "icrp145.female.6"
+density_g_cm3 = 0.981
+voxel_ids = [30, 34, 43, 47]
+
+[[materials]]
+preset = "icrp145.female.7"
+density_g_cm3 = 1.185
+voxel_ids = [29]
+
+[[materials]]
+preset = "icrp145.female.8"
+density_g_cm3 = 1.117
+voxel_ids = [31, 33, 36, 44, 46, 49]
+
+[[materials]]
+preset = "icrp145.female.9"
+density_g_cm3 = 1.192
+voxel_ids = [38]
+
+[[materials]]
+preset = "icrp145.female.10"
+density_g_cm3 = 1.252
+voxel_ids = [40]
+
+[[materials]]
+preset = "icrp145.female.11"
+density_g_cm3 = 1.046
+voxel_ids = [42]
+
+[[materials]]
+preset = "icrp145.female.12"
+density_g_cm3 = 1.189
+voxel_ids = [51]
+
+[[materials]]
+preset = "icrp145.female.13"
+density_g_cm3 = 1.105
+voxel_ids = [53]
+
+[[materials]]
+preset = "icrp145.female.14"
+density_g_cm3 = 1.087
+voxel_ids = [55]
+
+[[materials]]
+preset = "icrp145.female.15"
+density_g_cm3 = 1.125
+voxel_ids = [57]
+
+[[materials]]
+preset = "icrp145.female.16"
+density_g_cm3 = 1.129
+voxel_ids = [59]
+
+[[materials]]
+preset = "icrp145.female.17"
+density_g_cm3 = 1.08
+voxel_ids = [61]
+
+[[materials]]
+preset = "icrp145.female.18"
+density_g_cm3 = 1.165
+voxel_ids = [63]
+
+[[materials]]
+preset = "icrp145.female.19"
+density_g_cm3 = 1.052
+voxel_ids = [65]
+
+[[materials]]
+preset = "icrp145.female.20"
+density_g_cm3 = 1.073
+voxel_ids = [67]
+
+[[materials]]
+preset = "icrp145.female.21"
+density_g_cm3 = 1.099
+voxel_ids = [68, 69]
+
+[[materials]]
+preset = "icrp145.female.22"
+density_g_cm3 = 1.041
+voxel_ids = [70]
+
+[[materials]]
+preset = "icrp145.female.23"
+density_g_cm3 = 0.952
+voxel_ids = [71, 73]
+
+[[materials]]
+preset = "icrp145.female.24"
+density_g_cm3 = 1.021
+voxel_ids = [72, 74]
+
+[[materials]]
+preset = "icrp145.female.25"
+density_g_cm3 = 1.06
+voxel_ids = [75, 76, 80, 81]
+
+[[materials]]
+preset = "icrp145.female.26"
+density_g_cm3 = 1.087
+voxel_ids = [77, 82]
+
+[[materials]]
+preset = "icrp145.female.27"
+density_g_cm3 = 1.014
+voxel_ids = [78, 83]
+
+[[materials]]
+preset = "icrp145.female.28"
+density_g_cm3 = 1.019
+voxel_ids = [79, 84]
+
+[[materials]]
+preset = "icrp145.female.29"
+density_g_cm3 = 1.03
+voxel_ids = [86]
+
+[[materials]]
+preset = "icrp145.female.30"
+density_g_cm3 = 1.036
+voxel_ids = [87, 88, 89, 90]
+
+[[materials]]
+preset = "icrp145.female.31"
+density_g_cm3 = 1.036
+voxel_ids = [92, 93, 94, 95]
+
+[[materials]]
+preset = "icrp145.female.32"
+density_g_cm3 = 1.036
+voxel_ids = [98, 99, 100, 102, 103, 104, 106, 107, 108, 110, 111, 112, 114, 115, 116, 118]
+
+[[materials]]
+preset = "icrp145.female.33"
+density_g_cm3 = 1.04
+voxel_ids = [91, 96, 97, 101, 105, 109, 113, 117, 140, 154]
+
+[[materials]]
+preset = "icrp145.female.34"
+density_g_cm3 = 1.051
+voxel_ids = [119]
+
+[[materials]]
+preset = "icrp145.female.35"
+density_g_cm3 = 1.052
+voxel_ids = [121, 122, 123, 124, 125, 126]
+
+[[materials]]
+preset = "icrp145.female.36"
+density_g_cm3 = 1.06
+voxel_ids = [127]
+
+[[materials]]
+preset = "icrp145.female.37"
+density_g_cm3 = 0.413
+voxel_ids = [128, 129]
+
+[[materials]]
+preset = "icrp145.female.38"
+density_g_cm3 = 1.032
+voxel_ids = [130, 131, 132, 133, 134, 135]
+
+[[materials]]
+preset = "icrp145.female.39"
+density_g_cm3 = 1.05
+voxel_ids = [136]
+
+[[materials]]
+preset = "icrp145.female.40"
+density_g_cm3 = 1.036
+voxel_ids = [137, 138, 139]
+
+[[materials]]
+preset = "icrp145.female.41"
+density_g_cm3 = 1.051
+voxel_ids = [141, 142]
+
+[[materials]]
+preset = "icrp145.female.42"
+density_g_cm3 = 1.043
+voxel_ids = [143]
+
+[[materials]]
+preset = "icrp145.female.43"
+density_g_cm3 = 1.021
+voxel_ids = [167]
+
+[[materials]]
+preset = "icrp145.female.44"
+density_g_cm3 = 0.946
+voxel_ids = [146]
+
+[[materials]]
+preset = "icrp145.female.45"
+density_g_cm3 = 1.088
+voxel_ids = [149, 150]
+
+[[materials]]
+preset = "icrp145.female.46"
+density_g_cm3 = 1.06
+voxel_ids = [152]
+
+[[materials]]
+preset = "icrp145.female.47"
+density_g_cm3 = 2.69
+voxel_ids = [153]
+
+[[materials]]
+preset = "icrp145.female.48"
+density_g_cm3 = 1.051
+voxel_ids = [158]
+
+[[materials]]
+preset = "icrp145.female.49"
+density_g_cm3 = 1.04
+voxel_ids = [164, 165]
+
+[[materials]]
+preset = "icrp145.female.50"
+density_g_cm3 = 1.04
+voxel_ids = [166]
+
+[[materials]]
+preset = "icrp145.female.51"
+density_g_cm3 = 0.001
+voxel_ids = [168]
+
+[[materials]]
+preset = "icrp145.female.52"
+density_g_cm3 = 1
+voxel_ids = [7, 17]

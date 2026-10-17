@@ -89,6 +89,11 @@ endif()
 # 外部依赖
 # ============================================================================
 
+set(YKCBCT_SDK_ROOT "$ENV{YKCBCT_SDK_ROOT}" CACHE PATH "Native third-party SDK prefix (VTK, matio)")
+if(YKCBCT_SDK_ROOT)
+    list(PREPEND CMAKE_PREFIX_PATH "${YKCBCT_SDK_ROOT}")
+endif()
+include(CTest)
 find_package(CUDAToolkit REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 

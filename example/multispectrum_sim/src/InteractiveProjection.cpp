@@ -55,7 +55,7 @@ bool runInteractiveProjection(const SimulationConfig& initial, const std::vector
     const SpectralTransmissionModel& model, const std::filesystem::path& output, std::string& error)
 {
 #ifdef YK_SPECTRAL_IMGUI
-    return runImGuiProjection(initial,output,error);
+    return runImGuiProjection(initial,output,error,&labels);
 #else
     try {
         auto current = initial;

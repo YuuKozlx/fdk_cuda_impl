@@ -1,0 +1,529 @@
+schema_version = 2
+
+[geometry]
+detector_u = 768
+detector_v = 256
+kind = 'flat_helical'
+nikon_tilt_axis_azimuth_rad = 0.0
+nikon_tilt_rad = 0.0
+offset_n_mm = 0.0
+offset_u_mm = 0.0
+offset_v_mm = 0.0
+phantom_offset_x_mm = 0.0
+phantom_offset_y_mm = 0.0
+phantom_offset_z_mm = 0.0
+phantom_rotation_x_rad = 0.0
+phantom_rotation_y_rad = 0.0
+phantom_rotation_z_rad = 0.0
+pitch_mm_per_turn = 74.05473495623163
+pixel_u_mm = 0.9332730599960343
+pixel_v_mm = 0.9332730599960343
+planar_detector_y_mm = 0.0
+planar_resample_mode = 'perspective_orthogonal'
+reconstruction_detector_u = 0
+reconstruction_detector_v = 0
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+reconstruction_volume_x = 512
+reconstruction_volume_y = 512
+reconstruction_volume_z = 256
+reconstruction_voxel_x_mm = 0.828125
+reconstruction_voxel_y_mm = 0.828125
+reconstruction_voxel_z_mm = 1.0
+rotation_axis_pivot_x_mm = 0.0
+rotation_axis_pivot_y_mm = 0.0
+rotation_axis_pivot_z_mm = 0.0
+rotation_direction = 1
+scan_range_rad = 37.69911184307752
+sdd_mm = 1143.699951
+sid_mm = 709.0
+source_lateral_offset_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+source_orbit_radius_mm = 0.0
+start_angle_rad = 0.0
+start_z_mm = -222.16420486869487
+tilt_n_rad = 0.0
+tilt_u_rad = 0.0
+tilt_v_rad = 0.0
+views = 2160
+views_per_turn = 360
+volume_x = 624
+volume_y = 512
+volume_z = 512
+voxel_x_mm = 0.5
+voxel_y_mm = 0.5
+voxel_z_mm = 0.5
+
+[projection]
+air_output_file = '../../../../../out/icrp145/icrp145-male-abdomen_no_arm/air.raw'
+energy_output_file = '../../../../../out/icrp145/icrp145-male-abdomen_no_arm/energy.raw'
+label_volume = '../../../inputs/icrp145/prepared/inputs/icrp145-male-abdomen_no_arm.raw'
+mAs_per_view = 5.0
+output_file = '../../../../../out/icrp145/icrp145-male-abdomen_no_arm/projection.raw'
+save_metadata = true
+
+    [projection.batching]
+    max_buffer_mib = 256
+    views = 64
+
+    [projection.detector_postprocess.afterglow]
+    enabled = false
+    exposure_time_ms = 1.0
+    frame_time_ms = 1.0
+    initialization = 'zero'
+    p = 0.0
+    time_constants_ms = []
+    weights = []
+
+    [projection.detector_postprocess.das]
+    electronic_noise_std_electrons = 0.0
+    enabled = false
+
+    [projection.detector_postprocess.electronic_crosstalk]
+    enabled = false
+
+    [projection.detector_postprocess.optical_crosstalk]
+    enabled = false
+
+    [projection.detector_response]
+    enabled = false
+
+    [projection.focal_spot]
+    defocus_enabled = false
+    defocus_size_u_mm = 0.0
+    defocus_size_v_mm = 0.0
+    enabled = false
+    epsilon = 0.0
+    normal_size_u_mm = 0.0
+    normal_size_v_mm = 0.0
+
+    [projection.geometry_flux]
+    enabled = true
+
+    [projection.quantum_noise]
+    enabled = true
+    seed = 67890
+
+    [projection.sampling]
+    samples_per_pixel = 4
+    spatial_seed = 12345
+
+    [projection.scatter]
+    enabled = false
+    model_file = ''
+
+    [projection.spectrum]
+    anode_angle_deg = 12.0
+    bin_width_keV = 1.0
+    export_file = '../../../../../out/icrp145/icrp145-male-abdomen_no_arm/spectrum.spec'
+    kvp = 120.0
+    model = 'spekpy-v1'
+    source = 'generated'
+
+        [[projection.spectrum.filters]]
+        material = 'Al'
+        thickness_mm = 2.0
+
+        [[projection.spectrum.filters]]
+        material = 'Ti'
+        thickness_mm = 0.6
+
+    [[projection.materials]]
+    density_g_cm3 = 0.001205
+    label = 0
+    name = 'icrp145.air_outside'
+    preset = 'icrp145.air_outside'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.036
+    label = 1
+    name = 'icrp145.male.1'
+    preset = 'icrp145.male.1'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.031
+    label = 2
+    name = 'icrp145.male.2'
+    preset = 'icrp145.male.2'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.05
+    label = 3
+    name = 'icrp145.male.3'
+    preset = 'icrp145.male.3'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.06
+    label = 4
+    name = 'icrp145.male.4'
+    preset = 'icrp145.male.4'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.904
+    label = 5
+    name = 'icrp145.male.5'
+    preset = 'icrp145.male.5'
+
+    [[projection.materials]]
+    density_g_cm3 = 0.981
+    label = 6
+    name = 'icrp145.male.6'
+    preset = 'icrp145.male.6'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.233
+    label = 7
+    name = 'icrp145.male.7'
+    preset = 'icrp145.male.7'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.109
+    label = 8
+    name = 'icrp145.male.8'
+    preset = 'icrp145.male.8'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.157
+    label = 9
+    name = 'icrp145.male.9'
+    preset = 'icrp145.male.9'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.165
+    label = 10
+    name = 'icrp145.male.10'
+    preset = 'icrp145.male.10'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.125
+    label = 11
+    name = 'icrp145.male.11'
+    preset = 'icrp145.male.11'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.271
+    label = 12
+    name = 'icrp145.male.12'
+    preset = 'icrp145.male.12'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.121
+    label = 13
+    name = 'icrp145.male.13'
+    preset = 'icrp145.male.13'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.17
+    label = 14
+    name = 'icrp145.male.14'
+    preset = 'icrp145.male.14'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.201
+    label = 15
+    name = 'icrp145.male.15'
+    preset = 'icrp145.male.15'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.049
+    label = 16
+    name = 'icrp145.male.16'
+    preset = 'icrp145.male.16'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.07
+    label = 17
+    name = 'icrp145.male.17'
+    preset = 'icrp145.male.17'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.108
+    label = 18
+    name = 'icrp145.male.18'
+    preset = 'icrp145.male.18'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.033
+    label = 19
+    name = 'icrp145.male.19'
+    preset = 'icrp145.male.19'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.041
+    label = 20
+    name = 'icrp145.male.20'
+    preset = 'icrp145.male.20'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.099
+    label = 21
+    name = 'icrp145.male.21'
+    preset = 'icrp145.male.21'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.041
+    label = 22
+    name = 'icrp145.male.22'
+    preset = 'icrp145.male.22'
+
+    [[projection.materials]]
+    density_g_cm3 = 0.953
+    label = 23
+    name = 'icrp145.male.23'
+    preset = 'icrp145.male.23'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.021
+    label = 24
+    name = 'icrp145.male.24'
+    preset = 'icrp145.male.24'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.06
+    label = 25
+    name = 'icrp145.male.25'
+    preset = 'icrp145.male.25'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.1
+    label = 26
+    name = 'icrp145.male.26'
+    preset = 'icrp145.male.26'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.025
+    label = 27
+    name = 'icrp145.male.27'
+    preset = 'icrp145.male.27'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.031
+    label = 28
+    name = 'icrp145.male.28'
+    preset = 'icrp145.male.28'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.03
+    label = 29
+    name = 'icrp145.male.29'
+    preset = 'icrp145.male.29'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.037
+    label = 30
+    name = 'icrp145.male.30'
+    preset = 'icrp145.male.30'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.037
+    label = 31
+    name = 'icrp145.male.31'
+    preset = 'icrp145.male.31'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.037
+    label = 32
+    name = 'icrp145.male.32'
+    preset = 'icrp145.male.32'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.04
+    label = 33
+    name = 'icrp145.male.33'
+    preset = 'icrp145.male.33'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.051
+    label = 34
+    name = 'icrp145.male.34'
+    preset = 'icrp145.male.34'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.053
+    label = 35
+    name = 'icrp145.male.35'
+    preset = 'icrp145.male.35'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.06
+    label = 36
+    name = 'icrp145.male.36'
+    preset = 'icrp145.male.36'
+
+    [[projection.materials]]
+    density_g_cm3 = 0.415
+    label = 37
+    name = 'icrp145.male.37'
+    preset = 'icrp145.male.37'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.032
+    label = 38
+    name = 'icrp145.male.38'
+    preset = 'icrp145.male.38'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.05
+    label = 39
+    name = 'icrp145.male.39'
+    preset = 'icrp145.male.39'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.037
+    label = 40
+    name = 'icrp145.male.40'
+    preset = 'icrp145.male.40'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.041
+    label = 41
+    name = 'icrp145.male.41'
+    preset = 'icrp145.male.41'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.044
+    label = 42
+    name = 'icrp145.male.42'
+    preset = 'icrp145.male.42'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.031
+    label = 43
+    name = 'icrp145.male.43'
+    preset = 'icrp145.male.43'
+
+    [[projection.materials]]
+    density_g_cm3 = 0.939
+    label = 44
+    name = 'icrp145.male.44'
+    preset = 'icrp145.male.44'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.089
+    label = 45
+    name = 'icrp145.male.45'
+    preset = 'icrp145.male.45'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.06
+    label = 46
+    name = 'icrp145.male.46'
+    preset = 'icrp145.male.46'
+
+    [[projection.materials]]
+    density_g_cm3 = 2.688
+    label = 47
+    name = 'icrp145.male.47'
+    preset = 'icrp145.male.47'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.051
+    label = 48
+    name = 'icrp145.male.48'
+    preset = 'icrp145.male.48'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.04
+    label = 49
+    name = 'icrp145.male.49'
+    preset = 'icrp145.male.49'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.04
+    label = 50
+    name = 'icrp145.male.50'
+    preset = 'icrp145.male.50'
+
+    [[projection.materials]]
+    density_g_cm3 = 0.001
+    label = 51
+    name = 'icrp145.male.51'
+    preset = 'icrp145.male.51'
+
+    [[projection.materials]]
+    density_g_cm3 = 1.0
+    label = 52
+    name = 'icrp145.male.52'
+    preset = 'icrp145.male.52'
+
+[reconstruction]
+input_projection_file = '../../../../../out/icrp145/icrp145-male-abdomen_no_arm/projection.raw'
+output_volume_file = '../../../../../out/icrp145/icrp145-male-abdomen_no_arm/reconstruction.raw'
+save_slices = false
+slice_prefix = ''
+type = 'analytic'
+
+    [reconstruction.analytic]
+    chunk_views = 32
+    cutoff = 0.5
+    filter = 'hann'
+    gain = 1.0
+    pipeline = 'wfbp'
+
+    [reconstruction.geometry]
+    enabled = false
+    offset_n_mm = 0.0
+    offset_u_mm = 0.0
+    offset_v_mm = 0.0
+    sdd_mm = 1000.0
+    sid_mm = 500.0
+    source_offset_x_mm = 0.0
+    source_offset_y_mm = 0.0
+    source_offset_z_mm = 0.0
+    tilt_n_rad = 0.0
+    tilt_u_rad = 0.0
+    tilt_v_rad = 0.0
+
+    [reconstruction.preprocessing]
+    enabled = true
+
+        [reconstruction.preprocessing.beam_hardening]
+        clamp_max = 20.0
+        clamp_min = 0.0
+        coefficients = [ 0.0, 1.0 ]
+        enabled = true
+        fit_from_water_plate = true
+        order = 1
+        reference_energy_keV = 70.0
+        water_plate_max_mm = 600.0
+        water_plate_samples = 81
+
+        [reconstruction.preprocessing.scatter]
+        air_projection_file = ''
+        enabled = false
+        model_file = ''
+
+            [reconstruction.preprocessing.scatter.correction]
+            damping = 0.7
+            iterations = 3
+            object_mask_threshold = 1e-06
+            scatter_scale = 1.0
+
+            [reconstruction.preprocessing.scatter.guide]
+            enabled = false
+            sigma_u_pixels = 2.0
+            sigma_v_pixels = 2.0
+
+            [reconstruction.preprocessing.scatter.kernel]
+            mode = 'all'
+
+            [reconstruction.preprocessing.scatter.solver]
+            type = 'fixed'
+
+[visualization]
+auto_load_reconstruction = false
+enabled = false
+hold_open = false
+interactive = false
+max_fps = 15.0
+offscreen = false
+projection = 'signal'
+snapshot_directory = ''
+texture_max_size = 512
+volume_opacity_scale = 0.03
+
+[workflow]
+mode = 'project_and_reconstruct'

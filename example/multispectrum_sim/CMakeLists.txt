@@ -708,3 +708,6 @@ if(BUILD_TESTING)
     target_link_libraries(multispectrum_geometry_calibration_test PRIVATE multispectrum_geometry_calibration)
     add_test(NAME multispectrum_geometry_calibration COMMAND multispectrum_geometry_calibration_test)
 endif()
+
+# Setup examples reuse plugin metadata but remain independent of CUDA/VTK.
+include(cmake/Examples.cmake)

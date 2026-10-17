@@ -41,6 +41,7 @@ const BuiltinMaterialInfo builtin[] = {
 const BuiltinMaterialInfo generated_builtin[] = {
 #include "BuiltinMaterials.inc"
 #include "BuiltinGateMaterials.inc"
+#include "BuiltinIcrpMaterials.inc"
 };
 
 std::string key(std::string_view value)
