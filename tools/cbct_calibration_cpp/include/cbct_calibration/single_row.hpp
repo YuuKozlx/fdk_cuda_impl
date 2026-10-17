@@ -4,6 +4,9 @@
 #include "cbct_calibration/types.hpp"
 
 namespace cbct::calibration {
+CalibrationResult calibrateSingleRow(const std::vector<Point2>& points,
+                                     const std::vector<unsigned char>& usable,
+                                     const PipelineConfig& config);
 
 struct SingleRowConfig {
     float threshold = 5.0F;

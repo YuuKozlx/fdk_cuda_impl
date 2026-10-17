@@ -1,3 +1,4 @@
+#include "cbct_calibration/single_row.hpp"
 #include "cbct_calibration/pipeline.hpp"
 
 #include "cbct_calibration/dlt.hpp"
@@ -236,8 +237,28 @@ CalibrationResult calibrateIndexed(const std::vector<Point2>& indexed_points,
 }
 
 CalibrationResult calibrateRaw(const PipelineConfig& config) {
+    if (config.phantom_kind != PipelineConfig::PhantomKind::DoubleRing &&
+        config.phantom_kind != PipelineConfig::PhantomKind::Spiral &&
+        config.phantom_kind != PipelineConfig::PhantomKind::SingleRow)
+        throw std::invalid_argument("Unknown calibration phantom family");
     RawStackReader raw(config.tracker.raw_path, config.tracker.views,
                        config.tracker.image);
+    if(config.phantom_kind==PipelineConfig::PhantomKind::SingleRow){
+        SingleRowConfig row;row.threshold=config.tracker.threshold;row.min_pixels=config.tracker.min_pixels;
+        row.expected_beads=config.row_beads;row.max_jump_px=config.tracker.gate_radius_px;
+        auto tracked=trackSingleRow(raw,row);
+        auto result=calibrateSingleRow(tracked.points,tracked.observed,config);
+        result.tracking.views=tracked.views;result.tracking.targets=tracked.targets;
+        result.tracking.points=std::move(tracked.points);result.tracking.usable=tracked.observed;
+        result.tracking.observed=std::move(tracked.observed);
+        result.tracking.merged.assign(result.tracking.points.size(),0);
+        return result;
+    }
+    if(config.phantom_kind==PipelineConfig::PhantomKind::Spiral){
+        auto tracked=trackSpiral(raw,config);
+        auto result=calibrateIndexedPoints(tracked.points,makeSpiral(config),tracked.usable,tracked.views,config);
+        result.tracking=std::move(tracked);return result;
+    }
     TrackingResult tracking = trackIdentifiablePhantom(raw, config.tracker,
                                                        config.phantom, config.pixel);
     const auto local = makeIdentifiableDoubleRing(config.phantom);
@@ -291,6 +312,13 @@ CalibrationResult calibrateRaw(const PipelineConfig& config) {
             reversed_merged[static_cast<std::size_t>(view * tracking.targets + 2 * bead + 1)] =
                 tracking.merged[static_cast<std::size_t>(view * tracking.targets + 2 * lower_source_bead + 1)];
         }
+    }
+    if(config.phantom.markers_for_numbering_only){
+        for(int view=0;view<tracking.views;++view)
+            for(int target=2*config.phantom.beads_per_ring;target<tracking.targets;++target){
+                tracking.usable[view*tracking.targets+target]=0;
+                reversed_usable[view*tracking.targets+target]=0;
+            }
     }
     CalibrationResult direct = calibrateIndexedPoints(tracking.points,
         makeIdentifiableDoubleRing(config.phantom), tracking.usable, tracking.views, config);

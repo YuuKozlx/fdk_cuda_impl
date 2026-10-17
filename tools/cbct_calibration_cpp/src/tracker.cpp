@@ -222,6 +222,15 @@ TrackingResult trackIdentifiablePhantom(RawStackReader& raw, const TrackerConfig
     }
     if (anchor < 0) throw std::runtime_error("no separated anchor frame in RAW stack");
     const auto anchor_points = establishAnchor(anchor_components, phantom, pixel);
+    return trackFromAnchor(raw, config, anchor, anchor_points, makeIdentifiableDoubleRing(phantom));
+}
+
+TrackingResult trackFromAnchor(RawStackReader& raw,const TrackerConfig& config,
+                                int anchor,const std::vector<Point2>& anchor_points,const std::vector<Point3>& world) {
+    if(anchor<0 || anchor>=raw.views() || anchor_points.empty() || world.size()!=anchor_points.size())
+        throw std::invalid_argument("Invalid tracking anchor");
+    for(const auto& p:anchor_points)if(!p.allFinite())throw std::invalid_argument("Non-finite anchor");
+    for(const auto& p:world)if(!p.allFinite())throw std::invalid_argument("Non-finite landmark");
     const int targets = static_cast<int>(anchor_points.size());
     TrackingResult result; result.views = raw.views(); result.targets = targets; result.anchor_frame = anchor;
     result.points.assign(static_cast<std::size_t>(result.views * targets), Point2::Constant(std::numeric_limits<double>::quiet_NaN()));
@@ -231,7 +240,7 @@ TrackingResult trackIdentifiablePhantom(RawStackReader& raw, const TrackerConfig
     result.dlt_rmse_px.assign(result.views, std::numeric_limits<double>::quiet_NaN());
     auto run = [&](int direction) {
         std::vector<float> frame; std::vector<Point2> previous = anchor_points, before; std::vector<unsigned char> active(static_cast<std::size_t>(targets), 1);
-        const int steps = (raw.views() + 1) / 2;
+        const int steps = raw.views()-1;
         for (int step = 0; step <= steps; ++step) {
             const int view = (anchor + direction * step + raw.views()) % raw.views();
             if (step != 0) {
@@ -303,15 +312,28 @@ TrackingResult trackIdentifiablePhantom(RawStackReader& raw, const TrackerConfig
                         active[index] && inside && (valid[index] || frame_merged[index]));
                 }
                 before = previous; previous = measured;
-                // At the overlap of the two tracking directions, a failed
-                // pass must not erase a valid observation from the other pass.
-                for (int i = 0; i < targets; ++i) if (active[static_cast<std::size_t>(i)]) {
-                    const auto index = static_cast<std::size_t>(view * targets + i);
-                    if (result.usable[index] && frame_merged[static_cast<std::size_t>(i)]) continue;
-                    result.points[index] = previous[static_cast<std::size_t>(i)];
-                    result.observed[index] = 1;
-                    result.merged[index] = frame_merged[static_cast<std::size_t>(i)];
-                    result.usable[index] = static_cast<unsigned char>(!frame_merged[static_cast<std::size_t>(i)]);
+                // Trace the complete turn in both directions. Select a coherent frame
+                // by reprojection error rather than mixing individual points from two
+                // paths through long overlaps.
+                std::vector<Point3> fit_world;std::vector<Point2> fit_image;
+                for(int i=0;i<targets;++i)if(active[i]&&!frame_merged[i]){
+                    fit_world.push_back(world[i]);fit_image.push_back(previous[i]);
+                }
+                double score=std::numeric_limits<double>::infinity();
+                if(fit_world.size()>=6){
+                    try{score=reprojectionRmse(normalizedDlt(fit_world,fit_image),fit_world,fit_image);}
+                    catch(const std::exception&){}
+                }
+                const double old_score=result.dlt_rmse_px[view];
+                if(std::isfinite(score) && (!std::isfinite(old_score)||score<old_score)){
+                    result.dlt_rmse_px[view]=score;
+                    for(int i=0;i<targets;++i){
+                        const size_t index=size_t(view)*targets+i;
+                        result.points[index]=previous[i];
+                        result.observed[index]=active[i];
+                        result.merged[index]=frame_merged[i];
+                        result.usable[index]=active[i]&&!frame_merged[i];
+                    }
                 }
             }
             for (int i = 0; step == 0 && i < targets; ++i) {

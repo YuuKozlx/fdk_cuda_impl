@@ -9,7 +9,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CBCT_CALIBRATION_BUILD_TESTS "Build calibration regression tests" ON)
 option(CBCT_CALIBRATION_BUILD_REAL_DATA_TEST "Build the repository RAW regression" OFF)
 
-find_package(Eigen3 CONFIG REQUIRED)
+if(NOT TARGET Eigen3::Eigen)
+    find_package(Eigen3 CONFIG QUIET)
+endif()
+if(NOT TARGET Eigen3::Eigen)
+    include(FetchContent)
+    FetchContent_Declare(calibration_eigen
+        URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
+        URL_HASH SHA256=8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_GetProperties(calibration_eigen)
+    if(NOT calibration_eigen_POPULATED)
+        FetchContent_Populate(calibration_eigen)
+    endif()
+    add_library(calibration_eigen_headers INTERFACE)
+    target_include_directories(calibration_eigen_headers SYSTEM INTERFACE "${calibration_eigen_SOURCE_DIR}")
+    add_library(Eigen3::Eigen ALIAS calibration_eigen_headers)
+endif()
 
 add_library(cbct_calibration STATIC
     src/dlt.cpp
@@ -18,6 +34,8 @@ add_library(cbct_calibration STATIC
     src/phantom.cpp
     src/pipeline.cpp
     src/source_circle.cpp
+    src/spiral.cpp
+    src/single_row_fit.cpp
     src/single_row.cpp
     src/tracker.cpp
 )
@@ -44,4 +62,7 @@ if(CBCT_CALIBRATION_BUILD_TESTS)
     add_executable(cbct_calibration_tests tests/test_pipeline.cpp)
     target_link_libraries(cbct_calibration_tests PRIVATE cbct_calibration)
     add_test(NAME cbct_calibration_tests COMMAND cbct_calibration_tests)
+    add_executable(cbct_calibration_phantom_tests tests/test_phantom_families.cpp)
+    target_link_libraries(cbct_calibration_phantom_tests PRIVATE cbct_calibration)
+    add_test(NAME cbct_calibration_phantom_tests COMMAND cbct_calibration_phantom_tests)
 endif()

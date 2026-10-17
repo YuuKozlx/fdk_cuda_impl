@@ -31,8 +31,8 @@ SingleRowTrackingResult trackSingleRow(RawStackReader& raw,
                                              config.min_pixels);
     auto first = sortedCentres(first_components);
     if (config.expected_beads > 0) {
-        if (static_cast<int>(first.size()) < config.expected_beads)
-            throw std::runtime_error("single-row first frame has too few beads");
+        if (static_cast<int>(first.size()) != config.expected_beads)
+            throw std::runtime_error("single-row first frame must contain exactly the expected bead count");
         first.resize(static_cast<std::size_t>(config.expected_beads));
     }
     if (first.size() < 3) throw std::runtime_error("single-row needs at least three beads");

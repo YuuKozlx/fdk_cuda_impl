@@ -1,6 +1,7 @@
 #include "cbct_calibration/io.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -34,9 +35,14 @@ void RawStackReader::readFrame(int view, std::vector<float>& destination) {
 
 void writeCalibrationJson(const std::filesystem::path& path,
                           const CalibrationResult& result) {
+    const auto count = static_cast<std::size_t>(result.tracking.views) * result.tracking.targets;
+    if (result.tracking.views < 0 || result.tracking.targets < 0 ||
+        result.tracking.usable.size() != count || result.tracking.merged.size() != count)
+        throw std::invalid_argument("Invalid calibration report tracking arrays");
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot create calibration report: " + path.string());
     out << std::setprecision(12) << "{\n"
+        << "  \"model\": \"" << result.model << "\",\n"
         << "  \"machine\": {\n"
         << "    \"sid_mm\": " << result.machine.sid_mm << ",\n"
         << "    \"sdd_mm\": " << result.machine.sdd_mm << ",\n"
@@ -56,7 +62,10 @@ void writeCalibrationJson(const std::filesystem::path& path,
         << result.phantom_translation_mm.x() << ", "
         << result.phantom_translation_mm.y() << ", "
         << result.phantom_translation_mm.z() << "],\n"
-        << "  \"source_circle\": {\n"
+        << "  \"source_circle\": ";
+    // The row solver does not independently estimate a source circle from DLT.
+    if (result.cameras.empty()) out << "null,\n";
+    else out << "{\n"
         << "    \"center_phantom_mm\": [" << result.source_circle.center_phantom_mm.x() << ", "
         << result.source_circle.center_phantom_mm.y() << ", "
         << result.source_circle.center_phantom_mm.z() << "],\n"
@@ -66,8 +75,8 @@ void writeCalibrationJson(const std::filesystem::path& path,
         << "    \"radius_mm\": " << result.source_circle.radius_mm << ",\n"
         << "    \"radial_rms_mm\": " << result.source_circle.radial_rms_mm << ",\n"
         << "    \"axial_rms_mm\": " << result.source_circle.axial_rms_mm << "\n"
-        << "  },\n"
-        << "  \"joint_fit\": {\n"
+        << "  },\n";
+    out << "  \"joint_fit\": {\n"
         << "    \"rmse_px\": " << result.joint_rmse_px << ",\n"
         << "    \"max_point_error_px\": " << result.max_point_error_px << ",\n"
         << "    \"rotation_direction\": " << result.rotation_direction << ",\n"
@@ -100,7 +109,8 @@ void writeCalibrationJson(const std::filesystem::path& path,
         << "    \"dlt_rmse_px\": [";
     for (std::size_t i = 0; i < result.tracking.dlt_rmse_px.size(); ++i) {
         if (i) out << ", ";
-        out << result.tracking.dlt_rmse_px[i];
+        if (std::isfinite(result.tracking.dlt_rmse_px[i])) out << result.tracking.dlt_rmse_px[i];
+        else out << "null";
     }
     out << "],\n    \"source_phantom_mm\": [";
     for (std::size_t i = 0; i < result.cameras.size(); ++i) {
@@ -120,6 +130,8 @@ void writeCalibrationJson(const std::filesystem::path& path,
         out << "[" << principal.x() << ", " << principal.y() << "]";
     }
     out << "]\n  }\n}\n";
+    out.flush();
+    if (!out) throw std::runtime_error("Cannot write calibration report: " + path.string());
 }
 
 }  // namespace cbct::calibration

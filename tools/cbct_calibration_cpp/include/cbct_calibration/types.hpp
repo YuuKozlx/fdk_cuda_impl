@@ -25,6 +25,7 @@ struct PixelSize {
 };
 
 struct PhantomSpec {
+    bool markers_for_numbering_only = false;
     // An empty list means an unmarked phantom; one or two entries cover the
     // usual marked variants.
     int beads_per_ring = 12;
@@ -108,6 +109,7 @@ struct MachineGeometry {
 };
 
 struct CalibrationResult {
+    std::string model = "spatial_seven_parameter";
     TrackingResult tracking;
     std::vector<DltCamera> cameras;
     SourceCircle source_circle;
@@ -122,6 +124,14 @@ struct CalibrationResult {
 };
 
 struct PipelineConfig {
+    enum class PhantomKind { DoubleRing, Spiral, SingleRow };
+    PhantomKind phantom_kind = PhantomKind::DoubleRing;
+    int spiral_beads = 24;
+    double spiral_radius_mm = 50, spiral_spacing_mm = 5, spiral_step_deg = 30;
+    Point3 spiral_marker_mm{50, 0, -67.5};
+    int row_beads = 12;
+    double row_spacing_mm = 10;
+    double initial_sid_mm = 440, initial_sdd_mm = 770;
     TrackerConfig tracker;
     PhantomSpec phantom;
     PixelSize pixel;
