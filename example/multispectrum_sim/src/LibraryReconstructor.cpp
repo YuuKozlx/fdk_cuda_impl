@@ -1,7 +1,11 @@
+#include "config/ReconstructionGeometry.hpp"
 #include "common/YkTimingWatchdog.hpp"
 #include "LibraryReconstructor.hpp"
 #include "recon/postprocess/PostprocessPipeline.hpp"
 #include "image/ImageStages.hpp"
+#include "recon/bhc/BoneBhcStage.hpp"
+#include "recon/bhc/BoneBhcRouting.hpp"
+#include "recon/preprocess/BeamHardeningFit.hpp"
 
 #include "LibraryGeometry.hpp"
 #include "ReconstructionPreprocessor.hpp"
@@ -64,6 +68,103 @@ YK::EPipeline parsePipeline(const std::string& name)
 }
 
 
+void publishReconstruction(const SimulationConfig& config, std::vector<float>& volume,
+    std::shared_ptr<float> device_result, const std::filesystem::path& original,
+    const std::filesystem::path& corrected, const std::filesystem::path& output,
+    const std::filesystem::path& slices, TaskProgressCallback progress, PostprocessConfigurer configure)
+{
+    const auto& g=config.geometry.parameters;
+    postprocess::Volume result;
+    result.grid.dimensions={g.reconstruction_volume_x,g.reconstruction_volume_y,g.reconstruction_volume_z};
+    result.grid.spacing_mm={g.reconstruction_voxel_x_mm,g.reconstruction_voxel_y_mm,g.reconstruction_voxel_z_mm};
+    const double center[]={g.reconstruction_offset_x_mm,g.reconstruction_offset_y_mm,g.reconstruction_offset_z_mm};
+    for(int i=0;i<3;++i)result.grid.origin_mm[i]=center[i]-.5*(result.grid.dimensions[i]-1)*result.grid.spacing_mm[i];
+    result.elements=volume.size();result.host_data=volume.data();
+    if(device_result){result.device_owner=std::move(device_result);result.device_data=result.device_owner.get();result.location=postprocess::Location::Device;}
+    image::VolumeTransfer transfer;image::Workspace workspace(image::Location::Device);
+    postprocess::Context context;context.transfer=&transfer;context.image_workspace=&workspace;
+    context.volume_file=output;context.slice_prefix=slices;context.progress=progress;
+    context.original_projection_file=original;context.reconstruction_projection_file=corrected;
+    context.source_config_file=config.source_config_file;
+    postprocess::Pipeline pipeline;
+    if(configure)configure(pipeline);
+    pipeline.appendExporter(postprocess::makeRawFloatExporter());
+    if(config.reconstruction.save_slices)pipeline.appendExporter(postprocess::makeOrthogonalBmpExporter());
+    pipeline.run(result,context);
+}
+
+bool reconstructWithBoneCorrection(const SimulationConfig& config,
+    const std::filesystem::path& input, const std::filesystem::path& output,
+    const std::filesystem::path& slices, std::string& diagnostic,
+    TaskProgressCallback progress, PostprocessConfigurer configure)
+{
+    using namespace bone_bhc;
+    const auto route=resolveRouting(config);
+    const auto& settings=config.reconstruction.bone_hardening;
+    auto fit=config.reconstruction.preprocessing.beam_hardening;
+    if(fit.fit_from_water_plate)fit=preprocess::fitWaterPlate(config,fit,progress);
+    fit.fit_from_water_plate=false; // Freeze the polynomial used by input correction and the model.
+    auto prep=config;prep.reconstruction.bone_hardening.enabled=false;
+    prep.reconstruction.preprocessing.beam_hardening=fit;
+    prep.reconstruction.preprocessing.beam_hardening.enabled=!route.before_water;
+    prep.reconstruction.preprocessing.enabled=config.reconstruction.preprocessing.enabled &&
+        (prep.reconstruction.preprocessing.beam_hardening.enabled || prep.reconstruction.preprocessing.scatter.enabled);
+    auto fixed=input;
+    if(prep.reconstruction.preprocessing.enabled){
+        fixed=preprocess::cachedProjection(prep,input,[&](const auto& path,std::string& message){
+            return prepareReconstructionProjection(prep,input,path,message,progress);
+        },diagnostic,progress);
+    }
+    auto base=config;base.reconstruction.bone_hardening.enabled=false;
+    base.reconstruction.preprocessing.enabled=false;base.reconstruction.save_slices=false;
+    auto model=base;
+    std::unique_ptr<IBoneBhcAlgorithm> algorithm;
+    const auto domain=route.before_water?Domain::ScatterCorrectedLog:Domain::WaterCorrectedLog;
+    const SegmentationOptions segmentation{settings.air_threshold_hu,settings.bone_threshold_hu};
+    if(route.use_lut)algorithm=std::make_unique<TwoMaterialLutBhc>(model,
+        preprocess::TwoMaterialCalibration::load(settings.calibration_file),settings.bone_thickness_scale,segmentation);
+    else {
+        auto soft=settings.soft_material,bone=settings.bone_material;soft.label=1;bone.label=2;
+        model.projection.materials={soft,bone};
+        algorithm=std::make_unique<PhysicalBoneBhc>(model,domain,fit,segmentation);
+    }
+    const auto parent=std::filesystem::absolute(output).parent_path();std::filesystem::create_directories(parent);
+    Context context;
+    context.output_directory=parent/(output.stem().string()+"-bone-bhc-"+
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    context.options={settings.max_iterations,settings.stop_ratio};
+    context.reconstruct=[&](const auto& projection,const auto& volume){
+        std::string error;
+        if(!reconstructWithLibraryFdk(base,projection,volume,{},error,progress))throw std::runtime_error(error);
+    };
+    if(route.before_water)context.initialize=[&](const auto& projection,const auto& corrected){
+        auto initial=base;initial.reconstruction.preprocessing.enabled=true;
+        initial.reconstruction.preprocessing.scatter.enabled=false;initial.reconstruction.preprocessing.beam_hardening=fit;
+        initial.reconstruction.preprocessing.beam_hardening.fit_from_water_plate=false;
+        std::string error;
+        if(!prepareReconstructionProjection(initial,projection,corrected,error,progress))throw std::runtime_error(error);
+    };
+    context.progress=[&](const Iteration& i){
+        std::cout<<"bone_bhc iteration="<<i.number<<" model_ms="<<i.model_ms<<" reconstruction_ms="<<i.reconstruction_ms<<std::endl;
+        if(progress)progress({"Bone hardening iterations",i.number,settings.max_iterations});
+    };
+    if(progress)progress({"Bone hardening initial reconstruction",0,settings.max_iterations});
+    std::cout<<"bone_bhc method="<<settings.method<<" input_domain="<<(route.before_water?"before_water":"after_water")
+        <<" checkpoints="<<context.output_directory<<std::endl;
+    Dataset dataset;dataset.original_projection=fixed;dataset.domain=domain;
+    auto result=std::make_shared<Result>();BoneBhcStage stage(std::move(algorithm),result);
+    stage.process(dataset,context);
+    const auto& g=config.geometry.parameters;
+    std::vector<float> volume(size_t(g.reconstruction_volume_x)*g.reconstruction_volume_y*g.reconstruction_volume_z);
+    std::ifstream file(dataset.reconstruction,std::ios::binary);
+    check(bool(file.read(reinterpret_cast<char*>(volume.data()),volume.size()*sizeof(float))),"Cannot read bone-corrected volume");
+    // Only the final volume enters the caller's image-domain stages and exporters.
+    publishReconstruction(config,volume,{},input,dataset.corrected_projection,output,slices,progress,configure);
+    if(progress)progress({"Completed",1,1});
+    diagnostic="骨硬化校正完成，方案="+settings.method+"，轮数="+std::to_string(result->iterations.size())+
+        "，检查点="+context.output_directory.string();
+    return true;
+}
 } // namespace
 
 bool reconstructWithLibraryFdk(const SimulationConfig& config,
@@ -72,10 +173,20 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
     const std::filesystem::path& slice_prefix,
     std::string& diagnostic,TaskProgressCallback progress,PostprocessConfigurer configure_postprocess)
 {
+    if(config.reconstruction.geometry_override.enabled){
+        try{
+            auto resolved=config;
+            resolved.geometry.parameters=resolveReconstructionGeometry(config);
+            resolved.reconstruction.geometry_override.enabled=false;
+            return reconstructWithLibraryFdk(resolved,projection_file,volume_file,slice_prefix,diagnostic,progress,configure_postprocess);
+        }catch(const std::exception& e){diagnostic=e.what();return false;}
+    }
     YK::diagnostics::TimingSpan total_watch("reconstruction.run",config.reconstruction.iterative.algorithm);
     YK::IReconstructionSession* session = nullptr;
     std::filesystem::path reconstruction_input = projection_file;
     try {
+        if(config.reconstruction.bone_hardening.enabled)
+            return reconstructWithBoneCorrection(config,projection_file,volume_file,slice_prefix,diagnostic,progress,configure_postprocess);
         if (config.reconstruction.preprocessing.enabled) {
             std::string preprocessing_diagnostic;
             reconstruction_input=preprocess::cachedProjection(config,projection_file,
@@ -314,28 +425,10 @@ bool reconstructWithLibraryFdk(const SimulationConfig& config,
         }
         YK::ReconstructionSessionFactory::destroy(session);
         session=nullptr;
-        postprocess::Volume result;
-        result.grid.dimensions={g.reconstruction_volume_x,g.reconstruction_volume_y,g.reconstruction_volume_z};
-        result.grid.spacing_mm={g.reconstruction_voxel_x_mm,g.reconstruction_voxel_y_mm,g.reconstruction_voxel_z_mm};
-        const double center[]={g.reconstruction_offset_x_mm,g.reconstruction_offset_y_mm,g.reconstruction_offset_z_mm};
-        for(int i=0;i<3;++i)result.grid.origin_mm[i]=center[i]-.5*(result.grid.dimensions[i]-1)*result.grid.spacing_mm[i];
-        result.elements=volume.size();result.host_data=volume.data();
-        if(device_result){result.device_owner=std::move(device_result);result.device_data=result.device_owner.get();result.location=postprocess::Location::Device;}
-        image::VolumeTransfer transfer;
-        image::Workspace image_workspace(image::Location::Device);
-        postprocess::Context context;context.transfer=&transfer;context.image_workspace=&image_workspace;
-        context.volume_file=volume_file;context.slice_prefix=slice_prefix;context.progress=progress;
-        context.original_projection_file=projection_file;context.reconstruction_projection_file=reconstruction_input;
-        context.source_config_file=config.source_config_file;
-        postprocess::Pipeline postprocessing;
-        if(configure_postprocess)configure_postprocess(postprocessing);
-        // Keep the existing attenuation RAW contract for display and numerical comparison.
-        postprocessing.appendExporter(postprocess::makeRawFloatExporter());
-        if(config.reconstruction.save_slices)postprocessing.appendExporter(postprocess::makeOrthogonalBmpExporter());
-        postprocessing.run(result,context);
+        publishReconstruction(config,volume,std::move(device_result),projection_file,reconstruction_input,volume_file,slice_prefix,progress,configure_postprocess);
         if(progress)progress({"Completed",1,1});
         diagnostic = pipeline_name +
-            " 重建完成，输出体素=" + std::to_string(result.elements);
+            " 重建完成，输出体素=" + std::to_string(volume.size());
         return true;
     } catch (const std::exception& e) {
         if (session) YK::ReconstructionSessionFactory::destroy(session);

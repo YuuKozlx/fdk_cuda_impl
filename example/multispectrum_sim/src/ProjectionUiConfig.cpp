@@ -1,6 +1,9 @@
+#include "config/ReconstructionGeometry.hpp"
 #include "ProjectionUiConfig.hpp"
 #include "XcomAttenuationProvider.hpp"
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -178,6 +181,9 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
     toml::table recon=t["reconstruction"].is_table()?*t["reconstruction"].as_table():toml::table{};
     recon.insert_or_assign("type",r.type);recon.insert_or_assign("input_projection_file",r.input_projection_file.generic_string());
     recon.insert_or_assign("output_volume_file",r.output_volume_file.generic_string());recon.insert_or_assign("slice_prefix",r.slice_prefix.generic_string());recon.insert_or_assign("save_slices",r.save_slices);
+    toml::table reconstruction_geometry{{"enabled",r.geometry_override.enabled}};
+    for(const auto& f:reconstructionGeometryFields())reconstruction_geometry.insert(f.key,r.geometry_override.parameters.*f.member);
+    recon.insert_or_assign("geometry",std::move(reconstruction_geometry));
     recon.erase("analytic");recon.erase("iterative");recon.erase("statistical");
     if(r.type=="analytic")recon.insert("analytic",toml::table{{"pipeline",r.analytic.pipeline},{"filter",r.analytic.filter},{"chunk_views",r.analytic.chunk_views}});
     if(r.type=="analytic"){
@@ -211,6 +217,12 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
                 {"backtracking",s.optimizer.backtracking},{"max_backtracking",s.optimizer.max_backtracking},{"step_shrink",s.optimizer.step_shrink},
                 {"relative_tolerance",s.optimizer.relative_tolerance},{"minimum_iterations",s.optimizer.minimum_iterations}}}});
     }
+    const auto& bone=r.bone_hardening;
+    recon.insert_or_assign("bone_hardening",toml::table{{"enabled",bone.enabled},{"method",bone.method},
+        {"calibration_file",bone.calibration_file.generic_string()},{"max_iterations",bone.max_iterations},{"stop_ratio",bone.stop_ratio},
+        {"air_threshold_hu",bone.air_threshold_hu},{"bone_threshold_hu",bone.bone_threshold_hu},{"bone_thickness_scale",bone.bone_thickness_scale},
+        {"soft_material",toml::table{{"preset",bone.soft_material.preset},{"density_g_cm3",bone.soft_material.density_g_cm3}}},
+        {"bone_material",toml::table{{"preset",bone.bone_material.preset},{"density_g_cm3",bone.bone_material.density_g_cm3}}}});
     auto* pp=recon["preprocessing"].as_table();if(!pp){recon.insert("preprocessing",toml::table{});pp=recon["preprocessing"].as_table();}
     pp->insert_or_assign("enabled",r.preprocessing.enabled);
     const auto& bh=r.preprocessing.beam_hardening;
@@ -250,6 +262,29 @@ void saveProjectionUiConfig(const SimulationConfig& c, const std::filesystem::pa
     out << t;
     out.close();
 }
+bool setProjectionUiScanType(SimulationConfig& c,GeometryKind target) {
+    if(c.geometry.kind==target)return false;
+    auto& g=c.geometry.parameters;
+    const bool was_helical=c.geometry.kind==GeometryKind::FlatHelical;
+    const bool helical=target==GeometryKind::FlatHelical;
+    const double half_turns=g.views_per_turn>0 ? .5*g.rotation_direction*g.views/g.views_per_turn : 0;
+    // Preserve the center of the scanned Z range when changing trajectory.
+    const double center_z=g.start_z_mm+(was_helical?g.pitch_mm_per_turn*half_turns:0);
+    if(helical && g.pitch_mm_per_turn==0)g.pitch_mm_per_turn=100;
+    if(was_helical!=helical)g.start_z_mm=center_z-(helical?g.pitch_mm_per_turn*half_turns:0);
+    c.geometry.kind=target;
+    if(target==GeometryKind::PlanarSourceOrbit){
+        if(g.planar_detector_y_mm<=0)g.planar_detector_y_mm=std::max(g.sdd_mm-g.sid_mm,1.0);
+        if(g.source_orbit_radius_mm<=0)g.source_orbit_radius_mm=g.sid_mm;
+        g.reconstruction_detector_u=g.detector_u;g.reconstruction_detector_v=g.detector_v;
+    }
+    if(target==GeometryKind::PlanarSourceOrbit || target==GeometryKind::NikonTilted)c.projection.detector_response.enabled=false;
+    if(c.reconstruction.type=="analytic"){
+        if(helical && c.reconstruction.analytic.pipeline=="fdk")c.reconstruction.analytic.pipeline="wfbp";
+        else if(!helical && c.reconstruction.analytic.pipeline=="wfbp")c.reconstruction.analytic.pipeline="fdk";
+    }
+    return true;
+}
 void selectBuiltinMaterial(MaterialSpec& material,std::string_view id) {
     const auto* preset=findBuiltinMaterial(id);
     if(!preset)throw std::runtime_error("Unknown builtin material: "+std::string(id));
@@ -264,10 +299,19 @@ void validateProjectionUiInputs(const SimulationConfig& c, const std::vector<std
     const auto& g = c.geometry.parameters;
     if (g.volume_x <= 0 || g.volume_y <= 0 || g.volume_z <= 0 || static_cast<std::uint64_t>(g.volume_x) * g.volume_y * g.volume_z != labels.size())
         throw std::runtime_error("Raw uint8 file size must equal X * Y * Z");
+    for(double value:{g.sid_mm,g.sdd_mm,g.voxel_x_mm,g.voxel_y_mm,g.voxel_z_mm,g.pixel_u_mm,g.pixel_v_mm})
+        if(!std::isfinite(value) || value<=0)throw std::runtime_error("Distances, voxel spacing and pixel spacing must be finite and positive");
+    if(g.views<=0 || g.views_per_turn<=0 || g.detector_u<=0 || g.detector_v<=0 || c.projection.sampling.samples_per_pixel<=0)
+        throw std::runtime_error("View count, detector dimensions and ray count must be positive");
+    if(g.rotation_direction!=1 && g.rotation_direction!=-1)throw std::runtime_error("Rotation direction must be +1 or -1");
+    if(!std::isfinite(g.start_z_mm) || !std::isfinite(g.start_angle_rad))throw std::runtime_error("Scan start position and angle must be finite");
+    if(c.geometry.kind==GeometryKind::FlatHelical && (!std::isfinite(g.pitch_mm_per_turn) || g.pitch_mm_per_turn==0))
+        throw std::runtime_error("Helical pitch must be finite and nonzero");
+    if(c.projection.output_file.empty())throw std::runtime_error("Set a projection output path");
     if (g.sdd_mm <= g.sid_mm)
         throw std::runtime_error("SDD must be greater than SID");
-    if (c.projection.materials.empty() || c.projection.materials.size() > 32)
-        throw std::runtime_error("Use 1..32 material mappings");
+    if (c.projection.materials.empty() || c.projection.materials.size() > 64)
+        throw std::runtime_error("Use 1..64 material mappings");
     std::array<bool, 256> defined {};
     for (const auto& m : c.projection.materials) {
         if (defined[m.label])

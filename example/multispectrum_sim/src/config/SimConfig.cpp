@@ -1,3 +1,5 @@
+#include "config/ReconstructionGeometry.hpp"
+#include "recon/bhc/BoneBhcRouting.hpp"
 #include "config/SimConfig.hpp"
 #include "XcomAttenuationProvider.hpp"
 #include <toml++/toml.hpp>
@@ -168,6 +170,22 @@ namespace yk::spectral {
             c.reconstruction.save_slices = (*r)["save_slices"].value_or(false);
             if (auto value = (*r)["input_projection_file"].value<std::string>())
                 c.reconstruction.input_projection_file = resolve(config_directory, *value);
+            if(auto* bone=(*r)["bone_hardening"].as_table()) {
+                auto& b=c.reconstruction.bone_hardening;
+                b.enabled=(*bone)["enabled"].value_or(false);
+                b.method=(*bone)["method"].value_or(b.method);
+                b.calibration_file=resolve(config_directory,(*bone)["calibration_file"].value_or(std::string{}));
+                b.max_iterations=(*bone)["max_iterations"].value_or(b.max_iterations);
+                b.stop_ratio=(*bone)["stop_ratio"].value_or(b.stop_ratio);
+                b.air_threshold_hu=(*bone)["air_threshold_hu"].value_or(b.air_threshold_hu);
+                b.bone_threshold_hu=(*bone)["bone_threshold_hu"].value_or(b.bone_threshold_hu);
+                b.bone_thickness_scale=(*bone)["bone_thickness_scale"].value_or(b.bone_thickness_scale);
+                for(auto entry:{std::make_pair("soft_material",&b.soft_material),std::make_pair("bone_material",&b.bone_material)})
+                    if(auto* material=(*bone)[entry.first].as_table()){
+                        entry.second->preset=(*material)["preset"].value_or(entry.second->preset);
+                        entry.second->density_g_cm3=(*material)["density_g_cm3"].value_or(entry.second->density_g_cm3);
+                    }
+            }
             if (auto* preprocessing = (*r)["preprocessing"].as_table()) {
                 auto& pp = c.reconstruction.preprocessing;
                 pp.enabled = (*preprocessing)["enabled"].value_or(false);
@@ -440,6 +458,11 @@ namespace yk::spectral {
                     !std::isfinite(rc.maximum_update_ratio) || rc.maximum_update_ratio <= 0)
                     throw std::runtime_error("iterative 参数必须为正数");
             }
+            auto bone_validation=c;
+            if(c.reconstruction.geometry_override.enabled)bone_validation.geometry.parameters=resolveReconstructionGeometry(c);
+            const auto bone_route=bone_bhc::resolveRouting(bone_validation);
+            if(c.reconstruction.bone_hardening.enabled && bone_route.use_lut && !available(c.reconstruction.bone_hardening.calibration_file))
+                throw std::runtime_error("Bone hardening calibration file does not exist");
             auto& pp = c.reconstruction.preprocessing;
             if (pp.enabled) {
                 if (!pp.beam_hardening.enabled && !pp.scatter.enabled)
@@ -730,6 +753,17 @@ namespace yk::spectral {
                 (c.reconstruction.type == "analytic" && c.reconstruction.analytic.pipeline == "wfbp" && c.geometry.kind != GeometryKind::CylHelical && c.geometry.kind != GeometryKind::FlatHelical))
                 throw std::runtime_error("解析重建支持 flat_cbct/cyl_cbct+fdk、flat_helical/cyl_helical+wfbp");
         }
+        c.reconstruction.geometry_override.parameters=c.geometry.parameters;
+        if(const auto* override_table=t["reconstruction"]["geometry"].as_table()){
+            auto& override_geometry=c.reconstruction.geometry_override;
+            override_geometry.enabled=(*override_table)["enabled"].value_or(false);
+            for(const auto& f:reconstructionGeometryFields()){
+                const auto value=(*override_table)[f.key];
+                if(value && !value.is_number())throw std::runtime_error(std::string("reconstruction.geometry requires a number: ")+f.key);
+                override_geometry.parameters.*f.member=value.value_or(c.geometry.parameters.*f.member);
+            }
+        }
+        resolveReconstructionGeometry(c);
         return c;
     }
     std::vector<SpectrumPoint> loadSpectrum(const std::filesystem::path& p) {

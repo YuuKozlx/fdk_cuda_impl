@@ -3,6 +3,7 @@
 #include "XcomAttenuationProvider.hpp"
 #include "cuda/DeviceMemoryPool.hpp"
 #include "primary/IdealBoneCorrection.cuh"
+#include "primary/ScalarProjector.hpp"
 #include "recon/bhc/BoneBhcStage.hpp"
 #include "recon/preprocess/CudaPixelOps.hpp"
 #include "recon/preprocess/correction/TwoMaterialBhcStage.hpp"
@@ -15,6 +16,11 @@
 
 namespace yk::spectral::bone_bhc {
 namespace {
+    __global__ void makeBoneVolume(const unsigned char* labels, float* out, size_t voxels, float scale)
+    {
+        const size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;
+        if(i<voxels)out[i]=labels[i]==2?scale:0.f;
+    }
     using Json = nlohmann::json;
     namespace pd = primary_detail;
     void check(cudaError_t e)
@@ -238,6 +244,10 @@ namespace {
         const unsigned char* labels_;
         const int* map_;
         float scale_;
+        scalar_fp::Grid grid_;
+        std::unique_ptr<Buffer<scalar_fp::DeviceView>> views_;
+        cudaArray_t array_=nullptr;
+        cudaTextureObject_t texture_=0;
 
     public:
         BoneProvider(pd::DeviceGeometry g, const unsigned char* l, const int* m, float s)
@@ -246,9 +256,50 @@ namespace {
             , map_(m)
             , scale_(s)
         {
+            // A cylindrical detector is not a flat cone-vector panel. Keep its
+            // dedicated curved-ray path until the scalar library supports it.
+            if(g_.cylindrical)return;
+            grid_={g_.nx,g_.ny,g_.nz,{g_.vx,g_.vy,g_.vz},{}};
+            std::vector<scalar_fp::View> geometry;
+            constexpr float pi=3.14159265358979323846f;
+            for(int i=0;i<g_.views;++i){
+                const auto ray=pd::scannerRay(g_,i,0,0);
+                const float angle=g_.start+float(g_.rotation_direction)*2.f*pi*i/g_.views_per_turn;
+                float3 u,v,n;pd::detectorFrame(g_,angle-.5f*pi,u,v,n);
+                geometry.push_back({pd::phantomInverse(g_,ray.source,false),pd::phantomInverse(g_,ray.detector,false),
+                    pd::phantomInverse(g_,pd::scale3(u,g_.pu),true),pd::phantomInverse(g_,pd::scale3(v,g_.pv),true)});
+            }
+            const auto prepared=scalar_fp::prepareViews(geometry,grid_,g_.nu,g_.nv,scalar_fp::Method::Siddon,scalar_fp::DetectorAnchor::Pixel00);
+            views_=std::make_unique<Buffer<scalar_fp::DeviceView>>(prepared.size());views_->upload(prepared.data(),prepared.size());
+            const size_t voxels=size_t(g_.nx)*g_.ny*g_.nz;
+            size_t free=0,total=0;check(cudaMemGetInfo(&free,&total));
+            const size_t reserve=std::max(size_t(512)<<20,total/5);
+            if(free<=reserve || voxels>(free-reserve)/(2*sizeof(float)))
+                throw std::runtime_error("Insufficient memory for bone scalar FP volume/texture while reserving display memory");
+            Buffer<float> volume(voxels);
+            makeBoneVolume<<<unsigned((voxels+255)/256),256>>>(labels_,volume.p,voxels,scale_);check(cudaGetLastError());
+            try{
+                auto desc=cudaCreateChannelDesc<float>();const auto extent=make_cudaExtent(g_.nx,g_.ny,g_.nz);
+                check(cudaMalloc3DArray(&array_,&desc,extent));
+                cudaMemcpy3DParms copy{};copy.srcPtr=make_cudaPitchedPtr(volume.p,size_t(g_.nx)*sizeof(float),g_.nx,g_.ny);
+                copy.dstArray=array_;copy.extent=extent;copy.kind=cudaMemcpyDeviceToDevice;check(cudaMemcpy3D(&copy));
+                cudaResourceDesc resource{};resource.resType=cudaResourceTypeArray;resource.res.array.array=array_;
+                cudaTextureDesc sampler{};sampler.readMode=cudaReadModeElementType;sampler.filterMode=cudaFilterModePoint;
+                for(auto& mode:sampler.addressMode)mode=cudaAddressModeBorder;
+                check(cudaCreateTextureObject(&texture_,&resource,&sampler,nullptr));
+            }catch(...){if(texture_)cudaDestroyTextureObject(texture_);if(array_)cudaFreeArray(array_);throw;}
+            std::cout<<"bone_bhc thickness_projector=scalar_siddon_texture"<<std::endl;
         }
+        ~BoneProvider() override {if(texture_)cudaDestroyTextureObject(texture_);if(array_)cudaFreeArray(array_);}
         void writeDevice(int view, int width, int height, float* out) override
         {
+            if(view<0 || view>=g_.views || width!=g_.nu || height!=g_.nv || !out)
+                throw std::invalid_argument("Bone thickness projection geometry mismatch");
+            if(texture_){
+                scalar_fp::launch(scalar_fp::Method::Siddon,nullptr,texture_,views_->p+view,out,grid_,width,height,1,
+                    false,nullptr,1,scalar_fp::SiddonMemory::Texture);
+                return;
+            }
             bonePaths<<<(width * height + 127) / 128, 128>>>(g_, labels_, map_, view, out, scale_);
             check(cudaGetLastError());
         }

@@ -5,6 +5,7 @@ namespace yk::spectral {
 std::vector<ProjectionViewGeometry> buildDisplayGeometry(const SimulationConfig& c) {
     using namespace primary_detail;
     if(c.geometry.parameters.views<=0)throw std::runtime_error("geometry needs positive views");
+    if(c.geometry.parameters.views_per_turn<=0)throw std::runtime_error("geometry needs positive views per turn");
     auto g=makeDeviceGeometry(c,static_cast<int>(c.projection.materials.size()),1);
     const auto cone_geometry=buildNonStandardProjectionViews(c);
     std::vector<DeviceConeView> cone_views;

@@ -1,4 +1,5 @@
 #include "recon/bhc/BoneBhcStage.hpp"
+#include "recon/bhc/BoneBhcRouting.hpp"
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -37,6 +38,19 @@ struct Algorithm : IBoneBhcAlgorithm {
 int main(int argc, char** argv)
 {
     try {
+        yk::spectral::SimulationConfig config;
+        auto& b=config.reconstruction.bone_hardening;b.enabled=true;
+        config.reconstruction.preprocessing.beam_hardening.enabled=true;
+        auto route=resolveRouting(config);check(!route.before_water&&!route.use_lut,"physical-after-water routing");
+        b.method="physical_before_water";route=resolveRouting(config);check(route.before_water&&!route.use_lut,"physical-before-water routing");
+        b.method="two_material_lut";rejects([&]{resolveRouting(config);});
+        b.calibration_file="calibration.json";route=resolveRouting(config);check(route.before_water&&route.use_lut,"LUT must replace water BHC");
+        b.method="ebhc";rejects([&]{resolveRouting(config);}); // image-domain stage is not a dataset strategy
+        b.method="physical_after_water";b.max_iterations=0;rejects([&]{resolveRouting(config);});b.max_iterations=1;
+        b.air_threshold_hu=b.bone_threshold_hu;rejects([&]{resolveRouting(config);});b.air_threshold_hu=-500;
+        config.reconstruction.preprocessing.beam_hardening.enabled=false;rejects([&]{resolveRouting(config);});
+        config.reconstruction.preprocessing.beam_hardening.enabled=true;
+        config.geometry.kind=yk::spectral::GeometryKind::NikonTilted;rejects([&]{resolveRouting(config);});
         check(argc == 2, "output root required");
         const auto root = fs::path(argv[1]) / std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         fs::create_directories(root);

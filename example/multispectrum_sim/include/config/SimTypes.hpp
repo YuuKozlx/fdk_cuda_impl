@@ -305,7 +305,24 @@ struct StatisticalReconstructionConfig {
     bool non_negative=true;
 };
 
+struct ReconstructionGeometryConfig {
+    bool enabled = false;
+    GeometryConfig parameters;
+};
+struct BoneHardeningConfig {
+    bool enabled = false;
+    // Placement is part of the selected method, not an independent stage-order knob.
+    std::string method = "physical_after_water";
+    std::filesystem::path calibration_file;
+    int max_iterations = 1;
+    double stop_ratio = .78, air_threshold_hu = -500, bone_threshold_hu = 300;
+    double bone_thickness_scale = 1;
+    MaterialSpec soft_material {1, "soft", "", "compound.water", 1.03};
+    MaterialSpec bone_material {2, "bone", "", "tissue.ncat_skull", 1.61};
+};
 struct ReconstructionConfig {
+    BoneHardeningConfig bone_hardening;
+    ReconstructionGeometryConfig geometry_override;
     std::filesystem::path input_projection_file;
     std::string type = "analytic";
     AnalyticReconstructionConfig analytic;

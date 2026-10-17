@@ -27,6 +27,7 @@ void runBoneBhcJob(const std::filesystem::path& job_file)
     else
         throw std::invalid_argument("unknown bone BHC input domain");
     auto config = loadConfig(resolve("config"));
+    config.reconstruction.bone_hardening.enabled=false;
     config.projection.spectrum.export_file.clear();
     // Keep the configured analytic reconstruction; TV/other postprocessing must not
     // silently change the material model inside this experimental physical loop.

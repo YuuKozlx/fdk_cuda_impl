@@ -4,6 +4,49 @@
 没有枚举分发执行器、注册中心或工厂体系；具体对象在组装流程时直接注入。
 EBHC 保持独立，不进入这个框架。
 
+## 客户端与正常重建入口
+
+正常 `reconstructWithLibraryFdk` 入口已组装这个 Stage，CLI、GUI 的手动重建和前投后自动重建共用同一路径。GUI 在 Reconstruction → Bone hardening correction 中配置，默认关闭，仍标为实验性。外部选择方案，内部仍注入具体策略对象；不由界面直接调用 kernel。
+
+| `method` | 接入位置与固定输入 | 水 BHC 的执行规则 |
+|---|---|---|
+| `physical_after_water` | 常规前处理完成后，固定水校正 log 投影 | 前处理执行一次；模型补偿使用同一水多项式，后续重建不再做水 BHC |
+| `physical_before_water` | 散射校正后、水 BHC 前的固定 log 投影 | 仅初始重建先用水 BHC；最终模型补偿直接输出参考能量 log |
+| `two_material_lut` | 散射校正后、水 BHC 前，接收骨等效厚度和标定表 | 初始重建使用水 BHC；最终 LUT 替代水 BHC，不能二者串联 |
+| EBHC 图像域方案 | 最终重建后，通过独立 postprocess Stage 注入 | 需要对应扫描的基图与拟合系数；不作为上面三个方案的 UI 选项 |
+
+物理/查表方案需要初始重建，不能放入普通逐帧前处理链硬凑顺序。内部初始和逐轮重建会关闭骨校正、常规前处理、自定义图像后处理和切片导出，防止递归或用处理后的图像反复分割。完成全部轮次后，仅最终体积进入调用者的图像后处理和标准 RAW/BMP 导出。独立重建几何先解析，再用于初始重建、模型重投影和最终重建。
+
+```toml
+[reconstruction.bone_hardening]
+enabled = true
+method = "physical_after_water"
+max_iterations = 1
+air_threshold_hu = -500
+bone_threshold_hu = 300
+stop_ratio = 0.78
+
+[reconstruction.bone_hardening.soft_material]
+preset = "compound.water"
+density_g_cm3 = 1.03
+
+[reconstruction.bone_hardening.bone_material]
+preset = "tissue.ncat_skull"
+density_g_cm3 = 1.61
+```
+
+水参考/初始重建仍由 `reconstruction.preprocessing.beam_hardening` 设置，启用骨校正时必须启用该项。GUI 首次启用会打开水板拟合；已有水 BHC 配置保留。LUT 方案再指定 `calibration_file`（相对 TOML）和 `bone_thickness_scale`；材料参数只用于物理模型，厚度缩放只用于 LUT。
+
+`preprocessing.enabled=true` 表示输入尚待执行所配置的散射/水校正；设为 false 时，调用者必须提供已处于所选方案输入域的 log 投影，运行时不会猜测文件已做过哪些校正。开启散射仿真不等于自动去散射，仍需正确配置散射校正。自动分割的 LUT 仍要求声明匹配的参考能量，不能把未赋能量的 PMMA/Al 经验表直接塞入这个自动循环。
+
+各次执行在最终体积旁创建唯一 `*-bone-bhc-*` 目录，保留初始体积、逐轮投影、重建、`model.json`。正常重建配置的输出体积始终指向最终结果，UI 可直接显示它。常规前处理缓存只负责对应输入域的前处理，不将骨校正结果冒充可复用的水校正缓存。
+
+LUT 的平板圆扫/螺旋骨厚度重投影已使用独立 `multispectrum_scalar_fp` 的 Siddon 点采样纹理入口；按扫描几何变换到分割体积局部坐标，浮点骨掩膜与视图记录驻留 GPU。圆柱仍使用曲面专用射线，不能用平板向量近似替代。物理策略保留一次遍历同时累计软组织/骨路径的融合 kernel。LUT 的浮点路径与旧路径可能有末位舍入差异；不要求跨实现逐位一致。浮点体积/纹理准备前检查显存，保留至少 512 MiB 或总显存 20% 给显示等用途；模型资源在下一轮重建前释放。
+
+本次接入验证采用完整 ICRP 原始标签、36 帧/128×128 投影、64³ 重建，覆盖三种接入顺序及空气/软组织/骨非退化分割。恒等 LUT 用来检查没有重复水 BHC，仿射 LUT 用来比较新旧厚度前投；这些是流程/数值验证，不是骨伪影改善的质量验收，也没有验证大体积迭代组合的所有情况。
+
+该样例初始分割包含 219232 个空气、33973 个软组织、8939 个骨体素；前后置模式的初始重建逐值一致。恒等 LUT 最终投影与固定输入最大绝对差 `4.77e-7`；非零骨厚度参与的仿射 LUT，新浮点 Siddon 路径与旧专用路径的投影最大差 `8.59e-6`。另验证两轮物理后置校正，12 项相关测试通过。新增 `multispectrum_bone_scalar` 用解析骨块射线交段验证平板圆扫、平板/圆柱螺旋、非等距体素、重建中心偏移、厚度缩放 1/2，校正投影最大误差要求小于 `2e-6`。局部输出及日志位于 `out/bone-stage-integration`，不作为公开质量数据集。
+
 ```cpp
 using namespace yk::spectral::bone_bhc;
 auto algorithm = std::make_unique<PhysicalBoneBhc>(

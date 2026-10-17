@@ -101,7 +101,8 @@ inline DeviceGeometry makeDeviceGeometry(const SimulationConfig& c,
     result.tilt_v = (float)g.tilt_v_rad;
     result.tilt_n = (float)g.tilt_n_rad;
     result.start = (float)g.start_angle_rad;
-    result.pitch = (float)g.pitch_mm_per_turn;
+    const bool helical = c.geometry.kind == GeometryKind::FlatHelical || c.geometry.kind == GeometryKind::CylHelical;
+    result.pitch = helical ? (float)g.pitch_mm_per_turn : 0.f;
     result.start_z = (float)g.start_z_mm;
     result.phantom_x = (float)g.phantom_offset_x_mm;
     result.phantom_y = (float)g.phantom_offset_y_mm;

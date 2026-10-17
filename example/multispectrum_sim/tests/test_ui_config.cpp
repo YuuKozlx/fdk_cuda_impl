@@ -1,3 +1,5 @@
+#include "config/ReconstructionGeometry.hpp"
+#include <limits>
 #include "ProjectionUiConfig.hpp"
 #include "XcomAttenuationProvider.hpp"
 #include <cmath>
@@ -5,8 +7,46 @@
 #include <iostream>
 #include <stdexcept>
 using namespace yk::spectral;
+namespace yk::spectral { void testScanPanelInteraction(); }
 void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 int main(){try{
+    testScanPanelInteraction();
+    const GeometryKind scan_kinds[]={GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::PlanarSourceOrbit,GeometryKind::NikonTilted};
+    for(auto from:scan_kinds)for(auto to:scan_kinds)for(const char* method:{"analytic","iterative","statistical"})
+    for(int direction:{-1,1})for(double pitch:{-40.,40.}){
+        SimulationConfig scan;scan.geometry.kind=from;auto& s=scan.geometry.parameters;
+        s.views=725;s.views_per_turn=360;s.rotation_direction=direction;s.pitch_mm_per_turn=pitch;s.start_z_mm=-19;
+        scan.reconstruction.type=method;scan.reconstruction.analytic.pipeline=from==GeometryKind::FlatHelical?"wfbp":"fdk";
+        scan.reconstruction.geometry_override.enabled=true;scan.reconstruction.geometry_override.parameters.offset_u_mm=13;
+        const double center=s.start_z_mm+(from==GeometryKind::FlatHelical?.5*direction*pitch*725/360:0);
+        require(setProjectionUiScanType(scan,to)==(from!=to),"scan transition changed flag mismatch");
+        const double after=s.start_z_mm+(to==GeometryKind::FlatHelical?.5*direction*pitch*725/360:0);
+        require(std::abs(center-after)<1e-10,"fractional turn transition shifted center");
+        require(s.views==725 && s.views_per_turn==360 && s.pitch_mm_per_turn==pitch,"transition erased user sampling or pitch");
+        require(scan.reconstruction.type==method,"transition changed reconstruction family");
+        require(scan.reconstruction.geometry_override.enabled && scan.reconstruction.geometry_override.parameters.offset_u_mm==13,"transition changed independent reconstruction geometry");
+        if(scan.reconstruction.type=="analytic")require(scan.reconstruction.analytic.pipeline==(to==GeometryKind::FlatHelical?"wfbp":"fdk"),"incompatible analytic method after transition");
+    }
+    for(int direction:{-1,1}){
+        SimulationConfig scan;auto& s=scan.geometry.parameters;
+        s.views=1800;s.views_per_turn=360;s.rotation_direction=direction;
+        s.pitch_mm_per_turn=40;s.start_z_mm=12;scan.reconstruction.type="analytic";scan.reconstruction.analytic.pipeline="fdk";
+        require(setProjectionUiScanType(scan,GeometryKind::FlatHelical),"circular to helical did not change");
+        require(s.start_z_mm==12-direction*100,"helical scan was not centered on circular orbit");
+        require(scan.reconstruction.analytic.pipeline=="wfbp","helical retained FDK");
+        require(setProjectionUiScanType(scan,GeometryKind::FlatCbct),"helical to circular did not change");
+        require(s.start_z_mm==12 && s.pitch_mm_per_turn==40,"round trip changed scan center or erased pitch");
+        require(s.views==1800 && s.views_per_turn==360,"switch erased sampling parameters");
+        require(scan.reconstruction.analytic.pipeline=="fdk","circular retained WFBP");
+        require(!setProjectionUiScanType(scan,GeometryKind::FlatCbct),"same scan type changed parameters");
+        scan.reconstruction.type="iterative";scan.reconstruction.iterative.algorithm="ossart";
+        scan.reconstruction.iterative.regularization.strength=.0001;
+        setProjectionUiScanType(scan,GeometryKind::FlatHelical);
+        require(scan.reconstruction.type=="iterative" && scan.reconstruction.iterative.algorithm=="ossart" && scan.reconstruction.iterative.regularization.strength==.0001,"switch changed iterative configuration");
+    }
+    {SimulationConfig scan;scan.geometry.parameters.pitch_mm_per_turn=0;
+        setProjectionUiScanType(scan,GeometryKind::FlatHelical);
+        require(scan.geometry.parameters.pitch_mm_per_turn!=0,"new helix has zero pitch");}
     const auto dir=std::filesystem::current_path()/"ui-config-tests";
     std::filesystem::create_directories(dir);
     SimulationConfig c;c.workflow.mode=WorkflowMode::Project;c.visualization.enabled=true;c.visualization.interactive=true;
@@ -49,6 +89,21 @@ int main(){try{
     require(unknown && picked.preset==water->id,"invalid selection damaged material");
     c.projection.materials[0]=picked;c.projection.materials[0].label=1;
     saveProjectionUiConfig(c,dir/"picked.toml");
+    {
+        auto bone=c;bone.geometry.kind=GeometryKind::FlatCbct;
+        bone.projection.detector_response.enabled=false;
+        bone.reconstruction.preprocessing.beam_hardening.enabled=true;
+        bone.reconstruction.preprocessing.beam_hardening.fit_from_water_plate=true;
+        auto& b=bone.reconstruction.bone_hardening;b.enabled=true;b.max_iterations=2;b.bone_threshold_hu=375;
+        b.bone_material.preset="tissue.ncat_skull";b.bone_material.density_g_cm3=1.7;
+        for(const char* method:{"physical_before_water","physical_after_water","two_material_lut"}){
+            b.method=method;b.calibration_file=std::filesystem::absolute(dir/"calibration.json");
+            const auto path=dir/"bone-roundtrip.toml";saveProjectionUiConfig(bone,path);
+            const auto loaded=loadConfig(path,false);const auto& actual=loaded.reconstruction.bone_hardening;
+            require(actual.enabled&&actual.method==method&&actual.max_iterations==2&&actual.bone_threshold_hu==375,"bone method/placement roundtrip");
+            require(actual.calibration_file==b.calibration_file&&actual.bone_material.density_g_cm3==1.7&&actual.bone_material.preset==b.bone_material.preset,"bone calibration/material roundtrip");
+        }
+    }
     const auto selected=loadConfig(dir/"picked.toml");
     require(selected.projection.materials[0].preset==water->id && selected.projection.materials[0].formula.empty(),"selected preset did not survive save/load");
     XcomAttenuationProvider provider({});std::vector<double> preset_mu,formula_mu;std::string error;
@@ -156,6 +211,40 @@ int main(){try{
     require(loaded_sc.guide.enabled && loaded_sc.guide.sigma_u_pixels==1.5 && loaded_sc.guide.sigma_v_pixels==2.5,"guidance controls were not preserved");
     require(loaded_sc.solver.type=="adaptive_experimental" && loaded_sc.solver.adaptive.iterations==13 && loaded_sc.solver.adaptive.initial_damping==.6 && loaded_sc.solver.adaptive.min_damping==.2 && loaded_sc.solver.adaptive.damping_decay==.9 && loaded_sc.solver.adaptive.transmission_guard.positivity_margin==.85,"adaptive controls were not preserved");
     sc.solver.type="fixed";saveProjectionUiConfig(c,dir/"back-to-fixed.toml",WorkflowMode::ProjectAndReconstruct);loadConfig(dir/"back-to-fixed.toml");
+    auto& rg=c.reconstruction.geometry_override;
+    rg.parameters=c.geometry.parameters;rg.enabled=true;
+    for(const auto& f:reconstructionGeometryFields())rg.parameters.*f.member+=f.angle?.01:1.25;
+    saveProjectionUiConfig(c,dir/"reconstruction-geometry.toml",WorkflowMode::ProjectAndReconstruct);
+    const auto independent=loadConfig(dir/"reconstruction-geometry.toml");
+    const auto resolved=resolveReconstructionGeometry(independent);
+    for(const auto& f:reconstructionGeometryFields()){
+        require(std::abs(resolved.*f.member-rg.parameters.*f.member)<1e-10,"independent geometry field lost");
+        require(independent.geometry.parameters.*f.member==c.geometry.parameters.*f.member,"scan geometry mutated");
+    }
+    require(resolved.views==c.geometry.parameters.views && resolved.detector_u==c.geometry.parameters.detector_u && resolved.pitch_mm_per_turn==c.geometry.parameters.pitch_mm_per_turn,"override changed acquisition layout");
+    rg.parameters.sid_mm=rg.parameters.sdd_mm;
+    bool invalidGeometry=false;try{resolveReconstructionGeometry(c);}catch(const std::exception&){invalidGeometry=true;}
+    require(invalidGeometry,"invalid reconstruction distances accepted");
+    rg.parameters=c.geometry.parameters;rg.parameters.tilt_u_rad=std::numeric_limits<double>::quiet_NaN();
+    invalidGeometry=false;try{resolveReconstructionGeometry(c);}catch(const std::exception&){invalidGeometry=true;}
+    require(invalidGeometry,"nonfinite reconstruction geometry accepted");
+    rg.enabled=false;
+    require(resolveReconstructionGeometry(c).tilt_u_rad==c.geometry.parameters.tilt_u_rad,"disabled override affected geometry");
+    rg.parameters=c.geometry.parameters;rg.parameters.offset_u_mm+=3;
+    saveProjectionUiConfig(c,dir/"disabled-reconstruction-geometry.toml",WorkflowMode::ProjectAndReconstruct);
+    const auto disabled=loadConfig(dir/"disabled-reconstruction-geometry.toml");
+    require(!disabled.reconstruction.geometry_override.enabled && disabled.reconstruction.geometry_override.parameters.offset_u_mm==rg.parameters.offset_u_mm,"disabled custom settings lost");
+    validateProjectionUiInputs(c,labels); // Establish a valid baseline for the negative cases below.
+    for(int bad:{0,-1}){auto invalid=c;invalid.geometry.parameters.views_per_turn=bad;
+        bool rejected=false;try{validateProjectionUiInputs(invalid,labels);}catch(const std::exception&){rejected=true;}
+        require(rejected,"invalid views per turn accepted");}
+    {auto invalid=c;invalid.geometry.parameters.rotation_direction=0;
+        bool rejected=false;try{validateProjectionUiInputs(invalid,labels);}catch(const std::exception&){rejected=true;}
+        require(rejected,"zero rotation direction accepted");}
+    for(double bad:{0.,std::numeric_limits<double>::quiet_NaN(),std::numeric_limits<double>::infinity()}){
+        auto invalid=c;invalid.geometry.kind=GeometryKind::FlatHelical;invalid.geometry.parameters.pitch_mm_per_turn=bad;
+        bool rejected=false;try{validateProjectionUiInputs(invalid,labels);}catch(const std::exception&){rejected=true;}
+        require(rejected,"invalid helical pitch accepted");}
     labels[0]=9;bool missing=false;try{validateProjectionUiInputs(c,labels);}catch(const std::exception&){missing=true;}
     require(missing,"unmapped label was silently treated as air");labels[0]=0;
     labels.pop_back();bool wrongSize=false;try{validateProjectionUiInputs(c,labels);}catch(const std::exception&){wrongSize=true;}
