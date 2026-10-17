@@ -20,7 +20,7 @@ __device__ inline bool boxHit(float3 s, float3 d, float3 lo, float3 hi, float& a
 // Traverse from the box entry in local coordinates. Keeping the traversal
 // parameter relative to the entry avoids subtracting sub-millimeter voxel
 // boundaries from the ~500 mm source coordinates.
-template <int MaterialCount>
+template <int MaterialCount, int PathStride=1>
 __device__ bool accumulatePaths(DeviceGeometry g, const unsigned char* labels,
     const int* label_to_material, float3 source, float3 d, float3 lo, float3 hi,
     float* paths,unsigned* visited=nullptr) {
@@ -54,7 +54,7 @@ __device__ bool accumulatePaths(DeviceGeometry g, const unsigned char* labels,
             : static_cast<int>(__ldg(labels + (iz * g.ny + iy) * g.nx + ix));
         const int m = __ldg(label_to_material + label);
         if (m >= 0 && m < MaterialCount && segment > 0.f) {
-            paths[m] += segment * 0.1f;
+            paths[m*PathStride] += segment * 0.1f;
             hit_material = true;
         }
         s = next;

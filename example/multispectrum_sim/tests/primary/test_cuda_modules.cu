@@ -40,11 +40,29 @@ __global__ void geometryProbe(DeviceGeometry g,float* out){
     out[14]=v.x*n.x+v.y*n.y+v.z*n.z;
     const float3 cross=cross3(u,v);out[15]=cross.x*n.x+cross.y*n.y+cross.z*n.z;
 }
+__global__ void orbitProbe(DeviceGeometry g,float* out){
+    const int views[]={0,g.views_per_turn,2*g.views_per_turn-1};
+    for(int i=0;i<3;++i){const auto ray=scannerRay(g,views[i],.5f*(g.nu-1),.5f*(g.nv-1));
+        out[i*2]=ray.source.z;out[i*2+1]=ray.detector.z;}
+}
 void geometry(){
     DeviceGeometry g{};g.phantom_x=1;g.phantom_y=2;g.phantom_z=3;g.phantom_rz=1.57079632679f;
     Device<float> result(16);geometryProbe<<<1,1>>>(g,result.get());sync();auto x=result.read();
     const double expected[]={0,1,0,1,1,1,0,1,0,1,1,1,0,0,0,1};
     for(int i=0;i<16;++i)near(x[i],expected[i],2e-6,"geometry component "+std::to_string(i));
+    using namespace yk::spectral;
+    for(auto kind:{GeometryKind::FlatCbct,GeometryKind::CylCbct,GeometryKind::FlatHelical,GeometryKind::CylHelical})for(int direction:{-1,1})for(float pitch:{-80.f,80.f}){
+        SimulationConfig c;c.geometry.kind=kind;auto& p=c.geometry.parameters;
+        p.views=24;p.views_per_turn=12;p.rotation_direction=direction;p.start_angle_rad=.3;
+        p.pitch_mm_per_turn=pitch;p.start_z_mm=-120;p.source_offset_z_mm=7;p.offset_v_mm=2;
+        const auto d=makeDeviceGeometry(c,1,1);
+        const bool helical=kind==GeometryKind::FlatHelical || kind==GeometryKind::CylHelical;
+        require(d.pitch==(helical?pitch:0.f),"circular geometry consumed stale helical pitch");
+        orbitProbe<<<1,1>>>(d,result.get());sync();const auto actual=result.read();
+        const int views[]={0,12,23};
+        for(int i=0;i<3;++i){const double z=-120+(helical?direction*double(pitch)*views[i]/12:0);
+            near(actual[i*2],z+7,3e-4,"source Z trajectory");near(actual[i*2+1],z+2,3e-4,"detector Z trajectory");}
+    }
 }
 struct Ray {float3 source,direction;};
 __global__ void pathProbe(DeviceGeometry g,const unsigned char* labels,const int* map,
@@ -379,6 +397,105 @@ void launchWarpPrimaryTest(int option,const DeviceGeometry& g,const unsigned cha
     launchWarpPrimaryKernel<M>(g,labels,map,mu,spectrum,energies,quantum_noise,view,seed,quantum_seed,expected,sampled,air,mask,views);
 }
 // Independent warp kernel versus scalar projector and double CPU box reference.
+void warpProfile(){
+    DeviceGeometry g{};g.nu=3;g.nv=2;g.nx=5;g.ny=6;g.nz=4;g.vx=.7f;g.vy=1.1f;g.vz=.9f;
+    g.nm=53;g.views=2;g.views_per_turn=8;g.sid=100;g.sdd=160;g.pu=.4f;g.pv=.5f;g.rotation_direction=1;
+    g.normal_fu=.1f;g.normal_fv=.2f;g.defocus_fu=.4f;g.defocus_fv=.6f;g.focal_epsilon=.25f;
+    std::vector<unsigned char> labels(120);for(int i=0;i<120;++i)labels[i]=i%53;
+    std::vector<int> map(256,-1);for(int m=0;m<53;++m)map[m]=m;
+    Device<unsigned char> dl(labels),mask(12);Device<int> dm(map);
+    Device<float> expected(12),sampled(12),air(12);Device<unsigned long long> counters(WarpProfileCounterCount);
+    for(int bins:{119,238}){
+        g.ne=bins;std::vector<float> mu(53*bins),sw(bins,50),en(bins);
+        for(size_t i=0;i<mu.size();++i)mu[i]=.1f+.0002f*i;
+        for(int e=0;e<bins;++e)en[e]=20.f+e*.4f;
+        Device<float> dmu(mu),ds(sw),de(en);
+        for(int samples:{1,4,33})for(int noise:{0,1}){
+            g.samples=samples;
+            if(bins<=128)launchWarpPrimarySized<64,128>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false);
+            else launchWarpPrimarySized<64,256>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false);
+            sync();
+            const auto ref=expected.read(),noisy=sampled.read(),refair=air.read();const auto refmask=mask.read();
+            if(bins<=128)launchWarpPrimarySized<64,128,false,false,true>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false);
+            else launchWarpPrimarySized<64,256,false,false,true>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false);
+            sync();require(refmask==mask.read(),"shared material paths changed object mask");
+            const auto actual=expected.read(),actualNoise=sampled.read(),actualAir=air.read();
+            for(size_t p=0;p<ref.size();++p){
+                near(actual[p],ref[p],std::max(.001,double(ref[p])*2e-6),"shared paths energy reduction");
+                near(actualNoise[p],noisy[p],std::max(.001,double(noisy[p])*2e-6),"shared paths noise reduction");
+                near(actualAir[p],refair[p],std::max(.001,double(refair[p])*2e-6),"shared paths air reduction");
+            }
+            ck(cudaMemset(counters.get(),0,WarpProfileCounterCount*sizeof(unsigned long long)));
+            if(bins<=128)launchWarpPrimarySized<64,128>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false,counters.get());
+            else launchWarpPrimarySized<64,256>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false,counters.get());
+            sync();require(ref==expected.read()&&noisy==sampled.read()&&refair==air.read()&&refmask==mask.read(),"warp profiling changed numerical output");
+            const auto counts=counters.read();
+            require(counts[6]>0&&counts[7]==counts[6]*samples*2,"warp sampled ray count differs from focal components");
+            require(counts[8]<=counts[7]&&counts[9]>=counts[8],"warp traversal counters are inconsistent");
+            for(int stage=0;stage<6;++stage)require(counts[stage]>0,"empty warp stage timing");
+        }
+    }
+}
+void warpPolicy(){
+    for(int nm:{1,2,10,11,32,33,53,64})for(int ne:{3,119,128,129,238,256})for(int rays:{1,2,3,4,5,8,9,16,17,32,50}){
+        const auto layout=selectPrimaryLaunchLayout(nm,ne,rays);
+        const int group=ne>128?32:(rays<=2||(nm<=32&&rays<=4)?4:(rays<=8?8:(nm<=32&&rays>16?32:16)));
+        require(layout.threads_per_pixel==group,"primary launch group selection");
+        require(layout.threads_per_block==(group==16&&nm>32?64:128),"primary launch block selection");
+    }
+    const std::array<std::array<int,3>,5> invalidDims{{{0,119,4},{65,119,4},{10,0,4},{10,257,4},{10,119,0}}};
+    for(const auto& dims:invalidDims){
+        bool rejected=false;try{selectPrimaryLaunchLayout(dims[0],dims[1],dims[2]);}catch(const std::invalid_argument&){rejected=true;}
+        require(rejected,"invalid launch dimensions accepted");
+    }
+    DeviceGeometry g{};g.nu=3;g.nv=2;g.nx=5;g.ny=6;g.nz=4;g.vx=.7f;g.vy=1.1f;g.vz=.9f;
+    g.views=2;g.views_per_turn=8;g.sid=100;g.sdd=160;g.pu=.4f;g.pv=.5f;g.rotation_direction=1;g.geometry_flux=1;
+    g.phantom_x=.2f;g.phantom_y=-.3f;g.phantom_z=.1f;g.phantom_rx=.1f;g.phantom_ry=.2f;g.phantom_rz=-.12f;
+    g.normal_fu=.1f;g.normal_fv=.2f;g.defocus_fu=.4f;g.defocus_fv=.6f;g.focal_epsilon=.25f;
+    Device<unsigned char> dl(120),mask(12);Device<int> dm(256);Device<float> expected(12),sampled(12),air(12);
+    Device<unsigned long long> counters(WarpProfileCounterCount);
+    for(int nm:{1,2,10,11,32,33,53,64}){
+        g.nm=nm;std::vector<unsigned char> labels(120);for(int i=0;i<120;++i)labels[i]=i%7?i%nm:255;
+        std::vector<int> map(256,-1);for(int m=0;m<nm;++m)map[m]=m;dl.upload(labels);dm.upload(map);
+        for(int bins:{3,119,129,238,256}){
+            g.ne=bins;std::vector<float> mu(nm*bins),sw(bins,50),en(bins);
+            std::vector<float> efficiency(6*bins);for(size_t i=0;i<efficiency.size();++i)efficiency[i]=.2f+.02f*(i%13);
+            Device<float> dr(efficiency);g.detector_efficiency=dr.get();
+            for(size_t i=0;i<mu.size();++i)mu[i]=.1f+.00002f*i;
+            for(int e=0;e<bins;++e)en[e]=20.f+e*.4f;
+            Device<float> dmu(mu),ds(sw),de(en);
+            auto launch=[&](int first,int views,float* e,float* s,float* a,unsigned char* h,unsigned long long* profile=nullptr){
+                if(nm<=10)launchWarpPrimaryKernel<10>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),g.detector_response,first,123,456,e,s,a,h,views,false,profile);
+                else if(nm<=32)launchWarpPrimaryKernel<32>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),g.detector_response,first,123,456,e,s,a,h,views,false,profile);
+                else launchWarpPrimaryKernel<64>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),g.detector_response,first,123,456,e,s,a,h,views,false,profile);
+            };
+            for(int rays:{1,2,3,4,5,8,9,16,17,32,50})for(int noise:{0,1}){
+                g.samples=rays;g.detector_response=noise;
+                if(bins<=128)launchWarpPrimarySized<64,128>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false);
+                else launchWarpPrimarySized<64,256>(g,dl.get(),dm.get(),dmu.get(),ds.get(),de.get(),noise,0,123,456,expected.get(),sampled.get(),air.get(),mask.get(),2,false);
+                sync();const auto ref=expected.read(),refNoise=sampled.read(),refAir=air.read();const auto refMask=mask.read();
+                launch(0,2,expected.get(),sampled.get(),air.get(),mask.get());sync();
+                const auto actual=expected.read(),actualNoise=sampled.read(),actualAir=air.read();
+                require(refMask==mask.read(),"adaptive launch mask mismatch");
+                for(size_t i=0;i<ref.size();++i){
+                    near(actual[i],ref[i],std::max(.001,double(ref[i])*2e-6),"adaptive expected energy");
+                    near(actualNoise[i],refNoise[i],std::max(.001,double(refNoise[i])*2e-6),"adaptive quantum energy");
+                    near(actualAir[i],refAir[i],std::max(.001,double(refAir[i])*2e-6),"adaptive air energy");
+                }
+                for(int first=0;first<2;++first)launch(first,1,expected.get()+first*6,sampled.get()+first*6,air.get()+first*6,mask.get()+first*6);
+                sync();require(actual==expected.read()&&actualNoise==sampled.read()&&actualAir==air.read()&&refMask==mask.read(),"adaptive batching changed output");
+                // Check instrumented specialization on every selected layout,
+                // including padded material capacities and detector response.
+                if(bins==119&&noise){
+                    ck(cudaMemset(counters.get(),0,WarpProfileCounterCount*sizeof(unsigned long long)));
+                    launch(0,2,expected.get(),sampled.get(),air.get(),mask.get(),counters.get());sync();
+                    require(actual==expected.read()&&actualNoise==sampled.read()&&actualAir==air.read()&&refMask==mask.read(),"adaptive instrumentation changed output");
+                    const auto count=counters.read();require(count[6]>0&&count[7]==count[6]*rays*2,"adaptive sampled ray counts");
+                }
+            }
+        }
+    }
+}
 void warp(bool experiments=false){
     DeviceGeometry g{};g.nu=3;g.nv=2;g.nx=5;g.ny=6;g.nz=4;g.vx=.7f;g.vy=1.1f;g.vz=.9f;
     g.views_per_turn=13;g.rotation_direction=1;g.sid=709;g.sdd=1143;g.pu=.6f;g.pv=.8f;g.geometry_flux=1;
@@ -444,7 +561,7 @@ int main(int argc,char** argv){
         require(argc==2,"GPU module selection required");ck(cudaSetDevice(0));const std::string test=argv[1];
         if(test=="geometry")geometry();else if(test=="paths")paths();else if(test=="noise")noise();
         else if(test=="response")response();else if(test=="transmission")transmission();
-        else if(test=="focal")focal();else if(test=="multisample")multisample();else if(test=="warp")warp();else if(test=="warp_coefficients")warp(true);
+        else if(test=="focal")focal();else if(test=="multisample")multisample();else if(test=="warp")warp();else if(test=="warp_coefficients")warp(true);else if(test=="warp_profile")warpProfile();else if(test=="warp_policy")warpPolicy();
         else throw std::runtime_error("unknown GPU module test");
         std::cout<<test<<": PASS\n";return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

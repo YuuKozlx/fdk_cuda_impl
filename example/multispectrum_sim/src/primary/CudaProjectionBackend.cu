@@ -42,8 +42,10 @@ struct CudaProjectionBackend::Impl {
     bool kernel_timing_recorded=false;
     double kernel_ms=0,download_ms=0;
     unsigned long long* primary_profile=nullptr;
+    unsigned long long* warp_profile=nullptr;
     bool warp_primary=true;
-    bool cache_warp_coefficients=false;
+
+
     float incident = 0.f, mean_photon_energy = 0.f;
         unsigned char* dl=nullptr; unsigned char* dmask=nullptr; int* dm=nullptr; float *dmu=nullptr,*ds=nullptr,*de=nullptr,*dresponse=nullptr,*do1=nullptr,*do2=nullptr,*do3=nullptr;
         DeviceConeView* d_cone_views=nullptr;
@@ -88,18 +90,14 @@ struct CudaProjectionBackend::Impl {
         if(!selected_kernel.empty()&&selected_kernel!="warp"&&selected_kernel!="scalar")
             throw std::runtime_error("YK_PRIMARY_KERNEL must be warp or scalar");
         warp_primary=selected_kernel!="scalar";
-        cache_warp_coefficients=warp_primary&&nm==10&&ne<=128;
-        if(const char* option=std::getenv("YK_WARP_COEFFICIENT_CACHE")){
-            const std::string value=option;
-            if(!value.empty()&&value!="0"&&value!="1")throw std::runtime_error("YK_WARP_COEFFICIENT_CACHE must be 0 or 1");
-            if(value=="0")cache_warp_coefficients=false;
-        }
-        std::cout<<"primary_kernel="<<(warp_primary?"warp":"scalar")<<" coefficient_cache="<<cache_warp_coefficients<<'\n';
-        if (pixels <= 0 || g.views <= 0 || nm <= 0 || nm > 32 || ne <= 0 || ne > 256)
+        if (pixels <= 0 || g.views <= 0 || nm <= 0 || nm > 64 || ne <= 0 || ne > 256)
             throw std::runtime_error("invalid CUDA projection dimensions, materials or spectrum");
         if(g.volume_x<=0||g.volume_y<=0||g.volume_z<=0||labels.size()!=(size_t)g.volume_x*g.volume_y*g.volume_z) throw std::runtime_error("CUDA前投标签体尺寸不匹配");
-        if(nm > 32) throw std::runtime_error("CUDA primary projector supports at most 32 materials");
+        if(nm > 64) throw std::runtime_error("CUDA primary projector supports at most 64 materials");
         dg = makeDeviceGeometry(c, nm, ne);
+        const auto layout=selectPrimaryLaunchLayout(nm,ne,dg.samples);
+        std::cout<<"primary_kernel="<<(warp_primary?"warp":"scalar")<<" group_threads="<<(warp_primary?layout.threads_per_pixel:1)
+            <<" block_threads="<<(warp_primary?layout.threads_per_block:256)<<'\n';
         const auto cone_geometry = buildNonStandardProjectionViews(c);
         std::vector<DeviceConeView> cone_views;
         cone_views.reserve(cone_geometry.size());
@@ -223,6 +221,10 @@ struct CudaProjectionBackend::Impl {
         checkCuda(cudaHostAlloc(&batch_host,size_t(batch_capacity)*frame_bytes,cudaHostAllocDefault),"allocate pinned projection batch");
         do1=static_cast<float*>(batch_device);
         if(const char* flag=std::getenv("YK_PRIMARY_PROFILE")){if(std::string(flag)!="0")checkCuda(allocate(&primary_profile,8*sizeof(unsigned long long)),"allocate primary profile counters");}
+        if(const char* flag=std::getenv("YK_WARP_PROFILE")){if(std::string(flag)=="1"){
+            if(!warp_primary)throw std::runtime_error("YK_WARP_PROFILE requires warp kernel");
+            checkCuda(allocate(&warp_profile,WarpProfileCounterCount*sizeof(unsigned long long)),"allocate warp profile counters");
+        }}
         checkCuda(cudaEventCreate(&kernel_start),"create batch timing");
         checkCuda(cudaEventCreate(&kernel_done),"create batch timing");
         checkCuda(cudaEventCreate(&transfer_done),"create batch timing");
@@ -235,22 +237,13 @@ struct CudaProjectionBackend::Impl {
         dmask=reinterpret_cast<unsigned char*>(do1+6*elements);
         const int quantum_noise=config.projection.quantum_noise.enabled?1:0;
         if(primary_profile)checkCuda(cudaMemset(primary_profile,0,8*sizeof(unsigned long long)),"clear primary profile");
+        if(warp_profile)checkCuda(cudaMemset(warp_profile,0,WarpProfileCounterCount*sizeof(unsigned long long)),"clear warp profile");
         kernel_timing_recorded=false;
         checkCuda(cudaEventRecord(kernel_start),"record batch kernel start");
         if(warp_primary){
-            switch(dg.nm){
-            case 1: launchWarpPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 2: launchWarpPrimaryKernel<2>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 3: launchWarpPrimaryKernel<3>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 4: launchWarpPrimaryKernel<4>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 5: launchWarpPrimaryKernel<5>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 6: launchWarpPrimaryKernel<6>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 7: launchWarpPrimaryKernel<7>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 8: launchWarpPrimaryKernel<8>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 9: launchWarpPrimaryKernel<9>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            case 10: launchWarpPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr,cache_warp_coefficients); break;
-            default: launchWarpPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr); break;
-            }
+            if(dg.nm<=10)launchWarpPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr,warp_profile);
+            else if(dg.nm<=32)launchWarpPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr,warp_profile);
+            else launchWarpPrimaryKernel<64>(dg,dl,dm,dmu,ds,de,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile!=nullptr,warp_profile);
         }else{
             switch (dg.nm) {
             case 1: launchPrimaryKernel<1>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
@@ -263,11 +256,20 @@ struct CudaProjectionBackend::Impl {
             case 8: launchPrimaryKernel<8>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
             case 9: launchPrimaryKernel<9>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
             case 10: launchPrimaryKernel<10>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
-            default: launchPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile); break;
+            default:
+                if(dg.nm<=32)launchPrimaryKernel<32>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile);
+                else launchPrimaryKernel<64>(dg,dl,dm,dmu,ds,de,incident,quantum_noise,view,config.projection.sampling.seed,config.projection.quantum_noise.seed,do1,do3,do2,dmask,count,primary_profile);
+                break;
             }
         }
         checkCuda(cudaGetLastError(),"batched primary kernel");
         checkCuda(cudaEventRecord(kernel_done),"record batch kernel end");
+        if(warp_profile){unsigned long long c[WarpProfileCounterCount]{};
+            checkCuda(cudaMemcpy(c,warp_profile,sizeof(c),cudaMemcpyDeviceToHost),"read warp profile counters");
+            std::cout<<"warp_sample first="<<view<<" count="<<count<<" setup_cycles="<<c[0]<<" geometry_path_cycles="<<c[1]
+                <<" exchange_cycles="<<c[2]<<" spectrum_cycles="<<c[3]<<" noise_sum_cycles="<<c[4]<<" reduction_store_cycles="<<c[5]
+                <<" pixel_groups="<<c[6]<<" rays="<<c[7]<<" hits="<<c[8]<<" voxels="<<c[9]<<std::endl;
+        }
         if(primary_profile&&!warp_primary){unsigned long long c[8]{};checkCuda(cudaMemcpy(c,primary_profile,sizeof(c),cudaMemcpyDeviceToHost),"read primary profile counters");
             std::cout<<"primary_sample first="<<view<<" count="<<count<<" geometry_cycles="<<c[0]<<" path_cycles="<<c[1]<<" spectrum_cycles="<<c[2]<<" noise_cycles="<<c[3]
                 <<" pixels="<<c[4]<<" rays="<<c[5]<<" hits="<<c[6]<<" voxels="<<c[7]<<std::endl;

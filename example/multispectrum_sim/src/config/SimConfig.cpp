@@ -545,8 +545,8 @@ namespace yk::spectral {
             c.geometry.kind != GeometryKind::NikonTilted)
             throw std::runtime_error("随机多能谱前投不支持该几何类型");
         if (c.runsProjection() &&
-            c.projection.materials.size() > 32)
-            throw std::runtime_error("随机多能谱前投当前最多支持32种材料");
+            c.projection.materials.size() > 64)
+            throw std::runtime_error("随机多能谱前投当前最多支持64种材料");
         if (auto* d = p ? (*p)["detector_response"].as_table() : nullptr) {
             auto& response = c.projection.detector_response;
             response.enabled = (*d)["enabled"].value_or(false);

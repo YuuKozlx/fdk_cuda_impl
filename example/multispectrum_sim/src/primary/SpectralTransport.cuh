@@ -79,7 +79,7 @@ __global__ void primaryKernel(DeviceGeometry g, const unsigned char* labels,
             // A ray through vacuum has exactly unit transmission. Keep its
             // original weights and accumulation order, but skip attenuation.
             if(hit){
-                if constexpr(MaterialCount==32){
+                if constexpr(MaterialCount>=32){
                     for(int m=0;m<g.nm;++m)exponent+=paths[m]*readMu(g,mu,m*g.ne+e);
                 }else{
                     #pragma unroll
