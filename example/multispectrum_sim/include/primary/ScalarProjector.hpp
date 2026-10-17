@@ -6,6 +6,7 @@ enum class Method { Siddon,
     Joseph };
 enum class DetectorAnchor { Center,
     Pixel00 };
+enum class SiddonMemory { Linear, Texture };
 // All positions and pixel step vectors are millimetres, in the volume's local axes.
 // detector defaults to the complete panel centre (ASTRA cone_vec convention).
 // With DetectorAnchor::Pixel00 it is the centre of pixel (u=0,v=0).
@@ -33,5 +34,8 @@ std::vector<DeviceView> prepareViews(const std::vector<View>&, const Grid&, int 
 // Steps 1/2/4 are supported for Joseph; Siddon requires 1. No detector supersampling.
 void launch(Method, const float* device_volume, cudaTextureObject_t volume_texture,
     const DeviceView* prepared_views, float* output, const Grid&, int nu, int nv, int views,
-    bool accumulate = false, cudaStream_t stream = nullptr, int steps = 1);
+    bool accumulate = false, cudaStream_t stream = nullptr, int steps = 1,
+    SiddonMemory siddon_memory = SiddonMemory::Linear);
+// SiddonMemory::Texture requires an unnormalised float32 point-filtered,
+// zero-border 3D texture matching device_volume. No interpolation is performed.
 } // namespace yk::spectral::scalar_fp

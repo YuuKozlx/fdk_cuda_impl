@@ -6,8 +6,10 @@
 #define VOX_HI(o, i, v) ((o) + ((i) + 0.5f) * (v))
 #define IDX_FROM_WORLD(w, o, v) ((int)floorf(((w) - (o)) / (v) + 0.5f))
 
+template<bool UseTexture>
 __global__ void siddon_fp_kernel(
     const float* __restrict__ d_vol,
+    cudaTextureObject_t texture,
     float* d_sino,
     const DeviceView* __restrict__ d_views,
     float3 vol_origin,
@@ -106,8 +108,9 @@ __global__ void siddon_fp_kernel(
 
         const float t_next = fminf(fminf(tX, tY), fminf(tZ, tmax));
 
-        fVal += d_vol[(size_t)iz * Ny * Nx + (size_t)iy * Nx + ix]
-            * (t_next - t_cur) * ray_len;
+        const float value = UseTexture ? tex3D<float>(texture, ix+.5f, iy+.5f, iz+.5f)
+            : d_vol[(size_t)iz * Ny * Nx + (size_t)iy * Nx + ix];
+        fVal += value * (t_next - t_cur) * ray_len;
 
         t_cur = t_next;
 

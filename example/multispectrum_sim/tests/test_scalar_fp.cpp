@@ -40,7 +40,7 @@ struct Device {
 struct Texture {
     cudaArray_t array = nullptr;
     cudaTextureObject_t id = 0;
-    Texture(const std::vector<float>& values, const fp::Grid& g)
+    Texture(const std::vector<float>& values, const fp::Grid& g, bool linear = true)
     {
         auto channel = cudaCreateChannelDesc<float>();
         cudaCheck(cudaMalloc3DArray(&array, &channel, make_cudaExtent(g.nx, g.ny, g.nz)));
@@ -54,7 +54,7 @@ struct Texture {
         r.resType = cudaResourceTypeArray;
         r.res.array.array = array;
         cudaTextureDesc t {};
-        t.filterMode = cudaFilterModeLinear;
+        t.filterMode = linear ? cudaFilterModeLinear : cudaFilterModePoint;
         t.readMode = cudaReadModeElementType;
         for (auto& a : t.addressMode)
             a = cudaAddressModeBorder;
@@ -66,24 +66,24 @@ struct Texture {
         cudaFreeArray(array);
     }
 };
-std::vector<float> run(const std::vector<float>& volume, const fp::Grid& g, const std::vector<fp::View>& views, int nu, int nv, fp::Method method, int chunk = 0, int steps = 1, fp::DetectorAnchor anchor = fp::DetectorAnchor::Center)
+std::vector<float> run(const std::vector<float>& volume, const fp::Grid& g, const std::vector<fp::View>& views, int nu, int nv, fp::Method method, int chunk = 0, int steps = 1, fp::DetectorAnchor anchor = fp::DetectorAnchor::Center, fp::SiddonMemory memory = fp::SiddonMemory::Linear)
 {
     auto geometry = fp::prepareViews(views, g, nu, nv, method, anchor);
     Device<float> dv(volume.size()), out(size_t(nu) * nv * views.size());
     Device<fp::DeviceView> dg(geometry.size());
     dv.upload(volume);
     dg.upload(geometry);
-    Texture texture(volume, g);
+    Texture texture(volume, g, memory != fp::SiddonMemory::Texture);
     cudaStream_t stream {};
     cudaCheck(cudaStreamCreate(&stream));
     try {
         int batch = chunk ? chunk : int(views.size());
         for (int start = 0; start < int(views.size()); start += batch)
-            fp::launch(method, dv.p, texture.id, dg.p + start, out.p + size_t(start) * nu * nv, g, nu, nv, std::min(batch, int(views.size()) - start), false, stream, steps);
+            fp::launch(method, dv.p, texture.id, dg.p + start, out.p + size_t(start) * nu * nv, g, nu, nv, std::min(batch, int(views.size()) - start), false, stream, steps, memory);
         cudaCheck(cudaStreamSynchronize(stream));
         std::vector<float> result(size_t(nu) * nv * views.size());
         cudaCheck(cudaMemcpy(result.data(), out.p, result.size() * 4, cudaMemcpyDeviceToHost));
-        fp::launch(method, dv.p, texture.id, dg.p, out.p, g, nu, nv, int(views.size()), true, stream, steps);
+        fp::launch(method, dv.p, texture.id, dg.p, out.p, g, nu, nv, int(views.size()), true, stream, steps, memory);
         cudaCheck(cudaStreamSynchronize(stream));
         std::vector<float> doubled(result.size());
         cudaCheck(cudaMemcpy(doubled.data(), out.p, result.size() * 4, cudaMemcpyDeviceToHost));
@@ -197,7 +197,7 @@ int main(int argc, char** argv)
                             check(std::abs(result[0] - .02f * length) < 2e-5, "Siddon constant-volume path");
                         }
                     }
-        } else if (name == "siddon_oracle" || name == "batch") {
+        } else if (name == "siddon_oracle" || name == "siddon_texture" || name == "batch") {
             std::mt19937 rng(1729);
             std::uniform_real_distribution<float> random(-1, 1);
             for (int trial = 0; trial < 12; ++trial) {
@@ -211,12 +211,18 @@ int main(int argc, char** argv)
                     views.push_back({ { -40 * c, -40 * s, z }, { 30 * c, 30 * s, z + .4f }, { -s * .6f, c * .6f, .02f }, { .03f, -.02f, .6f } });
                 }
                 const int nu = 9, nv = 7;
-                if (name == "siddon_oracle") {
-                    auto got = run(volume, g, views, nu, nv, fp::Method::Siddon);
+                if (name == "siddon_oracle" || name == "siddon_texture") {
+                    const auto memory = name == "siddon_texture" ? fp::SiddonMemory::Texture : fp::SiddonMemory::Linear;
+                    auto got = run(volume, g, views, nu, nv, fp::Method::Siddon, 0, 1, fp::DetectorAnchor::Center, memory);
                     for (int k = 0; k < 7; ++k)
                         for (int y = 0; y < nv; ++y)
                             for (int x = 0; x < nu; ++x)
                                 check(std::abs(got[(k * nv + y) * nu + x] - oracle(volume, g, views[k], nu, nv, x, y)) < 2e-5, "Siddon independent plane-intersection oracle");
+                    if (name == "siddon_texture") {
+                        const auto linear = run(volume, g, views, nu, nv, fp::Method::Siddon);
+                        const auto batched = run(volume, g, views, nu, nv, fp::Method::Siddon, 2, 1, fp::DetectorAnchor::Center, memory);
+                        check(got == linear && got == batched, "Siddon texture/linear/batch mismatch");
+                    }
                 } else
                     for (auto method : { fp::Method::Siddon, fp::Method::Joseph }) {
                         auto full = run(volume, g, views, nu, nv, method), batch = run(volume, g, views, nu, nv, method, 2);

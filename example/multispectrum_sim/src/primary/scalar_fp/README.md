@@ -31,4 +31,20 @@
 
 Joseph 支持每体素 1/2/4 步，Siddon 为精确体素交段、只接受 steps=1。Joseph 的零边界纹理和超采样会产生原内核相同的边界积分偏差，不能视为 Siddon 的精确体素模型；也不承诺与任意 BP 严格伴随。没有 detector/focal supersampling。
 
-测试见 `tests/test_scalar_fp.cpp`，含独立解析/交点参考、分批一致性及可选 DLL 对照。性能尚未做完整头部基准。
+测试见 `tests/test_scalar_fp.cpp`，含独立解析/交点参考、分批一致性及可选 DLL 对照。
+
+## 完整体积性能基准
+
+Siddon 支持 `SiddonMemory::Linear`（默认，线性设备缓冲读取）与 `SiddonMemory::Texture`（三维点采样纹理读取）。后者不做插值，不改变遍历或积分公式；调用者提供非归一化坐标、float32、point filter、zero border 的三维纹理，可不提供线性体积指针。Joseph 仍使用 linear filter，不能复用点采样纹理。两类纹理对象可共享同一个 CUDA array，避免重复存储体积。
+
+DLL 的正式 Siddon 算子走点采样纹理路径，旧的独立版只包含线性读取路径。因此不能拿旧独立版的性能直接代表 DLL；尤其是规则体积尺寸下，两种读取路径的缓存行为可能差异很大。`scalar_fp_siddon_texture` 测试覆盖独立交点参考、线性/纹理数值一致、分批和累加；完整头部基准还逐批比较全部纹理结果和线性结果。
+
+手动构建 `multispectrum_benchmark_scalar_fp` 目标，运行：
+
+```text
+multispectrum_benchmark_scalar_fp <projection.toml>
+```
+
+该工具读取 TOML 的原始 uint8 RAW 标签、材料和网格，将标签转换为 70 keV 的浮点线衰减体积（mm⁻¹），沿相同的平板圆扫/螺旋几何测 Siddon 和 Joseph。它不是多能仿真：每像素一条中心射线，无焦点、探测器随机采样、能谱积分或计数噪声。暂不支持 MAT 输入、圆柱/planar/tilted 几何。
+
+工具保留原体积尺寸；每次仅使用最多 64 MiB 投影工作区，不保存全套投影。一次预热后三次扫描的 CUDA event 中位数作为 `kernel_median_ms`；另行报告体积上传、Joseph 纹理初始化及全套投影下载耗时。计时包含 launch 内部的输出清零和调度，不包含数据准备、文件读取或主机输出统计。所有下载结果检查有限值和非负性；这不替代解析与 DLL 数值回归测试。对比多能前投时必须注明材料数、能量数、随机采样数和计算任务的不同，不能将两者输出视为等价。

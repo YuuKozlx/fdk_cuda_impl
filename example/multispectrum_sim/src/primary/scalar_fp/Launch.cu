@@ -32,10 +32,13 @@ namespace {
         joseph<AxisZ, Steps>(texture, views, out, g, nu, nv, count, accumulate, stream);
     }
 }
-void launch(Method method, const float* volume, cudaTextureObject_t texture, const DeviceView* views, float* out, const Grid& g, int nu, int nv, int count, bool accumulate, cudaStream_t stream, int steps)
+void launch(Method method, const float* volume, cudaTextureObject_t texture, const DeviceView* views, float* out, const Grid& g, int nu, int nv, int count, bool accumulate, cudaStream_t stream, int steps, SiddonMemory memory)
 {
     validateGrid(g, nu, nv, count, method);
-    if (!views || !out || (method == Method::Siddon && !volume) || (method == Method::Joseph && !texture) || (steps != 1 && steps != 2 && steps != 4) || (method == Method::Siddon && steps != 1))
+    if ((memory != SiddonMemory::Linear && memory != SiddonMemory::Texture) ||
+        (method == Method::Joseph && memory != SiddonMemory::Linear) ||
+        !views || !out || (method == Method::Siddon && memory == SiddonMemory::Linear && !volume) ||
+        ((method == Method::Joseph || memory == SiddonMemory::Texture) && !texture) || (steps != 1 && steps != 2 && steps != 4) || (method == Method::Siddon && steps != 1))
         throw std::invalid_argument("invalid scalar FP buffers/sampling");
     if (g.nx > INT_MAX / steps || g.ny > INT_MAX / steps || g.nz > INT_MAX / steps)
         throw std::invalid_argument("FP step index overflow");
@@ -47,7 +50,10 @@ void launch(Method method, const float* volume, cudaTextureObject_t texture, con
             if (!accumulate)
                 checked(cudaMemsetAsync(output, 0, size_t(n) * pixels * sizeof(float), stream));
             float3 origin = { g.center.x - .5f * (g.nx - 1) * g.spacing.x, g.center.y - .5f * (g.ny - 1) * g.spacing.y, g.center.z - .5f * (g.nz - 1) * g.spacing.z };
-            siddon_fp_kernel<<<dim3((nu + 15) / 16, (nv + 15) / 16, n), dim3(16, 16), 0, stream>>>(volume, output, views + first, origin, g.spacing.x, g.spacing.y, g.spacing.z, g.nx, g.ny, g.nz, nu, nv, n, accumulate);
+            if (memory == SiddonMemory::Texture)
+                siddon_fp_kernel<true><<<dim3((nu + 15) / 16, (nv + 15) / 16, n), dim3(16, 16), 0, stream>>>(volume, texture, output, views + first, origin, g.spacing.x, g.spacing.y, g.spacing.z, g.nx, g.ny, g.nz, nu, nv, n, accumulate);
+            else
+                siddon_fp_kernel<false><<<dim3((nu + 15) / 16, (nv + 15) / 16, n), dim3(16, 16), 0, stream>>>(volume, texture, output, views + first, origin, g.spacing.x, g.spacing.y, g.spacing.z, g.nx, g.ny, g.nz, nu, nv, n, accumulate);
             checked(cudaGetLastError());
         } else {
             KernelGrid kg { g.nx, g.ny, g.nz, g.spacing.x, g.spacing.y, g.spacing.z };
