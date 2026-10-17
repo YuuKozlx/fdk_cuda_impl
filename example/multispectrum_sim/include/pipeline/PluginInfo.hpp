@@ -10,7 +10,7 @@ enum class PluginKind { Unspecified,
     PreprocessStage,
     PostprocessStage,
     Exporter,
-    ProjectionSource };
+    ProjectionSource, ExampleStage, CalibrationStage };
 enum class ImplementationStatus { Stable,
     Experimental,
     Deprecated };
@@ -47,6 +47,8 @@ inline void validatePluginInfo(const PluginInfo& info)
     case PluginKind::PostprocessStage:
     case PluginKind::Exporter:
     case PluginKind::ProjectionSource:
+    case PluginKind::ExampleStage:
+    case PluginKind::CalibrationStage:
         break;
     default:
         throw std::invalid_argument("invalid plugin kind");
