@@ -33,6 +33,7 @@ cmake --install out/build/core --prefix install/core
 
 ## 独立应用和工具
 
+- [客户端构建、SDK 与运行](doc/build-ui.md)：新机器准备 VTK/matio SDK、编译、测试、启动 UI 与内置示例。
 - [多能谱仿真](example/multispectrum_sim/README.zh-CN.md)：应用层物理模型、预处理、配置与输出。
 - [模体生成器](example/phantom_generator/README.zh-CN.md)。
 - [几何标定工具](tools/cbct_calibration/README.zh-CN.md)。

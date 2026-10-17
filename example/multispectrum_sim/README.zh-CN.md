@@ -1,5 +1,15 @@
 # 多能谱 CBCT 仿真示例
 
+首次使用请按 [客户端构建、SDK 与运行](../../doc/build-ui.md) 准备 VTK/matio SDK，再编译并启动界面。
+
+Example 菜单现可直接加载 BrainWeb 与 ICRP145 压缩 MAT 数据、材料及扫描预设，
+无需先生成 TOML。数据布局、LFS 获取与运行方法见
+[内置体素数据说明](../../data/phantoms/README.zh-CN.md)。
+
+ICRP145 男女头部、胸部/腹部带手臂及去手臂的十个全材料示例见
+[ICRP145 示例说明](configs/icrp145/README.zh-CN.md)，配置位于 `configs/ui/icrp/`。
+材料保留原介质组成和男女密度，默认使用螺旋 WFBP 解析重建。
+
 本例使用独立 CUDA kernel 在线完成多能谱前投，不生成材料路径缓存，也不通过 DLL 做 FP。DLL 只作为 FDK、wFBP 和迭代算法的重建后端。
 
 重建管线支持 `fdk`、`wfbp`，以及 DLL 已放行的迭代管线 `tigre_sart`、`tigre_sirt`、`tigre_os_sart`、`tigre_sart_tv`、`tigre_os_sart_tv`，以及原有的 `sirt`、`ossart`、`cgls`。解析重建和迭代重建分别放在 `reconstruction.analytic` 与 `reconstruction.iterative` 下，避免参数混用。迭代管线必须一次提交完整投影，不使用 `chunk_views` 分包；它们使用显存中的投影/体缓冲，程序负责 Host 与 Device 之间的拷贝。迭代参数示例：
@@ -703,7 +713,7 @@ ImGui 的内部正则插件配置仅在内部 `sirt`、`sart`、`ossart` 下显�
 
 ## BrainWeb 骨束硬化校正实验
 
-`scripts/brainweb_bone_bhc_experiment.py` 提供可复现的分割—重投影实验；当前是离线实验编排，尚未注册为骨 BHC Stage，也未增加 UI 开关。已有应用和默认重建行为不变。
+`scripts/brainweb_bone_bhc_experiment.py` 保留历史分割—重投影实验编排。正常客户端现已通过 `BoneBhcStage` 接入物理前置／后置和双材料 LUT 方案，入口为 Reconstruction → Bone hardening correction，默认关闭、仍标为实验性；阶段顺序、TOML 参数及验证范围见 [统一骨硬化策略](include/recon/bhc/README.md)。下面的脚本和旧结果属于独立历史实验，不代表所有新 UI 参数组合的质量验收。
 
 先构建 `multispectrum_bone_bhc_prepare` 目标（默认不构建），它通过正式 CUDA μ→HU / 阈值分割 Stage 处理**第一次重建的结果**。Python/NumPy 仅负责实验编排、模型差值及指标统计；绘图改为仓库的 C++ / Matplot++ 工具 `multispectrum_plot_bone_bhc`，不再使用 Matplotlib。绘图工具可直接读取已有结果目录，单独运行时完全不需要 Python。Matplot++ 仍需要 Gnuplot 后端，见前面的可选绘图构建说明；也可用 `plot/CMakeLists.txt` 独立构建，不必重新编译 CUDA 库。应用本身没有增加 Python 运行依赖。
 
@@ -852,3 +862,140 @@ gain = 1.0
 ### 螺旋配置与 SDK 床进方向
 
 示例 TOML 的 `pitch_mm_per_turn` 描述随源角度增加的源探 Z 位移，前投、模型重投影和显示共用该约定。SDK 的 `SRegularHelicalScanSpec::pitch_mm_per_turn` 描述物理床进，因此示例在 `LibraryGeometry` 中按 `-pitch_mm_per_turn * rotation_direction` 转换；SDK 调用方仍遵循物理床进约定。
+
+## 内置示例与 IExampleStage
+
+内置示例直接生成 SimulationConfig、标签体积和几何真值，UI 与前投使用内存数据，不写入再读取 TOML/RAW。无需外部模体或 Python。
+
+| ID | 模体 |
+|---|---|
+| water-circle | 20 cm 水圆柱，圆扫，SID 709 / SDD 1143，360 帧 |
+| water-helix | 同一水模，螺旋两周，每周 360 帧、步进 40 mm，预置 WFBP |
+| bead-line | 直线排列，12 颗 3 mm 钨珠、间隔 10 mm |
+| bead-double-ring | 直径 100/80 mm 非对称双环，每环 12 颗珠及额外标记 |
+| bead-cylinder-marker | 同步双环，每环 6 颗珠及两个圆柱标记 |
+| bead-spiral | 24 颗螺旋排列钨珠及下方标记 |
+| bead-sync-6 | 同步双环，每环 6 颗珠及两个球形标记 |
+| bead-sync-12 | 同步双环，每环 12 颗珠及两个球形标记 |
+
+六种几何模体保留原模体网格（直线 0.125 mm，其余 0.2 mm），不降低体积显示分辨率。预览采用 1024×256、U/V 间距 0.417/1.668 mm 探测器，保留原 1024×1024、0.417 mm 的视野，默认 360 帧。水模体为 2 mm 体素，圆扫探测器 1024×256、U/V 间距 0.4/1.6 mm；螺旋为 1024×256、U/V 间距 0.4/0.8 mm，两周共 720 帧，起点 Z=-40 mm。重建网格各方向为原模体尺寸的一半（向上取整），体素间距相应调整以保持物理范围。全部使用原生 120 kVp 能谱、2 mm Al 滤过、每像素一条射线，关闭噪声和散射。这些默认值用于快速验证流程，不是重建质量验收参数；已保存的 TOML 不受默认值调整影响。
+
+命令行（主工作树根目录）：
+
+    .\out\build\main-ui\example\multispectrum_sim\multispectrum_sim.exe --list-examples
+    .\out\build\main-ui\example\multispectrum_sim\multispectrum_sim.exe --gui-example bead-line .\out\examples\bead-line
+    .\out\build\main-ui\example\multispectrum_sim\multispectrum_sim.exe --example water-circle .\out\examples\water-circle
+
+GUI 通过 **Example → Water phantoms / Geometry calibration** 选择模体，在独立参数窗口中调整尺寸、珠列/环/螺旋、标记和体素网格，点击 **Generate and load**，即可生成体积并填入材料、能谱和轨迹参数。点击 Calculate 才开始前投并写结果；示例生成本身不创建文件。可直接调整扫描参数。生成后的内存体积不能直接重新解释维数；改变网格需在模体窗口重新生成。生成会清除旧投影和重建缓存，并创建新的示例扫描设置。超出网格、非整数珠数、非法数值以及超过 512 MiB 的标签体积会被拒绝，不会静默裁剪。主动 Save TOML 时才同时导出配套标签 RAW，原内存示例仍可继续使用。
+
+IExampleStage : pipeline::IPlugin 是准备资源的接口，提供 generate(ExampleRequest) -> ExampleResult，复用 PluginInfo 与注册表。结果包含强类型配置、标签数组、模体局部坐标下的球/圆柱标记真值。它不插入像素处理链，不执行珠心检测或几何求解。新增示例实现接口并在 builtinExamples() 注册即可。ExampleRequest.output_directory 仅指定计算结果路径，views=0 使用示例默认帧数。
+
+现有 configs/calibration/geometry 等 TOML 保留为具体实验配置，与内置示例独立。
+
+### 客户端菜单
+
+- File：加载/保存配置、体积与材料工作区、加载已配置的重建结果、导出能谱。
+- Example：按类别选择内置模体；每种模体独立参数窗口，可恢复默认值、取消或生成。修改参数不会立即触发计算。
+- Settings：跳转到扫描、体积/材料、能谱、物理效应、重建及结果参数页。
+- Compute：前投、重建、能谱预览，以及前投后自动重建开关。
+- View：打开投影/重建抽屉、关闭抽屉、机架固定相对模式。
+- Help：基本操作流程。
+
+左侧作为参数工作区，保留常用计算快捷按钮；图像通过右侧抽屉查看。计算期间菜单中的数据修改和任务操作禁用，避免同时修改正在计算的数据。
+
+IExampleStage.parameters() 返回该模体的参数描述（标识、名称、分组、默认值、范围、整数约束）；ExampleRequest.parameters 仅传入用户覆盖值。UI 依据描述生成表单，新增模体无需在 UI 写一套字段分发。参数在生成端再次校验，命令行及其他调用者也遵守相同约束。
+
+菜单栏顺序：File → Settings → Compute → View → Example → Help；Example 固定在倒数第二项。
+
+各示例通过 IExampleStage.scanPreset() 绑定常规扫描配置。示例参数窗口展示 SID/SDD、帧数、探测器及重建算法；点击 Generate and load 后整体应用并跳到 Scan 页。只打开窗口不修改当前设置，Cancel 不产生副作用。
+
+### 几何标定与几何校正 Stage（实验性集成）
+
+Example → Phantom calibration (experimental) 提供几何模体的实验性标定窗口，仅支持完整圆扫描、平板探测器。六个内置模体自动绑定各自的已知尺寸和编号方法：
+
+| 内置模体 | 标定方法与限制 |
+| --- | --- |
+| 双环（圆柱标记）`bead-cylinder-marker` | 圆柱辅助编号，圆柱投影质心不参与最终几何拟合；环上球珠参与空间七参数拟合 |
+| 同步双环带标记 6 球 `bead-sync-6` | 每环 6 球；标记编号、双向跟踪、空间七参数拟合 |
+| 同步双环带标记 12 球 `bead-sync-12` | 每环 12 球；重叠珠点排除，双向整圈跟踪按帧选择一致性较好的结果 |
+| 大小双环 `bead-double-ring` | 已知两环半径、间距、相位及标记位置，空间七参数拟合 |
+| 带标记螺旋 `bead-spiral` | 利用螺旋尺寸和标记建立编号，再跟踪和空间七参数拟合；螺旋指模体形状，不是扫描轨迹 |
+| 单排钢珠 `bead-line` | 五参数圆扫描联合拟合：SID、SDD、探测器 U/V 平移、面内旋转；要求离轴放置，探测器面外倾斜可忽略 |
+
+空间七参数为 SID、SDD、探测器 U/V 平移及三个倾角，同时估计模体姿态。单排钢珠不能使用空间 DLT，不复用双环的七参数求解器；采用受限圆扫描模型，以明确填写的标称距离初始化，检查数值可辨识性，拒绝轴心退化情形。它不是 Wu 解析公式的实现。单排示例默认离轴放置且探测器面外倾角为零，保留面内旋转和平移用于验证。
+
+步骤：
+
+1. Example 中选择上述任一模体，生成后自动带入已知尺寸。水模体不能用于这套珠点标定。
+2. 在 Scan 设置探测器偏移/倾斜、源偏移，用前投生成非理想几何的负对数投影。模体位置/姿态可以变化。
+3. 实验性标定窗口中设置检测阈值、跟踪门限、拟合迭代数和可接受 RMSE，再执行标定。输入仅为已知模体尺寸、像素尺寸和实际投影，不传入源/探测器误差真值。
+4. 查看报告中的收敛状态、重投影误差和拟合几何。通过质量门限后，分别运行标称几何重建和标定几何重建。结果使用 .nominal.raw 和 .calibrated.raw 后缀，保留原投影及仿真配置。
+
+GeometryCalibrationStage 复用原生 cbct_calibration 库，输入域 Measurements、输出域 Geometry；支持已编号非共面二维点/三维点及可用性掩码，也支持上述六类模体 float32 负对数 RAW 的检测跟踪与拟合。PipelineConfig.phantom_kind 在内部选择 DoubleRing、Spiral 或 SingleRow，双环变体通过 PhantomSpec 的尺寸与标记配置区分，不需要六套独立 Stage。
+GeometryCorrectionStage 从标定结果生成 GeometrySpec，域 Geometry → CorrectedGeometry，拒绝未收敛、非有限值及超过误差门限的拟合。它更新重建使用的几何，不对投影做像素扭曲，也不把标定值覆盖到仿真真值。两者复用顶层 IStage 和 PluginInfo，CPU 上运行；UI 异步执行并显示耗时，核心未提供的逐迭代进度不伪造。
+
+限制：螺旋扫描及非完整圆扫描不可套用；空间模体至少需要一帧标记与球珠充分分离以建立编号，严重重叠、截断或低信噪比可能导致拒绝拟合。阈值需匹配实际负对数投影。单排钢珠的限制见上表，不能因为残差较小就假定其恢复了面外倾斜。源偏移和探测器法向偏移采用零值规范约束，拟合的是等效几何，不承诺独立恢复所有机械偏移。标定后的重建坐标系可能与原仿真坐标系相差刚体变换，比较体积时需配准；报告同时保留拟合的模体姿态、模型名称和重投影误差。单排模型没有独立 DLT 源轨迹，报告的 source_circle 为 null。标称几何重建的 SID/SDD 可在窗口中明确指定。
+
+原生求解器独立位于 tools/cbct_calibration_cpp；上层通过其 CMake target 链接，不引入 Python 或 geometry_viewer 源码。优先使用已安装 Eigen3，否则首次配置下载校验过的 Eigen 3.4.0 头文件依赖，后续构建复用本地缓存。
+
+测试 cbct_calibration_phantom_tests 覆盖六类合成 RAW 的检测、编号、跟踪、几何恢复及报告写出，并覆盖单排的噪声、缺失点与轴心退化拒绝。实际多能投影集成验证使用 512×512、360 帧，重建网格为 256×256×320、0.6 mm；标称和标定几何分别输出结果。这些验证检查流程与几何残差，不等价于所有模体摆位、噪声水平下的图像质量验收。
+
+2026-10-16 内置默认配置验证：六类全部收敛，且标称/标定两次 FDK 均完成。圆柱标记双环、同步 6 球、同步 12 球、大小双环、标记螺旋、单排钢珠的重投影 RMSE 分别为 0.1282、0.1227、0.1254、0.1251、0.1229、0.1954 px。结果位于 `out/examples/calibration-family-validation/<example-id>/`，报告为 `projection.raw.geometry-calibration.json`。这里的残差是几何拟合指标，不是重建图像伪影或分辨率指标。
+
+### 普通重建的独立几何
+
+Recon 页提供 Reconstruction geometry 分组。默认沿用输入投影关联的扫描几何；
+启用 Use independent reconstruction geometry 后，可独立设置 SID、SDD、源 XYZ 偏移、
+探测器 U/V/法向偏移和三轴倾斜。界面角度单位为度，TOML 使用弧度。
+Copy scan geometry 复制扫描参数，Zero offsets / tilts 将偏移和倾斜清零。
+这些设置只影响重建，不修改正投几何；自动重建也使用该设置。
+投影尺寸、帧顺序、扫描轨迹和重建网格继续沿用原配置。
+
+配置保存在 [reconstruction.geometry]，用 enabled 控制启用；字段名与扫描几何一致。
+关闭后仍保留自定义值，便于切换比较。几何标定窗口的标称/标定比较按钮使用各自的几何，
+不受普通重建的独立几何开关覆盖。
+
+### 参数面板组织
+
+界面面板拆分在 include/ui：ScanPanel、VolumePanel、SpectrumPanel、EffectsPanel 和
+ReconstructionPanel；Widgets 统一基础输入控件。各面板编辑配置并返回操作意图，
+不持有 VTK 视图、GPU 资源或计算任务；客户端统一负责执行、结果加载及任务状态。
+VolumePanel 单独持有材料列表的搜索状态。主题定义集中在 visualization/ImGuiTheme.hpp。
+
+### 重建查看与 MPR
+
+重建完成或 File → Load reconstruction 加载 float32 RAW 后，View → MPR workspace
+可将右侧图像抽屉展开为四视图：轴向 XY、冠状 XZ、矢状 YZ 与任意斜切面。
+关闭 Expand viewer 可回到几何视图旁的抽屉；双击任一图像放大，再双击或点 Four views 恢复。
+查看器状态/交互位于 include/ui/ReconstructionViewerPanel.hpp，切面几何和 VTK 重采样位于
+visualization/Mpr.hpp、Mpr.cpp，与重建算法和 TOML 参数编辑分开。
+
+- 预设提供 Brain（WW 80 / WL 40）、Soft tissue（400 / 40）、Bone（2000 / 500）、
+  Lung（1500 / -600）、Abdomen（350 / 50）、Subdural（200 / 80），单位 HU；也可手填 WW/WL。
+  这些是可调整的常用起点，不是所有数据固定使用的标准值。
+- 点击或左键拖动图像联动三轴定位；滚轮在正交视图翻层，在斜切视图沿法线移动。
+  右键拖动分别调窗宽/窗位；预设与调窗作用于全部四图。
+- 前三幅图的彩色十字线是另外两幅切面的实际交线。拖动参考线或线上圆点可绕当前
+  切面法线旋转另外两个切面，三者保持正交；当前图像的显示方向保持稳定。
+  拖动中心圆环或点击图像空白处移动共同交点。参考线旋转后，前三图也会重新采样，
+  滚轮沿当前旋转切面的法线翻层。下面的 MPR rotation 显示同一旋转的 X/Y/Z 角度：
+  拖参考线实时更新角度，手动改角度同步更新切面和参考线。第四幅斜切图同步该方向，保留独立法线偏移。
+- 斜切面以三视图交点为旋转中心，角度按网格轴依次施加 X、Y、Z（Rz·Ry·Rx），
+  Plane offset 沿旋转后的法线平移。默认三线性插值，也可选最近邻或三次插值。
+  Reset MPR 同时清除参考线旋转、独立斜切角度和法线偏移，Center 将交点移回体积中心。
+- MPR 对已经重建的体积取样，不重新执行 CT 重建。原始体积、网格和衰减值不改变；
+  VTK 借用同一份体积内存，仅缓存二维切片。调窗复用切片，Auto WW 使用加载时缓存的百分位窗。
+- HU 基准沿用当前配置 BHC 拟合能量对应的水衰减。加载其他任务的 RAW 时需使用匹配的配置。
+  优先读取同名 `.raw.grid` 的尺寸、间距、原点及方向；没有 sidecar 时沿用当前配置网格。
+  当前 XY/XZ/YZ 与角度指重建网格轴，坐标显示采用 sidecar 的物理坐标；没有患者方向信息时
+  不推断 DICOM 的左/右、前/后。斜切视野外显示黑色，无效样本不计作 HU 数值。
+
+数值测试 multispectrum_mpr 覆盖正交切片、非等距体素、90° 与复合旋转、线性场插值、
+物理原点/方向、三视图定位、体积外背景及清空/重载；multispectrum_reconstruction_display
+验证输出网格元数据的读取。界面还支持 File → Load reconstruction 直接选择已有 RAW。
+参考线测试还覆盖连续交替旋转、当前显示方向保持、共同交点保持、三切面正交性及旋转后的插值数值。
+multispectrum_mpr_interaction 通过 ImGui 输入事件验证拖线旋转、松开结束旋转、中心拖动定位，以及参考线与切面几何的一致性。
+
+重建页分为方法、输出体积与文件、投影校正、几何四组。独立几何关闭时只保留开关，
+隐藏所有独立参数；关闭保存切片时隐藏切片前缀。投影算子、批处理性能、探测器姿态、
+物体姿态采用可展开的高级分组，噪声关闭时不显示随机种子。显示设置收进公共折叠组。

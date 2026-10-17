@@ -2,6 +2,8 @@
 
 本篇负责本体库构建和外部接入。算法组合见 [算法](algorithms.md)，测试执行见 [测试与验证](testing-and-validation.md)。事实来源：[顶层 CMake](../CMakeLists.txt)、[预设](../CMakePresets.json)、[安装包配置](../cmake/YKCBCTConfig.cmake.in)。
 
+多能前投 ImGui/VTK 客户端的完整 SDK、构建及运行流程见 [客户端构建与运行](build-ui.md)。matio 只属于应用层，关闭 `BUILD_MULTISPECTRUM_SIM` 的本体 DLL 构建不需要它。
+
 ## 工具链与依赖
 
 | 项目 | 当前要求或用途 |

@@ -670,15 +670,8 @@ if(TARGET YKCBCT)
     target_link_libraries(multispectrum_sim PRIVATE multispectrum_scalar_fp)
 endif()
 
-if(TARGET multispectrum_scalar_fp)
-    add_executable(multispectrum_benchmark_scalar_fp EXCLUDE_FROM_ALL app/BenchmarkScalarFp.cpp
-        src/config/SimConfig.cpp src/config/SpectrumSource.cpp src/XcomAttenuationProvider.cpp)
-    target_include_directories(multispectrum_benchmark_scalar_fp PRIVATE include src "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
-    target_link_libraries(multispectrum_benchmark_scalar_fp PRIVATE multispectrum_scalar_fp nist_xcom_core spek_spectrum::core)
-    if(MSVC)
-        target_compile_options(multispectrum_benchmark_scalar_fp PRIVATE /utf-8)
-    endif()
-endif()
+# Setup examples reuse plugin metadata but remain independent of CUDA/VTK.
+include(cmake/Examples.cmake)
 
 if(CMAKE_CUDA_COMPILER)
     add_executable(multispectrum_benchmark_warp EXCLUDE_FROM_ALL app/BenchmarkWarpPrimary.cu
@@ -687,6 +680,16 @@ if(CMAKE_CUDA_COMPILER)
     target_link_libraries(multispectrum_benchmark_warp PRIVATE CUDA::cudart nist_xcom_core spek_spectrum::core)
     if(MSVC)
         target_compile_options(multispectrum_benchmark_warp PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8> $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
+    endif()
+endif()
+
+if(TARGET multispectrum_scalar_fp)
+    add_executable(multispectrum_benchmark_scalar_fp EXCLUDE_FROM_ALL app/BenchmarkScalarFp.cpp
+        src/config/SimConfig.cpp src/config/SpectrumSource.cpp src/XcomAttenuationProvider.cpp)
+    target_include_directories(multispectrum_benchmark_scalar_fp PRIVATE include src "${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/tomlplusplus/include")
+    target_link_libraries(multispectrum_benchmark_scalar_fp PRIVATE multispectrum_scalar_fp nist_xcom_core spek_spectrum::core)
+    if(MSVC)
+        target_compile_options(multispectrum_benchmark_scalar_fp PRIVATE /utf-8)
     endif()
 endif()
 
@@ -708,6 +711,3 @@ if(BUILD_TESTING)
     target_link_libraries(multispectrum_geometry_calibration_test PRIVATE multispectrum_geometry_calibration)
     add_test(NAME multispectrum_geometry_calibration COMMAND multispectrum_geometry_calibration_test)
 endif()
-
-# Setup examples reuse plugin metadata but remain independent of CUDA/VTK.
-include(cmake/Examples.cmake)
