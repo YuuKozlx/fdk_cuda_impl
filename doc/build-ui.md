@@ -78,7 +78,7 @@ $exe = '.\out\build\ui\example\multispectrum_sim\multispectrum_sim.exe'
 & $exe --list-examples
 ```
 
-空界面入口是 --gui；无参数运行只显示用法。选择 Example 后先加载资源，Compute / Forward projection 才开始计算。
+`--gui` 不带 TOML 时直接加载内置水模圆扫描预设，不弹文件选择框，也不自动计算；可通过 Example 菜单切换模体，File 菜单加载 TOML。无参数运行只显示用法。Compute / Forward projection 才开始计算。
 
 Water 和几何模体由程序生成，不需要体素数据文件。BrainWeb/ICRP 需要对应的数据包，详见 [内置体素数据](../data/phantoms/README.zh-CN.md)。迁移时一起复制 data/materials 与 data/phantoms，并将 YK_EXAMPLE_DATA_ROOT 设置为包含它们的 data 根目录。数据不嵌入 exe。
 

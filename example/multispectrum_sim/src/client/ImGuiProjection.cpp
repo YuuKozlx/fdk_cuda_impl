@@ -1,3 +1,5 @@
+#include "client/panels/LogPanel.hpp"
+#include "input/calibration/PrepareCalibrateStage.hpp"
 #include "input/calibration/WaterBhcCalibration.hpp"
 #include "client/SimulationJobs.hpp"
 #include "client/LiveProjectionObserver.hpp"
@@ -44,19 +46,24 @@ namespace {
     using namespace ui;
     struct UiState {
         SimulationConfig draft;
+        ui::LogPanel log_panel;
         std::vector<float> spectrum_plot;
         std::string message;
         bool calculate = false, load = false, save = false, preview = false, export_spectrum = false;
-        bool load_geometry_correction=false;
-        bool calibration_window=false,calibrate_geometry=false,nominal_reconstruction=false,corrected_reconstruction=false;
+        bool prepare_selected=false, prepare_geometry=false;
+        std::optional<BeamHardeningConfig> calibration_water;
+        bool save_geometry_correction=false;
+        int calibration_source=0;
+        std::filesystem::path calibration_projection;
+        bool calibrate_geometry=false,nominal_reconstruction=false,corrected_reconstruction=false;
         calibration::Context calibration_context;
         calibration::Data calibration_data;
-        std::optional<SimulationConfig> calibration_input;
+        std::optional<SimulationConfig> calibration_input, prepared_resources;
         std::string calibration_message, known_example_id;
         double nominal_sid=440,nominal_sdd=770;
         bool create_example=false; int example_index=0;
         bool example_window=false, help_window=false;
-        int requested_settings=-1;
+        int requested_settings=-1, active_settings=0;
         std::vector<examples::Parameter> example_parameters;
         std::string example_error;
         void bindCalibrationExample(const std::string& id,const std::vector<examples::Parameter>& parameters){
@@ -142,103 +149,47 @@ namespace {
             }else ImGui::TextWrapped("Reconstruct first, or load the saved output volume below.");
             if(ImGui::Button("Load saved reconstruction"))load_reconstruction=true;
         }
-        void draw(int width, int height, bool enabled, const std::string& status, yk::visualization::LiveView& view)
-        {
-            float menu_height=ImGui::GetFrameHeight();
-            if(ImGui::BeginMainMenuBar()){
-                menu_height=ImGui::GetWindowHeight();
-                if(ImGui::BeginMenu("File")){
-                    if(ImGui::MenuItem("Open configuration...",nullptr,false,enabled))load=true;
-                    if(ImGui::MenuItem("Save configuration...",nullptr,false,enabled))save=true;
-                    ImGui::Separator();
-                    if(ImGui::MenuItem("Volume and materials...",nullptr,false,enabled))requested_settings=1;
-                    if(ImGui::MenuItem("Load reconstruction...",nullptr,false,enabled))browse_reconstruction=true;
-                    if(ImGui::MenuItem("Export spectrum...",nullptr,false,enabled))export_spectrum=true;
-                    ImGui::EndMenu();
-                }
-                if(ImGui::BeginMenu("Settings",enabled)){
-                    const char* pages[]={"Scan geometry","Volume and materials","Spectrum","Physical effects","Reconstruction","Results"};
-                    for(int i=0;i<6;++i)if(ImGui::MenuItem(pages[i]))requested_settings=i;
-                    ImGui::EndMenu();
-                }
-                if(ImGui::BeginMenu("Compute",enabled)){
-                    if(ImGui::MenuItem("Forward projection"))calculate=true;
-                    if(ImGui::MenuItem("Reconstruction"))reconstruct=true;
-                    if(ImGui::MenuItem("Preview spectrum"))preview=true;
-                    ImGui::Separator();
-                    ImGui::MenuItem("Reconstruct after projection",nullptr,&auto_reconstruct);
-                    ImGui::EndMenu();
-                }
-                if(ImGui::BeginMenu("View",enabled)){
-                    if(ImGui::MenuItem("Projection images",nullptr,drawer_open&&result_mode==0)){drawer_open=true;drawer_changed=true;result_mode=0;result_changed=true;select_image_page=true;}
-                    if(ImGui::MenuItem("Reconstruction images",nullptr,drawer_open&&result_mode==1)){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;}
-                    if(ImGui::MenuItem("MPR workspace",nullptr,drawer_open&&result_mode==1&&viewer.expanded,view.hasReconstruction())){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;viewer.expanded=true;viewer.layout_changed=true;}
-                    if(ImGui::MenuItem("Close image drawer",nullptr,false,drawer_open)){drawer_open=false;drawer_changed=true;}
-                    relative_mode=view.relativeGeometryMode();
-                    if(ImGui::MenuItem("Gantry fixed",nullptr,&relative_mode,view.relativeGeometryAvailable()))relative_changed=true;
-                    ImGui::EndMenu();
-                }
-                if(ImGui::BeginMenu("Example",enabled)){
-                    if(ImGui::MenuItem("Phantom calibration (experimental)..."))calibration_window=true;
-                    ImGui::Separator();
-                    for(const auto* category:{"Water phantoms","Geometry calibration","ICRP145","BrainWeb"}){
-                        if(ImGui::BeginMenu(category)){
-                            for(int i=0;i<int(builtin_examples.size());++i){
-                                const auto& item=builtin_examples[i];
-                                const auto group=item.id.rfind("water-",0)==0?"Water phantoms":item.id.rfind("bead-",0)==0?"Geometry calibration":item.category.c_str();
-                                if(std::string_view(category)==group && ImGui::MenuItem(item.name.c_str()))chooseExample(i);
+        void preparation(bool enabled){
+            ImGui::TextWrapped("Calibration workspace. Results can be inspected and exported; they are not applied to reconstruction.");
+            if(!calibration_water){calibration_water=draft.reconstruction.preprocessing.beam_hardening;calibration_water->calibration_file.clear();calibration_water->fit_from_water_plate=true;}
+            auto& bh=*calibration_water;
+            ImGui::Checkbox("Water BHC calibration",&bh.enabled);
+            if(bh.enabled && ImGui::TreeNode("Water BHC settings")){
+                integer("Polynomial order",bh.order);
+                number("Maximum water thickness (mm)",bh.water_plate_max_mm);
+                integer("Water samples",bh.water_plate_samples);
+                number("Reference energy (keV; 0 = automatic)",bh.reference_energy_keV);
+                if(ImGui::Button("Export water calibration..."))calibrate_water=true;
+                ImGui::TreePop();
+            }
+            ImGui::Checkbox("Geometry calibration",&prepare_geometry);
+            if(ImGui::Button("Run selected calibrations"))prepare_selected=true;
+            ImGui::TextWrapped("Normal reconstruction uses its own built-in settings. Geometry and BHC tables remain calibration outputs only.");
+            if(prepare_geometry && ImGui::CollapsingHeader("Geometry calibration task",ImGuiTreeNodeFlags_DefaultOpen)){
+                    ImGui::TextWrapped("Geometry calibration: prepare input and fit. Accepted results stay in memory; saving a file is optional. Full circular flat CBCT only.");
+                    if(ImGui::TreeNodeEx("1. Calibration input",ImGuiTreeNodeFlags_DefaultOpen)){
+                        ImGui::RadioButton("Simulated acquisition",&calibration_source,0);ImGui::SameLine();
+                        ImGui::RadioButton("Existing projections",&calibration_source,1);
+                        if(calibration_source==0){
+                            if(ImGui::TreeNodeEx("Phantom",ImGuiTreeNodeFlags_DefaultOpen)){
+                                for(int i=0;i<int(builtin_examples.size());++i){const auto& item=builtin_examples[i];
+                                    if(item.id.rfind("bead-",0)==0 && ImGui::Selectable(item.name.c_str(),known_example_id==item.id))chooseExample(i);
+                                }
+                                ImGui::TextWrapped("Select a phantom and confirm its parameters in the setup window.");
+                                ImGui::TreePop();
                             }
-                            ImGui::EndMenu();
+                            if(ImGui::TreeNode("Actual acquisition geometry / simulated errors")){scan();ImGui::TreePop();}
+                            ImGui::BeginDisabled(known_example_id.rfind("bead-",0)!=0);
+                            if(ImGui::Button("Generate calibration projections")){auto_reconstruct=false;calculate=true;}
+                            ImGui::EndDisabled();
+                        }else{
+                            pathInput("Negative-log projection RAW",calibration_projection,L"Projection RAW\0*.raw\0All files\0*.*\0\0");
+                            if(ImGui::TreeNode("Acquisition dimensions and geometry")){scan();ImGui::TreePop();}
+                            ImGui::TextWrapped("Set views, detector size and pixel spacing to match the selected file.");
                         }
+                        ImGui::TreePop();
                     }
-                    ImGui::EndMenu();
-                }
-                if(ImGui::BeginMenu("Help")){
-                    if(ImGui::MenuItem("Workflow guide"))help_window=true;
-                    ImGui::EndMenu();
-                }
-                ImGui::EndMainMenuBar();
-            }
-            if(example_window){
-                ImGui::SetNextWindowSize({620,650},ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowPos({float(width)*.5f,float(height)*.5f},ImGuiCond_Appearing,{.5f,.5f});
-                if(ImGui::Begin("Phantom parameters",&example_window)){
-                    ImGui::BeginDisabled(!enabled);
-                    ImGui::TextWrapped("%s",builtin_examples[example_index].name.c_str());
-                    ImGui::TextWrapped("Generates a new setup in memory. Current projections and reconstruction will be cleared.");
-                    const auto preset=examples::clientExamples().create(builtin_examples[example_index].id)->scanPreset();
-                    ImGui::TextWrapped("Scan preset: %s",preset.name.c_str());
-                    ImGui::Text("SID %.0f / SDD %.0f mm | %d views (%d / turn)",preset.sid_mm,preset.sdd_mm,preset.views,preset.views_per_turn);
-                    ImGui::Text("Detector %d x %d | %.3f x %.3f mm | %s + Hann",preset.detector_u,preset.detector_v,preset.pixel_u_mm,preset.pixel_v_mm,preset.reconstruction.c_str());
-                    if(preset.pitch_mm_per_turn>0)ImGui::Text("Travel %.0f mm / turn | start Z %.0f mm",preset.pitch_mm_per_turn,preset.start_z_mm);
-                    ImGui::TextWrapped("120 kVp, 2 mm Al. Noise and scatter off. Generate applies ALL setup parameters.");
-                    ImGui::BeginChild("Phantom fields",{0,-110},true);
-                    std::string group;
-                    for(auto& parameter:example_parameters){
-                        if(group!=parameter.group){group=parameter.group;ImGui::SeparatorText(group.c_str());}
-                        ImGui::PushID(parameter.id.c_str());
-                        ImGui::SetNextItemWidth(150);
-                        if(parameter.integer){int value=int(parameter.value);if(ImGui::InputInt(parameter.name.c_str(),&value))parameter.value=value;}
-                        else ImGui::InputDouble(parameter.name.c_str(),&parameter.value,0,0,"%.3f");
-                        ImGui::PopID();
-                    }
-                    ImGui::EndChild();
-                    if(!example_error.empty()){ImGui::TextWrapped("%s",example_error.c_str());}
-                    if(ImGui::Button("Generate and load",{170,32})){create_example=true;example_error.clear();}
-                    ImGui::SameLine();
-                    if(ImGui::Button("Restore defaults"))chooseExample(example_index);
-                    ImGui::SameLine();
-                    if(ImGui::Button("Cancel"))example_window=false;
-                    ImGui::EndDisabled();
-                }
-                ImGui::End();
-            }
-            if(calibration_window){
-                ImGui::SetNextWindowSize({690,720},ImGuiCond_FirstUseEver);
-                if(ImGui::Begin("Phantom calibration (experimental)",&calibration_window)){
-                    ImGui::BeginDisabled(!enabled);
-                    ImGui::TextWrapped("Set non-ideal detector/source offsets and tilts in Settings > Scan, then Compute > Forward projection. Calibration below uses that saved projection stack.");
-                    ImGui::TextWrapped("Full circular flat CBCT. Uses measured negative-log projections and known phantom dimensions.");
+                    if(ImGui::TreeNodeEx("2. Calibration settings",ImGuiTreeNodeFlags_DefaultOpen)){
                     auto& c=calibration_context.config;
                     using Kind=cbct::calibration::PipelineConfig::PhantomKind;
                     int kind=int(c.phantom_kind);
@@ -273,7 +224,9 @@ namespace {
                     ImGui::InputInt("Maximum fit iterations",&c.joint_max_iterations);
                     number("Accepted RMSE (pixels)",calibration_context.maximum_rmse_px);
                     number("Nominal SID (mm)",nominal_sid);number("Nominal SDD (mm)",nominal_sdd);
-                    if(ImGui::Button("Load geometry correction table..."))load_geometry_correction=true;
+                    ImGui::TreePop();
+                    }
+                    if(ImGui::TreeNodeEx("3. Run and inspect fit",ImGuiTreeNodeFlags_DefaultOpen)){
                     if(ImGui::Button("Calibrate current projections"))calibrate_geometry=true;
                     if(!calibration_message.empty())ImGui::TextWrapped("%s",calibration_message.c_str());
                     if(calibration_data.result){
@@ -281,14 +234,154 @@ namespace {
                         ImGui::TextWrapped("Model: %s",r.model.c_str());
                         ImGui::Text("Last fit: RMSE %.4f px | max %.4f px | %s",r.joint_rmse_px,r.max_point_error_px,r.joint_converged?"converged":"NOT converged");
                         ImGui::Text("SID %.3f / SDD %.3f | U %.3f / V %.3f mm",r.machine.sid_mm,r.machine.sdd_mm,r.machine.offset_u_mm,r.machine.offset_v_mm);
+                        ImGui::SeparatorText("Detector orientation (deg)");
+                        if(r.model=="single_row_five_parameter_no_out_of_plane_tilt"){
+                            ImGui::TextUnformatted("Tilt U / V: not estimated (fixed at 0)");
+                        }else{
+                            ImGui::Text("Tilt U: %.4f deg",r.machine.tilt_u_rad*degrees);
+                            ImGui::Text("Tilt V: %.4f deg",r.machine.tilt_v_rad*degrees);
+                        }
+                        ImGui::Text("Tilt N (in-plane): %.4f deg",r.machine.tilt_n_rad*degrees);
                         ImGui::TextWrapped("Correction uses fitted geometry, not pixel warping. Source and normal offsets are gauge-fixed. Corrected volume is in the fitted scanner frame.");
                     }
-                    ImGui::BeginDisabled(!calibration_input);
-                    if(ImGui::Button("Reconstruct with nominal geometry"))nominal_reconstruction=true;
-                    ImGui::EndDisabled();
-                    ImGui::BeginDisabled(!calibration_data.corrected);
-                    if(ImGui::Button("Reconstruct with calibrated geometry"))corrected_reconstruction=true;
-                    ImGui::EndDisabled();
+                    ImGui::TreePop();
+                    }
+                    if(ImGui::TreeNodeEx("4. Save calibration file",ImGuiTreeNodeFlags_DefaultOpen)){
+                        ImGui::BeginDisabled(!calibration_data.corrected);
+                        if(ImGui::Button("Save calibration file..."))save_geometry_correction=true;
+                        ImGui::EndDisabled();
+                        ImGui::TextWrapped("Export is optional. This result does not change reconstruction geometry.");
+                        ImGui::TreePop();
+                    }
+            }
+        }
+        void draw(int width, int height, bool enabled, const std::string& status, yk::visualization::LiveView& view)
+        {
+            float menu_height=ImGui::GetFrameHeight();
+            if(ImGui::BeginMainMenuBar()){
+                menu_height=ImGui::GetWindowHeight();
+                if(ImGui::BeginMenu("File")){
+                    if(ImGui::MenuItem("Open configuration...",nullptr,false,enabled))load=true;
+                    if(ImGui::MenuItem("Save configuration...",nullptr,false,enabled))save=true;
+                    ImGui::Separator();
+                    if(ImGui::MenuItem("Volume and materials...",nullptr,false,enabled))requested_settings=1;
+                    if(ImGui::MenuItem("Load reconstruction...",nullptr,false,enabled))browse_reconstruction=true;
+                    if(ImGui::MenuItem("Export spectrum...",nullptr,false,enabled))export_spectrum=true;
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Settings",enabled)){
+                    const char* pages[]={"Scan geometry","Volume and materials","Spectrum","Physical effects","Reconstruction","Results","PrepareCalibrate"};
+                    for(int i=0;i<7;++i)if(ImGui::MenuItem(pages[i]))requested_settings=i;
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Compute",enabled)){
+                    if(ImGui::MenuItem("Forward projection"))calculate=true;
+                    if(ImGui::MenuItem("Reconstruction"))reconstruct=true;
+                    if(ImGui::MenuItem("Preview spectrum"))preview=true;
+                    ImGui::Separator();
+                    ImGui::MenuItem("Reconstruct after projection",nullptr,&auto_reconstruct);
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("View",enabled)){
+                    if(ImGui::MenuItem("Projection images",nullptr,drawer_open&&result_mode==0)){drawer_open=true;drawer_changed=true;result_mode=0;result_changed=true;select_image_page=true;}
+                    if(ImGui::MenuItem("Reconstruction images",nullptr,drawer_open&&result_mode==1)){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;}
+                    if(ImGui::MenuItem("MPR workspace",nullptr,drawer_open&&result_mode==1&&viewer.expanded,view.hasReconstruction())){drawer_open=true;drawer_changed=true;result_mode=1;result_changed=true;select_image_page=true;viewer.expanded=true;viewer.layout_changed=true;}
+                    if(ImGui::MenuItem("Runtime log",nullptr,&log_panel.open)){}
+                    if(ImGui::MenuItem("Close image drawer",nullptr,false,drawer_open)){drawer_open=false;drawer_changed=true;}
+                    relative_mode=view.relativeGeometryMode();
+                    if(ImGui::MenuItem("Gantry fixed",nullptr,&relative_mode,view.relativeGeometryAvailable()))relative_changed=true;
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Calibration",enabled)){
+                    if(ImGui::MenuItem("PrepareCalibrate..."))requested_settings=6;
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Example",enabled)){
+                    for(const auto* category:{"Water phantoms","Geometry calibration","ICRP145","BrainWeb"}){
+                        if(ImGui::BeginMenu(category)){
+                            for(int i=0;i<int(builtin_examples.size());++i){
+                                const auto& item=builtin_examples[i];
+                                const auto group=item.id.rfind("water-",0)==0?"Water phantoms":item.id.rfind("bead-",0)==0?"Geometry calibration":item.category.c_str();
+                                if(std::string_view(category)==group && ImGui::MenuItem(item.name.c_str()))chooseExample(i);
+                            }
+                            ImGui::EndMenu();
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if(ImGui::BeginMenu("Help")){
+                    if(ImGui::MenuItem("Workflow guide"))help_window=true;
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMainMenuBar();
+            }
+            // A full-width, fixed navigation strip. Parameter scrolling belongs to
+            // the child below; it never moves or compresses these page labels.
+            if(requested_settings>=0)active_settings=requested_settings;
+            else if(select_results)active_settings=5;
+            requested_settings=-1;select_results=false;
+            const char* page_labels[]={"Scan", "Volume", "Spectrum", "Effects", "Reconstruction", "Results", "Calibrate"};
+            const int page_order[]={0,1,2,3,6,4,5};
+            const auto& style=ImGui::GetStyle();
+            const float available=std::max(1.f,float(width)-2*style.WindowPadding.x);
+            float row_width=0;int rows=1;
+            for(int page:page_order){
+                const float button_width=ImGui::CalcTextSize(page_labels[page]).x+2*style.FramePadding.x+16;
+                if(row_width>0 && row_width+style.ItemSpacing.x+button_width>available){++rows;row_width=0;}
+                row_width+=(row_width>0?style.ItemSpacing.x:0)+button_width;
+            }
+            const float log_width=ImGui::CalcTextSize("Logs").x+2*style.FramePadding.x;
+            if(row_width+style.ItemSpacing.x+log_width>available)++rows;
+            const float toolbar_height=2*style.WindowPadding.y+rows*ImGui::GetFrameHeight()+(rows-1)*style.ItemSpacing.y;
+            ImGui::SetNextWindowPos({0,menu_height});
+            ImGui::SetNextWindowSize({float(width),toolbar_height});
+            ImGui::Begin("Workspace toolbar",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoSavedSettings);
+            row_width=0;
+            for(int page:page_order){
+                const float button_width=ImGui::CalcTextSize(page_labels[page]).x+2*style.FramePadding.x+16;
+                if(row_width>0 && row_width+style.ItemSpacing.x+button_width>available)row_width=0;
+                else if(row_width>0)ImGui::SameLine();
+                const bool selected=page==active_settings;
+                if(selected)ImGui::PushStyleColor(ImGuiCol_Button,style.Colors[ImGuiCol_ButtonActive]);
+                if(ImGui::Button(page_labels[page],{button_width,0}))active_settings=page;
+                if(selected)ImGui::PopStyleColor();
+                if(page==6 && ImGui::IsItemHovered())ImGui::SetTooltip("PrepareCalibrate: independent calibration and export");
+                row_width+=(row_width>0?style.ItemSpacing.x:0)+button_width;
+            }
+            if(row_width+style.ItemSpacing.x+log_width<=available)ImGui::SameLine();
+            if(ImGui::Button("Logs"))log_panel.open=!log_panel.open;
+            ImGui::End();
+            menu_height+=toolbar_height;
+            if(example_window){
+                ImGui::SetNextWindowSize({620,650},ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos({float(width)*.5f,float(height)*.5f},ImGuiCond_Appearing,{.5f,.5f});
+                if(ImGui::Begin("Phantom parameters",&example_window)){
+                    ImGui::BeginDisabled(!enabled);
+                    ImGui::TextWrapped("%s",builtin_examples[example_index].name.c_str());
+                    ImGui::TextWrapped("Generates a new setup in memory. Current projections and reconstruction will be cleared.");
+                    const auto preset=examples::clientExamples().create(builtin_examples[example_index].id)->scanPreset();
+                    ImGui::TextWrapped("Scan preset: %s",preset.name.c_str());
+                    ImGui::Text("SID %.0f / SDD %.0f mm | %d views (%d / turn)",preset.sid_mm,preset.sdd_mm,preset.views,preset.views_per_turn);
+                    ImGui::Text("Detector %d x %d | %.3f x %.3f mm | %s + Hann",preset.detector_u,preset.detector_v,preset.pixel_u_mm,preset.pixel_v_mm,preset.reconstruction.c_str());
+                    if(preset.pitch_mm_per_turn>0)ImGui::Text("Travel %.0f mm / turn | start Z %.0f mm",preset.pitch_mm_per_turn,preset.start_z_mm);
+                    ImGui::TextWrapped("120 kVp, 2 mm Al. Noise and scatter off. Generate applies ALL setup parameters.");
+                    ImGui::BeginChild("Phantom fields",{0,-110},true);
+                    std::string group;
+                    for(auto& parameter:example_parameters){
+                        if(group!=parameter.group){group=parameter.group;ImGui::SeparatorText(group.c_str());}
+                        ImGui::PushID(parameter.id.c_str());
+                        ImGui::SetNextItemWidth(150);
+                        if(parameter.integer){int value=int(parameter.value);if(ImGui::InputInt(parameter.name.c_str(),&value))parameter.value=value;}
+                        else ImGui::InputDouble(parameter.name.c_str(),&parameter.value,0,0,"%.3f");
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    if(!example_error.empty()){ImGui::TextWrapped("%s",example_error.c_str());}
+                    if(ImGui::Button("Generate and load",{170,32})){create_example=true;example_error.clear();}
+                    ImGui::SameLine();
+                    if(ImGui::Button("Restore defaults"))chooseExample(example_index);
+                    ImGui::SameLine();
+                    if(ImGui::Button("Cancel"))example_window=false;
                     ImGui::EndDisabled();
                 }
                 ImGui::End();
@@ -325,29 +418,20 @@ namespace {
                 }
                 draw_content();ImGui::EndChild();
             };
-            if (ImGui::BeginTabBar("Settings")) {
-                if (ImGui::BeginTabItem("Scan",nullptr,requested_settings==0?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
-                    body([&]{scan();});
-                    ImGui::EndTabItem();
+            ImGui::SeparatorText(page_labels[active_settings]);
+            ImGui::PushID(active_settings);
+            body([&]{
+                switch(active_settings){
+                    case 0:scan();break;
+                    case 1:volume();break;
+                    case 2:energy();break;
+                    case 3:effects();break;
+                    case 4:reconstruction();break;
+                    case 5:results(view);break;
+                    case 6:preparation(enabled);break;
                 }
-                if (ImGui::BeginTabItem("Volume",nullptr,requested_settings==1?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
-                    body([&]{volume();});
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Spectrum",nullptr,requested_settings==2?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
-                    body([&]{energy();});
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Effects",nullptr,requested_settings==3?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)) {
-                    body([&]{effects();});
-                    ImGui::EndTabItem();
-                }
-                const auto recon_flags=!view.hasReconstruction() && (std::getenv("YK_IMGUI_RECON_SMOKE")||std::getenv("YK_IMGUI_CHAIN_SMOKE"))?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None;
-                if(ImGui::BeginTabItem("Recon",nullptr,requested_settings==4?ImGuiTabItemFlags_SetSelected:recon_flags)){body([&]{reconstruction();});ImGui::EndTabItem();}
-                if(ImGui::BeginTabItem("Results",nullptr,(select_results||requested_settings==5)?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None)){body([&]{results(view);});ImGui::EndTabItem();}
-                select_results=false;requested_settings=-1;
-                ImGui::EndTabBar();
-            }
+            });
+            ImGui::PopID();
             const float action_width=(ImGui::GetContentRegionAvail().x-ImGui::GetStyle().ItemSpacing.x)/2;
             if (ImGui::Button("Calculate all views", { action_width, 38 })) calculate = true;
             ImGui::SameLine();
@@ -412,6 +496,7 @@ namespace {
             ImGui::Text("Drag 3D view to rotate. B: beam, T: trajectory.");
             ImGui::End();
             }
+            log_panel.draw(status,width,height);
         }
     };
 }
@@ -459,8 +544,25 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             const auto window=view.reconstructionWindow();ui.viewer.window_low=window[0];ui.viewer.window_high=window[1];
             view.setImageDrawer(true);ui.drawer_open=true;ui.drawer_changed=false;ui.result_mode=1;ui.select_image_page=true;ui.result_changed=false;ui.select_results=true;jobs.recordReconstruction(config);
         };
+        auto prepareCalibration=[&](SimulationConfig config,bool include_geometry){
+            calibration::PrepareContext context;
+            context.geometry=include_geometry && ui.prepare_geometry;
+            if(context.geometry)context.fitted_geometry=ui.calibration_data.corrected;
+            view.setEditingEnabled(false);view.setStatus("PrepareCalibrate: preparing resources...");
+            auto task=std::async(std::launch::async,[config=std::move(config),context]()mutable{
+                calibration::PrepareData data{std::move(config)};
+                calibration::PrepareCalibrateStage stage;stage.process(data,context);return data.config;
+            });
+            while(task.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready){view.pollGui();std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+            auto prepared=task.get();
+            ui.prepared_resources=prepared;
+            view.setEditingEnabled(true);
+            return prepared;
+        };
         auto runReconstruction=[&](const SimulationConfig& projection_config, const char* output_suffix="") {
-            auto checked=SimulationJobs::reconstructionConfig(projection_config,ui.draft,output_suffix);
+            auto reconstruction_settings=ui.draft;
+            ui::ReconstructionPanel::useBuiltinResources(reconstruction_settings);
+            auto checked=SimulationJobs::reconstructionConfig(projection_config,reconstruction_settings,output_suffix);
             view.setEditingEnabled(false);view.setStatus("Running reconstruction...");
             ui.reconstruction_running=true;ui.progress_completed=ui.progress_total=0;
             jobs.startReconstruction(checked);
@@ -534,10 +636,11 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         bool success = true; // Closing a loaded setup without calculating is normal.
         const bool smoke = std::getenv("YK_IMGUI_SMOKE") != nullptr;
         const bool chain_smoke=std::getenv("YK_IMGUI_CHAIN_SMOKE")!=nullptr;
+        if(chain_smoke)ui.log_panel.open=true;
         const bool calibration_smoke=std::getenv("YK_IMGUI_CALIBRATION_SMOKE")!=nullptr;
         ui.calculate = smoke || chain_smoke || calibration_smoke;
         if(calibration_smoke){
-            ui.calibration_window=true;
+            ui.requested_settings=6;
             auto& g=ui.draft.geometry.parameters;
             g.reconstruction_volume_x=g.reconstruction_volume_y=256;g.reconstruction_volume_z=320;
             g.reconstruction_voxel_x_mm=g.reconstruction_voxel_y_mm=g.reconstruction_voxel_z_mm=.6;
@@ -638,10 +741,12 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                     const auto output=ui::chooseFile(true,L"Water BHC table\0*.toml\0All files\0*.*\0\0");
                     if(!output.empty()){
                         view.setEditingEnabled(false);view.setStatus("Calibrating water BHC; writing reusable correction table...");
-                        auto task=std::async(std::launch::async,[config=ui.draft,output]{return calibration::calibrateWaterBhc(config,output);});
+                        auto calibration_config=ui.draft;
+                        if(ui.calibration_water)calibration_config.reconstruction.preprocessing.beam_hardening=*ui.calibration_water;
+                        auto task=std::async(std::launch::async,[config=std::move(calibration_config),output]{return calibration::calibrateWaterBhc(config,output);});
                         while(task.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready){view.pollGui();std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-                        ui.draft.reconstruction.preprocessing.beam_hardening=task.get();
-                        view.setEditingEnabled(true);view.setStatus("Water BHC table saved and selected: "+output.string());
+                        ui.calibration_water=task.get();
+                        view.setEditingEnabled(true);view.setStatus("Water BHC table saved (not applied to reconstruction): "+output.string());
                     }
                 }
                 if(ui.reconstruct){ui.reconstruct=false;
@@ -650,29 +755,37 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                     if(computed_config && config.reconstruction.input_projection_file.lexically_normal()==computed_config->projection.output_file.lexically_normal())config.geometry=computed_config->geometry;
                     runReconstruction(config);
                 }
-                if(ui.load_geometry_correction){
-                    ui.load_geometry_correction=false;
-                    const auto table=ui::chooseFile(false,L"Geometry correction table\0*.toml\0All files\0*.*\0\0");
-                    if(!table.empty()){
-                        auto input=ui.draft;
-                        auto& source=input.reconstruction.input_projection_file;
-                        if(source.empty() && computed_config)source=computed_config->projection.output_file;
-                        if(source.empty())throw std::runtime_error("Select a reconstruction input projection before loading geometry correction");
-                        if(computed_config && source.lexically_normal()==computed_config->projection.output_file.lexically_normal())input.geometry=computed_config->geometry;
-                        // The calibration workflow names derived outputs from its input projection,
-                        // including externally acquired projections; never change the simulation draft.
-                        input.projection.output_file=source;
-                        const auto corrected=calibration::loadGeometryCorrection(table,input.geometry,ui.calibration_context.maximum_rmse_px);
-                        ui.calibration_data={};ui.calibration_data.corrected=corrected;
-                        ui.calibration_input=input;ui.calibration_context.nominal=calibration::nominalGeometry(input.geometry);
-                        ui.calibration_message="Loaded correction table: "+table.string();
+                if(ui.prepare_selected){
+                    ui.prepare_selected=false;
+                    auto calibration_config=ui.draft;
+                    if(ui.calibration_water){
+                        auto& pp=calibration_config.reconstruction.preprocessing;
+                        pp.enabled=true;pp.beam_hardening=*ui.calibration_water;
+                        pp.beam_hardening.calibration_file.clear();pp.beam_hardening.fit_from_water_plate=true;
+                    }
+                    prepareCalibration(std::move(calibration_config),false);
+                    if(ui.prepare_geometry)ui.calibrate_geometry=true;
+                    ui.message="Calibration resources prepared separately. Reconstruction settings are unchanged.";
+                }
+                if(ui.save_geometry_correction){
+                    ui.save_geometry_correction=false;
+                    if(!ui.calibration_data.corrected || !ui.calibration_data.result)throw std::runtime_error("Complete a valid calibration first");
+                    const auto file=chooseFile(true,L"Geometry calibration\0*.toml\0All files\0*.*\0\0");
+                    if(!file.empty()){
+                        calibration::saveGeometryCorrection(file,*ui.calibration_data.corrected,ui.calibration_data.result->joint_rmse_px);
+                        ui.calibration_message="Saved calibration: "+file.string();
                     }
                 }
                 if(ui.calibrate_geometry){
                     ui.calibrate_geometry=false;ui.calibration_data={};ui.calibration_input.reset();ui.calibration_message.clear();
-                    if(!ui.known_example_id.empty() && ui.known_example_id.rfind("bead-",0)!=0)
+                    if(ui.calibration_source==0 && ui.known_example_id.rfind("bead-",0)!=0)
                         throw std::runtime_error("Choose a bead calibration phantom, not a water cylinder.");
-                    auto input=computed_config?*computed_config:ui.draft;
+                    if(ui.calibration_source==0 && !computed_config)throw std::runtime_error("Generate calibration projections first");
+                    auto input=ui.calibration_source==0?*computed_config:ui.draft;
+                    if(ui.calibration_source==1){
+                        if(ui.calibration_projection.empty())throw std::runtime_error("Select calibration projections first");
+                        input.projection.output_file=ui.calibration_projection;
+                    }
                     auto context=ui.calibration_context;const auto& g=input.geometry.parameters;
                     context.full_circle=input.geometry.kind==GeometryKind::FlatCbct && g.views==g.views_per_turn;
                     if(!context.full_circle)throw std::runtime_error("Calibration requires a single full circular flat scan");
@@ -694,15 +807,10 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                     }
                     ui.calibration_data=task.get();ui.calibration_input=input;
                     ui.calibration_context=context;
-                    const auto report=std::filesystem::path(input.projection.output_file.string()+".geometry-calibration.json");
-                    cbct::calibration::writeCalibrationJson(report,*ui.calibration_data.result);
-                    ui.calibration_message="Report: "+report.string();
-                    try{calibration::GeometryCorrectionStage correction;correction.process(ui.calibration_data,context);ui.calibration_data.domain=correction.contract().output_domain;
-                        const auto table=std::filesystem::path(input.projection.output_file.string()+".geometry-correction.toml");
-                        calibration::saveGeometryCorrection(table,*ui.calibration_data.corrected,ui.calibration_data.result->joint_rmse_px);
-                        ui.calibration_message+=" | Correction table: "+table.string();}
-                    catch(const std::exception& e){ui.calibration_message+=" | ";ui.calibration_message+=e.what();}
-                    view.setEditingEnabled(true);view.setStatus("Geometry calibration finished. Review the fit before reconstruction.");
+                    ui.calibration_message="Fit complete. Result retained in memory.";
+                    try{calibration::GeometryCorrectionStage correction;correction.process(ui.calibration_data,context);ui.calibration_data.domain=correction.contract().output_domain;}
+                    catch(const std::exception& e){ui.calibration_message+=" ";ui.calibration_message+=e.what();}
+                    view.setEditingEnabled(true);view.setStatus("Geometry calibration finished. Review or export the fit; reconstruction settings are unchanged.");
                     if(calibration_smoke){
                         std::cout<<"calibration_rmse_px="<<ui.calibration_data.result->joint_rmse_px<<" converged="<<ui.calibration_data.result->joint_converged<<std::endl;
                         if(!ui.calibration_data.corrected)throw std::runtime_error(ui.calibration_message);
@@ -734,7 +842,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                     }else file=chooseFile(false, L"Configuration\0*.toml\0All files\0*.*\0\0");
                     if (generated || !file.empty()) {
                         auto loaded = generated ? generated->config : loadConfig(file, false);
-                        if(generated){builtin_grid=loaded.geometry.parameters;builtin_labels=std::move(generated->labels);}
+                        if(generated){builtin_grid=loaded.geometry.parameters;builtin_labels=std::move(generated->labels);loaded.reconstruction.preprocessing.enabled=true;loaded.reconstruction.preprocessing.beam_hardening.enabled=true;loaded.reconstruction.preprocessing.beam_hardening.order=5;loaded.reconstruction.preprocessing.beam_hardening.fit_from_water_plate=true;}
                         else builtin_labels.clear();
                         if (loaded.geometry.kind == GeometryKind::CylCbct || loaded.geometry.kind == GeometryKind::CylHelical)
                             throw std::runtime_error("Choose one of the four flat-detector scans");
@@ -827,6 +935,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                         chain.reconstruction.input_projection_file=checked.projection.output_file;
                         chain.workflow.mode=WorkflowMode::ProjectAndReconstruct;
                         chain.visualization.interactive=false;
+                        ui::ReconstructionPanel::useBuiltinResources(chain);
                         normalizeConfig(chain);validateConfig(chain);validateRuntimeInputs(chain);
                     }
                     SpectralTransmissionModel model(checked.projection.materials, spectrum, attenuation, checked.projection.detector_response);
@@ -873,7 +982,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                 }
             } catch (const std::exception& e) {
                 ui.message = e.what();
-                if(ui.calibration_window)ui.calibration_message=e.what();
+                ui.calibration_message=e.what();
                 view.setEditingEnabled(true);
                 view.setStatus("Operation failed. See the message above.");
                 if (smoke || calibration_smoke) {
@@ -891,16 +1000,22 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
 }
 bool launchImGuiProjection(const std::filesystem::path& config_file,std::string& error) {
     try {
-        const auto file=config_file.empty()?chooseFile(false,L"Configuration\0*.toml\0All files\0*.*\0\0"):config_file;
-        if(file.empty()) return true;
-        auto config=loadConfig(file,false);
+        std::optional<examples::ExampleResult> builtin;
+        if(config_file.empty()) {
+            const auto stamp=std::chrono::system_clock::now().time_since_epoch().count();
+            examples::ExampleRequest request{std::filesystem::current_path()/"out"/"examples"/("water-circle-"+std::to_string(stamp))};
+            builtin=examples::clientExamples().create("water-circle")->generate(request);
+        }
+        auto config=builtin?builtin->config:loadConfig(config_file,false);
+        if(builtin){config.reconstruction.preprocessing.enabled=true;config.reconstruction.preprocessing.beam_hardening.enabled=true;config.reconstruction.preprocessing.beam_hardening.order=5;config.reconstruction.preprocessing.beam_hardening.fit_from_water_plate=true;}
         if(config.geometry.kind==GeometryKind::CylCbct||config.geometry.kind==GeometryKind::CylHelical)
             throw std::runtime_error("Choose one of the four flat-detector scan types");
         config.visualization.enabled=true;
         config.visualization.interactive=true;
         config.visualization.offscreen=false;
         config.visualization.hold_open=true;
-        return runImGuiProjection(config,config.projection.output_file,error);
+        return runImGuiProjection(config,config.projection.output_file,error,
+            builtin?&builtin->labels:nullptr,builtin?"water-circle":"");
     } catch(const std::exception& e) {error=e.what();return false;}
 }
 

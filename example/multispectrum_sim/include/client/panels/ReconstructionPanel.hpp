@@ -5,15 +5,36 @@
 namespace yk::spectral::ui {
 // Edits configuration and returns user intent; owns no computation, file cache or VTK state.
 struct ReconstructionPanel {
+    // UI policy: external calibration artifacts remain in the calibration workflow.
+    // Apply to the job snapshot as well, including configurations loaded from TOML.
+    static void useBuiltinResources(SimulationConfig& config)
+    {
+        auto& r=config.reconstruction;
+        if(!r.geometry_override.calibration_file.empty()){
+            r.geometry_override.enabled=false;
+            r.geometry_override.calibration_file.clear();
+        }
+        auto& bh=r.preprocessing.beam_hardening;
+        if(!bh.calibration_file.empty()){
+            bh.calibration_file.clear();
+            bh.fit_from_water_plate=true;
+        }
+        if(r.bone_hardening.method=="two_material_lut")r.bone_hardening.enabled=false;
+    }
+
     static void geometry(SimulationConfig& draft, bool& initialized)
     {
         auto& custom = draft.reconstruction.geometry_override;
-        if (ImGui::Checkbox("Use independent geometry", &custom.enabled) && custom.enabled && !initialized) {
-            custom.parameters = draft.geometry.parameters;
-            initialized = true;
+        if(!custom.calibration_file.empty()){
+            ImGui::TextWrapped("Imported calibration file is inactive in this UI. Reconstruction uses scan geometry.");
+            custom.enabled=false;
         }
-        if (!custom.enabled)
-            return;
+        int mode=custom.enabled?1:0;
+        if(ImGui::Combo("Geometry source",&mode,"Scan geometry\0Manual geometry\0")){
+            custom.enabled=mode==1;custom.calibration_file.clear();
+            if(custom.enabled && !initialized){custom.parameters=draft.geometry.parameters;initialized=true;}
+        }
+        if(!custom.enabled)return;
         ImGui::Spacing();
         if (ImGui::Button("Copy scan geometry")) {
             custom.parameters = draft.geometry.parameters;
@@ -264,10 +285,11 @@ struct ReconstructionPanel {
             auto& bh = pp.beam_hardening;
             ImGui::Checkbox("Beam hardening correction", &bh.enabled);
             if (bh.enabled) {
-                pathInput("Water BHC table", bh.calibration_file, L"Water BHC table\0*.toml\0All files\0*.*\0\0");
-                ImGui::TextWrapped("Correction loads a saved calibration. Generating a table is a separate task; selected table coefficients and reference override the recipe below.");
-                if(ImGui::Button("Generate water BHC table...")) calibrate_water=true;
-                ImGui::Checkbox("Water calibration recipe", &bh.fit_from_water_plate);
+                if(!bh.calibration_file.empty()){
+                    bh.calibration_file.clear();bh.fit_from_water_plate=true;
+                }
+                ImGui::TextWrapped("Uses built-in coefficients or fits from the current spectrum. Calibration files are not required.");
+                ImGui::Checkbox("Fit from current spectrum", &bh.fit_from_water_plate);
                 integer("Polynomial order", bh.order);
                 number("Clamp min", bh.clamp_min);
                 number("Clamp max", bh.clamp_max);
@@ -340,17 +362,22 @@ struct ReconstructionPanel {
     static void boneCorrection(SimulationConfig& draft)
     {
         auto& b=draft.reconstruction.bone_hardening;
+        if(b.method=="two_material_lut"){
+            b.enabled=false;
+            ImGui::TextWrapped("Imported 2D BHC table is inactive. Select a built-in physical model to use bone correction.");
+        }
         if(ImGui::Checkbox("Enable bone correction (experimental)",&b.enabled) && b.enabled){
             auto& pp=draft.reconstruction.preprocessing;
             if(!pp.beam_hardening.enabled){pp.beam_hardening.enabled=true;pp.beam_hardening.fit_from_water_plate=true;}
             pp.enabled=true;
             if(pp.beam_hardening.reference_energy_keV<=0)pp.beam_hardening.reference_energy_keV=70;
         }
-        if(!b.enabled)return;
+        if(!b.enabled && b.method!="two_material_lut")return;
         const char* values[]={"physical_after_water","physical_before_water","two_material_lut"};
-        int selected=b.method==values[2]?2:b.method==values[1]?1:0;
+        int selected=b.method==values[2]?-1:b.method==values[1]?1:0;
         ImGui::SetNextItemWidth(-1);
-        if(ImGui::Combo("##Bone method",&selected,"Physical model after water BHC\0Physical model before water BHC\0Two-material LUT before water BHC\0"))b.method=values[selected];
+        if(ImGui::Combo("##Bone method",&selected,"Physical model after water BHC\0Physical model before water BHC\0")){b.method=values[selected];}
+        if(!b.enabled || selected<0)return;
         ImGui::TextWrapped(selected==0?
             "Water correction -> initial reconstruction -> bone model correction -> reconstruction. Water BHC is not repeated.":
             "Scatter-corrected log -> bone correction -> reconstruction. Water BHC is used only to initialize segmentation.");
@@ -359,11 +386,7 @@ struct ReconstructionPanel {
                 "Preprocessing is off: input must already be scatter-corrected log before water BHC.");
         integer("Bone correction rounds",b.max_iterations);
         number("Air threshold (HU)",b.air_threshold_hu);number("Bone threshold (HU)",b.bone_threshold_hu);
-        if(selected==2){
-            pathInput("Two-material calibration",b.calibration_file,L"Calibration\0*.json\0All files\0*.*\0\0");
-            number("Equivalent bone thickness scale",b.bone_thickness_scale);
-            ImGui::TextWrapped("Calibration must declare a matching reference energy and equivalent bone thickness basis. LUT replaces water BHC on the final projection.");
-        }else{
+        {
             if(b.max_iterations>1)number("Stop ratio",b.stop_ratio);
             static VolumePanel soft_picker,bone_picker;
             ImGui::PushID("bone-soft");ImGui::TextUnformatted("Soft tissue model");soft_picker.builtinPicker(b.soft_material);

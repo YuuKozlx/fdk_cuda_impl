@@ -1,6 +1,6 @@
 # 标定产物格式与读取
 
-本文描述当前实现，流程与 Stage 关系见 [架构说明](ARCHITECTURE.zh-CN.md)。标定产物是可复用的校正资源，不是扫描任务 TOML，也不是诊断图片或结果报告。正常校正读取资源，不隐式重新标定。
+本文描述当前实现，流程与 Stage 关系见 [架构说明](ARCHITECTURE.zh-CN.md)。标定产物是可复用的校正资源，不是扫描任务 TOML，也不是诊断图片或结果报告。资源也可由 PrepareCalibrate 在内存准备并交给校正，文件不是运行前提。
 
 ## 格式总览
 
@@ -90,17 +90,17 @@ calibration_file = "calibration/air-water-hu.toml"
 
 ## 几何校正
 
-`saveGeometryCorrection(path, geometry, rmse_px)` 保存；`loadGeometryCorrection(path, acquisition, max_rmse)` 加载。UI 的几何标定窗口可加载 `.geometry-correction.toml`，用于校正几何重建；该文件独立于详细诊断 JSON。
+`saveGeometryCorrection(path, geometry, rmse_px)` 保存；`loadGeometryCorrection(path, acquisition, max_rmse)` 加载。UI 的几何标定窗口只导出 `.geometry-correction.toml`，当前不自动接入重建；该文件独立于详细诊断 JSON。
 
 所有字段位于 TOML 顶层：
 
-- 固定标识：`format="circular_geometry_correction"`、`version=1`、`length_unit="mm"`、`angle_unit="rad"`、`coordinate_frame="calibrated_scanner"`。
+- 固定标识：`format="circular_geometry_correction"`、`version=1`、`length_unit="mm"`、`angle_unit="deg"`（读取旧表仍支持 `rad`）、`coordinate_frame="calibrated_scanner"`。
 - 采集与质量：`rmse_px`、`views`、`detector_u/v`、`pixel_u_mm/v_mm`、`rotation_direction`。
-- 11 个几何量：`sid_mm`、`sdd_mm`、`offset_u_mm`、`offset_v_mm`、`offset_n_mm`、`tilt_u_rad`、`tilt_v_rad`、`tilt_n_rad`、`source_offset_x_mm/y_mm/z_mm`。
+- 11 个几何量：`sid_mm`、`sdd_mm`、`offset_u_mm`、`offset_v_mm`、`offset_n_mm`、`tilt_u_deg`、`tilt_v_deg`、`tilt_n_deg`、`source_offset_x_mm/y_mm/z_mm`。
 
 仅支持整周平板圆扫描。读取时检查视角数、探测器尺寸、像素间距及 RMSE 上限；保留当前重建网格，使用标定扫描坐标系（起始角、起始 Z 和模体姿态清零）。它不是对任意扫描通用的逐帧轨迹文件。
 
-目前不存在扫描 TOML 的通用 `geometry.calibration_file` 自动加载字段。通过 UI/API 读取后得到具体几何，再由重建入口使用；保存扫描配置时保存的是相应参数。
+正常重建可设置 `[reconstruction.geometry]` 下的 `enabled=true` 和 `calibration_file="...toml"`，路径随扫描配置保存，并在重建开始时验证和加载。上述配置适用于命令行/库 API。当前 UI 的 Calibrate 页只进行标定和导出，标定结果与文件不自动接入 UI 重建。
 
 ## 双材料 BHC LUT
 

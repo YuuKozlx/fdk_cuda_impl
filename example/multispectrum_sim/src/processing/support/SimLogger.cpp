@@ -22,6 +22,16 @@ SimLogger& SimLogger::instance()
 void SimLogger::info(const std::string& message)
 {
     logger_->info(message);
+    std::lock_guard<std::mutex> lock(mutex_);
+    recent_.emplace_back(++sequence_,message.substr(0,4096));
+    while(recent_.size()>1024)recent_.pop_front();
+}
+std::vector<SimLogger::Entry> SimLogger::readSince(std::uint64_t sequence) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Entry> result;
+    for(const auto& entry:recent_)if(entry.first>sequence)result.push_back(entry);
+    return result;
 }
 
 }

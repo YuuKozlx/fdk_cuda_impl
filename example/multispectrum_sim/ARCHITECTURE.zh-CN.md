@@ -38,7 +38,7 @@ Stage 为头文件契约；显存池、图像运算、自适应散射直接编�
 
 ## 标定边界
 
-标定独立生产校正资源，执行链只加载应用，不隐式重新拟合。水 BHC、HU 和几何表 I/O 位于 `input/calibration`；双材料与 EBHC 专用拟合靠近对应业务。水 BHC 标定任务当前仍使用扫描 TOML，并未提供独立任务配置。
+库层的 PrepareCalibrate 在前处理前生产或加载校正资源，资源可留在内存，保存文件为可选操作；像素校正阶段不负责拟合。当前 UI 的 Calibrate 工作区单独保存标定状态，不向重建自动传递表或几何；UI 重建保留内置水 BHC 拟合，暂不使用几何、BHC 和双材料外部标定文件。水 BHC、HU 和几何表 I/O 位于 `input/calibration`；双材料与 EBHC 专用拟合靠近对应业务。水 BHC 标定任务当前仍使用扫描 TOML，并未提供独立任务配置。
 
 资源保留各自类型、格式和验证规则。空气 RAW 尚无完整采集元数据，表与扫描条件匹配仍需使用者保证。文件结构、适用范围及缓存规则集中在[标定产物文档](CALIBRATION-ARTIFACTS.zh-CN.md)，这里不重复列字段。
 
@@ -53,7 +53,8 @@ flowchart TB
     Client[CLI / ImGui] --> Config[统一配置与输入校验]
     Config --> FP[前投仿真]
     External[外部投影] --> Pre[投影预处理]
-    FP --> Pre
+    FP --> Prepare[PrepareCalibrate 内存准备或读表]
+    Prepare --> Pre
     Pre --> Recon[重建作业]
     Recon --> Post[体积后处理]
     Post --> Output[保存与显示]
@@ -64,7 +65,7 @@ flowchart TB
     Tables -.HU 校正.-> Post
 ```
 
-标定生产可复用的资源，执行链读取资源。两者可复用物理模型、图像算子、Eigen 求解和数据接口，但正常执行不能隐式重新标定。水 BHC、几何和 HU 的文件读写在 `input/calibration`；双材料和 EBHC 的专用拟合靠近对应业务，仍在 `recon/preprocess/calibration`。这不是所有标定都已集中为同一个 UI 工作台。
+标定生产可复用的资源，执行链读取资源。两者复用物理模型、图像算子、Eigen 求解和数据接口。带水板拟合配方的重建在准备阶段拟合；前处理本身保持只消费资源。水 BHC、几何和 HU 的文件读写在 `input/calibration`；双材料和 EBHC 的专用拟合靠近对应业务，仍在 `recon/preprocess/calibration`。这不是所有标定都已集中为同一个 UI 工作台。
 
 ### 前投
 

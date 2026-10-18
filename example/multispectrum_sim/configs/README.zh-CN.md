@@ -18,8 +18,7 @@ total/primary 模板、校正标定条件及几何转换边界。
 
 ## 水 BHC 标定准备
 
-带 `fit_from_water_plate = true` 的配置包含标定配方，正式重建不会再自动拟合。
-先生成一次校正表，再运行命令输出的 `.config.toml`：
+带 `fit_from_water_plate = true` 的配置包含标定配方，重建会在 PrepareCalibrate 阶段拟合并将系数留在内存，前处理随后应用。也可提前导出校正表供多次任务复用：
 
 ```powershell
 multispectrum_sim.exe --calibrate-water-bhc <扫描配置.toml> <输出目录/water.bhc.toml>
