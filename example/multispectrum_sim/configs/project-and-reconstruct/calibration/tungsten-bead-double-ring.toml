@@ -3,8 +3,8 @@
 schema_version = 2
 
 [geometry]
-detector_u = 1024
-detector_v = 256
+detector_u = 512
+detector_v = 512
 kind = 'flat_cbct'
 nikon_tilt_axis_azimuth_rad = 0.0
 nikon_tilt_rad = 0.0
@@ -18,12 +18,12 @@ phantom_rotation_x_rad = 0.0174532925199433
 phantom_rotation_y_rad = 0.0349065850398866
 phantom_rotation_z_rad = 0.0523598775598299
 pitch_mm_per_turn = 0.0
-pixel_u_mm = 0.417
-pixel_v_mm = 1.668
+pixel_u_mm = 0.834
+pixel_v_mm = 0.834
 planar_detector_y_mm = 330.0
 planar_resample_mode = 'perspective_orthogonal'
-reconstruction_detector_u = 1024
-reconstruction_detector_v = 1024
+reconstruction_detector_u = 512
+reconstruction_detector_v = 512
 reconstruction_offset_x_mm = 0.0
 reconstruction_offset_y_mm = 0.0
 reconstruction_offset_z_mm = 0.0

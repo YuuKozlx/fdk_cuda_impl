@@ -64,7 +64,7 @@ namespace {
                 return { "Water / helical / 2 turns", GeometryKind::FlatHelical, 720, 360, 1024, 256, 709, 1143, .4, .8, 40, -40, "wfbp" };
             if (model_ == Model::WaterCircle)
                 return { "Water / circular / 360 degrees", GeometryKind::FlatCbct, 360, 360, 1024, 256, 709, 1143, .4, 1.6, 0, 0, "fdk" };
-            return { "Geometry calibration / circular / 360 degrees", GeometryKind::FlatCbct, 360, 360, 1024, 256, 440, 770, .417, 1.668, 0, 0, "fdk" };
+            return { "Geometry calibration / circular / 360 degrees", GeometryKind::FlatCbct, 360, 360, 512, 512, 440, 770, .834, .834, 0, 0, "fdk" };
         }
         std::vector<Parameter> parameters() const override
         {
