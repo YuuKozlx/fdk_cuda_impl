@@ -113,12 +113,14 @@ int main()
         require(rejectsContext(), "spiral accepted nonfinite tracking settings");
         GeometrySpec corrected;corrected.kind=GeometryKind::FlatCbct;
         auto& g=corrected.parameters;g.views=36;g.views_per_turn=36;g.detector_u=64;g.detector_v=48;
+        g.tilt_u_rad=.03;g.tilt_v_rad=-.07;g.tilt_n_rad=.11;
         g.pixel_u_mm=.6;g.pixel_v_mm=.8;g.sid_mm=709;g.sdd_mm=1143;g.offset_u_mm=2;g.start_z_mm=g.start_angle_rad=0;
         const auto table=std::filesystem::current_path()/"geometry-correction-test.toml";
         calibration::saveGeometryCorrection(table,corrected,.2);
         auto acquisition=corrected;acquisition.parameters.reconstruction_volume_x=512;
         auto loaded=calibration::loadGeometryCorrection(table,acquisition);
         require(loaded.parameters.offset_u_mm==2 && loaded.parameters.reconstruction_volume_x==512,"geometry resource changed grid or lost correction");
+        require(std::abs(loaded.parameters.tilt_u_rad-.03)<1e-12 && std::abs(loaded.parameters.tilt_v_rad+.07)<1e-12 && std::abs(loaded.parameters.tilt_n_rad-.11)<1e-12,"degree geometry table changed detector orientation");
         acquisition.parameters.detector_u++;
         bool mismatch=false;try{calibration::loadGeometryCorrection(table,acquisition);}catch(const std::exception&){mismatch=true;}
         require(mismatch,"geometry table accepted mismatched detector");

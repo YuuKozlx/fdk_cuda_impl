@@ -41,6 +41,7 @@ void writeCalibrationJson(const std::filesystem::path& path,
         throw std::invalid_argument("Invalid calibration report tracking arrays");
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot create calibration report: " + path.string());
+    constexpr double degrees=57.2957795130823208768;
     out << std::setprecision(12) << "{\n"
         << "  \"model\": \"" << result.model << "\",\n"
         << "  \"machine\": {\n"
@@ -48,16 +49,16 @@ void writeCalibrationJson(const std::filesystem::path& path,
         << "    \"sdd_mm\": " << result.machine.sdd_mm << ",\n"
         << "    \"offset_u_mm\": " << result.machine.offset_u_mm << ",\n"
         << "    \"offset_v_mm\": " << result.machine.offset_v_mm << ",\n"
-        << "    \"tilt_u_rad\": " << result.machine.tilt_u_rad << ",\n"
-        << "    \"tilt_v_rad\": " << result.machine.tilt_v_rad << ",\n"
-        << "    \"tilt_n_rad\": " << result.machine.tilt_n_rad << ",\n"
+        << "    \"tilt_u_deg\": " << result.machine.tilt_u_rad * degrees << ",\n"
+        << "    \"tilt_v_deg\": " << result.machine.tilt_v_rad * degrees << ",\n"
+        << "    \"tilt_n_deg\": " << result.machine.tilt_n_rad * degrees << ",\n"
         << "    \"source_offset_mm\": [0, 0, 0],\n"
         << "    \"offset_n_mm\": 0\n"
         << "  },\n"
-        << "  \"phantom_rotation_vector_rad\": ["
-        << result.phantom_rotation_vector_rad.x() << ", "
-        << result.phantom_rotation_vector_rad.y() << ", "
-        << result.phantom_rotation_vector_rad.z() << "],\n"
+        << "  \"phantom_rotation_vector_deg\": ["
+        << result.phantom_rotation_vector_rad.x() * degrees << ", "
+        << result.phantom_rotation_vector_rad.y() * degrees << ", "
+        << result.phantom_rotation_vector_rad.z() * degrees << "],\n"
         << "  \"phantom_translation_mm\": ["
         << result.phantom_translation_mm.x() << ", "
         << result.phantom_translation_mm.y() << ", "

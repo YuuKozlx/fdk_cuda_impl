@@ -1,3 +1,4 @@
+#include "input/config/AngleConfig.hpp"
 #include "input/config/ReconstructionGeometry.hpp"
 #include "recon/geometry/GeometryCalibrationStage.hpp"
 #include <cmath>
@@ -23,11 +24,11 @@ void saveGeometryCorrection(const std::filesystem::path& path, const GeometrySpe
 {
     valid(s, rmse);
     const auto& g = s.parameters;
-    toml::table t { { "format", "circular_geometry_correction" }, { "version", 1 }, { "length_unit", "mm" }, { "angle_unit", "rad" },
+    toml::table t { { "format", "circular_geometry_correction" }, { "version", 1 }, { "length_unit", "mm" }, { "angle_unit", "deg" },
         { "coordinate_frame", "calibrated_scanner" }, { "rmse_px", rmse }, { "views", g.views }, { "detector_u", g.detector_u },
         { "detector_v", g.detector_v }, { "pixel_u_mm", g.pixel_u_mm }, { "pixel_v_mm", g.pixel_v_mm }, { "rotation_direction", g.rotation_direction } };
     for (const auto& field : reconstructionGeometryFields())
-        t.insert(field.key, g.*field.member);
+        t.insert(field.angle ? config_detail::degreeKey(field.key) : std::string(field.key), (g.*field.member) * (field.angle ? config_detail::degrees_per_radian : 1.));
     if (!path.parent_path().empty())
         std::filesystem::create_directories(path.parent_path());
     std::ofstream f(path);
@@ -38,7 +39,7 @@ void saveGeometryCorrection(const std::filesystem::path& path, const GeometrySpe
 GeometrySpec loadGeometryCorrection(const std::filesystem::path& path, const GeometrySpec& acquisition, double max_rmse)
 {
     auto t = toml::parse_file(path.string());
-    if (t["format"].value_or(std::string{}) != "circular_geometry_correction" || t["version"].value_or(0) != 1 || t["length_unit"].value_or(std::string{}) != "mm" || t["angle_unit"].value_or(std::string{}) != "rad" || t["coordinate_frame"].value_or(std::string{}) != "calibrated_scanner")
+    if (t["format"].value_or(std::string{}) != "circular_geometry_correction" || t["version"].value_or(0) != 1 || t["length_unit"].value_or(std::string{}) != "mm" || (t["angle_unit"].value_or(std::string{}) != "rad" && t["angle_unit"].value_or(std::string{}) != "deg") || t["coordinate_frame"].value_or(std::string{}) != "calibrated_scanner")
         throw std::runtime_error("Unsupported geometry correction format/frame/units");
     auto number = [&](const char* key) {auto v=t[key].value<double>();if(!v || !std::isfinite(*v))throw std::runtime_error(std::string("Invalid geometry correction field: ")+key);return *v; };
     if(acquisition.kind!=GeometryKind::FlatCbct || acquisition.parameters.views!=acquisition.parameters.views_per_turn)
@@ -51,7 +52,13 @@ GeometrySpec loadGeometryCorrection(const std::filesystem::path& path, const Geo
     if (number("views") != g.views || number("detector_u") != g.detector_u || number("detector_v") != g.detector_v || std::abs(number("pixel_u_mm") - g.pixel_u_mm) > 1e-9 || std::abs(number("pixel_v_mm") - g.pixel_v_mm) > 1e-9)
         throw std::runtime_error("Geometry calibration does not match acquisition dimensions/pixel size");
     for (const auto& field : reconstructionGeometryFields())
-        g.*field.member = number(field.key);
+        {
+        if(field.angle){
+            const auto key=t["angle_unit"].value_or(std::string{})=="deg" ? config_detail::degreeKey(field.key) : std::string(field.key);
+            number(key.c_str()); // Require the field declared by angle_unit.
+            g.*field.member=config_detail::readAngle(t,field.key,0.);
+        }else g.*field.member=number(field.key);
+    }
     const auto direction = t["rotation_direction"].value<int>();
     if (!direction)
         throw std::runtime_error("Missing calibration rotation direction");

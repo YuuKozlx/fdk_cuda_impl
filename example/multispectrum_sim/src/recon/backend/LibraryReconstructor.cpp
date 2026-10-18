@@ -1,4 +1,6 @@
+#include "input/calibration/PrepareCalibrateStage.hpp"
 #include "input/config/ReconstructionGeometry.hpp"
+#include "recon/geometry/GeometryCalibrationStage.hpp"
 #include "processing/support/TimingWatchdog.hpp"
 #include "recon/backend/LibraryReconstructor.hpp"
 #include "recon/postprocess/PostprocessPipeline.hpp"
@@ -184,10 +186,20 @@ bool reconstructWithLibrary(const SimulationConfig& config,
     const std::filesystem::path& slice_prefix,
     std::string& diagnostic,TaskProgressCallback progress,PostprocessConfigurer configure_postprocess)
 {
+    const auto& bh=config.reconstruction.preprocessing.beam_hardening;
+    if(config.reconstruction.preprocessing.enabled && bh.enabled && bh.fit_from_water_plate && bh.calibration_file.empty()){
+        try{
+            calibration::PrepareData data{config};calibration::PrepareContext context;context.progress=progress;
+            calibration::PrepareCalibrateStage stage;stage.process(data,context);
+            return reconstructWithLibrary(data.config,projection_file,volume_file,slice_prefix,diagnostic,progress,configure_postprocess);
+        }catch(const std::exception& e){diagnostic=e.what();return false;}
+    }
     if(config.reconstruction.geometry_override.enabled){
         try{
             auto resolved=config;
-            resolved.geometry.parameters=resolveReconstructionGeometry(config);
+            if(!config.reconstruction.geometry_override.calibration_file.empty())
+                resolved.geometry=calibration::loadGeometryCorrection(config.reconstruction.geometry_override.calibration_file,config.geometry);
+            else resolved.geometry.parameters=resolveReconstructionGeometry(config);
             resolved.reconstruction.geometry_override.enabled=false;
             return reconstructWithLibrary(resolved,projection_file,volume_file,slice_prefix,diagnostic,progress,configure_postprocess);
         }catch(const std::exception& e){diagnostic=e.what();return false;}

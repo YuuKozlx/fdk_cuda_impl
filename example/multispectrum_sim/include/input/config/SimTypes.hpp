@@ -316,6 +316,7 @@ struct StatisticalReconstructionConfig {
 
 struct ReconstructionGeometryConfig {
     bool enabled = false;
+    std::filesystem::path calibration_file;
     GeometryConfig parameters;
 };
 struct BoneHardeningConfig {

@@ -1,3 +1,4 @@
+#include "input/config/AngleConfig.hpp"
 #include "input/config/ReconstructionGeometry.hpp"
 #include <limits>
 #include "client/ProjectionUiConfig.hpp"
@@ -10,6 +11,21 @@ using namespace yk::spectral;
 namespace yk::spectral { void testSimulationJobs(); void testNativeConfig(const SimulationConfig&, const std::filesystem::path&); void testScanPanelInteraction(); void testConfigCatalog(); }
 void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 int main(){try{
+    {
+        using namespace config_detail;
+        for(double deg:{-360.,-90.,0.,1.25,45.,180.,720.}){
+            toml::table t{{"tilt_u_deg",deg}};
+            require(std::abs(readAngle(t,"tilt_u_rad",17.)-deg/degrees_per_radian)<1e-12,"degree input conversion");
+        }
+        toml::table old{{"tilt_u_rad",.3}};
+        require(readAngle(old,"tilt_u_rad",0.)==.3,"old radians changed meaning");
+        require(readAngle(old,"tilt_v_rad",.7)==.7,"missing angle fallback");
+        for(auto text:{"tilt_u_deg=30.0\ntilt_u_rad=0.5", "tilt_u_deg='30'", "tilt_u_deg=nan", "tilt_u_rad=inf"}){
+            bool caught=false;try{readAngle(toml::parse(text),"tilt_u_rad",0.);}catch(const std::exception&){caught=true;}
+            require(caught,"ambiguous or invalid angle accepted");
+        }
+    }
+
     testSimulationJobs();
     testConfigCatalog();
     testScanPanelInteraction();
@@ -67,10 +83,12 @@ int main(){try{
     const GeometryKind kinds[]={GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::PlanarSourceOrbit,GeometryKind::NikonTilted};
     for(auto kind:kinds){c.geometry.kind=kind;const auto path=dir/"saved.toml";
         saveConfig(c,path);const auto loaded=loadConfig(path);validateProjectionUiInputs(loaded,labels);
+        const auto saved=toml::parse_file(path.string());
+        require(saved["geometry"]["phantom_rotation_z_deg"].is_number() && !saved["geometry"]["phantom_rotation_z_rad"],"serialized angles must be degrees");
         require(loaded.reconstruction.postprocessing.hu_correction.enabled && loaded.reconstruction.postprocessing.hu_correction.calibration_file==c.reconstruction.postprocessing.hu_correction.calibration_file,"HU correction config roundtrip");
         require(loaded.geometry.kind==kind,"scan type roundtrip");
         require(loaded.geometry.parameters.source_offset_x_mm==4.5,"source pose roundtrip");
-        require(loaded.geometry.parameters.phantom_rotation_z_rad==.3,"volume pose roundtrip");
+        require(std::abs(loaded.geometry.parameters.phantom_rotation_z_rad-.3)<1e-12,"volume pose roundtrip");
         require(loaded.projection.spectrum.source=="generated"&&loaded.projection.spectrum.filters.size()==1,"spectrum roundtrip");
         require(loaded.projection.label_volume==c.projection.label_volume,"file location roundtrip");
         require(loaded.projection.sampling.samples_per_pixel==1,"preview sampling");

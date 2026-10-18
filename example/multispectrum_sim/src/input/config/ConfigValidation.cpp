@@ -207,7 +207,7 @@ namespace {
         if (c.runsReconstruction() || c.reconstruction.preprocessing.enabled || c.reconstruction.bone_hardening.enabled) {
 
             auto bone_validation = c;
-            if (c.reconstruction.geometry_override.enabled)
+            if (c.reconstruction.geometry_override.enabled && c.reconstruction.geometry_override.calibration_file.empty())
                 bone_validation.geometry.parameters = resolveReconstructionGeometry(c);
             const auto bone_route = bone_bhc::resolveRouting(bone_validation);
             if (c.reconstruction.bone_hardening.enabled && bone_route.use_lut && !available(c.reconstruction.bone_hardening.calibration_file))

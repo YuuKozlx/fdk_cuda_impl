@@ -1,3 +1,4 @@
+#include "input/config/AngleConfig.hpp"
 #include "input/config/SimConfig.hpp"
 #include "input/config/ReconstructionGeometry.hpp"
 #include "input/materials/XcomAttenuationProvider.hpp"
@@ -443,24 +444,24 @@ SimulationConfig loadConfig(const std::filesystem::path& path, bool check_runtim
         c.geometry.parameters.offset_u_mm = real("offset_u_mm", 0.0);
         c.geometry.parameters.offset_n_mm = real("offset_n_mm", 0.0);
         c.geometry.parameters.offset_v_mm = real("offset_v_mm", 0.0);
-        c.geometry.parameters.tilt_u_rad = real("tilt_u_rad", 0.0);
-        c.geometry.parameters.tilt_v_rad = real("tilt_v_rad", 0.0);
-        c.geometry.parameters.tilt_n_rad = real("tilt_n_rad", 0.0);
+        c.geometry.parameters.tilt_u_rad = config_detail::readAngle(*g,"tilt_u_rad", 0.0);
+        c.geometry.parameters.tilt_v_rad = config_detail::readAngle(*g,"tilt_v_rad", 0.0);
+        c.geometry.parameters.tilt_n_rad = config_detail::readAngle(*g,"tilt_n_rad", 0.0);
         c.geometry.parameters.source_offset_x_mm = real("source_offset_x_mm", 0.0);
         c.geometry.parameters.source_offset_y_mm = real("source_offset_y_mm", 0.0);
         c.geometry.parameters.source_offset_z_mm = real("source_offset_z_mm", 0.0);
-        c.geometry.parameters.start_angle_rad = real("start_angle_rad", 0.0);
+        c.geometry.parameters.start_angle_rad = config_detail::readAngle(*g,"start_angle_rad", 0.0);
         c.geometry.parameters.pitch_mm_per_turn = real("pitch_mm_per_turn", 0.0);
         c.geometry.parameters.start_z_mm = real("start_z_mm", 0.0);
-        c.geometry.parameters.scan_range_rad = real("scan_range_rad", 6.28318530717958647692);
+        c.geometry.parameters.scan_range_rad = config_detail::readAngle(*g,"scan_range_rad", 6.28318530717958647692);
         c.geometry.parameters.planar_detector_y_mm = real("planar_detector_y_mm", c.geometry.parameters.sdd_mm - c.geometry.parameters.sid_mm);
         c.geometry.parameters.source_orbit_radius_mm = real("source_orbit_radius_mm", 0.0);
         c.geometry.parameters.source_lateral_offset_mm = real("source_lateral_offset_mm", 0.0);
         c.geometry.parameters.reconstruction_detector_u = integer("reconstruction_detector_u", c.geometry.parameters.detector_u);
         c.geometry.parameters.reconstruction_detector_v = integer("reconstruction_detector_v", c.geometry.parameters.detector_v);
         c.geometry.parameters.planar_resample_mode = (*g)["planar_resample_mode"].value_or(std::string("perspective_orthogonal"));
-        c.geometry.parameters.nikon_tilt_rad = real("nikon_tilt_rad", 0.0);
-        c.geometry.parameters.nikon_tilt_axis_azimuth_rad = real("nikon_tilt_axis_azimuth_rad", 0.0);
+        c.geometry.parameters.nikon_tilt_rad = config_detail::readAngle(*g,"nikon_tilt_rad", 0.0);
+        c.geometry.parameters.nikon_tilt_axis_azimuth_rad = config_detail::readAngle(*g,"nikon_tilt_axis_azimuth_rad", 0.0);
         c.geometry.parameters.rotation_axis_pivot_x_mm = real("rotation_axis_pivot_x_mm", 0.0);
         c.geometry.parameters.rotation_axis_pivot_y_mm = real("rotation_axis_pivot_y_mm", 0.0);
         c.geometry.parameters.rotation_axis_pivot_z_mm = real("rotation_axis_pivot_z_mm", 0.0);
@@ -479,9 +480,9 @@ SimulationConfig loadConfig(const std::filesystem::path& path, bool check_runtim
         c.geometry.parameters.phantom_offset_x_mm = real("phantom_offset_x_mm", 0.0);
         c.geometry.parameters.phantom_offset_y_mm = real("phantom_offset_y_mm", 0.0);
         c.geometry.parameters.phantom_offset_z_mm = real("phantom_offset_z_mm", 0.0);
-        c.geometry.parameters.phantom_rotation_x_rad = real("phantom_rotation_x_rad", 0.0);
-        c.geometry.parameters.phantom_rotation_y_rad = real("phantom_rotation_y_rad", 0.0);
-        c.geometry.parameters.phantom_rotation_z_rad = real("phantom_rotation_z_rad", 0.0);
+        c.geometry.parameters.phantom_rotation_x_rad = config_detail::readAngle(*g,"phantom_rotation_x_rad", 0.0);
+        c.geometry.parameters.phantom_rotation_y_rad = config_detail::readAngle(*g,"phantom_rotation_y_rad", 0.0);
+        c.geometry.parameters.phantom_rotation_z_rad = config_detail::readAngle(*g,"phantom_rotation_z_rad", 0.0);
 
         c.geometry.parameters.reconstruction_offset_x_mm = real("reconstruction_offset_x_mm", 0.0);
         c.geometry.parameters.reconstruction_offset_y_mm = real("reconstruction_offset_y_mm", 0.0);
@@ -652,11 +653,14 @@ SimulationConfig loadConfig(const std::filesystem::path& path, bool check_runtim
     if (const auto* override_table = t["reconstruction"]["geometry"].as_table()) {
         auto& override_geometry = c.reconstruction.geometry_override;
         override_geometry.enabled = (*override_table)["enabled"].value_or(false);
+        if (override_table->contains("calibration_file") && !(*override_table)["calibration_file"].is_string())
+            throw std::runtime_error("reconstruction.geometry.calibration_file must be a path string");
+        override_geometry.calibration_file = resolve(config_directory, (*override_table)["calibration_file"].value_or(std::string{}));
         for (const auto& f : reconstructionGeometryFields()) {
             const auto value = (*override_table)[f.key];
             if (value && !value.is_number())
                 throw std::runtime_error(std::string("reconstruction.geometry requires a number: ") + f.key);
-            override_geometry.parameters.*f.member = value.value_or(c.geometry.parameters.*f.member);
+            override_geometry.parameters.*f.member = f.angle ? config_detail::readAngle(*override_table,f.key,c.geometry.parameters.*f.member) : value.value_or(c.geometry.parameters.*f.member);
         }
     }
     normalizeConfig(c);

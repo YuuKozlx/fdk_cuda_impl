@@ -17,7 +17,7 @@ target_link_libraries(multispectrum_calibration_fits_test PRIVATE
 if(MSVC)
     target_compile_options(multispectrum_calibration_fits_test PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
 endif()
-foreach(case water_table water_mono water_eid water_invalid empirical_recovery empirical_invalid material_holdout material_invalid water_matrix empirical_matrix material_matrix)
+foreach(case prepare_calibrate water_table water_mono water_eid water_invalid empirical_recovery empirical_invalid material_holdout material_invalid water_matrix empirical_matrix material_matrix)
     add_test(NAME calibration_fit_${case} COMMAND multispectrum_calibration_fits_test ${case} "${CMAKE_CURRENT_BINARY_DIR}/fit-tests")
     set_tests_properties(calibration_fit_${case} PROPERTIES LABELS "cpu;unit;calibration")
 endforeach()

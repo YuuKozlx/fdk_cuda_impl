@@ -1,3 +1,4 @@
+#include "input/config/AngleConfig.hpp"
 #include "PreprocessConfig.hpp"
 #include "input/config/ReconstructionGeometry.hpp"
 #include "input/config/SimConfig.hpp"
@@ -47,24 +48,24 @@ void saveConfig(const SimulationConfig& c, const std::filesystem::path& path, Wo
     FIELD(offset_u_mm);
     FIELD(offset_n_mm);
     FIELD(offset_v_mm);
-    FIELD(tilt_u_rad);
-    FIELD(tilt_v_rad);
-    FIELD(tilt_n_rad);
+    geometry.insert_or_assign("tilt_u_deg", g.tilt_u_rad * config_detail::degrees_per_radian);
+    geometry.insert_or_assign("tilt_v_deg", g.tilt_v_rad * config_detail::degrees_per_radian);
+    geometry.insert_or_assign("tilt_n_deg", g.tilt_n_rad * config_detail::degrees_per_radian);
     FIELD(source_offset_x_mm);
     FIELD(source_offset_y_mm);
     FIELD(source_offset_z_mm);
-    FIELD(start_angle_rad);
+    geometry.insert_or_assign("start_angle_deg", g.start_angle_rad * config_detail::degrees_per_radian);
     FIELD(pitch_mm_per_turn);
     FIELD(start_z_mm);
-    FIELD(scan_range_rad);
+    geometry.insert_or_assign("scan_range_deg", g.scan_range_rad * config_detail::degrees_per_radian);
     FIELD(planar_detector_y_mm);
     FIELD(source_orbit_radius_mm);
     FIELD(source_lateral_offset_mm);
     FIELD(reconstruction_detector_u);
     FIELD(reconstruction_detector_v);
     FIELD(planar_resample_mode);
-    FIELD(nikon_tilt_rad);
-    FIELD(nikon_tilt_axis_azimuth_rad);
+    geometry.insert_or_assign("nikon_tilt_deg", g.nikon_tilt_rad * config_detail::degrees_per_radian);
+    geometry.insert_or_assign("nikon_tilt_axis_azimuth_deg", g.nikon_tilt_axis_azimuth_rad * config_detail::degrees_per_radian);
     FIELD(rotation_axis_pivot_x_mm);
     FIELD(rotation_axis_pivot_y_mm);
     FIELD(rotation_axis_pivot_z_mm);
@@ -77,9 +78,9 @@ void saveConfig(const SimulationConfig& c, const std::filesystem::path& path, Wo
     FIELD(phantom_offset_x_mm);
     FIELD(phantom_offset_y_mm);
     FIELD(phantom_offset_z_mm);
-    FIELD(phantom_rotation_x_rad);
-    FIELD(phantom_rotation_y_rad);
-    FIELD(phantom_rotation_z_rad);
+    geometry.insert_or_assign("phantom_rotation_x_deg", g.phantom_rotation_x_rad * config_detail::degrees_per_radian);
+    geometry.insert_or_assign("phantom_rotation_y_deg", g.phantom_rotation_y_rad * config_detail::degrees_per_radian);
+    geometry.insert_or_assign("phantom_rotation_z_deg", g.phantom_rotation_z_rad * config_detail::degrees_per_radian);
     FIELD(reconstruction_volume_x);
     FIELD(reconstruction_volume_y);
     FIELD(reconstruction_volume_z);
@@ -200,9 +201,9 @@ void saveConfig(const SimulationConfig& c, const std::filesystem::path& path, Wo
     recon.insert_or_assign("postprocessing", toml::table{{"hu_correction", toml::table{
         {"enabled", r.postprocessing.hu_correction.enabled},
         {"calibration_file", config_detail::serializedPath(r.postprocessing.hu_correction.calibration_file)}}}});
-    toml::table reconstruction_geometry { { "enabled", r.geometry_override.enabled } };
+    toml::table reconstruction_geometry { { "enabled", r.geometry_override.enabled }, { "calibration_file", config_detail::serializedPath(r.geometry_override.calibration_file) } };
     for (const auto& f : reconstructionGeometryFields())
-        reconstruction_geometry.insert(f.key, r.geometry_override.parameters.*f.member);
+        reconstruction_geometry.insert(f.angle ? config_detail::degreeKey(f.key) : std::string(f.key), (r.geometry_override.parameters.*f.member) * (f.angle ? config_detail::degrees_per_radian : 1.));
     recon.insert_or_assign("geometry", std::move(reconstruction_geometry));
     recon.erase("analytic");
     recon.erase("iterative");

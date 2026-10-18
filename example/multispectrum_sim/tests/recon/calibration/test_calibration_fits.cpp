@@ -1,3 +1,4 @@
+#include "input/calibration/PrepareCalibrateStage.hpp"
 #include "input/calibration/WaterBhcTable.hpp"
 #include "input/materials/WaterReference.hpp"
 #include "input/materials/XcomAttenuationProvider.hpp"
@@ -41,7 +42,32 @@ int main(int argc, char** argv)
         check(argc == 3, "case and scratch path required");
         const std::string test = argv[1];
         const double nan = std::numeric_limits<double>::quiet_NaN();
-        if(test=="water_table") {
+        if(test=="prepare_calibrate") {
+            const auto dir=std::filesystem::path(argv[2])/test;std::filesystem::create_directories(dir);
+            const auto spectrum=dir/"mono.spec";
+            {std::ofstream f(spectrum);f<<"Energy[keV]  N[keV cm^2 mAs]^-1 @ 1 meter\n70 1\n";}
+            calibration::PrepareData data;data.config.projection.spectrum_file=spectrum;
+            auto& pp=data.config.reconstruction.preprocessing;pp.enabled=true;
+            pp.beam_hardening.enabled=true;pp.beam_hardening.fit_from_water_plate=true;pp.beam_hardening.order=3;
+            calibration::PrepareCalibrateStage stage;calibration::PrepareContext context;
+            const auto original=data.config;
+            stage.process(data,context);
+            check(!data.config.reconstruction.preprocessing.beam_hardening.fit_from_water_plate,"recipe not prepared");
+            check(data.config.reconstruction.preprocessing.beam_hardening.calibration_file.empty(),"preparation required output file");
+            check(std::abs(data.config.reconstruction.preprocessing.beam_hardening.coefficients[1]-1)<1e-8,"mono preparation changed projection");
+            check(original.reconstruction.preprocessing.beam_hardening.fit_from_water_plate,"input snapshot changed");
+            calibration::PrepareData disabled{original};context.water_bhc=false;stage.process(disabled,context);
+            check(disabled.config.reconstruction.preprocessing.beam_hardening.fit_from_water_plate,"disabled stage ran");
+            context.geometry=true;reject([&]{stage.process(data,context);});
+            context.fitted_geometry=data.config.geometry;context.fitted_geometry->parameters.sid_mm=600;
+            data.config.geometry.parameters.reconstruction_volume_x=123;
+            stage.process(data,context);
+            check(data.config.geometry.parameters.sid_mm==600,"in-memory geometry not applied");
+            check(data.config.geometry.parameters.reconstruction_volume_x==123,"target grid overwritten");
+            context.fitted_geometry->parameters.detector_u++;
+            reject([&]{stage.process(data,context);});
+            check(data.config.geometry.parameters.sid_mm==600,"failed preparation changed input");
+        } else if(test=="water_table") {
             const auto dir=std::filesystem::path(argv[2])/test;std::filesystem::create_directories(dir);
             const auto spectrum=dir/"mono.spec",table=dir/"water.bhc.toml";
             {std::ofstream f(spectrum);f<<"Energy[keV]  N[keV cm^2 mAs]^-1 @ 1 meter\n70 1\n";}
