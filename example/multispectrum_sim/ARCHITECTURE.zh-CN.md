@@ -1,115 +1,46 @@
-# 源码组织
+# 架构与处理流程
 
-`include/` 保留五个公共接口分区。应用实现放在 `src/` 的对应分区；具有独立 API 或可选显示边界的组件集中到 `modules/`。目录分区本身不要求建立独立库。
+配置入口见 [README](README.zh-CN.md)，校正资源字段见 [标定产物](CALIBRATION-ARTIFACTS.zh-CN.md)。本文只维护源码边界、执行顺序和当前能力。
 
-```text
-include/                         公共接口按业务用途查找
-├── input/                       准备输入
-│   ├── calibration/             标定作业及校正资源读写
-│   ├── config/                  TOML、参数及谱文件读取
-│   ├── materials/               材料、XCOM、水参考与多能谱模型
-│   ├── io/                      体积数据读写
-│   └── examples/                内置模体和数据示例
-├── projection/                  生成投影
-│   ├── spectral/                标签体积多能前投、采样、探测器仿真
-│   └── scalar/                  浮点体积前投
-├── recon/                       重建与校正
-│   ├── backend/                 重建 DLL 适配
-│   ├── preprocess/              投影校正、缓存、BHC 标定
-│   ├── bhc/                     骨硬化策略与迭代作业
-│   ├── postprocess/             体积后处理与输出
-│   └── geometry/                几何标定与校正
-├── processing/                  跨前投和重建复用的处理设施
-│   ├── stage/                   Stage 接口、执行结构、插件元信息
-│   ├── image/                   滤波、重采样等图像运算
-│   ├── scatter/                 仿真和校正共用的 ASKS 运算
-│   ├── device/                  设备缓冲与显存池
-│   └── support/                 日志与任务进度
-└── client/                      界面与交互
-    └── panels/                  ImGui 面板
-```
+## 源码归属
 
-私有实现按同一职责归属，静态组件见 [modules 说明](modules/README.zh-CN.md)。例如浮点前投接口在 `include/projection/scalar/`，实现和构建入口在 `modules/scalar_projection/`。只有接口而无实现时，不建立空的 `src` 对应目录。
+`include/` 与 `src/` 按职责对应；目录分区不等于独立静态库。
 
-## 边界
-
-- `input` 提供配置、体积、材料和谱，不依赖界面。
-- `projection` 生成投影；`spectral` 与 `scalar` 是同一级的两种前投实现。
-- `recon` 调用底层重建 DLL，组织校正和重建作业。底层 DLL 不反向依赖本应用。
-- `processing` 放跨流程复用的 Stage 和运算设施，不接管前投或重建算法。
-- `client` 装配交互和显示。可选 VTK 组件仍独立放在 `modules/visualization/`，便于关闭界面构建。
-
-`app/` 放可执行入口，`app/experiments/` 放实验程序，`app/plot/` 放绘图工具。BHC 用法示例在 `include/recon/preprocess/examples/`，内置模体在 `input/examples/`。配置、输入资源和构建输出分别放在 `configs/`、`inputs/`／`spectra/`、仓库 `out/`。
-
-Stage 是头文件契约；显存池、图像处理、自适应散射深度参与设备状态及处理流程，作为 `processing` 内部实现直接编译进使用者。三者的源码列表集中在 `cmake/ProcessingSources.cmake`，函数只装配源码与编译依赖，不创建库目标；重复接入同一目标不会重复添加源码。自适应散射的实验开关保留。可插拔 Stage 是运行时的处理策略边界，不要求每种策略对应一个静态库。
-
-## 文件与构建约定
-
-公开头文件和私有实现按上述分区对应放置。引用公开接口写完整路径，例如 `#include "input/materials/WaterReference.hpp"`；私有辅助头文件跟随实现。新增功能优先加入已有分区，只有形成独立职责后才增加子目录。根目录不堆散文件，也不为单个辅助类新设顶层目录。
-
-根 `CMakeLists.txt` 负责选项、依赖查找和独立组件，随后依次加载 `Application.cmake`、`Tools.cmake`，开启测试时再加载 `Tests.cmake`。应用源码和内部目标统一在 Application 定义；工具与实验在 Tools；测试在 Tests，不再由测试文件给主程序补源码或依赖。源文件显式列举，不递归搜集。
-
-`cmake/` 只保留上述三个职责文件，以及三份有明确复用目的的文件：`ProcessingSources.cmake` 装配内部处理源码，`NumericalTests.cmake` 供完整构建和独立测试入口共用数值测试，`Findmatio.cmake` 查找 SDK。新增业务分区通常只修改 Application 中的源码列表；新增测试修改 Tests 或共用数值清单，无需再新增一个 CMake 片段。
-
-`tests/` 按相同的五类职责分组，参考数据在 `tests/reference/`；`tests/cpu/` 保留无需 CUDA、VTK 或重建 DLL 的独立测试入口。可执行程序名和 CTest 测试名不随目录调整变化。
-
-移动接口直接更新引用，不保留旧路径转发头。同步检查主构建、独立测试、实验程序、工具和文档；目录调整不改变算法或默认参数。
-
-## 配置、计算与界面的调用边界
-
-配置入口统一在 `input/config/SimConfig.hpp`，CLI 与 UI 使用同一套规则：
-
-- `loadConfig` 负责 TOML 语法、字段读取和相对路径解析，再调用公共校验。
-- `normalizeConfig` 补全派生默认值，例如从前投输出继承校正空气图路径。
-- `validateConfig` 检查内存参数，不访问输入文件；实现集中在 `ConfigValidation.cpp`。
-- `validateRuntimeInputs` 在执行前检查所需校正模型等外部资源。体积和投影内容、大小仍由各输入读取器检查。
-- `saveConfig` 在 `ConfigSerialization.cpp` 从当前参数生成完整配置，不依赖原配置文件仍然存在，不读取原文件合并旧字段。
-
-UI 的参数编辑不再通过临时 TOML 往返完成校验。新增参数时，在配置层补齐解析、校验和序列化，再添加界面控件。前处理参数表的序列化集中在私有 `PreprocessConfig.hpp`，保存配置和校正缓存身份共同使用；缓存另附输入文件时间、大小以及相关谱、空气图、模型文件身份。更改重建算法不会因此重新做投影校正。
-
-前投核心不包含 VTK、ImGui 或 client 接口。`IProjectionObserver` 是可选的观察接口，按准备、轨迹、逐帧、进度、完成顺序通知；成功和失败均调用 `reset`。数据只在回调期间借用，回调在调用线程执行。`FrameGeometry` 是独立的几何描述，VTK 只是使用者。
-
-`client/LiveProjectionObserver` 将上述通知适配到 `LiveView`；拥有的窗口由适配器清理，外部传入的窗口只借用。CLI 在 `app/main.cpp` 选择普通前投、带显示前投或交互模式，前投算法内部不再决定是否启动界面。
-
-`client/SimulationJobs` 管理成功计算后的配置快照、扫描切换时的失效、后台重建、进度副本与异常结果。界面负责绘制和用户交互；VTK 更新仍在 UI 线程执行。重建工作结束后必须领取结果才能启动下一个任务，析构等待工作线程结束。它是具体的应用控制器，不是通用任务框架。
-
-重建适配入口统一命名为 `reconstructWithLibrary`，覆盖解析、代数和统计重建。应用自己的计时、显存预算估算与批量策略放在应用内，不再包含 DLL 私有 `common` 或迭代实现头；调用底层算法仍经其公开接口。
-
-非标准几何的纯计算工具也属于 SDK 公共几何层：`YkTrajectorySampling.hpp`、`YkNonStandardViewGeometry.hpp`、`YkSourceOrbitGeometryBuilder.hpp` 和 `YkTiltedAxisGeometryBuilder.hpp` 位于 `include/YKCBCT/geometry`，随 SDK 头文件一起安装。应用的 `LibraryGeometry` 仅将配置转换为公共几何描述，不包含 `src/NonStandardFpBp`；DLL 与应用使用同一份几何公式。裁剪窗口、重采样和重建算法仍在底层私有实现中。旧私有头文件已迁移，没有兼容转发层。
-
-`multispectrum_pose_unit_test` 只使用 SDK 公共头文件与 CUDA 基础类型，不链接重建 DLL、不包含底层 `src`，验证平面源轨道、探测器姿态、倾斜轴和螺旋几何的一致性。应用及内部处理源码装配不再添加底层 `src` 搜索路径。日志使用仓库内 `thirdparty/spdlog` 的固定版本，以 `yk::spdlog` INTERFACE 目标显式私有依赖；应用不再搜索底层 `src/util`。该目标只提供头文件，不产生静态库或运行时 DLL，SDK 公共接口不暴露 spdlog 类型。底层算法白盒测试可继续包含私有头文件，不能据此给生产目标增加相同路径。
-
-
-## Stage 与业务实现的关系
-
-`processing/stage` 只提供插件元信息结构、契约、注册和执行设施。内置业务描述集中在 `processing/PluginCatalog.hpp`，不让通用接口反向认识各个业务。图像运算位于 `processing/image`；与重建数据绑定的 Stage 适配位于 `recon/ImageStages.hpp` 及对应实现。增加独立滤波算子和增加某条流程中的 Stage 是两种不同的修改入口。
-
-这些边界不需要额外的工厂层、模板参数或独立静态库。新增功能先找到已有职责和处理链，再决定是否需要新类型；不要仅为了目录对称或每个类单独编译而增加层级。
-
-## 标定与校正的分离原则
-
-标定作业生产可保存的校正资源；正式处理链加载资源并应用。标定不属于每次预处理、重建或后处理都隐式执行的步骤。仿真可提供一键生成，但应明确显示为准备作业，并把结果保存下来供后续重复使用。
-
-| 标定产物 | 使用位置 |
+| 分区 | 职责 |
 | --- | --- |
-| 水 BHC 多项式或查找表 | 投影域水硬化校正 |
-| ASKS 模型 JSON | 散射仿真或散射校正；二者共享模型，不共享标定作业 |
-| 双材料骨硬化表 | 对应骨硬化策略，按其要求的输入数值域应用 |
-| 几何标定结果 | 解析为重建几何，进入重建适配器；不是逐像素滤波 |
-| 空气参考及相应尺寸、采集条件 | 归一化、取对数及需要空气参考的散射校正 |
-| HU 线性标定系数 | 重建体积的 HU 校正 |
+| input | 配置、材料/能谱、体积 I/O、内置示例及标定资源 |
+| projection | spectral 多能标签前投、scalar 浮点前投 |
+| recon | backend 重建适配、preprocess 校正、bhc 骨硬化、postprocess 后处理、geometry 几何 |
+| processing | stage 契约、image 算子、scatter 共用运算、device 显存池、support 日志进度 |
+| client | ImGui 面板、作业控制、显示适配 |
+| modules | 有独立 API 或可选边界的能谱、衰减、浮点前投和 VTK 组件 |
+| app | 可执行入口、experiments 实验程序、plot 绘图工具 |
+| tests | 对应业务测试；cpu 为不依赖 CUDA/VTK/重建 DLL 的入口 |
 
-产物应记录格式版本、数值域和单位、适用采集条件、有效范围及来源。各资源保留自己的类型和格式，不强制塞进一个万能表结构。资源加载器检查格式和适用性；Stage 使用已加载的只读模型。校正缓存应包含所用资源的身份；更换资源必须使旧缓存失效。标定也可以使用 Stage，但运行在独立的标定任务里。
+底层重建 DLL 不依赖本应用；计算核心不依赖客户端。公开引用写完整分区路径，私有辅助文件跟随实现。新增功能优先进入已有分区，不保留迁移路径的转发头。独立组件详见 [modules](modules/README.zh-CN.md)。
 
-当前实现：水 BHC 拟合位于 `input/calibration/WaterBhcCalibration`，预处理仅调用 `WaterBhcTable` 的加载/解析；未准备好的拟合请求会明确报错。几何标定分别输出诊断 JSON 和可加载的校正 TOML；HU 标定结果可保存为 TOML，并由 HU 校正 Stage 从文件构造。双材料表、ASKS JSON 和空气 RAW 继续沿用现有加载器，不在校正时生成。
+## 构建与依赖
 
-水 BHC、几何和 HU 的校正文件 I/O 集中在 `src/input/calibration`。各资源保留具体类型，没有增加泛型资源工厂。水 BHC 表更换会使投影校正缓存失效；几何表加载检查当前采集尺寸，保留当前重建网格。空气 RAW 仍使用一帧广播或逐视角布局，读取时检查文件长度和正有限值；尚不包含独立的采集条件元数据，使用者需保证与对应投影同域、同剂量和同探测器响应。
+根 CMake 查找依赖和装配组件；`Application.cmake` 定义应用，`Tools.cmake` 定义工具，`Tests.cmake` 定义测试。复用源码列表放 `ProcessingSources.cmake`，共用数值测试放 `NumericalTests.cmake`，matio SDK 查找放 `Findmatio.cmake`。源码显式列举。
 
-### CPU 数值求解
+Stage 为头文件契约；显存池、图像运算、自适应散射直接编译进使用者，不要求各建一个静态库。日志依赖 `yk::spdlog` 头文件目标，不借用 DLL 的 `src/util`。Eigen 用于水 BHC 的带主元 QR、双材料拟合和 EBHC 的 LDLT，业务拟合模型仍由对应模块维护。
 
-通用线性代数使用 `Eigen3::Eigen`，不再维护手写 QR/高斯消元：水 BHC 在归一化的 Vandermonde 矩阵上用带列主元的 Householder QR 求最小二乘，并检查秩；双材料标定的阻尼正规方程和 EBHC 的加权二阶系统使用 LDLT。模型、Huber 权重、阻尼与收敛策略仍由具体标定方法负责，不能把线性求解器当作完整优化算法。
+应用使用 SDK 公共几何头 `include/YKCBCT/geometry/` 和重建入口，不包含底层私有算法头。白盒测试可单独依赖私有实现，不能将其搜索路径扩散到生产目标。
 
-Eigen 是相关 CPU 实现的私有头文件依赖；配置结构、Stage 接口和 CUDA kernel 不暴露 Eigen 类型。完整应用在上层查找 Eigen 目标，几何标定和数值拟合共同复用。独立 CPU 测试通过 `find_package(Eigen3 CONFIG REQUIRED)` 获取 SDK，可设置 `Eigen3_DIR` 或 `CMAKE_PREFIX_PATH`；不硬编码本机安装路径。
+## 配置与任务边界
+
+- `loadConfig` 读取 TOML、解析相对路径；`normalizeConfig` 补派生默认值。
+- `validateConfig` 校验内存参数；`validateRuntimeInputs` 检查执行所需资源，数据内容由读取器验证。
+- `saveConfig` 序列化当前参数，不依赖原文件或临时 TOML 往返。新增参数需同步解析、校验、保存和对应 UI。
+- `SimulationJobs` 管理配置快照、后台重建、进度和异常；VTK 更新留在 UI 线程。
+- `IProjectionObserver` 提供借用数据的同步通知；`LiveProjectionObserver` 适配显示。
+- `reconstructWithLibrary` 统一解析、代数与统计重建入口；具体算法仍由 DLL 执行。
+
+## 标定边界
+
+标定独立生产校正资源，执行链只加载应用，不隐式重新拟合。水 BHC、HU 和几何表 I/O 位于 `input/calibration`；双材料与 EBHC 专用拟合靠近对应业务。水 BHC 标定任务当前仍使用扫描 TOML，并未提供独立任务配置。
+
+资源保留各自类型、格式和验证规则。空气 RAW 尚无完整采集元数据，表与扫描条件匹配仍需使用者保证。文件结构、适用范围及缓存规则集中在[标定产物文档](CALIBRATION-ARTIFACTS.zh-CN.md)，这里不重复列字段。
 
 ## 当前业务链与 Stage 清单
 
