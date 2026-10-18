@@ -1,9 +1,9 @@
-#include "WaterReference.hpp"
-#include "XcomAttenuationProvider.hpp"
-#include "cuda/DeviceMemoryPool.hpp"
-#include "primary/IdealBoneCorrection.cuh"
-#include "primary/QuantumSampling.cuh"
-#include "recon/preprocess/BeamHardeningFit.hpp"
+#include "input/materials/WaterReference.hpp"
+#include "input/materials/XcomAttenuationProvider.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
+#include "projection/spectral/IdealBoneCorrection.cuh"
+#include "projection/spectral/QuantumSampling.cuh"
+#include "input/calibration/WaterBhcCalibration.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>

@@ -117,9 +117,9 @@ def main():
     env = os.environ.copy()
     root = Path(__file__).resolve().parents[3]
     env['PATH'] = os.pathsep.join([str(exe.parents[2]), str(root / 'out/vtk-env/Lib/site-packages/vtk.libs'), env['PATH']])
-    base_path = Path(__file__).resolve().parents[1] / 'configs/ui/brainweb-center33-fullchain.toml'
+    base_path = Path(__file__).resolve().parents[1] / 'configs/project-and-reconstruct/analytic/brainweb-center33-physics-fdk.toml'
     base = tomllib.loads(base_path.read_text(encoding='utf-8'))
-    base['geometry'].update(views=360, views_per_turn=360, detector_u=512, pixel_u_mm=.945)
+    base['geometry'].update(views=360, views_per_turn=360, detector_u=512, pixel_u_mm=.945, pixel_v_mm=1.26)
     detector_v = max(96, int(np.ceil(len(labels)*base['geometry']['sdd_mm']/base['geometry']['sid_mm']/1.26*1.3/32))*32)
     base['geometry'].update(volume_z=len(labels), reconstruction_volume_z=len(labels), detector_v=detector_v)
     base['projection']['quantum_noise']['enabled'] = False
@@ -127,6 +127,11 @@ def main():
     base['projection']['save_metadata'] = True
     base['reconstruction']['save_slices'] = False
     base['visualization'].update(enabled=False, interactive=False, snapshot_directory='')
+    # Current templates omit disabled optional modules; populate only the experiment's switches.
+    for key in ('scatter', 'focal_spot', 'detector_response'):
+        base['projection'].setdefault(key, {'enabled': False})
+    base['projection'].setdefault('detector_postprocess', {})
+    base['reconstruction']['preprocessing'].setdefault('scatter', {'enabled': False})
     full_physics = args.physics_config is not None
     if full_physics:
         physical = tomllib.loads(args.physics_config.read_text(encoding='utf-8'))

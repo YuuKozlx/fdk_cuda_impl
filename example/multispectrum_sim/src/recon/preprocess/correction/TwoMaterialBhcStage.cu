@@ -1,4 +1,4 @@
-#include "cuda/DeviceMemoryPool.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
 #include "recon/preprocess/correction/TwoMaterialBhcStage.hpp"
 #include <cmath>
 #include <cuda_runtime.h>
@@ -33,7 +33,7 @@ namespace {
         const float f = x - b;
         projection[i] = row(b, p, minimum, step, table, columns) * (1 - f) + row(b + 1, p, minimum, step, table, columns) * f;
     }
-    class Stage final : public IStage {
+    class Stage final : public IProjectionPreprocessStage {
         TwoMaterialCalibration model_;
         std::shared_ptr<IBoneThicknessProvider> provider_;
         float *bone_ = nullptr, *minimum_ = nullptr, *step_ = nullptr, *table_ = nullptr;
@@ -104,5 +104,5 @@ namespace {
         }
     };
 }
-std::unique_ptr<IStage> makeTwoMaterialBhcStage(TwoMaterialCalibration m, std::shared_ptr<IBoneThicknessProvider> p) { return std::make_unique<Stage>(std::move(m), std::move(p)); }
+std::unique_ptr<IProjectionPreprocessStage> makeTwoMaterialBhcStage(TwoMaterialCalibration m, std::shared_ptr<IBoneThicknessProvider> p) { return std::make_unique<Stage>(std::move(m), std::move(p)); }
 }

@@ -1,4 +1,4 @@
-#include "cuda/DeviceMemoryPool.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
 #include "recon/preprocess/correction/EmpiricalBhcStage.hpp"
 #include <cmath>
 #include <cuda_runtime.h>
@@ -25,7 +25,7 @@ namespace {
         // clipping would break equivalence with the reconstructed basis combination.
         p[i] = isfinite(v) && isfinite(q) && q >= 0 ? float(v + a * q * q + b * v * q) : nanf("");
     }
-    class Stage final : public IStage {
+    class Stage final : public IProjectionPreprocessStage {
         EmpiricalBhcParameters parameters_;
         std::shared_ptr<IBoneThicknessProvider> provider_;
         float* paths_ = nullptr;
@@ -82,5 +82,5 @@ namespace {
         }
     };
 }
-std::unique_ptr<IStage> makeEmpiricalBhcStage(EmpiricalBhcParameters p, std::shared_ptr<IBoneThicknessProvider> provider) { return std::make_unique<Stage>(p, std::move(provider)); }
+std::unique_ptr<IProjectionPreprocessStage> makeEmpiricalBhcStage(EmpiricalBhcParameters p, std::shared_ptr<IBoneThicknessProvider> provider) { return std::make_unique<Stage>(p, std::move(provider)); }
 }

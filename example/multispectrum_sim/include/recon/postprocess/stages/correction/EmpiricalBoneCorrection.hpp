@@ -28,5 +28,5 @@ inline const pipeline::PluginInfo& ebhcVolumeInfo()
     return p;
 }
 // Fixed-grid, per-scan basis. CUDA default/Context stream; owns pooled basis storage.
-std::unique_ptr<IStage> makeEbhcVolumeStage(EbhcCoefficients, EbhcBasis, Grid);
+std::unique_ptr<IVolumePostprocessStage> makeEbhcVolumeStage(EbhcCoefficients, EbhcBasis, Grid);
 }

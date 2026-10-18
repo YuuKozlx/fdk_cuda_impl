@@ -1,6 +1,6 @@
-#include "pipeline/BuiltinPluginInfo.hpp"
+#include "processing/PluginCatalog.hpp"
 #include "recon/postprocess/PostprocessPipeline.hpp"
-#include "SimLogger.hpp"
+#include "processing/support/SimLogger.hpp"
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -35,7 +35,7 @@ namespace {
     }
 
 }
-void Pipeline::append(std::unique_ptr<IStage> stage)
+void Pipeline::append(std::unique_ptr<IVolumePostprocessStage> stage)
 {
     if (running_ || !stage)
         throw std::invalid_argument("invalid postprocess stage");

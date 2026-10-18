@@ -6,7 +6,7 @@ EBHC 保持独立，不进入这个框架。
 
 ## 客户端与正常重建入口
 
-正常 `reconstructWithLibraryFdk` 入口已组装这个 Stage，CLI、GUI 的手动重建和前投后自动重建共用同一路径。GUI 在 Reconstruction → Bone hardening correction 中配置，默认关闭，仍标为实验性。外部选择方案，内部仍注入具体策略对象；不由界面直接调用 kernel。
+正常 `reconstructWithLibrary` 入口已组装这个 Stage，CLI、GUI 的手动重建和前投后自动重建共用同一路径。GUI 在 Reconstruction → Bone hardening correction 中配置，默认关闭，仍标为实验性。外部选择方案，内部仍注入具体策略对象；不由界面直接调用 kernel。
 
 | `method` | 接入位置与固定输入 | 水 BHC 的执行规则 |
 |---|---|---|
@@ -35,7 +35,7 @@ preset = "tissue.ncat_skull"
 density_g_cm3 = 1.61
 ```
 
-水参考/初始重建仍由 `reconstruction.preprocessing.beam_hardening` 设置，启用骨校正时必须启用该项。GUI 首次启用会打开水板拟合；已有水 BHC 配置保留。LUT 方案再指定 `calibration_file`（相对 TOML）和 `bone_thickness_scale`；材料参数只用于物理模型，厚度缩放只用于 LUT。
+水参考/初始重建仍由 `reconstruction.preprocessing.beam_hardening` 设置，启用骨校正时必须启用该项。GUI 首次启用会准备水板标定配方；需要先生成或选择水 BHC 表，正式骨校正不再拟合。已有水 BHC 配置保留。LUT 方案再指定 `calibration_file`（相对 TOML）和 `bone_thickness_scale`；材料参数只用于物理模型，厚度缩放只用于 LUT。
 
 `preprocessing.enabled=true` 表示输入尚待执行所配置的散射/水校正；设为 false 时，调用者必须提供已处于所选方案输入域的 log 投影，运行时不会猜测文件已做过哪些校正。开启散射仿真不等于自动去散射，仍需正确配置散射校正。自动分割的 LUT 仍要求声明匹配的参考能量，不能把未赋能量的 PMMA/Al 经验表直接塞入这个自动循环。
 

@@ -1,7 +1,7 @@
 // Experimental Hsieh-style two-pass cone artifact correction. Not a default stage.
-#include "config/SimConfig.hpp"
-#include "image/ImageProcessing.hpp"
-#include "primary/JosephScalar.cuh"
+#include "input/config/SimConfig.hpp"
+#include "processing/image/ImageProcessing.hpp"
+#include "projection/spectral/JosephScalar.cuh"
 #include <chrono>
 #include <cmath>
 #include <fstream>

@@ -1,11 +1,45 @@
 # 重建前处理开发说明
 
+## 投影域平滑与引导滤波
+
+`reconstruction.preprocessing.filters` 是有序的逐帧二维滤波 Stage 列表，默认空列表。
+复用现有 `image::makeProjectionStage` 的 CUDA 均值、高斯和自引导滤波，不混合相邻角度：
+
+```toml
+[reconstruction.preprocessing]
+enabled = true
+
+[[reconstruction.preprocessing.filters]]
+operation = "gaussian"
+radius_pixels = 5
+sigma_pixels = 1.5
+
+[[reconstruction.preprocessing.filters]]
+operation = "guided"
+radius_pixels = 4
+epsilon = 0.0001
+```
+
+启用散射时处理顺序为 `p → 恢复能量 → 散射扣除 → 除以空场 → filters → 乘回空场 → -log(T) → BHC`。
+未启用散射时则为 `p → exp(-p) → filters → -log(T) → BHC`。
+滤波使用归一化透射率，`epsilon` 是透射率平方的量纲，不随 eV、keV 或每历史能量的绝对比例改变。
+半径、sigma 以探测器像素计，sigma 只影响高斯滤波；引导滤波为标准 self-guided，
+并非拿无噪声 primary 作为外部引导。转换回对数时采用 `T >= 1e-8` 的数值下限。
+`mean`、`gaussian`、`guided` 是当前支持的 operation，顺序由数组次序决定。
+
+该列表平滑扣除后的测量投影，避免直接对噪声很大的残差取对数；原有 `scatter.guide` 则只平滑散射估计的输入，
+最终残差仍扣自测量图像，两者含义不同。滤波不是标定，也不保证消除模型失配或光子饥饿。
+滤波会改变空间分辨率，比较图像时应给 primary 对照施加相同滤波。
+
+全链在 GPU 上复用工作区，不增加逐 Stage 的 CPU 往返。单独启用 filters 无需能谱或空场。
+顺序和参数均纳入校正缓存；UI 保存/加载 TOML 保留这些设置，目前尚无专用 UI 编辑控件。
+
 ## 文件职责
 
 - `PreprocessPipeline.cpp`：阶段编排、数据域检查、Host/Device 状态转换、文件 I/O、进度和计时。
 - `Stages.cpp`：内置能量恢复、散射、转对数/BHC 阶段；固定、自适应和引导散射均通过设备接口连接。
 - `CudaPixelOps.cu`：驻留帧工作缓冲、能量/对数转换、双精度 Horner 与截断、有效性检查。
-- `BeamHardeningFit.cpp`：小规模 CPU 水板标定拟合。逐像素应用在 CUDA 完成。
+- `input/calibration/WaterBhcCalibration.cpp`：独立 CPU 水板标定任务，不由前处理调用。`WaterBhcTable` 加载完成的标定表，逐像素应用仍在 CUDA 完成。
 - `DeviceMemoryPool.cpp`：进程内、按 CUDA 设备隔离、线程安全的缓冲池。无 VTK 依赖。
 
 应用入口 `prepareReconstructionProjection()` 内部调用 `Pipeline`。原来的校正数值定义不变：恢复 `air*exp(-log)`，散射正值下限 `air*1e-8`，转对数比例下限 `FLT_MIN`，BHC 使用双精度多项式并按配置截断；多项式溢出必须报错，不能被截断掩盖。
@@ -42,4 +76,49 @@ Context 和 Frame 均为借用对象，只在回调期间使用。Pipeline 本�
 
 ## 公共执行层
 
-处理与输出使用 [统一流水线契约](../../../include/pipeline/README.md)。`IStage` 是公共有类型接口的专用实例，旧的独立输入/输出域和位置方法已删除。状态标记由执行器管理，插件不应修改；辅助输入要求通过 `validateContext()` 检查。
+处理与输出使用 [统一流水线契约](../../../include/processing/stage/README.md)。业务接口 `IProjectionPreprocessStage` 绑定顶层 `pipeline::IStage<Frame, Context, Domain>`；通用接口不属于前处理。状态标记由执行器管理，插件不应修改；辅助输入要求通过 `validateContext()` 检查。
+
+## 独立标定文件
+
+水 BHC 现在分为两步，正式校正不会隐式拟合：
+
+```powershell
+multispectrum_sim.exe --calibrate-water-bhc scan.toml calibration/water.bhc.toml
+multispectrum_sim.exe calibration/water.bhc.toml.config.toml
+```
+
+第一条只计算水板标定，保存系数、截断范围、参考能量、水衰减系数、标定水厚度范围和来源，并生成引用该表的完整配置。它不读取模体或做投影、重建；其当前物理模型是理想能量积分探测器，不能自动替代实机标定。
+
+```toml
+[reconstruction.preprocessing.beam_hardening]
+enabled = true
+calibration_file = "calibration/water.bhc.toml"
+```
+
+路径相对扫描 TOML；表中的系数、阶数、截断和参考覆盖扫描配置里的同名数值。应用已有表不要求原始能谱存在；HU 的水基准也直接读取该表。显式填写 coefficients 的调用仍可用。`fit_from_water_plate=true` 现在只表示尚待执行的标定配方，不能在正式校正中触发拟合；旧配置需要先运行上述标定命令。选中已有表时，以表为准。
+
+UI 的 Reconstruction → Projection corrections → Beam hardening correction 提供表路径与 Generate water BHC table 按钮。生成成功后选中该表，再保存扫描 TOML 以持久化选择。重新生成是明确操作，不会因每次点击重建自动发生。
+
+几何标定完成后在诊断报告旁保存 `.geometry-correction.toml`；可在几何标定窗口加载表并使用校正几何重建，不必再次提取钢珠和拟合。表目前限整周圆轨道平板 CT，并要求相同视角数、探测器行列和像素间距。
+
+HU 校正的程序接口：
+
+```cpp
+auto result = postprocess::fitAirWaterHu(measured_air, measured_water);
+result.save("air-water-hu.toml"); // 独立标定作业
+// 后续任务：不再测量 ROI，不再拟合
+pipeline.append(postprocess::makeHuCorrectionStage(
+    std::filesystem::path("air-water-hu.toml"), postprocess::Location::Device));
+```
+
+HU 表也可用于正式重建，在 UI 的重建输出设置中启用 **Apply HU calibration** 并选择文件，或配置：
+
+```toml
+[reconstruction.postprocessing.hu_correction]
+enabled = true
+calibration_file = "calibration/air-water-hu.toml"
+```
+
+路径相对扫描 TOML。正式流程只读取标定结果，不会重新选择 ROI 或拟合。最终重建体积先按水基准转换为 HU，应用 `HU_corrected = scale * HU + offset`，再转回衰减系数（mm⁻¹）保存，因此 RAW 和现有显示模块的单位约定保持一致。水基准优先来自水 BHC 表；未配置该表时沿用参考能量/能谱计算。请确保标定时和校正时使用相同的水基准。
+
+该处理只应用于最终输出，骨硬化循环的中间重建不会重复应用；不会使投影校正缓存失效。程序指定的其他后处理 Stage 在此校正之后运行。缺失或非法的表会在重建计算前报错。

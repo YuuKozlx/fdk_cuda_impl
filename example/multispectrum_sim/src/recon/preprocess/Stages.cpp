@@ -1,17 +1,30 @@
-#include "pipeline/BuiltinPluginInfo.hpp"
-#include "common/YkCudaTiming.hpp"
+#include "processing/PluginCatalog.hpp"
+#include "processing/support/CudaTiming.hpp"
 #include "Stages.hpp"
 #include "CudaPixelOps.hpp"
-#include "CudaFasksScatter.hpp"
-#include "FasksRuntimeModel.hpp"
+#include "processing/scatter/CudaFasksScatter.hpp"
+#include "processing/scatter/FasksRuntimeModel.hpp"
+#include "recon/ImageStages.hpp"
 #ifdef YK_SPECTRAL_ADAPTIVE_SCATTER
-#include "AdaptiveScatterSolver.hpp"
+#include "processing/scatter/AdaptiveScatterSolver.hpp"
 #endif
 #include <stdexcept>
 #include <iostream>
 namespace yk::spectral::preprocess {
 namespace {
-class Restore final : public IStage {
+class TransmissionConversion final : public IProjectionPreprocessStage {
+    bool forward_;
+    bool energy_;
+  public:
+    TransmissionConversion(bool forward,bool energy):forward_(forward),energy_(energy){}
+    const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(forward_?
+        pipeline::BuiltinPlugin::TransmissionRestore:pipeline::BuiltinPlugin::TransmissionOutput);}
+    pipeline::Contract<Domain> contract()const override{return {
+        forward_?(energy_?Domain::EnergySignal:Domain::LogAttenuation):Domain::Transmission,
+        forward_?Domain::Transmission:(energy_?Domain::EnergySignal:Domain::LogAttenuation),Location::Device,Location::Device};}
+    void process(Frame&,const Context& c)override{c.cuda.convertTransmission(forward_,energy_);}
+};
+class Restore final : public IProjectionPreprocessStage {
   public:
     const pipeline::PluginInfo& info()const noexcept override{return pipeline::builtinPluginInfo(pipeline::BuiltinPlugin::EnergyRestore);}
     pipeline::Contract<Domain> contract()const override{return {Domain::LogAttenuation,Domain::EnergySignal,Location::Device,Location::Device};}
@@ -19,7 +32,7 @@ class Restore final : public IStage {
     void process(Frame &, const Context &c) override { c.cuda.restoreEnergy(); }
     void reset() noexcept override {}
 };
-class Scatter final : public IStage {
+class Scatter final : public IProjectionPreprocessStage {
     std::unique_ptr<FasksRuntimeModel> model_;
     std::unique_ptr<CudaFasksScatter> scatter_;
 #ifdef YK_SPECTRAL_ADAPTIVE_SCATTER
@@ -54,19 +67,19 @@ class Scatter final : public IStage {
         float *measured = gpu.data();
         const float *air = gpu.air();
         if (s.guide.enabled) {
-            YK::diagnostics::TimingSpan guide_watch("preprocess.guide","view="+std::to_string(f.view));
+            yk::spectral::diagnostics::TimingSpan guide_watch("preprocess.guide","view="+std::to_string(f.view));
             scatter_->smoothGuideDevice(gpu.original(), s.guide.sigma_u_pixels,
                                         s.guide.sigma_v_pixels, gpu.guide());
             scatter_->smoothGuideDevice(gpu.air(), s.guide.sigma_u_pixels, s.guide.sigma_v_pixels,
                                         gpu.guideAir());
-            if(YK::diagnostics::timingEnabled())gpu.synchronize();
+            if(yk::spectral::diagnostics::timingEnabled())gpu.synchronize();
             measured = gpu.guide();
             air = gpu.guideAir();
         }
         // The current edge-window model consumes a CPU mask, not frame signals.
         std::vector<unsigned char> mask;const unsigned char* device_mask=nullptr;
-        const bool device_edge=s.solver.type=="fixed"&&!(YK::diagnostics::timingEnabled()&&std::getenv("YK_TIMING_CPU_EDGE_REFERENCE"));
-        {YK::diagnostics::TimingSpan watch("preprocess.mask","view="+std::to_string(f.view));
+        const bool device_edge=s.solver.type=="fixed"&&!(yk::spectral::diagnostics::timingEnabled()&&std::getenv("YK_TIMING_CPU_EDGE_REFERENCE"));
+        {yk::spectral::diagnostics::TimingSpan watch("preprocess.mask","view="+std::to_string(f.view));
             if(device_edge)device_mask=gpu.makeMaskDevice(measured,air,s.correction.object_mask_threshold);
             else mask=gpu.mask(measured,air,s.correction.object_mask_threshold);
         }
@@ -91,7 +104,7 @@ class Scatter final : public IStage {
             scatter_->correctFixedDeviceMask(measured,air,device_mask,s.correction.iterations,s.correction.damping,s.correction.scatter_scale,measured);
         else scatter_->correctFixedDevice(measured,air,mask,s.correction.iterations,s.correction.damping,s.correction.scatter_scale,measured);
         if (s.guide.enabled) {
-            YK::diagnostics::TimingSpan watch("preprocess.guide.residual","view="+std::to_string(f.view));
+            yk::spectral::diagnostics::TimingSpan watch("preprocess.guide.residual","view="+std::to_string(f.view));
             if(device_mask)scatter_->predictDeviceMask(measured,air,device_mask,gpu.prediction());
             else scatter_->predictDevice(measured,air,mask,gpu.prediction());
             gpu.guidedResidual(s.correction.scatter_scale);
@@ -105,7 +118,7 @@ class Scatter final : public IStage {
         model_.reset();
     }
 };
-class Finalize final : public IStage {
+class Finalize final : public IProjectionPreprocessStage {
     bool energy_;
     BeamHardeningConfig bhc_;
 
@@ -124,13 +137,30 @@ class Finalize final : public IStage {
     void reset() noexcept override {}
 };
 } // namespace
-std::vector<std::unique_ptr<IStage>> makeStages(const SimulationConfig &c,
+std::vector<std::unique_ptr<IProjectionPreprocessStage>> makeStages(const SimulationConfig &c,
                                                 const BeamHardeningConfig &bhc) {
-    std::vector<std::unique_ptr<IStage>> stages;
+    std::vector<std::unique_ptr<IProjectionPreprocessStage>> stages;
     const bool scatter = c.reconstruction.preprocessing.scatter.enabled;
     if (scatter) {
         stages.push_back(std::make_unique<Restore>());
         stages.push_back(std::make_unique<Scatter>());
+    }
+    const auto& filters=c.reconstruction.preprocessing.filters;
+    if(!filters.empty()) {
+        stages.push_back(std::make_unique<TransmissionConversion>(true,scatter));
+        for(const auto& f:filters){
+            image::Options o;o.neighborhood=image::Neighborhood::Slice2D;
+            if(f.operation=="mean")o.operation=image::Operation::Mean;
+            else if(f.operation=="gaussian")o.operation=image::Operation::Gaussian;
+            else if(f.operation=="guided")o.operation=image::Operation::Guided;
+            else throw std::invalid_argument("Unknown projection filter operation");
+            o.radius={f.radius_pixels,f.radius_pixels,0};
+            o.sigma_mm={f.sigma_pixels*c.geometry.parameters.pixel_u_mm,
+                f.sigma_pixels*c.geometry.parameters.pixel_v_mm,1};
+            o.epsilon=f.epsilon;
+            stages.push_back(image::makeProjectionStage(o,Domain::Transmission));
+        }
+        stages.push_back(std::make_unique<TransmissionConversion>(false,scatter));
     }
     if (scatter || bhc.enabled)
         stages.push_back(std::make_unique<Finalize>(scatter, bhc));

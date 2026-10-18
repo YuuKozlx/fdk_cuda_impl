@@ -19,7 +19,7 @@ foreach ($line in $content) {
 }
 
 $records = [System.Collections.Generic.List[string]]::new()
-$records.Add('// Generated from thirdparty/nist_xcom/data/GateMaterials.db.')
+$records.Add('// Generated from example/multispectrum_sim/modules/attenuation/data/GateMaterials.db.')
 $records.Add('// Regenerate with tools/generate_gate_materials.ps1; do not edit manually.')
 $records.Add('')
 $current = $null

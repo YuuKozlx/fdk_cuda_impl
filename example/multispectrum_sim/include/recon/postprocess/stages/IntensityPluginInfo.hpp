@@ -1,5 +1,5 @@
 #pragma once
-#include "pipeline/PluginInfo.hpp"
+#include "processing/stage/PluginInfo.hpp"
 namespace yk::spectral::postprocess {
 inline const std::vector<pipeline::PluginInfo>& intensityPluginDescriptions()
 {

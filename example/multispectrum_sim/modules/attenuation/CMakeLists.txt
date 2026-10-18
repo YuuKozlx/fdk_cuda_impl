@@ -1,0 +1,7 @@
+add_library(nist_xcom_core STATIC xcom.cpp xcom_c_api.cpp)
+target_include_directories(nist_xcom_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(nist_xcom_core PUBLIC XCOM_C_API_STATIC)
+target_compile_features(nist_xcom_core PUBLIC cxx_std_17)
+if(MSVC)
+    target_compile_options(nist_xcom_core PRIVATE /utf-8)
+endif()

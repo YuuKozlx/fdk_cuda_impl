@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 #include "YKCBCT/geometry/YkSystemGeometry.hpp"
-#include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtGeometry.hpp"
+#include "YKCBCT/geometry/YkTiltedAxisGeometryBuilder.hpp"
 #include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitTomography.hpp"
 
 namespace Viewer {

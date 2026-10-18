@@ -1,11 +1,11 @@
-﻿#pragma once
+#pragma once
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <utility>
 
 
 #include <limits>
-#include "../Filter/YkFFT.hpp"
+#include "YkFFT.hpp"
 #include "../global/YkGlobals.h"
 #include "../global/YkMacro.hpp"
 #include "../global/YkFilterTypes.hpp"

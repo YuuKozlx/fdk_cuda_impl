@@ -1,7 +1,7 @@
 // Experiment helper: segment a reconstructed attenuation volume, never source labels.
-#include "WaterReference.hpp"
-#include "XcomAttenuationProvider.hpp"
-#include "image/ImageStages.hpp"
+#include "input/materials/WaterReference.hpp"
+#include "input/materials/XcomAttenuationProvider.hpp"
+#include "recon/ImageStages.hpp"
 #include "recon/postprocess/stages/correction/HuTransforms.hpp"
 #include "recon/postprocess/stages/segmentation/HuThresholds.hpp"
 #include <fstream>

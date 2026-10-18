@@ -1,7 +1,7 @@
-#include "primary/ScalarProjector.hpp"
-#include "config/SimConfig.hpp"
-#include "XcomAttenuationProvider.hpp"
-#include "primary/ProjectionGeometry.cuh"
+#include "projection/scalar/ScalarProjector.hpp"
+#include "input/config/SimConfig.hpp"
+#include "input/materials/XcomAttenuationProvider.hpp"
+#include "projection/spectral/ProjectionGeometry.cuh"
 #include <algorithm>
 #include <array>
 #include <chrono>

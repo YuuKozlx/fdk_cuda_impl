@@ -23,7 +23,7 @@ HuCalibrationResult fitAirWaterHu(double air, double water, AirWaterTargets targ
     return result;
 }
 namespace {
-    class CalibrationStage final : public IStage {
+    class CalibrationStage final : public IVolumePostprocessStage {
         CalibrationRoi air_, water_;
         std::shared_ptr<HuCalibrationResult> result_;
         AirWaterTargets targets_;
@@ -75,5 +75,5 @@ namespace {
         }
     };
 }
-std::unique_ptr<IStage> makeAirWaterHuCalibrationStage(CalibrationRoi air, CalibrationRoi water, std::shared_ptr<HuCalibrationResult> out, AirWaterTargets targets, Location l) { return std::make_unique<CalibrationStage>(air, water, std::move(out), targets, l); }
+std::unique_ptr<IVolumePostprocessStage> makeAirWaterHuCalibrationStage(CalibrationRoi air, CalibrationRoi water, std::shared_ptr<HuCalibrationResult> out, AirWaterTargets targets, Location l) { return std::make_unique<CalibrationStage>(air, water, std::move(out), targets, l); }
 }

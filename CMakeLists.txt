@@ -125,6 +125,9 @@ target_include_directories(YKCBCT
         ${PROJECT_SOURCE_DIR}/src/util
 )
 
+add_subdirectory(thirdparty/spdlog)
+target_link_libraries(YKCBCT PRIVATE yk::spdlog)
+
 target_link_libraries(YKCBCT
     PUBLIC
         CUDA::cudart
@@ -243,7 +246,7 @@ if(BUILD_MULTISPECTRUM_PLOT_TOOLS)
             "at build/runtime; install gnuplot and add it to PATH")
     endif()
     message(STATUS "Matplot++ plotting backend: ${GNUPLOT_EXECUTABLE}")
-    add_subdirectory(example/multispectrum_sim/plot)
+    add_subdirectory(example/multispectrum_sim/app/plot)
 endif()
 
 # ============================================================================

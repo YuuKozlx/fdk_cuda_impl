@@ -12,6 +12,6 @@ inline const pipeline::PluginInfo& twoMaterialBhcInfo()
         p.documentation="include/recon/preprocess/correction/README.md";return p; }();
     return info;
 }
-std::unique_ptr<IStage> makeTwoMaterialBhcStage(TwoMaterialCalibration,
+std::unique_ptr<IProjectionPreprocessStage> makeTwoMaterialBhcStage(TwoMaterialCalibration,
     std::shared_ptr<IBoneThicknessProvider>);
 }

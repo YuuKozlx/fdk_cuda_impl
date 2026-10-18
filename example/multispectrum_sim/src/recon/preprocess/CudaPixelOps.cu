@@ -1,4 +1,4 @@
-#include "cuda/DeviceMemoryPool.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
 #include "CudaPixelOps.hpp"
 #include <cuda_runtime.h>
 #include <cmath>
@@ -28,6 +28,16 @@ __global__ void makeMask(const float *data, const float *air, unsigned char *mas
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
         mask[i] = -log(fmax(double(data[i]) / air[i], 1e-30)) > threshold;
+}
+__global__ void transmission(float* data, const float* air, size_t n, bool forward, bool energy, int* invalid) {
+    const size_t i=blockIdx.x*blockDim.x+threadIdx.x;
+    if(i>=n)return;
+    const float value=data[i];
+    const double converted=energy?(forward?double(value)/air[i]:double(value)*air[i]):
+        (forward?exp(-double(value)):-log(fmax(double(value),1e-8)));
+    if(!isfinite(value)||!isfinite(converted)||fabs(converted)>FLT_MAX||
+        (energy&&(!isfinite(air[i])||air[i]<=0)))atomicExch(invalid,1);
+    data[i]=float(converted);
 }
 __global__ void residual(float *data, const float *original, const float *air,
                          const float *prediction, size_t n, double scale, int *invalid) {
@@ -125,6 +135,10 @@ void CudaPixelOps::download(std::vector<float> &v) {
 void CudaPixelOps::restoreEnergy() {
     restore<<<int((impl_->n + 255) / 256), 256>>>(data(), air(), original(), impl_->n,
                                                   impl_->invalid);
+    check(cudaGetLastError());
+}
+void CudaPixelOps::convertTransmission(bool forward,bool energy) {
+    transmission<<<int((impl_->n+255)/256),256>>>(data(),air(),impl_->n,forward,energy,impl_->invalid);
     check(cudaGetLastError());
 }
 const unsigned char* CudaPixelOps::makeMaskDevice(float* p,const float* a,double threshold){

@@ -1,5 +1,5 @@
 #pragma once
-#include "config/SimConfig.hpp"
+#include "input/config/SimConfig.hpp"
 #include <cmath>
 #include <stdexcept>
 namespace yk::spectral::bone_bhc {

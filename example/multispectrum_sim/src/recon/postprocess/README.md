@@ -30,10 +30,10 @@ Stage 可原地修改体积；失败时不自动回滚数值，避免无条件�
 
 `makeHuConversionStage(mu_water_mm_inv)` 可在独立导出流水线中转换 CT 值；调用者应传入 BHC 拟合参考能量对应的水衰减系数。它不会默认修改原始重建数据。默认 RAW Exporter 只接受衰减值，防止 UI 把 HU 再转换一遍。HU/DICOM 分支应从独立导出缓冲或插件内部按块转换，保留原始衰减体积。
 
-`reconstructWithLibraryFdk` 的 `PostprocessConfigurer` 参数用于安装后处理扩展。例如：
+`reconstructWithLibrary` 的 `PostprocessConfigurer` 参数用于安装后处理扩展。例如：
 
 ```cpp
-reconstructWithLibraryFdk(config, projection, volume, slices, diagnostic, progress,
+reconstructWithLibrary(config, projection, volume, slices, diagnostic, progress,
     [&](postprocess::Pipeline& pipeline) {
         // stages/exporters 是调用者的有类型工厂注册表。
         pipeline.append(stages.create("denoise"));
@@ -53,7 +53,7 @@ reconstructWithLibraryFdk(config, projection, volume, slices, diagnostic, progre
 
 ## 公共执行层
 
-Stage、Exporter、状态转换、逆序清理、进度、计时和工厂使用 [统一流水线基础层](../../../include/pipeline/README.md)，不再维护独立的 Stage/Requirements/Registry 契约。`prepare(const Context&)` 通过 `context.grid` 获取当前体积几何；插件不得自行修改 domain/location 标记，转换由流水线提交。
+Stage、Exporter、状态转换、逆序清理、进度、计时和工厂使用 [统一流水线基础层](../../../include/processing/stage/README.md)，不再维护独立的 Stage/Requirements/Registry 契约。`prepare(const Context&)` 通过 `context.grid` 获取当前体积几何；插件不得自行修改 domain/location 标记，转换由流水线提交。
 
 Stage 与 Exporter 通过共同 IPlugin::info() 提供元信息，注册表通过 add(PluginInfo, Factory) 注册，list()/find(id) 查询不会实例化插件；详见统一流水线的静态自描述说明。
 

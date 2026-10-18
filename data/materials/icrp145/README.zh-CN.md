@@ -37,6 +37,6 @@ powershell -NoProfile -File tools/generate_icrp_materials.ps1
 powershell -NoProfile -File tools/generate_icrp_materials.ps1 -Check
 ```
 
-脚本仅依赖 PowerShell，生成 `example/multispectrum_sim/src/BuiltinIcrpMaterials.inc`，校验 ID、性别、介质覆盖、密度、来源和质量分数。生成的 C++ 表随库编译，运行时不需要 CSV 解析器或生成脚本。
+脚本仅依赖 PowerShell，生成 `example/multispectrum_sim/src/input/materials/BuiltinIcrpMaterials.inc`，校验 ID、性别、介质覆盖、密度、来源和质量分数。生成的 C++ 表随库编译，运行时不需要 CSV 解析器或生成脚本。
 
-标签与密度对应关系维护在 organs CSV 和映射 TOML 中；修改介质归属时要同步对应映射并重新导入体积。示例导入、扫描与运行方式见 [ICRP145 示例说明](../../../example/multispectrum_sim/configs/icrp145/README.zh-CN.md)。
+标签与密度对应关系维护在 organs CSV 和映射 TOML 中；修改介质归属时要同步对应映射并重新导入体积。示例导入、扫描与运行方式见 [配置与数据准备说明](../../../example/multispectrum_sim/configs/README.zh-CN.md)。

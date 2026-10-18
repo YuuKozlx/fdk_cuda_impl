@@ -52,7 +52,7 @@ if(EXISTS "${YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR}/toml++/toml.hpp")
     target_include_directories(ykcbct_manual_tests PRIVATE
         "${YKCBCT_TOMLPLUSPLUS_INCLUDE_DIR}")
 elseif(TARGET tomlplusplus::tomlplusplus)
-    target_link_libraries(ykcbct_manual_tests PRIVATE tomlplusplus::tomlplusplus)
+    target_link_libraries(ykcbct_manual_tests PRIVATE yk::spdlog tomlplusplus::tomlplusplus)
 else()
     message(FATAL_ERROR
         "BUILD_TESTS=ON 需要 toml++。请启用 vcpkg manifest，或设置 "

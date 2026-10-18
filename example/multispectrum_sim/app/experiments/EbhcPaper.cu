@@ -1,6 +1,6 @@
-#include "config/SimConfig.hpp"
-#include "cuda/DeviceMemoryPool.hpp"
-#include "primary/JosephScalar.cuh"
+#include "input/config/SimConfig.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
+#include "projection/spectral/JosephScalar.cuh"
 #include "recon/postprocess/stages/correction/EmpiricalBoneCorrection.hpp"
 #include <algorithm>
 #include <chrono>

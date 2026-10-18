@@ -1,5 +1,9 @@
 # 多能谱重建回归记录
 
+以下是历史实验记录。当前配置已按三类工作流整理，网格、能谱和输入准备方式均可能不同；
+不能用当前配置重跑来验证这里的旧 RAW 哈希。新的配置入口与准备命令见
+[配置说明](../configs/README.zh-CN.md)，当前输出位于仓库 `out/config-examples/`。
+
 日期：2026-09-20。环境：Windows、VS2022 Release、CUDA 12.6、RTX 3080 10 GB。
 本轮没有实现 wFBP 流式分批，也没有修改其滤波或反投影公式。
 
@@ -20,7 +24,7 @@
 | FDK | 3B79870877769C95D5E0DF96B32B672024360665532659BF647C6603F269C0D0 |
 | wFBP | 2DF6209B89C64EEA7BD176CF06E9BF896FC56A0B8813EA95F2F5F337C71C4836 |
 
-`reference-brainweb-center33-*.json` 是实现回归基线，不是人体组织的物理真值。
+`reference/reference-brainweb-center33-*.json` 是实现回归基线，不是人体组织的物理真值。
 ROI 使用一体素立方邻域腐蚀，排除首尾各四层；不同腐蚀定义的旧统计不可直接比较。
 四种主要组织均通过 1e-5 mm^-1 绝对容差。空 ROI 不统计；单体素 ROI 不作为定量结论。
 
@@ -57,10 +61,10 @@ volume.roi.json 和 `water-roi-comparison.png`。对比图上栏为绝对值，�
 ```powershell
 $exe = 'out/top-multispectrum-dll-vs/example/multispectrum_sim/Release/multispectrum_sim.exe'
 $base = 'example/multispectrum_sim'
-& $exe "$base/configs/calibration/reconstruction/water-small-cone-fdk.toml"
-& $exe "$base/configs/calibration/reconstruction/water-small-cone-heli-cyl-wfbp.toml"
-python "$base/scripts/report_material_roi.py" "$base/configs/calibration/reconstruction/water-small-cone-fdk.toml" --fixed-radius-mm 20
-python "$base/scripts/report_material_roi.py" "$base/configs/calibration/reconstruction/water-small-cone-heli-cyl-wfbp.toml" --fixed-radius-mm 20
+& $exe "$base/configs/project-and-reconstruct/calibration/water-small-cone-fdk.toml"
+& $exe "$base/configs/project-and-reconstruct/calibration/water-small-cone-heli-cyl-wfbp.toml"
+python "$base/scripts/report_material_roi.py" "$base/configs/project-and-reconstruct/calibration/water-small-cone-fdk.toml" --fixed-radius-mm 20
+python "$base/scripts/report_material_roi.py" "$base/configs/project-and-reconstruct/calibration/water-small-cone-heli-cyl-wfbp.toml" --fixed-radius-mm 20
 python "$base/scripts/plot_water_roi.py" "$base/outputs/calibration/water-fdk-volume.roi.json" "$base/outputs/calibration/water-wfbp-volume.roi.json" --output "$base/outputs/calibration/water-roi-comparison.png"
 ctest --test-dir out/top-multispectrum-dll-vs/example/multispectrum_sim -C Release --output-on-failure
 python -m unittest discover -s "$base/scripts" -p test_report_material_roi.py
@@ -138,7 +142,7 @@ ctest --test-dir out/build/stage-tests -C Release --output-on-failure
 
 引导滤波参考采用双精度完整邻域求和。误差判定同时包含输出相对误差和输入幅值对应的 float 舍入项，避免经过抵消的近零输出使用不合理的纯相对容差。
 
-新增 FP 在 `include/primary/ScalarProjector.hpp`，由上层独立维护，生产目标仅依赖 CUDA，不引用底层内部源码。`src/primary/scalar_fp/README.md` 说明坐标和资源所有权。原有多能融合投影、骨硬化和 EBHC 默认执行路径尚未替换；本轮无速度收益结论。
+新增 FP 在 `include/projection/scalar/ScalarProjector.hpp`，由上层独立维护，生产目标仅依赖 CUDA，不引用底层内部源码。`modules/scalar_projection/README.md` 说明坐标和资源所有权。原有多能融合投影、骨硬化和 EBHC 默认执行路径尚未替换；本轮无速度收益结论。
 
 可选 DLL 对照：独立 GPU 测试配置增加 `SCALAR_FP_DLL_LIBRARY`（导入库）与 `SCALAR_FP_DLL_INCLUDE_DIR`（公共头文件目录），运行时确保 DLL 及其依赖位于 PATH。完整工程存在 `YKCBCT` 目标时自动注册。未提供 DLL 时不注册此项，其余 FP 测试仍可运行。
 

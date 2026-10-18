@@ -1,12 +1,12 @@
-#include "image/ImageProcessing.hpp"
-#include "pipeline/BuiltinPluginInfo.hpp"
-#include "common/YkTimingWatchdog.hpp"
+#include "processing/image/ImageProcessing.hpp"
+#include "processing/PluginCatalog.hpp"
+#include "processing/support/TimingWatchdog.hpp"
 #include "recon/preprocess/PreprocessPipeline.hpp"
 #include "CudaPixelOps.hpp"
-#include "BeamHardeningFit.hpp"
+#include "input/calibration/WaterBhcTable.hpp"
 #include "Stages.hpp"
-#include "cuda/DeviceMemoryPool.hpp"
-#include "../../primary/AirReferenceReader.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
+#include "../../projection/spectral/AirReferenceReader.hpp"
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -41,7 +41,7 @@ double elapsed(Clock::time_point tick) {
     return std::chrono::duration<double, std::milli>(Clock::now() - tick).count();
 }
 } // namespace
-void Pipeline::append(std::unique_ptr<IStage> stage) {
+void Pipeline::append(std::unique_ptr<IProjectionPreprocessStage> stage) {
     require(!running_, "cannot append a stage while running");
     require(bool(stage), "null preprocess stage");
     extensions_.push_back(std::move(stage));
@@ -53,12 +53,12 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
         diagnostic = "preprocess pipeline is already running";
         return false;
     }
-    YK::diagnostics::TimingSpan total_watch("preprocess.run",std::to_string(config.geometry.parameters.views)+" views");
+    yk::spectral::diagnostics::TimingSpan total_watch("preprocess.run",std::to_string(config.geometry.parameters.views)+" views");
     pipeline::RunScope run_scope(running_);
     statistics_ = {};
     auto started = Clock::now();
-    std::vector<std::unique_ptr<IStage>> builtins;
-    std::vector<IStage *> stages;
+    std::vector<std::unique_ptr<IProjectionPreprocessStage>> builtins;
+    std::vector<IProjectionPreprocessStage *> stages;
     try {
         const auto &g = config.geometry.parameters;
         const auto &pp = config.reconstruction.preprocessing;
@@ -79,9 +79,8 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
                 "preprocessing input projection size does not match geometry");
         auto tick = Clock::now();
         auto bhc = pp.beam_hardening;
-        if (bhc.enabled && bhc.fit_from_water_plate)
-            bhc = fitWaterPlate(config, bhc, progress);
-        statistics_.fit_ms = elapsed(tick);
+        if (bhc.enabled) bhc = calibration::resolveWaterBhc(bhc);
+        statistics_.calibration_load_ms = elapsed(tick);
         tick = Clock::now();
         const auto pool_start=yk::spectral::cuda_resources::devicePoolStatistics();
         CudaPixelOps gpu(pixels);
@@ -120,9 +119,9 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
         progress_report.start();
         for (int view = 0; view < g.views; ++view) {
             tick = Clock::now();
-            {YK::diagnostics::TimingSpan watch("preprocess.read","view="+std::to_string(view));input.read(reinterpret_cast<char *>(host.data()), pixels * sizeof(float));
+            {yk::spectral::diagnostics::TimingSpan watch("preprocess.read","view="+std::to_string(view));input.read(reinterpret_cast<char *>(host.data()), pixels * sizeof(float));
             require(bool(input), "cannot read preprocessing frame");}
-            {YK::diagnostics::TimingSpan watch("preprocess.validate","view="+std::to_string(view));for(float v:host)require(std::isfinite(v),"projection contains a non-finite value");}
+            {yk::spectral::diagnostics::TimingSpan watch("preprocess.validate","view="+std::to_string(view));for(float v:host)require(std::isfinite(v),"projection contains a non-finite value");}
             const bool new_air = air_reader && (!broadcast_air || view == 0);
             if (new_air)
                 air_reader->read(view, air);
@@ -160,7 +159,7 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
             };
             for (size_t index = 0; index < stages.size(); ++index) {
                 auto *stage = stages[index];
-                YK::diagnostics::TimingSpan stage_watch(std::string("preprocess.stage.")+stage->info().name.c_str(),std::string(stage->info().name.c_str())+" view="+std::to_string(view));
+                yk::spectral::diagnostics::TimingSpan stage_watch(std::string("preprocess.stage.")+stage->info().name.c_str(),std::string(stage->info().name.c_str())+" view="+std::to_string(view));
                 const auto timing=pipeline::execute(stage->info().name.c_str(),stage->contract(),&frame,1,ensure,
                     [&](Frame& value){stage->process(value,context);
                         require(host.size()==pixels && value.host_data==&host && value.device_data==gpu.data(),"preprocess stage changed borrowed frame storage");},
@@ -168,8 +167,8 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
                 statistics_.stages_ms[index].second+=timing.process_ms;
             }
             ensure(Location::Host);
-            {YK::diagnostics::TimingSpan watch("preprocess.validate.output","view="+std::to_string(view));for(float v:host)require(std::isfinite(v),"preprocessing produced a non-finite value");}
-            {YK::diagnostics::TimingSpan watch("preprocess.write","view="+std::to_string(view));
+            {yk::spectral::diagnostics::TimingSpan watch("preprocess.validate.output","view="+std::to_string(view));for(float v:host)require(std::isfinite(v),"preprocessing produced a non-finite value");}
+            {yk::spectral::diagnostics::TimingSpan watch("preprocess.write","view="+std::to_string(view));
                 const pipeline::Contract<Domain> contract{Domain::LogAttenuation,Domain::LogAttenuation};
                 const auto timing=pipeline::execute(output.info().name.c_str(),contract,&frame,1,ensure,
                     [&](const Frame& value){output.write(value,context);},[]{});
@@ -180,7 +179,7 @@ bool Pipeline::run(const SimulationConfig &config, const std::filesystem::path &
         output.finish();
         statistics_.total_ms = elapsed(started);
         std::cout << "preprocess_timing_ms total=" << statistics_.total_ms
-                  << " init=" << statistics_.init_ms << " fit=" << statistics_.fit_ms
+                  << " init=" << statistics_.init_ms << " calibration_load=" << statistics_.calibration_load_ms
                   << " read=" << statistics_.read_ms << " transfer=" << statistics_.transfer_ms
                   << " write=" << statistics_.write_ms << " uploads=" << statistics_.image_uploads
                   << " downloads=" << statistics_.image_downloads

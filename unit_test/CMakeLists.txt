@@ -10,7 +10,7 @@ add_executable(YKCBCT_unit_test
     ${PROJECT_SOURCE_DIR}/src/global/YkLog.cpp
 )
 
-target_link_libraries(YKCBCT_unit_test PRIVATE
+target_link_libraries(YKCBCT_unit_test PRIVATE yk::spdlog
     GTest::gtest
     YKCBCT::YKCBCT
     CUDA::cudart
@@ -102,7 +102,7 @@ add_executable(YKCBCT_operator_benchmark_test
     ${PROJECT_SOURCE_DIR}/src/CylFpBp/kernels/siddon/YkCylSiddonForwardKernels.cu
     ${PROJECT_SOURCE_DIR}/src/CylFpBp/kernels/siddon/YkCylSiddonBackprojectKernels.cu
 )
-target_link_libraries(YKCBCT_operator_benchmark_test PRIVATE
+target_link_libraries(YKCBCT_operator_benchmark_test PRIVATE yk::spdlog
     GTest::gtest CUDA::cudart CUDA::cufft OpenMP::OpenMP_CXX)
 target_include_directories(YKCBCT_operator_benchmark_test PRIVATE
     ${PROJECT_SOURCE_DIR}/include

@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <vector>
 
-#include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtGeometry.hpp"
+#include "YKCBCT/geometry/YkTiltedAxisGeometryBuilder.hpp"
 #include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtPipeline.hpp"
 #include "NonStandardFpBp/SourceOrbitTomography/YkSourceOrbitTomographyPipeline.hpp"
 #include "YKCBCT/geometry/YkPlanarGeometryBuilder.hpp"

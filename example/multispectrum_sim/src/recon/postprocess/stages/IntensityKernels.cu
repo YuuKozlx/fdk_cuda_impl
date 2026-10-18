@@ -1,5 +1,5 @@
 #include "IntensityOps.hpp"
-#include "cuda/DeviceMemoryPool.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cuda_runtime.h>

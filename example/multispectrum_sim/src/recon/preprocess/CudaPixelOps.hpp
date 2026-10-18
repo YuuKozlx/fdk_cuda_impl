@@ -1,5 +1,5 @@
 #pragma once
-#include "config/SimTypes.hpp"
+#include "input/config/SimTypes.hpp"
 #include <memory>
 namespace yk::spectral::preprocess {
 class CudaPixelOps {
@@ -18,6 +18,7 @@ class CudaPixelOps {
     float *guideAir();
     float *prediction();
     void restoreEnergy();
+    void convertTransmission(bool to_transmission, bool energy_domain = false);
     const unsigned char* makeMaskDevice(float*,const float*,double);
     std::vector<unsigned char> mask(float *energy, const float *air, double threshold);
     void guidedResidual(double scale);

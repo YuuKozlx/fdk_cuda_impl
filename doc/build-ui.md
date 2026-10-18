@@ -11,6 +11,7 @@
 | NVIDIA 驱动 | 兼容所用 CUDA 及显卡 |
 | VTK | 原生 C++ SDK，≥ 9.3；验证版本 9.6.2 |
 | matio / zlib | matio ≥ 1.5.28，支持 zlib 压缩 MAT v5；验证为 matio 1.5.28 + zlib 1.3.1 |
+| Eigen | 头文件 SDK，提供 Eigen3Config.cmake；供几何标定与 CPU 拟合共用 |
 | Git LFS | 仅获取仓库内体素示例数据时需要，编译和空 UI 不需要 |
 
 Windows 客户端和 SDK 统一使用 x64 / Release / MD。SDK 已有 matio CMake 包时直接复用；只有标准头文件与库时，由独立的 Findmatio.cmake 适配，不要求使用本项目制作 SDK。matio 不依赖 MATLAB 或 Python。
@@ -21,6 +22,8 @@ SDK 布局示例：
 <SDK>/
   include/matio.h, matio_pubconf.h, zlib.h
   include/vtk-*/...
+  include/eigen3/Eigen/...
+  share/eigen3/cmake/Eigen3Config.cmake
   lib/matio.lib 或 libmatio.lib
   lib/zlibstatic.lib
   lib/cmake/vtk-*/vtk-config.cmake
@@ -99,10 +102,13 @@ ctest --test-dir out/build/ui --output-on-failure `
 ## CMake 职责
 
 - 顶层 CMakeLists.txt：主库、功能开关、SDK 搜索前缀与子模块编排。
-- example/multispectrum_sim/CMakeLists.txt：应用目标与功能模块组合。
-- example/multispectrum_sim/cmake/Examples.cmake：内置示例、ICRP 和对应测试目标。
-- example/multispectrum_sim/cmake/MatVolume.cmake：MAT 读取目标；Findmatio.cmake 只负责查找和适配 SDK。
-- example/multispectrum_sim/visualization/CMakeLists.txt：VTK/ImGui 显示目标。
+- example/multispectrum_sim/CMakeLists.txt：应用选项、SDK 查找、独立组件及构建顺序。
+- example/multispectrum_sim/cmake/Application.cmake：主程序、内部处理、内置示例、ICRP 和 MAT 读取目标。
+- example/multispectrum_sim/cmake/Tools.cmake：数据工具、实验程序和基准程序。
+- example/multispectrum_sim/cmake/Tests.cmake：应用测试目标与注册；只在 BUILD_TESTING=ON 时加载。
+- example/multispectrum_sim/cmake/NumericalTests.cmake：完整构建与独立 CPU/CUDA 测试共用的数值测试清单。
+- example/multispectrum_sim/cmake/ProcessingSources.cmake：显存池、图像处理、自适应散射的内部源码装配；Findmatio.cmake 只负责查找和适配 SDK。
+- example/multispectrum_sim/modules/visualization/CMakeLists.txt：VTK/ImGui 显示目标。
 
 模块通过 CMake target 传递头文件与链接依赖。matio、VTK 仅属于应用层，关闭 BUILD_MULTISPECTRUM_SIM 的本体 DLL 构建不需要它们。扩展处理功能不应增加下载器、环境初始化脚本或另一套构建调度。
 
@@ -111,3 +117,7 @@ ctest --test-dir out/build/ui --output-on-failure `
 找不到包时检查 SDK 布局、前缀和 ABI；缺 DLL 时检查 SDK/CUDA 的 PATH、驱动和 MSVC x64 运行库；MAT 是 LFS pointer 时获取实际数据；exe 被占用时先关闭对应界面。Windows ImGui 输入桥不代表 Linux UI 已完成支持。
 
 2026-10-17：上述 MSVC/CUDA/VTK/matio 组合在全新目录完成客户端构建，七项定向测试通过；BrainWeb 资源加载与界面启动通过。matio SDK 复制到含空格的新目录后，头文件、库查找和压缩读写通过。VTK 复用已准备的原生 SDK；未验证所有工具链或另一台物理机器。
+
+日志使用仓库随附的 `thirdparty/spdlog`（当前固定为 1.17.0），由 `yk::spdlog` 头文件目标提供；无需安装、下载或部署额外日志 DLL。父项目和多能应用独立配置入口均显式接入该依赖，不需要底层私有 `src/util` 路径。
+
+CPU 拟合使用 Eigen（`Eigen3::Eigen`），与几何标定复用同一个依赖；无额外运行时 DLL。独立 CPU 数值测试也需要准备 Eigen SDK，通过 `Eigen3_DIR` 指向包含 `Eigen3Config.cmake` 的目录。

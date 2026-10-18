@@ -138,4 +138,4 @@ Windows 运行前，将安装 `bin/` 加入当前进程 `PATH`，或把所需 DL
 
 准备 VTK C++ 包后，可在主工程添加 `-DBUILD_VTK_VIEWER=ON -DVTK_DIR=<包配置目录>` 并构建 geometry_viewer 目标。也可直接以 tools/geometry_viewer 为源码目录配置，跳过主库编译。运行需要 VTK 对应的 DLL/共享库，操作、RAW 布局、导出与验证见 [查看器说明](../tools/geometry_viewer/README.zh-CN.md)。
 
-多能前投的内置实时显示使用独立 `BUILD_VTK_VISUALIZATION` 开关和 `ykcbct_visualization` 模块，配置、完整体数据与投影贴图约定见 [实时显示层](../visualization/README.zh-CN.md)。两个开关均关闭时不寻找 VTK。
+多能前投的内置实时显示使用独立 `BUILD_VTK_VISUALIZATION` 开关和 `ykcbct_visualization` 模块，配置、完整体数据与投影贴图约定见 [实时显示层](../example/multispectrum_sim/modules/visualization/README.zh-CN.md)。两个开关均关闭时不寻找 VTK。

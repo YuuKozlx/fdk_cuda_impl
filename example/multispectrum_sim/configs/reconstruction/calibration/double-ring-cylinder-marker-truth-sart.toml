@@ -1,0 +1,110 @@
+# Current schema v2. Paths are relative to this TOML.
+#  Requires imported projection data with the exact declared geometry and signal convention.
+schema_version = 2
+
+[geometry]
+detector_u = 1024
+detector_v = 1024
+kind = 'flat_cbct'
+nikon_tilt_axis_azimuth_rad = 0.0
+nikon_tilt_rad = 0.0
+offset_n_mm = 0.0
+offset_u_mm = 2.085
+offset_v_mm = 4.17
+phantom_offset_x_mm = 10.0
+phantom_offset_y_mm = 15.0
+phantom_offset_z_mm = 20.0
+phantom_rotation_x_rad = 0.0
+phantom_rotation_y_rad = 0.0
+phantom_rotation_z_rad = 0.0
+pitch_mm_per_turn = 0.0
+pixel_u_mm = 0.417
+pixel_v_mm = 0.417
+planar_detector_y_mm = 330.0
+planar_resample_mode = 'perspective_orthogonal'
+reconstruction_detector_u = 1024
+reconstruction_detector_v = 1024
+reconstruction_offset_x_mm = 0.0
+reconstruction_offset_y_mm = 0.0
+reconstruction_offset_z_mm = 0.0
+reconstruction_volume_x = 768
+reconstruction_volume_y = 768
+reconstruction_volume_z = 600
+reconstruction_voxel_x_mm = 0.3
+reconstruction_voxel_y_mm = 0.3
+reconstruction_voxel_z_mm = 0.3
+rotation_axis_pivot_x_mm = 0.0
+rotation_axis_pivot_y_mm = 0.0
+rotation_axis_pivot_z_mm = 0.0
+rotation_direction = 1
+scan_range_rad = 6.283185307179586
+sdd_mm = 770.0
+sid_mm = 440.0
+source_lateral_offset_mm = 0.0
+source_offset_x_mm = 0.0
+source_offset_y_mm = 0.0
+source_offset_z_mm = 0.0
+source_orbit_radius_mm = 0.0
+start_angle_rad = 0.0
+start_z_mm = 0.0
+tilt_n_rad = 0.0523598775598299
+tilt_u_rad = 0.0174532925199433
+tilt_v_rad = 0.0349065850398866
+views = 360
+views_per_turn = 360
+volume_x = 540
+volume_y = 540
+volume_z = 900
+voxel_x_mm = 0.2
+voxel_y_mm = 0.2
+voxel_z_mm = 0.2
+
+[projection]
+mAs_per_view = 1.0
+materials = []
+save_metadata = true
+
+    [projection.geometry_flux]
+    enabled = true
+
+    [projection.quantum_noise]
+    enabled = true
+    seed = 67890
+
+    [projection.sampling]
+    samples_per_pixel = 1
+    spatial_seed = 12345
+
+    [projection.spectrum]
+    anode_angle_deg = 12.0
+    bin_width_keV = 1.0
+    export_file = '../../../../../out/config-examples/double-ring-cylinder-marker-truth-sart/spectrum.spec'
+    kvp = 120.0
+    model = 'spekpy-v1'
+    source = 'generated'
+
+        [[projection.spectrum.filters]]
+        material = 'Al'
+        thickness_mm = 2.0
+
+[reconstruction]
+input_projection_file = '../../../../../out/config-examples/imported/double-ring-100mm-spacing100-bead3-cylinder6-6beads-spp10-projection-1024x1024x360-f32.raw'
+output_volume_file = '../../../../../out/config-examples/double-ring-cylinder-marker-truth-sart/double-ring-cylinder-marker-truth-sart-reconstruction.raw'
+save_slices = false
+slice_prefix = '../../../../../out/config-examples/double-ring-cylinder-marker-truth-sart/double-ring-cylinder-marker-truth-sart'
+type = 'iterative'
+
+    [reconstruction.iterative]
+    algorithm = 'sart'
+    back_projector = 'auto'
+    forward_projector = 'auto'
+    iterations = 20
+    non_negative = true
+    relaxation = 0.8
+    subsets = 1
+
+[visualization]
+enabled = false
+
+[workflow]
+mode = 'reconstruct'

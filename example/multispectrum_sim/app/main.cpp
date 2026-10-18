@@ -1,17 +1,23 @@
-#include "examples/DataExamples.hpp"
-#include "io/MatLabelVolume.hpp"
-#include "ReconstructionPreprocessor.hpp"
-#include "config/SimConfig.hpp"
+#include "input/calibration/WaterBhcCalibration.hpp"
+#include "input/examples/DataExamples.hpp"
+#include "input/io/MatLabelVolume.hpp"
+#include "recon/preprocess/ReconstructionPreprocessor.hpp"
+#include "input/config/SimConfig.hpp"
 #ifdef YK_SPECTRAL_IMGUI
-#include "ImGuiProjection.hpp"
+#include "client/ImGuiProjection.hpp"
 #endif
-#include "SimLogger.hpp"
-#include "SpectralModel.hpp"
-#include "XcomAttenuationProvider.hpp"
-#include "ProjectionSimulator.hpp"
+#include "processing/support/SimLogger.hpp"
+#include "input/materials/SpectralModel.hpp"
+#include "input/materials/XcomAttenuationProvider.hpp"
+#include "projection/spectral/ProjectionSimulator.hpp"
 #ifdef YK_MULTISPECTRUM_CUDA_PRIMARY
 #include "recon/bhc/BoneBhcStage.hpp"
 #endif
+#ifdef YK_SPECTRAL_VTK
+#include "client/LiveProjectionObserver.hpp"
+#include "client/InteractiveProjection.hpp"
+#endif
+#include "recon/backend/LibraryReconstructor.hpp"
 #include <iomanip>
 #include <iostream>
 #include <filesystem>
@@ -60,6 +66,14 @@ int main(int argc, char** argv)
 #endif
 
     try {
+        if(argc==4 && std::string_view(argv[1])=="--calibrate-water-bhc") {
+            auto config=yk::spectral::loadConfig(std::filesystem::u8path(argv[2]),false);
+            const auto table=std::filesystem::u8path(argv[3]);
+            config.reconstruction.preprocessing.beam_hardening=yk::spectral::calibration::calibrateWaterBhc(config,table);
+            const auto ready=std::filesystem::path(table.string()+".config.toml");
+            yk::spectral::saveConfig(config,ready);
+            std::cout<<"water_bhc_table="<<table<<"\nready_config="<<ready<<'\n';return 0;
+        }
         const auto total_start = std::chrono::steady_clock::now();
         if (argc == 2 && std::string_view(argv[1]) == "--list-examples") {
             for(const auto& info:yk::spectral::examples::clientExamples().list())
@@ -119,6 +133,7 @@ int main(int argc, char** argv)
                 << "   或: multispectrum_sim --profile-preprocess <config.toml>\n"
                 << "   或: multispectrum_sim --bone-bhc <job.json> (CUDA build)\n"
                 << "   或: multispectrum_sim --export-spectrum <config.toml> <output.spec>\n"
+                << "   或: multispectrum_sim --calibrate-water-bhc <config.toml> <table.toml>\n"
                 << "   或: multispectrum_sim --gui [config.toml] (ImGui build)\n"
                 << "   或: multispectrum_sim --list-examples\n"
                 << "   或: multispectrum_sim --example <id> <output-directory> | --gui-example <id> <output-directory>\n"
@@ -160,7 +175,7 @@ int main(int argc, char** argv)
                 std::filesystem::create_directories(
                     config.reconstruction.slice_prefix.parent_path());
             std::string error;
-            if (!yk::spectral::reconstructWithLibraryFdk(config,
+            if (!yk::spectral::reconstructWithLibrary(config,
                 config.reconstruction.input_projection_file,
                 config.reconstruction.output_volume_file,
                 config.reconstruction.slice_prefix, error))
@@ -188,7 +203,18 @@ int main(int argc, char** argv)
             std::filesystem::create_directories(
                 config.reconstruction.slice_prefix.parent_path());
         const auto projection_start = std::chrono::steady_clock::now();
-        if (!simulator.runToFile(labels, config.projection.output_file, error))
+        yk::spectral::IProjectionObserver* observer = nullptr;
+#ifdef YK_SPECTRAL_VTK
+        yk::spectral::LiveProjectionObserver live_observer;
+        if (config.visualization.enabled) observer = &live_observer;
+        const bool success = config.visualization.enabled && config.visualization.interactive
+            ? yk::spectral::runInteractiveProjection(config, labels, model, config.projection.output_file, error)
+            : simulator.runToFile(labels, config.projection.output_file, error, observer);
+#else
+        if (config.visualization.enabled) throw std::runtime_error("Live display requires BUILD_VTK_VISUALIZATION=ON");
+        const bool success = simulator.runToFile(labels, config.projection.output_file, error);
+#endif
+        if (!success)
             throw std::runtime_error(error);
         const auto projection_end = std::chrono::steady_clock::now();
         const auto projection_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -200,7 +226,7 @@ int main(int argc, char** argv)
             << " labels=" << labels.size()
             << " output=" << config.projection.output_file.string() << '\n';
         if (config.runsReconstruction()) {
-            if (!yk::spectral::reconstructWithLibraryFdk(config,
+            if (!yk::spectral::reconstructWithLibrary(config,
                 config.reconstruction.input_projection_file,
                 config.reconstruction.output_volume_file,
                 config.reconstruction.slice_prefix, error))

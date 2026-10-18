@@ -10,7 +10,7 @@
 #include "YkTestImage.hpp"
 #include "common/YkProjectionOperators.hpp"
 #include "global/YkMem3d.hpp"
-#include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtGeometry.hpp"
+#include "YKCBCT/geometry/YkTiltedAxisGeometryBuilder.hpp"
 #include "NonStandardFpBp/NikonTiltedCt/YkNikonTiltedCtPipeline.hpp"
 
 namespace {

@@ -1,7 +1,7 @@
 #include "BoneBhcIo.hpp"
-#include "LibraryReconstructor.hpp"
+#include "recon/backend/LibraryReconstructor.hpp"
 #include "recon/bhc/BoneBhcStage.hpp"
-#include "recon/preprocess/BeamHardeningFit.hpp"
+#include "input/calibration/WaterBhcTable.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -27,6 +27,8 @@ void runBoneBhcJob(const std::filesystem::path& job_file)
     else
         throw std::invalid_argument("unknown bone BHC input domain");
     auto config = loadConfig(resolve("config"));
+    if (config.reconstruction.postprocessing.hu_correction.enabled)
+        throw std::invalid_argument("Experimental bone-BHC jobs do not apply output HU calibration; use the formal reconstruction workflow");
     config.reconstruction.bone_hardening.enabled=false;
     config.projection.spectrum.export_file.clear();
     // Keep the configured analytic reconstruction; TV/other postprocessing must not
@@ -35,8 +37,7 @@ void runBoneBhcJob(const std::filesystem::path& job_file)
         throw std::invalid_argument("iBHC job currently requires analytic FDK/WFBP");
     const size_t elements = product(config.geometry.parameters.detector_u, config.geometry.parameters.detector_v, config.geometry.parameters.views);
     auto fit = config.reconstruction.preprocessing.beam_hardening;
-    if (fit.enabled && fit.fit_from_water_plate)
-        fit = preprocess::fitWaterPlate(config, fit, {});
+    if (fit.enabled) fit = calibration::resolveWaterBhc(fit);
     SegmentationOptions segmentation { job.value("air_threshold_hu", -500.), job.value("bone_threshold_hu", 300.) };
     std::unique_ptr<IBoneBhcAlgorithm> algorithm;
     const auto method = job.at("method").get<std::string>();
@@ -70,7 +71,7 @@ void runBoneBhcJob(const std::filesystem::path& job_file)
     context.options.stop_ratio = job.value("stop_ratio", .78);
     context.reconstruct = [&](const auto& input, const auto& output) {
         std::string error;
-        if (!reconstructWithLibraryFdk(config, input, output, {}, error))
+        if (!reconstructWithLibrary(config, input, output, {}, error))
             throw std::runtime_error(error);
     };
     if (fit.enabled && domain == Domain::ScatterCorrectedLog) {

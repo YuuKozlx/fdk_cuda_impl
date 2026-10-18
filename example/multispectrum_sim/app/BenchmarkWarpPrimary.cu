@@ -1,7 +1,7 @@
 // Native thread-layout comparison; no reconstruction, plugins, or image export.
-#include "primary/WarpSpectralTransport.cuh"
-#include "config/SimConfig.hpp"
-#include "XcomAttenuationProvider.hpp"
+#include "projection/spectral/WarpSpectralTransport.cuh"
+#include "input/config/SimConfig.hpp"
+#include "input/materials/XcomAttenuationProvider.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>

@@ -8,5 +8,5 @@ struct HuThresholdSegmentation {
     std::vector<LabelClass> classes;
 };
 // HU -> Labels. Storage stays float32 with exact nonnegative integer label IDs.
-std::unique_ptr<IStage> makeHuThresholdStage(HuThresholdSegmentation, Location = Location::Device);
+std::unique_ptr<IVolumePostprocessStage> makeHuThresholdStage(HuThresholdSegmentation, Location = Location::Device);
 } // namespace

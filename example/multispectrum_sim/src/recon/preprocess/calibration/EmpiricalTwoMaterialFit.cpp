@@ -1,4 +1,5 @@
 #include "recon/preprocess/calibration/EmpiricalTwoMaterialFit.hpp"
+#include <Eigen/Cholesky>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -26,27 +27,20 @@ namespace {
     }
     bool solve(double h[5][6], A& out)
     {
+        Eigen::Matrix<double, 5, 5> matrix;
+        Eigen::Matrix<double, 5, 1> rhs;
         for (int i = 0; i < 5; ++i) {
-            int pivot = i;
-            for (int j = i + 1; j < 5; ++j)
-                if (std::abs(h[j][i]) > std::abs(h[pivot][i]))
-                    pivot = j;
-            if (std::abs(h[pivot][i]) < 1e-20)
-                return false;
-            for (int k = i; k < 6; ++k)
-                std::swap(h[i][k], h[pivot][k]);
-            const double d = h[i][i];
-            for (int k = i; k < 6; ++k)
-                h[i][k] /= d;
+            rhs[i] = h[i][5];
             for (int j = 0; j < 5; ++j)
-                if (j != i) {
-                    const double a = h[j][i];
-                    for (int k = i; k < 6; ++k)
-                        h[j][k] -= a * h[i][k];
-                }
+                matrix(i, j) = h[i][j];
         }
-        for (int i = 0; i < 5; ++i)
-            out[i] = h[i][5];
+        if (!matrix.allFinite() || !rhs.allFinite()) return false;
+        const Eigen::LDLT<Eigen::Matrix<double, 5, 5>> factor(matrix);
+        if (factor.info() != Eigen::Success || !factor.isPositive() ||
+            factor.vectorD().cwiseAbs().minCoeff() < 1e-20) return false;
+        const Eigen::Matrix<double, 5, 1> step = factor.solve(rhs);
+        if (factor.info() != Eigen::Success || !step.allFinite()) return false;
+        for (int i = 0; i < 5; ++i) out[i] = step[i];
         return true;
     }
 }

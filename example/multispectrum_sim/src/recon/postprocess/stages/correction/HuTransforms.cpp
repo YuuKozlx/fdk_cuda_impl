@@ -1,6 +1,6 @@
 #include "recon/postprocess/stages/correction/HuTransforms.hpp"
 #include "../IntensityOps.hpp"
-#include "pipeline/BuiltinPluginInfo.hpp"
+#include "processing/PluginCatalog.hpp"
 #include <cmath>
 #include <stdexcept>
 namespace yk::spectral::postprocess {
@@ -16,7 +16,7 @@ namespace {
         intensity_detail::validateCoefficients(c);
         return c;
     }
-    class LinearStage final : public IStage {
+    class LinearStage final : public IVolumePostprocessStage {
         Domain input_, output_;
         Location location_;
         HuLinearCoefficients coefficients_;
@@ -58,15 +58,15 @@ namespace {
         }
     };
 }
-std::unique_ptr<IStage> makeMuToHuStage(MuHuReference r, Location l) { return std::make_unique<LinearStage>(Domain::AttenuationMmInv, Domain::HounsfieldUnits, l, conversion(r, false), 0); }
-std::unique_ptr<IStage> makeHuToMuStage(MuHuReference r, Location l) { return std::make_unique<LinearStage>(Domain::HounsfieldUnits, Domain::AttenuationMmInv, l, conversion(r, true), 1); }
-std::unique_ptr<IStage> makeHuCorrectionStage(HuLinearCoefficients c, Location l) { return std::make_unique<LinearStage>(Domain::HounsfieldUnits, Domain::HounsfieldUnits, l, c, 3); }
-std::unique_ptr<IStage> makeHuCorrectionStage(std::shared_ptr<const HuCalibrationResult> c, Location l)
+std::unique_ptr<IVolumePostprocessStage> makeMuToHuStage(MuHuReference r, Location l) { return std::make_unique<LinearStage>(Domain::AttenuationMmInv, Domain::HounsfieldUnits, l, conversion(r, false), 0); }
+std::unique_ptr<IVolumePostprocessStage> makeHuToMuStage(MuHuReference r, Location l) { return std::make_unique<LinearStage>(Domain::HounsfieldUnits, Domain::AttenuationMmInv, l, conversion(r, true), 1); }
+std::unique_ptr<IVolumePostprocessStage> makeHuCorrectionStage(HuLinearCoefficients c, Location l) { return std::make_unique<LinearStage>(Domain::HounsfieldUnits, Domain::HounsfieldUnits, l, c, 3); }
+std::unique_ptr<IVolumePostprocessStage> makeHuCorrectionStage(std::shared_ptr<const HuCalibrationResult> c, Location l)
 {
     if (!c)
         throw std::invalid_argument("missing HU calibration result");
     return std::make_unique<LinearStage>(Domain::HounsfieldUnits, Domain::HounsfieldUnits, l, HuLinearCoefficients {}, 3, false, std::move(c));
 }
 // Existing water-only CPU convenience factory now shares the same numerical engine.
-std::unique_ptr<IStage> makeHuConversionStage(double water) { return std::make_unique<LinearStage>(Domain::AttenuationMmInv, Domain::HounsfieldUnits, Location::Host, conversion({ water }, false), 0, true); }
+std::unique_ptr<IVolumePostprocessStage> makeHuConversionStage(double water) { return std::make_unique<LinearStage>(Domain::AttenuationMmInv, Domain::HounsfieldUnits, Location::Host, conversion({ water }, false), 0, true); }
 }

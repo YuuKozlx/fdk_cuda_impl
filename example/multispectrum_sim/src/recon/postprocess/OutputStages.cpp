@@ -1,5 +1,5 @@
-#include "pipeline/BuiltinPluginInfo.hpp"
-#include "image/GridMetadata.hpp"
+#include "processing/PluginCatalog.hpp"
+#include "processing/image/GridMetadata.hpp"
 #include "recon/postprocess/PostprocessPipeline.hpp"
 #include <algorithm>
 #include <cmath>

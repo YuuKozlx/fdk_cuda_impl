@@ -6,7 +6,7 @@
 #include <stdexcept>
 namespace yk::spectral::postprocess {
 namespace {
-    class ThresholdStage final : public IStage {
+    class ThresholdStage final : public IVolumePostprocessStage {
         HuThresholdSegmentation options_;
         Location location_;
         std::shared_ptr<const LabelMapping> mapping_;
@@ -53,5 +53,5 @@ namespace {
         }
     };
 }
-std::unique_ptr<IStage> makeHuThresholdStage(HuThresholdSegmentation s, Location l) { return std::make_unique<ThresholdStage>(std::move(s), l); }
+std::unique_ptr<IVolumePostprocessStage> makeHuThresholdStage(HuThresholdSegmentation s, Location l) { return std::make_unique<ThresholdStage>(std::move(s), l); }
 }

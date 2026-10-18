@@ -1,7 +1,7 @@
 #pragma once
-#include "TaskProgress.hpp"
-#include "pipeline/Stage.hpp"
-#include "image/ImageGrid.hpp"
+#include "processing/support/TaskProgress.hpp"
+#include "processing/stage/Stage.hpp"
+#include "processing/image/ImageGrid.hpp"
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -48,7 +48,7 @@ struct Context {
     void* stream = nullptr;
     image::Workspace* image_workspace = nullptr;
 };
-using IStage = pipeline::IStage<Volume, Context, Domain>;
+using IVolumePostprocessStage = pipeline::IStage<Volume, Context, Domain>;
 struct ReadOnlyVolume {
     Grid grid;
     size_t elements;
@@ -76,7 +76,7 @@ struct StageTiming {
 };
 class Pipeline {
 public:
-    void append(std::unique_ptr<IStage>);
+    void append(std::unique_ptr<IVolumePostprocessStage>);
     void appendExporter(std::unique_ptr<IExporter>);
     // One worker per instance. Fails explicitly when domain/input/transfer is missing.
     // Resets stages on success and failure; numerical processors may modify in place.
@@ -84,14 +84,14 @@ public:
     const std::vector<StageTiming>& timings() const { return timings_; }
 
 private:
-    std::vector<std::unique_ptr<IStage>> stages_;
+    std::vector<std::unique_ptr<IVolumePostprocessStage>> stages_;
     std::vector<std::unique_ptr<IExporter>> exporters_;
     std::vector<StageTiming> timings_;
     bool running_ = false;
 };
-using StageRegistry = pipeline::FactoryRegistry<IStage>;
+using StageRegistry = pipeline::FactoryRegistry<IVolumePostprocessStage>;
 using ExportRegistry = pipeline::FactoryRegistry<IExporter>;
-std::unique_ptr<IStage> makeHuConversionStage(double water_mu_mm_inv);
+std::unique_ptr<IVolumePostprocessStage> makeHuConversionStage(double water_mu_mm_inv);
 std::unique_ptr<IExporter> makeRawFloatExporter();
 std::unique_ptr<IExporter> makeOrthogonalBmpExporter();
 } // namespace yk::spectral::postprocess

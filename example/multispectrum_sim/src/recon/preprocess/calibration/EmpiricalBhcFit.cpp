@@ -1,4 +1,5 @@
 #include "recon/preprocess/calibration/EmpiricalBhcFit.hpp"
+#include <Eigen/Cholesky>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -30,7 +31,13 @@ EmpiricalBhcFit fitEmpiricalBhc(const std::vector<EmpiricalBhcDifference>& sampl
             d -= w * s.square * s.baseline;
             e -= w * s.cross * s.baseline;
         }
-        const double det = a * c - b * b, x = (d * c - b * e) / det, y = (a * e - b * d) / det;
+        Eigen::Matrix2d matrix;
+        matrix << a, b, b, c;
+        const Eigen::LDLT<Eigen::Matrix2d> factor(matrix);
+        if (!matrix.allFinite() || factor.info() != Eigen::Success || !factor.isPositive())
+            throw std::runtime_error("Unstable EBHC fit");
+        const Eigen::Vector2d solution = factor.solve(Eigen::Vector2d(d, e));
+        const double x = solution[0], y = solution[1];
         if (!std::isfinite(x) || !std::isfinite(y) || std::abs(x) > 100 || std::abs(y) > 100)
             throw std::runtime_error("Unstable EBHC fit");
         const double change = std::abs(x - out.square) + std::abs(y - out.cross);

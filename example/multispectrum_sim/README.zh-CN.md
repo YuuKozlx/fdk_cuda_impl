@@ -1,13 +1,20 @@
 # 多能谱 CBCT 仿真示例
 
+文档导航：[架构与各阶段流程图](ARCHITECTURE.zh-CN.md) · [标定表格式与读取](CALIBRATION-ARTIFACTS.zh-CN.md)
+
 首次使用请按 [客户端构建、SDK 与运行](../../doc/build-ui.md) 准备 VTK/matio SDK，再编译并启动界面。
+
+开发时先看 [源码组织与模块边界](ARCHITECTURE.zh-CN.md)，了解材料、前投、散射、重建适配、处理 Stage 与客户端代码的归属。
+
+只处理 MC-GPU 或其他程序的投影时，无需运行本库前投或加载原标签体积。
+外部数据的导入、校正、FDK／OS-SART 配置见 [外部仿真重建全链路](configs/reconstruction/external/README.zh-CN.md)。
 
 Example 菜单现可直接加载 BrainWeb 与 ICRP145 压缩 MAT 数据、材料及扫描预设，
 无需先生成 TOML。数据布局、LFS 获取与运行方法见
 [内置体素数据说明](../../data/phantoms/README.zh-CN.md)。
 
 ICRP145 男女头部、胸部/腹部带手臂及去手臂的十个全材料示例见
-[ICRP145 示例说明](configs/icrp145/README.zh-CN.md)，配置位于 `configs/ui/icrp/`。
+[配置与数据准备说明](configs/README.zh-CN.md)，配置位于 `configs/project-and-reconstruct/icrp/`。
 材料保留原介质组成和男女密度，默认使用螺旋 WFBP 解析重建。
 
 本例使用独立 CUDA kernel 在线完成多能谱前投，不生成材料路径缓存，也不通过 DLL 做 FP。DLL 只作为 FDK、wFBP 和迭代算法的重建后端。
@@ -16,7 +23,7 @@ ICRP145 男女头部、胸部/腹部带手臂及去手臂的十个全材料示�
 
 ```toml
 [reconstruction]
-enabled = true
+type = "iterative"
 output_volume_file = "../outputs/reconstructions/iterative.raw"
 slice_prefix = "../outputs/images/iterative"
 save_slices = false        # 默认不导出轴向、冠状和矢状 BMP
@@ -88,7 +95,7 @@ filters = [
 ]
 ```
 
-生成器来自仓库内 `thirdparty/spek_spectrum`，以静态库链接到多能前投工具。
+生成器来自仓库内 `example/multispectrum_sim/modules/spectrum`，以静态库链接到多能前投工具。
 正常构建、运行无需 Python、SciPy 或外部数值表；不增加 YKCBCT 核心 DLL 的依赖。
 只生成或导出能谱可运行 `multispectrum_sim --export-spectrum <config.toml> <output.spec>`，
 此命令不加载标签体、不运行投影或重建，也可使用独立 C++ 构建。实际前投仍需要 CUDA 父工程构建。
@@ -125,13 +132,13 @@ BrainWeb TOML 使用相对于配置文件的路径，输出统一写入 `example
 ```powershell
 cmake -S . -B out/brainweb -G "Visual Studio 17 2022" -A x64 -DBUILD_MULTISPECTRUM_SIM=ON -DYKCBCT_BUILD_HELICAL=ON
 cmake --build out/brainweb --config Release --target multispectrum_sim
-out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-fdk.toml
-out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-heli-cyl-wfbp.toml
+out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/project-and-reconstruct/analytic/brainweb-center33-fdk.toml
+out/brainweb/example/multispectrum_sim/Release/multispectrum_sim.exe example/multispectrum_sim/configs/project-and-reconstruct/analytic/brainweb-center33-heli-cyl-wfbp.toml
 ```
 
 示例文件按职责分开保存：
 
-- `configs/projection/`：纯投影配置；`configs/reconstruction/analytic/` 和 `configs/reconstruction/iterative/`：读取已有投影的重建配置；`configs/pipelines/analytic/` 和 `configs/pipelines/iterative/`：投影后立即重建的组合配置；`configs/quality/`：图像质量模体配置；`configs/calibration/geometry/`：双环、螺旋等几何标定模体；`configs/calibration/reconstruction/`：水模重建数值校验；
+- `configs/projection/`：纯投影；`configs/reconstruction/`：读取已有投影的纯重建；`configs/project-and-reconstruct/`：投影后重建。解析、迭代、质量评价及标定实验分别放在对应工作流的子目录。完整入口和准备命令见 [配置说明](configs/README.zh-CN.md)；
 - `spectra/`：原始能谱和转换后的 CSV；
 - `inputs/`：外部标签体；
 - `outputs/projections/`：最终 `-log(I/I0)` 投影；
@@ -158,7 +165,7 @@ XCOM 核心及 `data/MDATX3.*` 来自 `nist-xcom-portable`，保留 GPL-3.0-or-l
 winget install --id gnuplot.gnuplot --scope user
 cmake --preset x64-Release-plotting
 cmake --build out/build/x64-Release-plotting --config Release --target multispectrum_plot_reconstruction
-out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot_reconstruction.exe `
+out/build/x64-Release-plotting/example/multispectrum_sim/app/plot/multispectrum_plot_reconstruction.exe `
   --input example/multispectrum_sim/outputs/reconstructions/volume.raw `
   --size 512 512 256 --output volume-profile.png
 ```
@@ -167,10 +174,11 @@ out/build/x64-Release-plotting/example/multispectrum_sim/plot/multispectrum_plot
 
 ## 典型水模测试
 
-仓库只保留 `configs/pipelines/analytic/water-cylinder-120kv-fullfov.toml` 这一份完整示例。它使用
-`512 x 512 x 256` 标签体、`1024 x 1024` 平板探测器、360 个视图和 120 kV 能谱，
-随后可使用 `configs/reconstruction/analytic/brainweb-center33-fdk.toml` 这类独立配置调用 DLL 解析重建。投影、
-重建体和 BMP 均写入 `outputs/`，该目录不纳入版本控制。
+初次使用建议选择 `configs/project-and-reconstruct/analytic/water-circle.toml`，
+先按 [配置说明](configs/README.zh-CN.md) 生成 20 cm 水模 MAT，再执行 1024×256、360 帧、120 kV 的完整流程。
+也可先运行 `configs/projection/water-circle.toml`，再运行配套的
+`configs/reconstruction/analytic/water-circle.toml`。输出统一位于仓库 `out/config-examples/`。
+`water-cylinder-120kv-fullfov.toml` 则保留为需要专用高分辨率标签体的实验配置。
 
 ### 几何偏移参数
 
@@ -208,8 +216,8 @@ WDDM 空闲物理显存不足时仅告警，因为驱动可能通过分页满足
 
 ```powershell
 python -m pip install numpy
-python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-fdk.toml --contrast-labels 2 3
-python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/pipelines/analytic/brainweb-center33-heli-cyl-wfbp.toml --contrast-labels 2 3
+python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/project-and-reconstruct/analytic/brainweb-center33-fdk.toml --contrast-labels 2 3
+python example/multispectrum_sim/scripts/report_material_roi.py example/multispectrum_sim/configs/project-and-reconstruct/analytic/brainweb-center33-heli-cyl-wfbp.toml --contrast-labels 2 3
 ```
 
 默认标签 ROI 腐蚀一个体素（26 邻域），排除首尾四层；输出 RAW 同目录的 `.roi.json`，
@@ -221,7 +229,7 @@ python example/multispectrum_sim/scripts/report_material_roi.py example/multispe
 ```
 
 以上数字仅示范格式，不代表灰质真值。超差退出码为 1；无参考值时 reference_passed 为 null。
-`tests/reference-brainweb-center33-fdk.json` 与 `tests/reference-brainweb-center33-wfbp.json`
+`tests/reference/reference-brainweb-center33-fdk.json` 与 `tests/reference/reference-brainweb-center33-wfbp.json`
 保存本次对应 TOML 的 CSF/灰质/白质/骨组织回归基准，绝对容差为 0.00001 mm^-1；
 可分别传给 `--reference`。它们用于发现实现变化，不是物理正确性定标；修改能谱、几何或材料后不能沿用。
 多能谱结果不能直接当作某个单能的衰减真值。BrainWeb 整层均值受组织面积影响，不能作为
@@ -239,7 +247,7 @@ wFBP 保留其支持的 U/V 主点 offset，仅清除源端和 N 分量。调用
 
 ```powershell
 out/top-multispectrum-dll-vs/example/multispectrum_sim/Release/multispectrum_sim.exe `
-  example/multispectrum_sim/configs/pipelines/analytic/water-cylinder-120kv-fullfov.toml
+  example/multispectrum_sim/configs/project-and-reconstruct/analytic/water-cylinder-120kv-fullfov.toml
 ```
 
 ## 内置人体材料
@@ -290,11 +298,11 @@ multispectrum_sim --material-info Al
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/generate_builtin_materials.ps1 `
   -InputDirectory D:\Work\Tool\mc-gpu\MCGPU_materials\material `
-  -OutputFile example/multispectrum_sim/src/BuiltinMaterials.inc
+  -OutputFile example/multispectrum_sim/src/input/materials/BuiltinMaterials.inc
 
 powershell -ExecutionPolicy Bypass -File tools/generate_gate_materials.ps1 `
-  -InputFile thirdparty/nist_xcom/data/GateMaterials.db `
-  -OutputFile example/multispectrum_sim/src/BuiltinGateMaterials.inc
+  -InputFile example/multispectrum_sim/modules/attenuation/data/GateMaterials.db `
+  -OutputFile example/multispectrum_sim/src/input/materials/BuiltinGateMaterials.inc
 ```
 
 例如，灰质和白质可以共用脑组织配比，只通过密度产生低对比度：
@@ -354,7 +362,7 @@ sigma_v_pixels = 2.0
 `scatter.correction` 不再填写 `iterations` 和 `damping`，仍保留散射幅度和物体掩膜阈值。
 
 示例见 `configs/reconstruction/experimental/water-cylinder-adaptive-scatter.toml`，
-算法与限制见 `plugins/adaptive_scatter/README.md`。插件在 GPU 上执行像素更新和
+算法与限制见 `src/processing/scatter/README.md`。插件在 GPU 上执行像素更新和
 残差统计，在 CPU 上控制回退与固定次数；日志逐轮和逐帧报告实际迭代次数、预测次数、最终
 damping、残差、信号变化量和耗时。插件不设置容差提前停止，正常运行 iterations 次
 后仅报告 completed；最低安全步长仍无法下降会单独报告异常状态。插件不自动调整
@@ -391,7 +399,7 @@ mkdir -p example/multispectrum_sim/inputs/generated
 断线缺陷。铜层采用测试网格可表达的 0.1 mm 厚度。材料为铜、SAC305 配比焊料和玻璃主导
 的 FR-4 等效材料；FR-4 的 SiO2 模型不代表完整玻纤/环氧配方。
 
-两份组合案例位于 `configs/pipelines/analytic/pcb-nikon-tilted-fdk.toml` 和
+两份组合案例位于 `configs/project-and-reconstruct/analytic/pcb-nikon-tilted-fdk.toml` 和
 `pcb-planar-pose-fdk.toml`。生成标签体后，将配置路径传给 `multispectrum_sim` 即可运行。
 
 小模块测试直接调用 CPU 函数与 CUDA kernel，覆盖材料路径、多能透射、焦点、探测器响应、
@@ -403,7 +411,7 @@ ctest --test-dir out/docker-test/example/multispectrum_sim -R multispectrum_proj
 ```
 ## 可选实时显示
 
-主工程启用 `BUILD_VTK_VISUALIZATION=ON` 并提供 VTK C++ 包后，在 TOML 增加 `[visualization] enabled=true`，即可边前投边显示实际材料标签体、源/探测器姿态与偏移和当前帧投影贴图。体数据保留原分辨率，仅显示贴图可降采样；关闭显示时计算和输出不变。显示模块位于本示例的 `visualization/`，不依赖 geometry_viewer 工具源码。构建、配置及自生成验证见 [实时显示层说明](visualization/README.zh-CN.md)。
+主工程启用 `BUILD_VTK_VISUALIZATION=ON` 并提供 VTK C++ 包后，在 TOML 增加 `[visualization] enabled=true`，即可边前投边显示实际材料标签体、源/探测器姿态与偏移和当前帧投影贴图。体数据保留原分辨率，仅显示贴图可降采样；关闭显示时计算和输出不变。显示模块位于本示例的 `modules/visualization/`，不依赖 geometry_viewer 工具源码。构建、配置及自生成验证见 [实时显示层说明](modules/visualization/README.zh-CN.md)。
 
 ## 可选 ImGui 前投界面
 
@@ -412,24 +420,25 @@ ctest --test-dir out/docker-test/example/multispectrum_sim -R multispectrum_proj
 第一版支持 Flat 圆扫描、Flat 螺旋扫描、Planar CT、Tilted CT。
 可在界面导入 Raw uint8 标签体、编辑尺寸/间距/材料映射、导入或生成能谱、修改几何和效果开关，
 保存/加载 TOML。按计算按钮后先计算全批，完成后再通过底部滑条浏览。
-计算使用界面/TOML 设置的每像素射线数；体积不降采样。更多说明见 [实时显示层说明](visualization/README.zh-CN.md)。
+计算使用界面/TOML 设置的每像素射线数；体积不降采样。更多说明见 [实时显示层说明](modules/visualization/README.zh-CN.md)。
 
 启动界面：`multispectrum_sim --gui [config.toml]`。不传配置路径时先弹出 TOML 文件选择窗口。
 加载后参数自动填充，同时读取标签体、材料和能谱并显示三维场景；点击 Calculate all views 后才开始计算投影。
 
 ### BrainWeb 界面与全链路示例
 
-`configs/ui/brainweb-fullchain.toml` 使用完整 `181 x 217 x 181`、1 mm、uint8 标签体；
-`configs/ui/brainweb-center33-fullchain.toml` 使用中心 33 层，适合快速试用。
-两者都配置 60 帧平板圆扫描、SID=709 mm、SDD=1143.699951 mm，
+`configs/project-and-reconstruct/analytic/brainweb-full-fdk.toml` 使用完整 `181 x 217 x 181`、1 mm、uint8 标签体；
+`configs/project-and-reconstruct/analytic/brainweb-center33-physics-fdk.toml` 使用中心 33 层，适合快速试用。
+完整头部配置为 360 帧，中心层快速示例为 60 帧；均采用平板圆扫描、SID=709 mm、SDD=1143.699951 mm，
 本地生成 120 kVp / 12° / 2 mm Al 能谱、10 个标签材料映射、量子噪声、可选探测器处理参数。
-散射关闭，无需外部散射标定文件。输入数据不随源码提交，可复用已有 BrainWeb 数据或按前述脚本准备。
+散射关闭，无需外部散射标定文件。全头读取仓库 LFS 中的 BrainWeb MAT；中心 33 层用
+`multispectrum_pack_mat --example brainweb-normal ... --center-slices 33` 准备，详见 [配置说明](configs/README.zh-CN.md)。
 
 在界面 Load TOML 后，体积、材料、能谱和几何会一起加载；Calculate 执行前投，勾选 Recon 页的 Reconstruct after projection 时继续校正和重建。
-完整投影、生成谱、空场和重建结果写入 `outputs/brainweb-full-ui/`（中心版为 `outputs/brainweb-ui/`）。
-直接运行 `multispectrum_sim configs/ui/brainweb-fullchain.toml` 可执行
-前投、水板硬化校正、FDK 重建，并导出三张正交切片。
-60 帧是流程试用设置；水板校正为示例，并非骨材料专项标定。Recon 页也可单独运行重建；界面锁定期间仍刷新状态。
+完整投影、生成谱、空场和重建结果写入仓库 `out/config-examples/` 下的同名示例目录。
+直接运行 `multispectrum_sim configs/project-and-reconstruct/analytic/brainweb-full-fdk.toml` 可执行
+前投、水板硬化校正和 FDK 重建；切片导出默认关闭，可在界面开启。
+中心层的 60 帧是流程试用设置；水板校正为示例，并非骨材料专项标定。Recon 页也可单独运行重建；界面锁定期间仍刷新状态。
 
 界面加载允许先填充缺少可选运行文件的配置，并显示缺失散射模型等提示；
 点击计算仍执行完整文件校验，不会静默关闭效果。
@@ -496,7 +505,7 @@ CUDA 电子噪声使用全局角度/像素/配置 seed 的确定性 Gaussian 序
 
 原 scalar 正投的谱积分保留“每条射线分别衰减、累计各能量期望光子数、最后一次量子采样”的顺序。没有经过有效材料的射线直接使用透射率 1，跳过材料衰减求和和指数运算；仍计算原有几何通量、探测器响应和空气参考。能量点数不超过 128 时使用 128 项计数缓冲，129..256 点使用 256 项缓冲，减少常见能谱的每线程 local-memory 占用；数组仍是动态索引的线程私有存储，并非全部放进寄存器。空气参考与最终能量求和统一读取能量常量表（不可用时读取设备表）。采样数、随机种子和计数累计顺序保持不变，未启用快速数学近似。多采样测试还覆盖 119、128、129、256 个能量点，以及带探测器响应和量子噪声时两种计数容量的逐值一致性。
 
-默认前投使用 `src/primary/WarpSpectralTransport.cuh` 的统一 kernel，由 `include/primary/PrimaryLaunchPolicy.hpp` 按实际材料数、能量点数和每像素射线数分派布局。UI/TOML 不增加线程参数，不做运行时自动测速，也不按投影尺寸细分。所有布局保留相同 Siddon 遍历、射线随机种子、逐射线指数衰减及累计后一次量子采样。线程归约顺序可能产生浮点末位差异。
+默认前投使用 `src/projection/spectral/WarpSpectralTransport.cuh` 的统一 kernel，由 `include/projection/spectral/PrimaryLaunchPolicy.hpp` 按实际材料数、能量点数和每像素射线数分派布局。UI/TOML 不增加线程参数，不做运行时自动测速，也不按投影尺寸细分。所有布局保留相同 Siddon 遍历、射线随机种子、逐射线指数衰减及累计后一次量子采样。线程归约顺序可能产生浮点末位差异。
 
 能量点数不超过 128 时，默认规则为：
 
@@ -576,7 +585,7 @@ DetailedWeight OSSART 将固定几何的 `A_s*1` 行权重和 `A_s^T*1` 列权�
 
 SIRT 的计算批次不作为算法子集：分批计算行权重和残差，累加完整数据的反投与列归一化，最后统一更新体积。TIGRE SIRT 仍采用粗估二维列权重，内部 SIRT 仍采用精确三维列权重。批次变化可能改变浮点累加分组，允许小量舍入误差；视角顺序和算法轮次不变。TV 数据更新仍按原 SART/OS-SART 顺序进行，残差、自动阈值的 FDK 估计使用有界批缓冲，五份必需 TV 工作体保持常驻。不可变 TV 输入不再复制完整投影，Bregman 等可变输入变体仍保留原完整工作数组。
 
-目录职责：`src/Reconstruction/Iterative/Flat/YkSirtBatchBackend.hpp` 是算法实现；迭代共用的投影数据源、权重缓存和显存预算在 `src/Reconstruction/Iterative/Common/`。示例仿真/校正共用显存池在 `include/cuda/DeviceMemoryPool.hpp` 与 `src/cuda/DeviceMemoryPool.cpp`，命名空间为 `yk::spectral::cuda_resources`，不属于重建预处理阶段。核心 SDK 的 `src/common/YkDeviceWorkspace.hpp` 是独立通用设备缓冲封装，不依赖示例的显存池。
+目录职责：`src/Reconstruction/Iterative/Flat/YkSirtBatchBackend.hpp` 是算法实现；迭代共用的投影数据源、权重缓存和显存预算在 `src/Reconstruction/Iterative/Common/`。示例仿真/校正共用显存池在 `include/processing/device/DeviceMemoryPool.hpp` 与 `src/processing/device/DeviceMemoryPool.cpp`，命名空间为 `yk::spectral::cuda_resources`，不属于重建预处理阶段。核心 SDK 的 `src/common/YkDeviceWorkspace.hpp` 是独立通用设备缓冲封装，不依赖示例的显存池。
 
 
 ### 内部代数重建的 TV 插件
@@ -661,8 +670,8 @@ minimum_iterations = 1
 当前不要求严格伴随，但也不宣称严格统计优化收敛。FISTA 尚未实现，选择它会报不支持。
 
 
-`configs/ui/brainweb-statistical-gd.toml` 是完整示例，读取已有本地 BrainWeb 标签资产，
-生成 512×512×360 投影，重建 256×256×200、1.2 mm 网格，输出到独立的 out/statistical-brainweb。
+`configs/project-and-reconstruct/experimental/brainweb-statistical-algebraic.toml` 是完整示例，读取已有本地 BrainWeb 标签资产，
+生成 1024×256×360 投影，重建 256×256×200、1.2 mm 网格，输出到独立的 `out/config-examples/brainweb-statistical-algebraic/`。
 示例启用量子噪声和 BHC，关闭散射与散射校正，因此不需要额外散射核文件。
 可以从 UI 载入；命令行也可使用 `multispectrum_sim <该 TOML 路径>` 运行完整链路。
 
@@ -695,16 +704,16 @@ ImGui 的内部正则插件配置仅在内部 `sirt`、`sart`、`ossart` 下显�
 
 ### 统一流水线基础层
 
-多能前投、重建前处理及后处理已直接采用同一个有类型 Stage/Output 契约与执行器，统一数据位置、数值域转换、生命周期、进度、计时和工厂。物理阶段排序、空气参考和三维体积等业务差异仍由各自接口表达，详见 [统一流水线说明](include/pipeline/README.md)。
+多能前投、重建前处理及后处理已直接采用同一个有类型 Stage/Output 契约与执行器，统一数据位置、数值域转换、生命周期、进度、计时和工厂。物理阶段排序、空气参考和三维体积等业务差异仍由各自接口表达，详见 [统一流水线说明](include/processing/stage/README.md)。
 
-三条流水线的 Stage/Exporter 强制通过 IPlugin::info() 提供静态自描述；FactoryRegistry 支持不实例化插件的 list()/find(id) 查询。内置描述目录与参数说明详见 [插件自描述与查询](include/pipeline/README.md)。
+三条流水线的 Stage/Exporter 强制通过 IPlugin::info() 提供静态自描述；FactoryRegistry 支持不实例化插件的 list()/find(id) 查询。内置描述目录与参数说明详见 [插件自描述与查询](include/processing/stage/README.md)。
 
 多能前投已作为注册的 `MultiSpecFpStage` 源阶段接入：配置/体积/材料/能谱准备、批次生成、输出校验及 Backend 生命周期由源统一管理；现有融合 kernel、批次显存预算和设备驻留保持不变。源 ID 为 `projection.source.multi_spec_fp`，可查询注册描述和 Pipeline::sourceInfo()。
 
 
 ## 通用图像处理 Stage
 
-投影与体积的升降采样、均值、高斯、双边、自引导滤波现提供 CPU/CUDA 实现；体积可选逐层二维或空间三维处理。API、显存生命周期、投影重采样的几何要求和实测结果见 [图像处理 Stage](include/image/README.md)。当前为 C++ 接口，尚未增加 TOML 或 UI 滤波面板。
+投影与体积的升降采样、均值、高斯、双边、自引导滤波现提供 CPU/CUDA 实现；体积可选逐层二维或空间三维处理。API、显存生命周期、投影重采样的几何要求和实测结果见 [图像处理 Stage](include/processing/image/README.md)。当前为 C++ 接口，尚未增加 TOML 或 UI 滤波面板。
 
 
 ## HU 转换、标定、校正与分割
@@ -715,7 +724,7 @@ ImGui 的内部正则插件配置仅在内部 `sirt`、`sart`、`ossart` 下显�
 
 `scripts/brainweb_bone_bhc_experiment.py` 保留历史分割—重投影实验编排。正常客户端现已通过 `BoneBhcStage` 接入物理前置／后置和双材料 LUT 方案，入口为 Reconstruction → Bone hardening correction，默认关闭、仍标为实验性；阶段顺序、TOML 参数及验证范围见 [统一骨硬化策略](include/recon/bhc/README.md)。下面的脚本和旧结果属于独立历史实验，不代表所有新 UI 参数组合的质量验收。
 
-先构建 `multispectrum_bone_bhc_prepare` 目标（默认不构建），它通过正式 CUDA μ→HU / 阈值分割 Stage 处理**第一次重建的结果**。Python/NumPy 仅负责实验编排、模型差值及指标统计；绘图改为仓库的 C++ / Matplot++ 工具 `multispectrum_plot_bone_bhc`，不再使用 Matplotlib。绘图工具可直接读取已有结果目录，单独运行时完全不需要 Python。Matplot++ 仍需要 Gnuplot 后端，见前面的可选绘图构建说明；也可用 `plot/CMakeLists.txt` 独立构建，不必重新编译 CUDA 库。应用本身没有增加 Python 运行依赖。
+先构建 `multispectrum_bone_bhc_prepare` 目标（默认不构建），它通过正式 CUDA μ→HU / 阈值分割 Stage 处理**第一次重建的结果**。Python/NumPy 仅负责实验编排、模型差值及指标统计；绘图改为仓库的 C++ / Matplot++ 工具 `multispectrum_plot_bone_bhc`，不再使用 Matplotlib。绘图工具可直接读取已有结果目录，单独运行时完全不需要 Python。Matplot++ 仍需要 Gnuplot 后端，见前面的可选绘图构建说明；也可用 `app/plot/CMakeLists.txt` 独立构建，不必重新编译 CUDA 库。应用本身没有增加 Python 运行依赖。
 
 在仓库根目录运行，输出目录必须不存在：
 
@@ -890,7 +899,8 @@ GUI 通过 **Example → Water phantoms / Geometry calibration** 选择模体，
 
 IExampleStage : pipeline::IPlugin 是准备资源的接口，提供 generate(ExampleRequest) -> ExampleResult，复用 PluginInfo 与注册表。结果包含强类型配置、标签数组、模体局部坐标下的球/圆柱标记真值。它不插入像素处理链，不执行珠心检测或几何求解。新增示例实现接口并在 builtinExamples() 注册即可。ExampleRequest.output_directory 仅指定计算结果路径，views=0 使用示例默认帧数。
 
-现有 configs/calibration/geometry 等 TOML 保留为具体实验配置，与内置示例独立。
+标定模体 TOML 归入 `configs/project-and-reconstruct/calibration/` 与 `configs/projection/calibration/`，
+采用当前内置模体网格；使用命令行时由 `multispectrum_pack_mat --example` 准备配套标签。
 
 ### 客户端菜单
 
@@ -936,7 +946,7 @@ GeometryCorrectionStage 从标定结果生成 GeometrySpec，域 Geometry → Co
 
 限制：螺旋扫描及非完整圆扫描不可套用；空间模体至少需要一帧标记与球珠充分分离以建立编号，严重重叠、截断或低信噪比可能导致拒绝拟合。阈值需匹配实际负对数投影。单排钢珠的限制见上表，不能因为残差较小就假定其恢复了面外倾斜。源偏移和探测器法向偏移采用零值规范约束，拟合的是等效几何，不承诺独立恢复所有机械偏移。标定后的重建坐标系可能与原仿真坐标系相差刚体变换，比较体积时需配准；报告同时保留拟合的模体姿态、模型名称和重投影误差。单排模型没有独立 DLT 源轨迹，报告的 source_circle 为 null。标称几何重建的 SID/SDD 可在窗口中明确指定。
 
-原生求解器独立位于 tools/cbct_calibration_cpp；上层通过其 CMake target 链接，不引入 Python 或 geometry_viewer 源码。优先使用已安装 Eigen3，否则首次配置下载校验过的 Eigen 3.4.0 头文件依赖，后续构建复用本地缓存。
+原生求解器独立位于 tools/cbct_calibration_cpp；上层通过其 CMake target 链接，不引入 Python 或 geometry_viewer 源码。完整应用要求准备 Eigen SDK，通过 Eigen3_DIR 或 CMAKE_PREFIX_PATH 查找；几何标定与 CPU 拟合复用同一个 Eigen3::Eigen 目标，不在应用配置时自动下载。
 
 测试 cbct_calibration_phantom_tests 覆盖六类合成 RAW 的检测、编号、跟踪、几何恢复及报告写出，并覆盖单排的噪声、缺失点与轴心退化拒绝。实际多能投影集成验证使用 512×512、360 帧，重建网格为 256×256×320、0.6 mm；标称和标定几何分别输出结果。这些验证检查流程与几何残差，不等价于所有模体摆位、噪声水平下的图像质量验收。
 
@@ -960,15 +970,15 @@ Copy scan geometry 复制扫描参数，Zero offsets / tilts 将偏移和倾斜�
 界面面板拆分在 include/ui：ScanPanel、VolumePanel、SpectrumPanel、EffectsPanel 和
 ReconstructionPanel；Widgets 统一基础输入控件。各面板编辑配置并返回操作意图，
 不持有 VTK 视图、GPU 资源或计算任务；客户端统一负责执行、结果加载及任务状态。
-VolumePanel 单独持有材料列表的搜索状态。主题定义集中在 visualization/ImGuiTheme.hpp。
+VolumePanel 单独持有材料列表的搜索状态。主题定义集中在 modules/visualization/ImGuiTheme.hpp。
 
 ### 重建查看与 MPR
 
 重建完成或 File → Load reconstruction 加载 float32 RAW 后，View → MPR workspace
 可将右侧图像抽屉展开为四视图：轴向 XY、冠状 XZ、矢状 YZ 与任意斜切面。
 关闭 Expand viewer 可回到几何视图旁的抽屉；双击任一图像放大，再双击或点 Four views 恢复。
-查看器状态/交互位于 include/ui/ReconstructionViewerPanel.hpp，切面几何和 VTK 重采样位于
-visualization/Mpr.hpp、Mpr.cpp，与重建算法和 TOML 参数编辑分开。
+查看器状态/交互位于 include/client/panels/ReconstructionViewerPanel.hpp，切面几何和 VTK 重采样位于
+modules/visualization/Mpr.hpp、Mpr.cpp，与重建算法和 TOML 参数编辑分开。
 
 - 预设提供 Brain（WW 80 / WL 40）、Soft tissue（400 / 40）、Bone（2000 / 500）、
   Lung（1500 / -600）、Abdomen（350 / 50）、Subdural（200 / 80），单位 HU；也可手填 WW/WL。

@@ -1,6 +1,6 @@
 param(
     [string]$Source = (Join-Path $PSScriptRoot '../data/materials/icrp145/media.csv'),
-    [string]$Output = (Join-Path $PSScriptRoot '../example/multispectrum_sim/src/BuiltinIcrpMaterials.inc'),
+    [string]$Output = (Join-Path $PSScriptRoot '../example/multispectrum_sim/src/input/materials/BuiltinIcrpMaterials.inc'),
     [switch]$Check
 )
 $ErrorActionPreference = 'Stop'

@@ -13,6 +13,8 @@ struct HuCalibrationResult {
     double measured_air_hu = 0, measured_water_hu = 0;
     double target_air_hu = -1000, target_water_hu = 0;
     size_t air_voxels = 0, water_voxels = 0;
+    void save(const std::filesystem::path&) const;
+    static HuCalibrationResult load(const std::filesystem::path&);
 };
 // Half-open voxel-index box [begin,end), on the current output grid.
 struct CalibrationRoi {
@@ -22,6 +24,6 @@ HuCalibrationResult fitAirWaterHu(double measured_air_hu, double measured_water_
     AirWaterTargets targets = {});
 // HU -> HU: does not modify image values. Publishes a result for later correction.
 // prepare invalidates an old result; successful results survive reset/end of run.
-std::unique_ptr<IStage> makeAirWaterHuCalibrationStage(CalibrationRoi air, CalibrationRoi water,
+std::unique_ptr<IVolumePostprocessStage> makeAirWaterHuCalibrationStage(CalibrationRoi air, CalibrationRoi water,
     std::shared_ptr<HuCalibrationResult> output, AirWaterTargets targets = {}, Location = Location::Device);
 } // namespace

@@ -25,6 +25,6 @@ inline const pipeline::PluginInfo& empiricalBhcInfo()
     return info;
 }
 // Append after the same base corrections used during fitting. Do not apply twice.
-std::unique_ptr<IStage> makeEmpiricalBhcStage(EmpiricalBhcParameters,
+std::unique_ptr<IProjectionPreprocessStage> makeEmpiricalBhcStage(EmpiricalBhcParameters,
     std::shared_ptr<IBoneThicknessProvider>);
 }

@@ -1,8 +1,8 @@
-#include "WaterReference.hpp"
-#include "XcomAttenuationProvider.hpp"
-#include "cuda/DeviceMemoryPool.hpp"
-#include "primary/IdealBoneCorrection.cuh"
-#include "recon/preprocess/BeamHardeningFit.hpp"
+#include "input/materials/WaterReference.hpp"
+#include "input/materials/XcomAttenuationProvider.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
+#include "projection/spectral/IdealBoneCorrection.cuh"
+#include "input/calibration/WaterBhcCalibration.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -113,7 +113,7 @@ int main(int argc, char** argv)
         const auto bhc_input = config.reconstruction.preprocessing.beam_hardening;
         if (!bhc_input.enabled)
             throw std::runtime_error("Baseline water BHC must be enabled");
-        auto bhc = bhc_input.fit_from_water_plate ? preprocess::fitWaterPlate(config, bhc_input, {}) : bhc_input;
+        auto bhc = bhc_input.fit_from_water_plate ? calibration::fitWaterPlate(config, bhc_input, {}) : bhc_input;
         const auto reference = resolveWaterReference(config, bhc_input);
         const auto spectrum = bhc_input.spectrum_file.empty() ? loadProjectionSpectrum(config.projection) : loadSpectrum(bhc_input.spectrum_file);
         auto& geom = config.geometry.parameters;

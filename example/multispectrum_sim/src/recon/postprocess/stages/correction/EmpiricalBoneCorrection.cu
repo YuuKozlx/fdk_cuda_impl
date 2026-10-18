@@ -1,4 +1,4 @@
-#include "cuda/DeviceMemoryPool.hpp"
+#include "processing/device/DeviceMemoryPool.hpp"
 #include "recon/postprocess/stages/correction/EmpiricalBoneCorrection.hpp"
 #include <algorithm>
 #include <cmath>
@@ -66,7 +66,7 @@ namespace {
         if (i < n)
             f[i] = float(value(i, f, a, b, c, t));
     }
-    class Stage final : public IStage {
+    class Stage final : public IVolumePostprocessStage {
         EbhcCoefficients coefficients_;
         EbhcBasis basis_;
         Grid grid_;
@@ -184,5 +184,5 @@ EbhcTvResult fitEbhcFullVolumeTv(const std::vector<float>& f, const EbhcBasis& b
     result.final_tv = vertices[0].y;
     return result;
 }
-std::unique_ptr<IStage> makeEbhcVolumeStage(EbhcCoefficients c, EbhcBasis b, Grid g) { return std::make_unique<Stage>(c, std::move(b), g); }
+std::unique_ptr<IVolumePostprocessStage> makeEbhcVolumeStage(EbhcCoefficients c, EbhcBasis b, Grid g) { return std::make_unique<Stage>(c, std::move(b), g); }
 }

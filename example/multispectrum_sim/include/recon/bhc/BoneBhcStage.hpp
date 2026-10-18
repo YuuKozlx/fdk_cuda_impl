@@ -1,6 +1,6 @@
 #pragma once
-#include "config/SimConfig.hpp"
-#include "pipeline/Stage.hpp"
+#include "input/config/SimConfig.hpp"
+#include "processing/stage/Stage.hpp"
 #include "recon/preprocess/calibration/TwoMaterialCalibration.hpp"
 #include <filesystem>
 #include <optional>
@@ -38,7 +38,7 @@ struct Context {
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> initialize;
     std::function<void(const Iteration&)> progress;
 };
-using IStage = pipeline::IStage<Dataset, Context, Domain>;
+using IBoneBhcStage = pipeline::IStage<Dataset, Context, Domain>;
 class IBoneBhcAlgorithm {
 public:
     virtual ~IBoneBhcAlgorithm() = default;
@@ -81,7 +81,7 @@ public:
     const char* errorMetric() const noexcept override { return "none"; }
     std::optional<double> correct(const std::filesystem::path&, const std::filesystem::path&, const std::filesystem::path&) override;
 };
-class BoneBhcStage final : public IStage {
+class BoneBhcStage final : public IBoneBhcStage {
     std::unique_ptr<IBoneBhcAlgorithm> algorithm_;
     std::shared_ptr<Result> result_;
 

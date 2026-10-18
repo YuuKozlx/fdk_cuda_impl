@@ -1,6 +1,6 @@
 #pragma once
-#include "config/SimConfig.hpp"
-#include "TaskProgress.hpp"
+#include "input/config/SimConfig.hpp"
+#include "processing/support/TaskProgress.hpp"
 #include <functional>
 namespace yk::spectral::preprocess {
 using ProjectionBuilder = std::function<bool(const std::filesystem::path&, std::string&)>;

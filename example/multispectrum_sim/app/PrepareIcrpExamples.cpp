@@ -1,5 +1,5 @@
-#include "ProjectionUiConfig.hpp"
-#include "examples/IcrpExamples.hpp"
+#include "client/ProjectionUiConfig.hpp"
+#include "input/examples/IcrpExamples.hpp"
 #include <iostream>
 using namespace yk::spectral;
 int main(int argc, char** argv)
@@ -67,7 +67,7 @@ int main(int argc, char** argv)
             relative(config.projection.spectrum.export_file);
             relative(config.reconstruction.output_volume_file);
             relative(config.reconstruction.input_projection_file);
-            saveProjectionUiConfig(config, configs / (p->id() + ".toml"), WorkflowMode::ProjectAndReconstruct);
+            saveConfig(config, configs / (p->id() + ".toml"), WorkflowMode::ProjectAndReconstruct);
             std::cout << p->id() << " materials=" << mapping.materials.size() << " config=" << (configs / (p->id() + ".toml")).string() << '\n';
         }
         return 0;
