@@ -167,6 +167,7 @@ struct ScatterConfig {
 };
 
 struct GeometrySpec {
+    std::filesystem::path frames_file;
     GeometryKind kind = GeometryKind::FlatCbct;
     GeometryConfig parameters;
 };
@@ -315,6 +316,7 @@ struct StatisticalReconstructionConfig {
 };
 
 struct ReconstructionGeometryConfig {
+    std::filesystem::path frames_file;
     bool enabled = false;
     std::filesystem::path calibration_file;
     GeometryConfig parameters;

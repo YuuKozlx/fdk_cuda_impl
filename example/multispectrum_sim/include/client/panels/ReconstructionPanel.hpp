@@ -25,6 +25,17 @@ struct ReconstructionPanel {
     static void geometry(SimulationConfig& draft, bool& initialized)
     {
         auto& custom = draft.reconstruction.geometry_override;
+        if(ImGui::Button("Load reconstruction geometry CSV...")){
+            const auto file=chooseFile(false,L"Flat geometry CSV\0*.csv\0All files\0*.*\0\0");
+            if(!file.empty()){custom.frames_file=file;custom.enabled=true;custom.calibration_file.clear();}
+        }
+        if(!custom.frames_file.empty()){
+            ImGui::TextWrapped("Per-view geometry: %s",custom.frames_file.string().c_str());
+            ImGui::Checkbox("Use independent frame geometry",&custom.enabled);
+            if(ImGui::Button("Clear independent frame geometry")){custom.frames_file.clear();custom.enabled=false;}
+            return;
+        }
+
         if(!custom.calibration_file.empty()){
             ImGui::TextWrapped("Imported calibration file is inactive in this UI. Reconstruction uses scan geometry.");
             custom.enabled=false;

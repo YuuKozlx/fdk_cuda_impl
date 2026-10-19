@@ -93,7 +93,8 @@ public:
         const SReconstructionSpec& reconstruction,
         const SNonStandardGeometrySpec* nonstandard, int device,
         const SAlgebraicRegularizationSpec* regularization,
-        const SStatisticalReconstructionSpec* statistical) override
+        const SStatisticalReconstructionSpec* statistical,
+        const SConeProjGeomVec* flat_frames, int flat_frame_count) override
     {
         release();
         if (device < 0) {
@@ -116,7 +117,7 @@ public:
             return true;
         }
         PreparedGeometry prepared;
-        if (!prepared.initialize(system)) {
+        if (!prepared.initialize(system,flat_frames,flat_frame_count)) {
             YK_LOGE("[Session] initialize: invalid geometry or GPU selection.");
             release();
             return false;

@@ -1,3 +1,5 @@
+#include "input/geometry/FlatFrameTable.hpp"
+#include "projection/spectral/DisplayGeometry.hpp"
 #include "TestChecks.hpp"
 #include "recon/backend/LibraryGeometry.hpp"
 #include "projection/spectral/ProjectionGeometry.cuh"
@@ -135,7 +137,32 @@ void helicalAgreement(){
 }
 
 }
+void externalFrames(){
+    using namespace yk::spectral;
+    const auto file=std::filesystem::current_path()/"flat-frame-roundtrip.csv";
+    for(auto kind:{GeometryKind::FlatCbct,GeometryKind::FlatHelical,GeometryKind::PlanarSourceOrbit,GeometryKind::NikonTilted}){
+        SimulationConfig c;c.geometry.kind=kind;auto& g=c.geometry.parameters;
+        g.volume_x=g.volume_y=g.volume_z=8;g.sid_mm=709;g.sdd_mm=1143;g.planar_detector_y_mm=434;g.source_orbit_radius_mm=709;
+        g.views=11;g.views_per_turn=8;g.detector_u=17;g.detector_v=12;g.pixel_u_mm=.7;g.pixel_v_mm=.9;
+        g.pitch_mm_per_turn=40;g.source_offset_x_mm=2;g.offset_u_mm=3;g.tilt_u_rad=.02;
+        const auto original=buildDisplayGeometry(c);std::vector<FlatFrame> table;
+        for(const auto& d:original){FlatFrame f;for(int k=0;k<3;++k){f.source[k]=d.source[k];f.center[k]=d.detector_center[k];f.u[k]=d.detector_axes[0][k]*g.pixel_u_mm;f.v[k]=d.detector_axes[1][k]*g.pixel_v_mm;}table.push_back(f);}
+        writeFlatFrames(file,table);c.geometry.frames_file=file;
+        // Explicit frames must be immune to nominal source/detector pose edits.
+        g.sid_mm+=200;g.offset_u_mm+=50;g.tilt_u_rad+=.4;
+        const auto imported=buildDisplayGeometry(c);
+        for(size_t i=0;i<original.size();++i){
+            for(int k=0;k<3;++k){near(imported[i].source[k],original[i].source[k],.001,"imported VTK source");near(imported[i].detector_center[k],original[i].detector_center[k],.001,"imported VTK detector");}
+            for(size_t j=0;j<original[i].detector.size();++j)for(int k=0;k<3;++k)near(imported[i].detector[j][k],original[i].detector[j][k],.001,"imported detector corners");
+        }
+        ++g.views;bool rejected=false;try{buildDisplayGeometry(c);}catch(const std::exception&){rejected=true;}require(rejected,"frame count mismatch accepted");
+    }
+    for(auto row:{"0,-10,0,0,10,0,0,0,0,0,0,1", "0,0,0,0,0,0,1,0,0,0,0,1", "0,-10,0,0,10,0,1,0,0,1,0,1", "1,2,3"}){
+        {std::ofstream out(file);out<<row;}bool rejected=false;try{readFlatFrames(file);}catch(const std::exception&){rejected=true;}require(rejected,"invalid CSV accepted");
+    }
+    std::filesystem::remove(file);
+}
 int main(){
-    try{planar();tilted();adapter();helicalAgreement();std::cout<<"non-standard flat detector pose: PASS\n";return 0;}
+    try{externalFrames();planar();tilted();adapter();helicalAgreement();std::cout<<"non-standard flat detector pose: PASS\n";return 0;}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

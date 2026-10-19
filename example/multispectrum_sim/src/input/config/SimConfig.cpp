@@ -430,6 +430,8 @@ SimulationConfig loadConfig(const std::filesystem::path& path, bool check_runtim
             c.reconstruction.slice_prefix = default_prefix;
     }
     if (auto* g = t["geometry"].as_table()) {
+        if(g->contains("frames_file") && !(*g)["frames_file"].is_string())throw std::runtime_error("geometry.frames_file must be a path string");
+        c.geometry.frames_file=resolve(config_directory,(*g)["frames_file"].value_or(std::string{}));
         auto integer = [&](const char* k, int d) { return (*g)[k].value_or(d); };
         auto real = [&](const char* k, double d) { return (*g)[k].value_or(d); };
         c.geometry.parameters.views = integer("views", 360);
@@ -652,6 +654,8 @@ SimulationConfig loadConfig(const std::filesystem::path& path, bool check_runtim
     c.reconstruction.geometry_override.parameters = c.geometry.parameters;
     if (const auto* override_table = t["reconstruction"]["geometry"].as_table()) {
         auto& override_geometry = c.reconstruction.geometry_override;
+        if(override_table->contains("frames_file") && !(*override_table)["frames_file"].is_string())throw std::runtime_error("reconstruction.geometry.frames_file must be a path string");
+        override_geometry.frames_file=resolve(config_directory,(*override_table)["frames_file"].value_or(std::string{}));
         override_geometry.enabled = (*override_table)["enabled"].value_or(false);
         if (override_table->contains("calibration_file") && !(*override_table)["calibration_file"].is_string())
             throw std::runtime_error("reconstruction.geometry.calibration_file must be a path string");

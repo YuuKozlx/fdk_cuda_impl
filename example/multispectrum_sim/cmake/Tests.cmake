@@ -22,7 +22,7 @@ foreach(module IN ITEMS crosstalk afterglow das thickness output air_input)
     set_tests_properties(multispectrum_unit_${module} PROPERTIES LABELS "unit;cpu;multispectrum")
 endforeach()
 if(TARGET YKCBCT)
-    add_executable(multispectrum_pose_unit_test tests/projection/spectral/test_nonstandard_pose.cpp
+    add_executable(multispectrum_pose_unit_test tests/projection/spectral/test_nonstandard_pose.cpp src/client/DisplayGeometry.cpp
         src/recon/backend/LibraryGeometry.cpp)
     # SDK boundary test: no DLL implementation headers or linkage.
     target_include_directories(multispectrum_pose_unit_test PRIVATE include src

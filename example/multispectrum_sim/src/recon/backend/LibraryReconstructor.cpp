@@ -186,6 +186,11 @@ bool reconstructWithLibrary(const SimulationConfig& config,
     const std::filesystem::path& slice_prefix,
     std::string& diagnostic,TaskProgressCallback progress,PostprocessConfigurer configure_postprocess)
 {
+    if(config.reconstruction.geometry_override.enabled && !config.reconstruction.geometry_override.frames_file.empty()){
+        auto resolved=config;resolved.geometry.frames_file=config.reconstruction.geometry_override.frames_file;
+        resolved.reconstruction.geometry_override.enabled=false;
+        return reconstructWithLibrary(resolved,projection_file,volume_file,slice_prefix,diagnostic,progress,configure_postprocess);
+    }
     const auto& bh=config.reconstruction.preprocessing.beam_hardening;
     if(config.reconstruction.preprocessing.enabled && bh.enabled && bh.fit_from_water_plate && bh.calibration_file.empty()){
         try{
@@ -261,9 +266,26 @@ bool reconstructWithLibrary(const SimulationConfig& config,
             "DLL cyl_fdk 只放行 cyl_cbct");
         check(!wfbp || config.geometry.kind == GeometryKind::CylHelical || config.geometry.kind == GeometryKind::FlatHelical,
             "DLL wFBP requires flat_helical or cyl_helical");
-        auto system = makeLibrarySystem(config, pipeline,
-            parseFilter(config.reconstruction.analytic.filter),
-            GeometryUse::Reconstruction);
+        auto geometry_config=config;
+        std::vector<YK::SConeProjGeomVec> external_frames;
+        if(!config.geometry.frames_file.empty()){
+            check((iterative && (pipeline_name=="sart" || pipeline_name=="sirt" || pipeline_name=="ossart" || pipeline_name=="cgls")) || pipeline_name=="fdk" || pipeline_name=="wfbp","External flat frames support internal SART/SIRT/OSSART/CGLS or validated FDK/WFBP");
+            external_frames=buildNonStandardProjectionViews(config);
+            if(iterative){geometry_config.geometry.kind=GeometryKind::FlatCbct;
+            auto& pose=geometry_config.geometry.parameters;
+            pose.offset_u_mm=pose.offset_v_mm=pose.offset_n_mm=0;
+            pose.tilt_u_rad=pose.tilt_v_rad=pose.tilt_n_rad=0;
+            pose.source_offset_x_mm=pose.source_offset_y_mm=pose.source_offset_z_mm=0;
+            }
+        }
+        auto system = makeLibrarySystem(geometry_config, pipeline,
+            parseFilter(config.reconstruction.analytic.filter),GeometryUse::Reconstruction);
+        if(!external_frames.empty() && !iterative){
+            std::vector<YK::SConeProjGeomVec> nominal;std::vector<YK::SCylConeProjGeomVec> unused;
+            check(YK::buildSystemGeometry(system.geometry,nominal,unused) && nominal.size()==external_frames.size(),"Invalid nominal analytic trajectory");
+            for(size_t i=0;i<nominal.size();++i)external_frames[i].angle=nominal[i].angle;
+        }
+        if(!external_frames.empty()){system.flat_frames=external_frames.data();system.flat_frame_count=int(external_frames.size());}
         if(statistical)check(YK::estimateStatisticalWorkspace(system,statistical_workspace),"Cannot estimate statistical workspace for requested modules");
         if(statistical){const auto& s=config.reconstruction.statistical;
             std::cout<<" optimizer="<<s.optimizer.type<<" iterations="<<s.optimizer.iterations<<" regularization="<<s.regularization.plugin

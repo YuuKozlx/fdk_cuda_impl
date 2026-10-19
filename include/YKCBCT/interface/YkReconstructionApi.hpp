@@ -29,6 +29,10 @@ struct SSystemSpec {
     SAlgebraicRegularizationSpec regularization{};
     // Optional statistical reconstruction tail.
     SStatisticalReconstructionSpec statistical{};
+    // Optional flat-frame tail. Host memory is borrowed only during initialize;
+    // the session copies it. detS is pixel (0,0), detU/detV are one-pixel steps.
+    const SConeProjGeomVec* flat_frames = nullptr;
+    int flat_frame_count = 0;
 };
 
 // Queries implementations without preparing CUDA buffers. Counts exclude

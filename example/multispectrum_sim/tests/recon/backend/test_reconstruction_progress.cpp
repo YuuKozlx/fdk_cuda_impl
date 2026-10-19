@@ -61,6 +61,27 @@ int main(){try{
     require(progress.calls==4&&progress.last==4&&progress.total==4,"missing internal SART outer-iteration progress");
     cudaMemcpy(observed.data(),dv,observed.size()*sizeof(float),cudaMemcpyDeviceToHost);
     for(size_t i=0;i<observed.size();++i)require(std::isfinite(observed[i])&&std::abs(observed[i]-baseline[i])<=1e-6f,"internal SART callback changed output");
-    cudaFree(dp);cudaFree(dv);YK::ReconstructionSessionFactory::destroy(session);
+    YK::ReconstructionSessionFactory::destroy(session);
+    for(auto algorithm:{YK::EPipeline::SART,YK::EPipeline::SIRT,YK::EPipeline::OSSART,YK::EPipeline::CGLS,YK::EPipeline::FDK}){
+        auto standard=makeLibrarySystem(c,algorithm);
+        std::vector<YK::SConeProjGeomVec> frames;std::vector<YK::SCylConeProjGeomVec> unused;
+        require(YK::buildSystemGeometry(standard.geometry,frames,unused),"build reference frames");
+        auto run=[&](YK::SSystemSpec spec,std::vector<float>& output){
+            auto* local=YK::ReconstructionSessionFactory::create();require(local&&local->initialize(spec),"external comparison initialize");
+            request.projection=algorithm==YK::EPipeline::FDK ? YK::Buffer{projection.data(),YK::EMemoryLocation::Host,projection.size()} : YK::Buffer{dp,YK::EMemoryLocation::Device,projection.size()};
+            cudaMemset(dv,0,output.size()*sizeof(float));request.progress_callback=nullptr;request.progress_user_data=nullptr;
+            if(algorithm==YK::EPipeline::FDK){
+                const size_t pixels=size_t(g.detector_u)*g.detector_v;
+                for(int frame=0;frame<g.views;++frame){request.projection={projection.data()+frame*pixels,YK::EMemoryLocation::Host,pixels};request.view_offset=frame;request.view_count=1;request.clear_output=frame==0;
+                    if(!local->execute(request))throw std::runtime_error(std::string("single-frame FDK: ")+local->lastErrorMessage());}
+                request.view_offset=0;request.view_count=g.views;request.clear_output=true;
+            }else if(!local->execute(request))throw std::runtime_error(std::string("external comparison execute: ")+local->lastErrorMessage());cudaMemcpy(output.data(),dv,output.size()*sizeof(float),cudaMemcpyDeviceToHost);
+            YK::ReconstructionSessionFactory::destroy(local);
+        };
+        run(standard,baseline);standard.flat_frames=frames.data();standard.flat_frame_count=int(frames.size());run(standard,observed);
+        for(size_t i=0;i<observed.size();++i)require(std::isfinite(observed[i])&&std::abs(observed[i]-baseline[i])<1e-5f,"explicit geometry changed reconstruction");
+        if(algorithm==YK::EPipeline::FDK){frames[0].src.z+=2;auto* invalid=YK::ReconstructionSessionFactory::create();require(!invalid->initialize(standard),"FDK accepted noncircular frame");YK::ReconstructionSessionFactory::destroy(invalid);}
+    }
+    cudaFree(dp);cudaFree(dv);
     std::cout<<"Iteration callback, old ABI and numerical invariance passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

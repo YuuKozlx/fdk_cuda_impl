@@ -18,7 +18,8 @@ public:
         const SReconstructionSpec& reconstruction,
         const SNonStandardGeometrySpec* nonstandard, int device,
         const SAlgebraicRegularizationSpec* regularization = nullptr,
-        const SStatisticalReconstructionSpec* statistical = nullptr) = 0;
+        const SStatisticalReconstructionSpec* statistical = nullptr,
+        const SConeProjGeomVec* flat_frames = nullptr, int flat_frame_count = 0) = 0;
     virtual bool execute(const ExecuteRequest& request) = 0;
     virtual void reset() = 0;
     virtual void release() = 0;

@@ -143,6 +143,29 @@ public:
             return fail_(EApiErrorCode::InvalidConfig, "SSystemSpec 结构体版本过旧或被截断");
         if (system.api_version != 2)
             return fail_(EApiErrorCode::InvalidConfig, "不支持的 SSystemSpec api_version");
+        const bool frame_tail=hasBytes(system.struct_size,offsetof(SSystemSpec,flat_frame_count)+sizeof(system.flat_frame_count));
+        if(system.struct_size>offsetof(SSystemSpec,flat_frames) && !frame_tail)return fail_(EApiErrorCode::InvalidConfig,"Truncated flat-frame tail");
+        const auto* flat_frames=frame_tail?system.flat_frames:nullptr;
+        const int flat_frame_count=frame_tail?system.flat_frame_count:0;
+        if((flat_frames==nullptr)!=(flat_frame_count==0) || flat_frame_count<0)return fail_(EApiErrorCode::InvalidConfig,"Invalid flat-frame buffer/count");
+        if(flat_frames){
+            const auto p=system.reconstruction.pipeline;
+            if(system.geometry.detector!=EDetectorKind::Flat ||
+                (system.geometry.trajectory!=ETrajectoryKind::Circular && system.geometry.trajectory!=ETrajectoryKind::Helical) ||
+                (p!=EPipeline::ForwardProjection && p!=EPipeline::SART && p!=EPipeline::SIRT && p!=EPipeline::OSSART && p!=EPipeline::CGLS && p!=EPipeline::FDK && p!=EPipeline::WFBP))
+                return fail_(EApiErrorCode::UnsupportedCombination,"Unsupported external flat-frame algorithm");
+            if(p==EPipeline::FDK || p==EPipeline::WFBP){
+                std::vector<SConeProjGeomVec> expected;std::vector<SCylConeProjGeomVec> unused;
+                if(!buildSystemGeometry(system.geometry,expected,unused) || int(expected.size())!=flat_frame_count)
+                    return fail_(EApiErrorCode::InvalidGeometry,"Analytic external geometry requires matching nominal trajectory");
+                for(int i=0;i<flat_frame_count;++i){
+                    const float4 a[]={expected[i].src,expected[i].detS,expected[i].detU,expected[i].detV,expected[i].angle};
+                    const float4 b[]={flat_frames[i].src,flat_frames[i].detS,flat_frames[i].detU,flat_frames[i].detV,flat_frames[i].angle};
+                    for(int j=0;j<5;++j)if(std::abs(a[j].x-b[j].x)>1e-3f||std::abs(a[j].y-b[j].y)>1e-3f||std::abs(a[j].z-b[j].z)>1e-3f)
+                        return fail_(EApiErrorCode::UnsupportedCombination,"External frames do not match analytic trajectory assumptions; use iterative reconstruction");
+                }
+            }
+        }
         const auto decision = releaseDecision(system);
         if (decision == EReleaseDecision::Invalid)
             return fail_(EApiErrorCode::InvalidConfig, "算法、探测器或轨迹枚举非法");
@@ -253,7 +276,7 @@ public:
         session_ = detail::createExecutionBackend();
         if (!session_ || !session_->initialize(backend_geometry,
                 system.reconstruction,
-                nonstandard ? &system.nonstandard : nullptr, system.device, regularization, statistical)) {
+                nonstandard ? &system.nonstandard : nullptr, system.device, regularization, statistical, flat_frames, flat_frame_count)) {
             const std::string message=session_&&session_->lastErrorMessage()?session_->lastErrorMessage():"几何或算法初始化失败";
             release();
             return fail_(EApiErrorCode::InvalidGeometry,message.c_str());

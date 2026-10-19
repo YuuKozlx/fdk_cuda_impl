@@ -34,6 +34,7 @@ void saveConfig(const SimulationConfig& c, const std::filesystem::path& path, Wo
                                                                                                                                          : "project_and_reconstruct" } });
     auto& g = c.geometry.parameters;
     toml::table geometry = t["geometry"].is_table() ? *t["geometry"].as_table() : toml::table {};
+    geometry.insert_or_assign("frames_file", config_detail::serializedPath(c.geometry.frames_file));
     geometry.insert_or_assign("kind", kind(c.geometry.kind));
 #define FIELD(name) geometry.insert_or_assign(#name, g.name)
     FIELD(views);
@@ -202,6 +203,7 @@ void saveConfig(const SimulationConfig& c, const std::filesystem::path& path, Wo
         {"enabled", r.postprocessing.hu_correction.enabled},
         {"calibration_file", config_detail::serializedPath(r.postprocessing.hu_correction.calibration_file)}}}});
     toml::table reconstruction_geometry { { "enabled", r.geometry_override.enabled }, { "calibration_file", config_detail::serializedPath(r.geometry_override.calibration_file) } };
+    reconstruction_geometry.insert_or_assign("frames_file",config_detail::serializedPath(r.geometry_override.frames_file));
     for (const auto& f : reconstructionGeometryFields())
         reconstruction_geometry.insert(f.angle ? config_detail::degreeKey(f.key) : std::string(f.key), (r.geometry_override.parameters.*f.member) * (f.angle ? config_detail::degrees_per_radian : 1.));
     recon.insert_or_assign("geometry", std::move(reconstruction_geometry));

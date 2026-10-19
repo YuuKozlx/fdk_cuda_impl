@@ -79,6 +79,10 @@ namespace {
             if (value.enabled && (!std::isfinite(value.gain_electrons_per_keV) || value.gain_electrons_per_keV <= 0 || !std::isfinite(value.offset_electrons) || !std::isfinite(value.electronic_noise_std_electrons) || value.electronic_noise_std_electrons < 0 || !std::isfinite(value.saturation_electrons) || value.saturation_electrons < 0 || !std::isfinite(value.adc_lsb_electrons) || value.adc_lsb_electrons < 0))
                 throw std::runtime_error("invalid detector DAS parameters");
         }
+        if(!c.geometry.frames_file.empty() || (c.reconstruction.geometry_override.enabled && !c.reconstruction.geometry_override.frames_file.empty())){
+            if(c.geometry.kind==GeometryKind::CylCbct || c.geometry.kind==GeometryKind::CylHelical)throw std::runtime_error("Frame CSV supports flat detectors only");
+            if(c.reconstruction.bone_hardening.enabled)throw std::runtime_error("Bone BHC reprojection does not yet support external frame geometry");
+        }
         const auto available = [check_runtime_files](const std::filesystem::path& p) {
             return !check_runtime_files || std::filesystem::is_regular_file(p);
         };
@@ -207,7 +211,7 @@ namespace {
         if (c.runsReconstruction() || c.reconstruction.preprocessing.enabled || c.reconstruction.bone_hardening.enabled) {
 
             auto bone_validation = c;
-            if (c.reconstruction.geometry_override.enabled && c.reconstruction.geometry_override.calibration_file.empty())
+            if (c.reconstruction.geometry_override.enabled && c.reconstruction.geometry_override.calibration_file.empty() && c.reconstruction.geometry_override.frames_file.empty())
                 bone_validation.geometry.parameters = resolveReconstructionGeometry(c);
             const auto bone_route = bone_bhc::resolveRouting(bone_validation);
             if (c.reconstruction.bone_hardening.enabled && bone_route.use_lut && !available(c.reconstruction.bone_hardening.calibration_file))

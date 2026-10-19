@@ -20,13 +20,23 @@ class PreparedGeometry {
 public:
     // 统一系统配置入口：builder 在这里一次性生成规范 geometry，后续算子
     // 只从本对象读取，不再分别转换 Flat/Cyl 或 Circular/Helical 参数。
-    bool initialize(const SSystemConfig& system)
+    bool initialize(const SSystemConfig& system, const SConeProjGeomVec* frames=nullptr, int count=0)
     {
         releaseGeometry_();
         std::vector<SConeProjGeomVec> flat;
         std::vector<SCylConeProjGeomVec> cyl;
         SVolGeom volume{};
-        if (!buildSystemGeometry(system, flat, cyl, volume)) return false;
+        if(frames){
+            if(system.detector!=EDetectorKind::Flat || count<=0 || count!=(system.trajectory==ETrajectoryKind::Helical?system.helical.total_views:system.circular.total_views) || !buildVolumeGeometry(system.volume,volume))return false;
+            flat.assign(frames,frames+count);
+            for(const auto& f:flat){
+                for(auto a:{f.src,f.detS,f.detU,f.detV})if(!std::isfinite(a.x)||!std::isfinite(a.y)||!std::isfinite(a.z))return false;
+                const double uu=f.detU.x*f.detU.x+f.detU.y*f.detU.y+f.detU.z*f.detU.z;
+                const double vv=f.detV.x*f.detV.x+f.detV.y*f.detV.y+f.detV.z*f.detV.z;
+                const double uv=f.detU.x*f.detV.x+f.detU.y*f.detV.y+f.detU.z*f.detV.z;
+                if(uu<=0||vv<=0||std::abs(uv)>1e-5*std::sqrt(uu*vv)||!std::isfinite(f.angle.x))return false;
+            }
+        }else if (!buildSystemGeometry(system, flat, cyl, volume)) return false;
         system_ = system;
         all_geometry_ = std::move(flat);
         cyl_geometry_ = std::move(cyl);

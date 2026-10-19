@@ -1,3 +1,4 @@
+#include "input/geometry/FlatFrameTable.hpp"
 #include "recon/backend/LibraryGeometry.hpp"
 #include <limits>
 #include "YKCBCT/geometry/YkTrajectorySampling.hpp"
@@ -255,6 +256,19 @@ namespace yk::spectral {
     std::vector<YK::SConeProjGeomVec> buildNonStandardProjectionViews(
         const SimulationConfig& config)
     {
+        if(!config.geometry.frames_file.empty()){
+            check(config.geometry.kind!=GeometryKind::CylCbct && config.geometry.kind!=GeometryKind::CylHelical,"External frame geometry only supports flat detectors");
+            const auto frames=readFlatFrames(config.geometry.frames_file);const auto& g=config.geometry.parameters;
+            check(int(frames.size())==g.views,"External geometry frame count differs from projection count");
+            check(std::abs(frameNorm(frames[0].u)-g.pixel_u_mm)<1e-5*g.pixel_u_mm && std::abs(frameNorm(frames[0].v)-g.pixel_v_mm)<1e-5*g.pixel_v_mm,"External geometry pixel spacing differs from configuration");
+            std::vector<YK::SConeProjGeomVec> result;result.reserve(frames.size());
+            for(const auto& f:frames){
+                auto vector=[](const auto& a){return make_float4(float(a[0]),float(a[1]),float(a[2]),0);};
+                auto first=f.center;for(int k=0;k<3;++k)first[k]-=.5*(g.detector_u-1)*f.u[k]+.5*(g.detector_v-1)*f.v[k];
+                result.push_back({vector(f.source),vector(first),vector(f.u),vector(f.v),make_float4(float(std::atan2(f.source[1],f.source[0])),0,0,0)});
+            }
+            return result;
+        }
         if (config.geometry.kind != GeometryKind::PlanarSourceOrbit &&
             config.geometry.kind != GeometryKind::NikonTilted)
             return {};

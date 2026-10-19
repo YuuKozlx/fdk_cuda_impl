@@ -1,3 +1,4 @@
+#include "input/geometry/FlatFrameTable.hpp"
 #include "client/panels/LogPanel.hpp"
 #include "input/calibration/PrepareCalibrateStage.hpp"
 #include "input/calibration/WaterBhcCalibration.hpp"
@@ -101,7 +102,7 @@ namespace {
         const std::vector<pipeline::PluginInfo> builtin_examples=examples::clientExamples().list();
         bool reconstruction_geometry_initialized=false;
         bool reconstruct=false, auto_reconstruct=false, opacity_changed=false, calibrate_water=false;
-        bool scan_type_changed=false;
+        bool scan_type_changed=false, import_frames=false, export_frames=false;
         float opacity_scale=.03f;
         int result_mode=0;
         bool relative_mode=false,relative_changed=false;
@@ -117,6 +118,7 @@ namespace {
 
         bool show_beam = true, show_trajectory = true;
         int requested_frame = -1, shown_frame = 0;
+        std::vector<ProjectionViewGeometry> preview_frames;
         std::array<std::uint64_t, 256> counts {};
         void histogram(const std::vector<std::uint8_t>& labels)
         {
@@ -130,7 +132,20 @@ namespace {
             for (auto p : points)
                 spectrum_plot.push_back(float(p.fluence_per_keV_cm2_mAs_at_1m));
         }
-        void scan(){scan_type_changed=ui::ScanPanel::draw(draft)||scan_type_changed;}
+        void scan(){
+            ImGui::SeparatorText("Per-view flat geometry");
+            if(ImGui::Button("Load geometry CSV..."))import_frames=true;
+            ImGui::SameLine();if(ImGui::Button("Export geometry CSV..."))export_frames=true;
+            if(!draft.geometry.frames_file.empty()){
+                ImGui::TextWrapped("External: %s",draft.geometry.frames_file.string().c_str());
+                if(ImGui::Button("Use built-in trajectory")){draft.geometry.frames_file.clear();scan_type_changed=true;}
+                ImGui::TextWrapped("CSV defines source and detector pose for every view. Nominal trajectory and detector pose controls are inactive.");
+                integer("Detector columns",draft.geometry.parameters.detector_u);
+                integer("Detector rows",draft.geometry.parameters.detector_v);
+                if(ImGui::Button("Refresh detector preview"))scan_type_changed=true;
+                ImGui::BeginDisabled();ui::ScanPanel::draw(draft);ImGui::EndDisabled();
+            }else scan_type_changed=ui::ScanPanel::draw(draft)||scan_type_changed;
+        }
         ui::VolumePanel volume_panel;
         void volume(){volume_panel.draw(draft,counts);}
         void energy(){ui::SpectrumPanel::draw(draft,spectrum_plot,preview,export_spectrum);}
@@ -487,10 +502,11 @@ namespace {
             ImGui::SetNextWindowPos({ float(width) * .30f, float(height) * .90f });
             ImGui::SetNextWindowSize({ float(width) * (drawer_open?.35f:.70f), float(height) * .10f });
             ImGui::Begin("Scan browsing", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-            ImGui::BeginDisabled(!enabled || view.cachedFrameCount() == 0);
-            int frame = view.displayedFrame();
+            const int frame_count=view.cachedFrameCount()>0?int(view.cachedFrameCount()):int(preview_frames.size());
+            ImGui::BeginDisabled(!enabled || frame_count == 0);
+            int frame = view.cachedFrameCount()>0?view.displayedFrame():shown_frame;
             ImGui::SetNextItemWidth(-110);
-            if (ImGui::SliderInt("View", &frame, 0, std::max(0, int(view.cachedFrameCount()) - 1)))
+            if (ImGui::SliderInt("View", &frame, 0, std::max(0, frame_count - 1)))
                 requested_frame = frame;
             ImGui::EndDisabled();
             ImGui::Text("Drag 3D view to rotate. B: beam, T: trajectory.");
@@ -609,7 +625,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
             for(size_t i=0;i<projection.materials.size();++i){const auto& m=projection.materials[i];const auto* color=colors[i%6];
                 volume.materials.push_back({m.label,m.name,{color[0],color[1],color[2],m.density_g_cm3<.01?0.:.15}});}
             view.setVolumeOpacityScale(config.visualization.volume_opacity_scale);
-            view.setVolume(volume);view.setTrajectory(frames);view.setGeometryPreview(frames.front());
+            view.setVolume(volume);ui.preview_frames=frames;view.setTrajectory(frames);view.setGeometryPreview(frames.front());
             ui.result_mode=0;ui.select_image_page=true;
             ui.histogram(loaded_labels);ui.spectrum(spectrum);labels=std::move(loaded_labels);
             ui.requested_frame=-1;
@@ -627,7 +643,7 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         auto refreshScanPreview=[&]{
             const auto frames=buildDisplayGeometry(ui.draft);
             jobs.invalidateForScanChange(ui.draft);
-            view.setTrajectory(frames);view.setGeometryPreview(frames.front());
+            ui.preview_frames=frames;view.setTrajectory(frames);view.setGeometryPreview(frames.front());
             ui.requested_frame=-1;ui.shown_frame=0;
             ui.calibration_data={};ui.calibration_input.reset();ui.calibration_message.clear();
             ui.message="Scan type changed. Geometry preview updated; calculate new projections before reconstruction.";
@@ -719,6 +735,24 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
         while (view.isOpen()) {
             view.pollGui();
             try {
+                if(ui.import_frames){
+                    ui.import_frames=false;const auto file=chooseFile(false,L"Flat geometry CSV\0*.csv\0All files\0*.*\0\0");
+                    if(!file.empty()){
+                        const auto frames=readFlatFrames(file);
+                        auto candidate=ui.draft;candidate.geometry.frames_file=file;
+                        auto& g=candidate.geometry.parameters;g.views=int(frames.size());
+                        g.pixel_u_mm=frameNorm(frames[0].u);g.pixel_v_mm=frameNorm(frames[0].v);
+                        buildDisplayGeometry(candidate);ui.draft=std::move(candidate);ui.scan_type_changed=true;
+                    }
+                }
+                if(ui.export_frames){
+                    ui.export_frames=false;const auto file=chooseFile(true,L"Flat geometry CSV\0*.csv\0All files\0*.*\0\0");
+                    if(!file.empty()){
+                        const auto display=buildDisplayGeometry(ui.draft);std::vector<FlatFrame> frames;
+                        for(const auto& d:display){FlatFrame f;for(int k=0;k<3;++k){f.source[k]=d.source[k];f.center[k]=d.detector_center[k];f.u[k]=d.detector_axes[0][k]*ui.draft.geometry.parameters.pixel_u_mm;f.v[k]=d.detector_axes[1][k]*ui.draft.geometry.parameters.pixel_v_mm;}frames.push_back(f);}
+                        writeFlatFrames(file,frames);ui.message="Geometry CSV exported: "+file.string();
+                    }
+                }
                 if(ui.scan_type_changed){
                     ui.scan_type_changed=false;
                     refreshScanPreview();
@@ -909,7 +943,8 @@ bool runImGuiProjection(const SimulationConfig& initial, const std::filesystem::
                 if (ui.requested_frame >= 0) {
                     const int frame = ui.requested_frame;
                     ui.requested_frame = -1;
-                    view.selectFrame(frame);
+                    if(view.cachedFrameCount()>0)view.selectFrame(frame);
+                    else if(frame>=0 && frame<int(ui.preview_frames.size())){view.setGeometryPreview(ui.preview_frames[frame]);ui.shown_frame=frame;}
                 }
                 if (ui.calculate) {
                     ui.calculate = false;

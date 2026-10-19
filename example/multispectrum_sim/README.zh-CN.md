@@ -65,3 +65,33 @@ UI 的 `Calibrate` 页签（PrepareCalibrate）仅用于独立标定、查看及
 UI 与新导出的扫描 TOML、几何校正 TOML、几何标定 JSON 均以度显示/保存角度，字段显式使用 `_deg`。内部计算仍为弧度。读取 TOML 时继续识别旧 `_rad` 字段，但同一角度同时出现 `_deg` 与 `_rad` 会报错；几何校正表的 `angle_unit` 必须与字段一致。单排钢珠模型仅估计面内角，UI 对 U/V 倾角标注未估计。
 
 顶部 **Logs** 或 **View → Runtime log** 打开可移动、可缩放的只读日志面板，支持筛选、复制可见内容、清空显示和自动跟随。面板显示应用日志与任务状态，保留最近 2000 行；直接写入终端的第三方库输出不在此范围内。
+
+### Flat 外部逐帧几何
+
+Scan 页提供 **Load geometry CSV / Export geometry CSV**。加载后 VTK 立即显示轨迹、源和探测器姿态；尚未计算投影时也可用底部 View 滑条浏览每帧。探测器行列数沿用当前配置，可修改后刷新预览；帧数和像素间距由 CSV 读取。切回内置轨迹使用 **Use built-in trajectory**。
+
+```toml
+[geometry]
+kind = "flat_cbct"
+frames_file = "scan-frames.csv"
+views = 360
+detector_u = 512
+detector_v = 256
+pixel_u_mm = 0.6
+pixel_v_mm = 0.6
+```
+
+CSV 每行 12 个数，按投影帧顺序排列，不排序。可使用以下表头；位置与步长单位均为 mm：
+
+```text
+source_x,source_y,source_z,center_x,center_y,center_z,u_x,u_y,u_z,v_x,v_y,v_z
+```
+
+`center` 是探测器阵列中心，`u/v` 是列/行索引增加一个像素的位移向量（不是单位方向）。坐标采用当前扫描世界坐标系。向量须非零、相互垂直，源不能位于探测器平面；本版要求所有帧像素间距固定。TOML 直接加载时必须匹配 `views` 和像素间距。显式几何直接决定射线，不叠加标称源探偏移或倾角；体积自身姿态仍按原定义应用。
+
+重建默认沿用扫描帧表；需要独立几何时，在 Recon 加载另一份 CSV，或设置 `[reconstruction.geometry] enabled=true, frames_file="recon-frames.csv"`。帧数、行列数和像素间距必须对应实际投影。
+
+- 内部 SART、SIRT、OS-SART、CGLS 接收逐帧向量几何。
+- FDK/WFBP 仍可分批/按原机制执行；当前要求外部帧表与 TOML 声明的标准圆/螺旋几何匹配，否则明确拒绝，不回退到标称几何。
+- TIGRE、统计重建及骨 BHC 重投影尚未接入此文件入口；不允许静默使用另一套几何。柱面探测器不支持。
+- 公共 DLL 的 `SSystemSpec.flat_frames/flat_frame_count` 在初始化时复制；内部 `detS` 表示像素 `(0,0)` 中心，应用层负责由 CSV 阵列中心转换。
