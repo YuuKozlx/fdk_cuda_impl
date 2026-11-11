@@ -68,6 +68,8 @@ UI 与新导出的扫描 TOML、几何校正 TOML、几何标定 JSON 均以度�
 
 ### Flat 外部逐帧几何
 
+可直接运行的螺旋、乳腺环绕、Nikon 倾斜和平面 CT CSV＋TOML 见[逐帧几何样例](configs/project-and-reconstruct/external-frames/README.zh-CN.md)。
+
 Scan 页提供 **Load geometry CSV / Export geometry CSV**。加载后 VTK 立即显示轨迹、源和探测器姿态；尚未计算投影时也可用底部 View 滑条浏览每帧。探测器行列数沿用当前配置，可修改后刷新预览；帧数和像素间距由 CSV 读取。切回内置轨迹使用 **Use built-in trajectory**。
 
 ```toml
