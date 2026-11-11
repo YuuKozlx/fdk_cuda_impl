@@ -7,6 +7,7 @@
 | 目的 | 文档 |
 | --- | --- |
 | 准备 SDK、编译和启动 UI | [构建与运行](../../doc/build-ui.md) |
+| Linux CUDA 命令行容器入口 | [容器构建](container/README.zh-CN.md) |
 | 选择纯投影、纯重建或完整流程 | [配置入口](configs/README.zh-CN.md)及[配置索引](configs/CATALOG.zh-CN.md) |
 | 使用 BrainWeb / ICRP 数据 | [内置体素数据](../../data/phantoms/README.zh-CN.md) |
 | 导入 MC-GPU 投影 | [外部数据重建](configs/reconstruction/external/README.zh-CN.md) |
